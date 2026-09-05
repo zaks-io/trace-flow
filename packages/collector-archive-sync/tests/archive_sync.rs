@@ -147,6 +147,47 @@ fn checkpoint_from_pending(
     serde_json::from_value(value["checkpoint"].clone()).unwrap()
 }
 
+fn real_durable_bytes(root: &std::path::Path) -> u64 {
+    fn walk(dir: &std::path::Path, total: &mut u64) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, total);
+                continue;
+            }
+            if !path.is_file() {
+                continue;
+            }
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            if name.ends_with(".tmp") && !name.ends_with(".ack.tmp") {
+                continue;
+            }
+            *total += path.metadata().map(|meta| meta.len()).unwrap_or(0);
+        }
+    }
+    let mut total = 0;
+    walk(root, &mut total);
+    total
+}
+
+fn pad_spool_leaving_room(root: &std::path::Path, cap: u64, room: u64) {
+    let used = real_durable_bytes(root);
+    let pad = cap.saturating_sub(used).saturating_sub(room);
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(root.join("pad.bin"))
+        .unwrap();
+    file.set_len(pad).unwrap();
+}
+
 fn server_aggregate_duplicate_ack(pending: &PendingArchiveRequest) -> ArchiveAcknowledgement {
     ArchiveAcknowledgement {
         status: "acknowledged".to_string(),
@@ -817,15 +858,15 @@ async fn acknowledgement_at_exact_cap_clears_pending() {
     let dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();
     let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
-    {
-        let spool = ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, u64::MAX).unwrap();
-        spool.persist_pending(&pending).unwrap();
-    }
-    let used = ArchiveSpool::open(dir.path(), "org_1", &keys)
-        .unwrap()
-        .on_disk_bytes()
-        .unwrap();
-    let mut spool = ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, used).unwrap();
+    let mut spool =
+        ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, ARCHIVE_SPOOL_CAP_BYTES).unwrap();
+    spool.persist_pending(&pending).unwrap();
+    let staging = spool.ack_transition_len(&pending).unwrap();
+    pad_spool_leaving_room(dir.path(), ARCHIVE_SPOOL_CAP_BYTES, staging);
+    assert_eq!(
+        real_durable_bytes(dir.path()).saturating_add(staging),
+        ARCHIVE_SPOOL_CAP_BYTES
+    );
     let uploader = ScriptedUploader::new([Ok(ack_for(&pending))]);
     let report = run_archive_cycle(
         &uploader,
@@ -838,6 +879,7 @@ async fn acknowledgement_at_exact_cap_clears_pending() {
     .await;
     assert_eq!(report.uploaded, 1);
     assert_eq!(report.failed, 0);
+    assert!(real_durable_bytes(dir.path()) <= ARCHIVE_SPOOL_CAP_BYTES);
     assert!(spool
         .pending(ArchiveSource::Claude, &pending.source_session_id)
         .unwrap()
@@ -1011,25 +1053,43 @@ async fn claude_parent_and_subagent_same_session_upload_independently() {
 
 #[test]
 fn acknowledgement_unlink_failure_never_exceeds_exact_cap() {
+    acknowledgement_transition_stays_within_exact_cap();
+}
+
+#[test]
+fn acknowledgement_transition_bytes_stay_within_exact_cap() {
+    acknowledgement_transition_stays_within_exact_cap();
+}
+
+fn acknowledgement_transition_stays_within_exact_cap() {
     let dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();
     let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
-    let used = {
-        let spool = ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, u64::MAX).unwrap();
-        spool.persist_pending(&pending).unwrap();
-        spool.on_disk_bytes().unwrap()
-    };
-    let spool = ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, used).unwrap();
-    assert_eq!(spool.on_disk_bytes().unwrap(), used);
+    let spool =
+        ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, ARCHIVE_SPOOL_CAP_BYTES).unwrap();
+    spool.persist_pending(&pending).unwrap();
+    let staging = spool.ack_transition_len(&pending).unwrap();
+    pad_spool_leaving_room(dir.path(), ARCHIVE_SPOOL_CAP_BYTES, staging);
+    assert_eq!(
+        real_durable_bytes(dir.path()).saturating_add(staging),
+        ARCHIVE_SPOOL_CAP_BYTES
+    );
     spool.debug_fail_next_pending_clear();
     let checkpoint = checkpoint_from_pending(&pending);
     assert!(spool.commit_acknowledgement(&pending, &checkpoint).is_err());
-    assert_eq!(spool.on_disk_bytes().unwrap(), used);
+    let after_fail = real_durable_bytes(dir.path());
+    assert!(after_fail <= ARCHIVE_SPOOL_CAP_BYTES);
+    assert_eq!(after_fail, ARCHIVE_SPOOL_CAP_BYTES);
+    assert_eq!(spool.on_disk_bytes().unwrap(), after_fail);
     assert!(pending_disk_path(dir.path(), &pending).exists());
     assert!(!progress_disk_path(dir.path(), &pending).exists());
     assert!(ack_staging_disk_path(dir.path(), &pending).exists());
 
-    let relaunched = ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, used).unwrap();
+    let relaunched =
+        ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, ARCHIVE_SPOOL_CAP_BYTES).unwrap();
+    let after_relaunch = real_durable_bytes(dir.path());
+    assert!(after_relaunch <= ARCHIVE_SPOOL_CAP_BYTES);
+    assert_eq!(relaunched.on_disk_bytes().unwrap(), after_relaunch);
     assert!(relaunched
         .pending(ArchiveSource::Claude, &pending.source_session_id)
         .unwrap()
@@ -1042,7 +1102,6 @@ fn acknowledgement_unlink_failure_never_exceeds_exact_cap() {
             .record_count,
         checkpoint.record_count
     );
-    assert!(relaunched.on_disk_bytes().unwrap() <= used);
     assert!(!pending_disk_path(dir.path(), &pending).exists());
     assert!(progress_disk_path(dir.path(), &pending).exists());
     assert!(!ack_staging_disk_path(dir.path(), &pending).exists());
@@ -1164,4 +1223,68 @@ async fn failing_keyring_delete_does_not_claim_purge() {
         .pending(ArchiveSource::Codex, &later_session)
         .unwrap()
         .is_none());
+}
+
+#[tokio::test]
+async fn enrollment_invalid_failed_delete_retries_cleanup_after_relaunch() {
+    let dir = TempDir::new().unwrap();
+    let spool_dir = dir.path().join("spool");
+    let enroll = dir.path().join("archive-enrollment.json");
+    ArchiveEnrollmentRecord::save(&enroll, ArchivePolicy::Enrolled).unwrap();
+    let keys = FailingDeleteKeyStore::new();
+    let mut spool = ArchiveSpool::open(&spool_dir, "org_1", &keys).unwrap();
+    spool.set_enrollment_path(&enroll);
+    let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    spool.persist_pending(&pending).unwrap();
+    let uploader = ScriptedUploader::new([Err(ArchiveClientError::Forbidden {
+        reason: "enrollment_invalid".to_string(),
+    })]);
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        None,
+    )
+    .await;
+    assert!(!report.purged);
+    assert!(report.failed >= 1);
+    assert_eq!(
+        ArchiveEnrollmentRecord::load(&enroll).unwrap(),
+        ArchivePolicy::Revoked
+    );
+    assert!(keys.load("org_1").unwrap().is_some());
+    assert!(spool.cleanup_required());
+
+    let policy = ArchiveEnrollmentRecord::load(&enroll).unwrap();
+    assert_eq!(policy, ArchivePolicy::Revoked);
+    let mut relaunched = ArchiveSpool::open_existing(&spool_dir, "org_1", &keys)
+        .unwrap()
+        .expect("retained spool after failed purge");
+    relaunched.set_enrollment_path(&enroll);
+    let later = snapshot(ArchiveSource::Codex, CODEX, 11);
+    let later_session = later.source_session_id.clone();
+    let unavailable = ScriptedUploader::new([Err(ArchiveClientError::Unavailable {
+        reason: "archive unavailable".to_string(),
+    })]);
+    let relaunch_report =
+        run_archive_cycle(&unavailable, &mut relaunched, &keys, &[later], policy, None).await;
+    assert_eq!(unavailable.calls.get(), 0);
+    assert_eq!(relaunch_report.captured, 0);
+    assert!(!relaunch_report.purged);
+    assert!(relaunch_report.failed >= 1);
+    assert_eq!(
+        relaunch_report.first_error.as_deref(),
+        Some("archive_key_unavailable")
+    );
+    assert!(keys.load("org_1").unwrap().is_some());
+    assert!(relaunched
+        .pending(ArchiveSource::Codex, &later_session)
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        ArchiveEnrollmentRecord::load(&enroll).unwrap(),
+        ArchivePolicy::Revoked
+    );
 }

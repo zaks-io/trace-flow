@@ -39,7 +39,7 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
     cancel: Option<&CancellationToken>,
 ) -> ArchiveCycleReport {
     let mut report = ArchiveCycleReport::default();
-    if policy.purges() {
+    if policy.purges() || spool.cleanup_required() {
         match spool.purge(key_store) {
             Ok(()) => report.purged = true,
             Err(err) => {
@@ -245,10 +245,15 @@ async fn upload_pending<U: ArchiveUploader>(
             Ok(UploadOutcome::Advanced)
         }
         Err(err) => match err.denial_reason().and_then(policy_from_denial_reason) {
-            Some(ArchivePolicy::Revoked) => match spool.purge(key_store) {
-                Ok(()) => Ok(UploadOutcome::Purged),
-                Err(err) => Ok(UploadOutcome::Halt(err.class())),
-            },
+            Some(ArchivePolicy::Revoked) => {
+                spool
+                    .persist_terminal_revocation()
+                    .map_err(|err| err.class())?;
+                match spool.purge(key_store) {
+                    Ok(()) => Ok(UploadOutcome::Purged),
+                    Err(err) => Ok(UploadOutcome::Halt(err.class())),
+                }
+            }
             Some(ArchivePolicy::Frozen) | Some(ArchivePolicy::Grace) => Ok(UploadOutcome::Frozen),
             _ => Err(err.class()),
         },

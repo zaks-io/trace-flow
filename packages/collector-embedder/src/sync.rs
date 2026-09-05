@@ -351,7 +351,9 @@ fn apply_archive_policy_after_cycle(
         ingest_denial_reason(&report.first_error).and_then(policy_from_denial_reason)
             == Some(ArchivePolicy::Revoked)
     });
-    if archive_purged || fact_revoked {
+    let archive_halted = archive.as_ref().is_some_and(|report| report.halted);
+    if archive_purged || fact_revoked || archive_halted {
+        let _ = ArchiveEnrollmentRecord::save(&archive_cfg.enrollment_path, ArchivePolicy::Revoked);
         match ArchiveSpool::purge_at(
             &archive_cfg.spool_dir,
             org_id,
@@ -372,7 +374,6 @@ fn apply_archive_policy_after_cycle(
                 }
             }
         }
-        let _ = ArchiveEnrollmentRecord::save(&archive_cfg.enrollment_path, ArchivePolicy::Revoked);
         return;
     }
     if archive.as_ref().is_some_and(|report| report.frozen) {
@@ -542,6 +543,7 @@ async fn run_archive_work(
     snapshots: &[ArchiveSnapshot],
 ) -> ArchiveCycleReport {
     if archive.policy.purges() {
+        let _ = ArchiveEnrollmentRecord::save(&archive.enrollment_path, ArchivePolicy::Revoked);
         let mut report = ArchiveCycleReport::default();
         match ArchiveSpool::purge_at(&archive.spool_dir, org_id, archive.key_store.as_ref()) {
             Ok(()) => report.purged = true,
@@ -564,6 +566,19 @@ async fn run_archive_work(
             };
         }
     };
+    spool.set_enrollment_path(archive.enrollment_path.clone());
+    if spool.cleanup_required() {
+        let _ = spool.persist_terminal_revocation();
+        let mut report = ArchiveCycleReport::default();
+        match spool.purge(archive.key_store.as_ref()) {
+            Ok(()) => report.purged = true,
+            Err(err) => {
+                report.failed = 1;
+                report.first_error = Some(err.class().to_string());
+            }
+        }
+        return report;
+    }
 
     let uploader = match ArchiveClient::new(ArchiveClientConfig::new(
         archive.archive_url.clone(),

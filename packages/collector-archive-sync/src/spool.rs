@@ -8,8 +8,10 @@ use collector_archive::{
 };
 
 use crate::crypto::{decrypt, encrypt};
+use crate::enrollment::ArchiveEnrollmentRecord;
 use crate::error::{ArchiveSyncError, ArchiveSyncResult};
 use crate::key_store::{ArchiveKeyStore, ArchiveSpoolKey};
+use crate::policy::ArchivePolicy;
 
 /// Exact on-disk cap for the encrypted Archive Spool. Never round or evict to stay under this.
 pub const ARCHIVE_SPOOL_CAP_BYTES: u64 = 2_147_483_648;
@@ -18,6 +20,7 @@ pub use crate::key_store::ARCHIVE_SPOOL_KEYRING_SERVICE;
 const PENDING_KIND: u8 = 2;
 const CLAUDE: u8 = 1;
 const CODEX: u8 = 2;
+const ACK_TRANSITION_RESERVE_FALLBACK: u64 = 4_096;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingArchiveRequest {
@@ -67,6 +70,7 @@ pub struct ArchiveSpool {
     key: ArchiveSpoolKey,
     cap_bytes: u64,
     fail_next_pending_clear: AtomicBool,
+    enrollment_path: Option<PathBuf>,
 }
 
 impl ArchiveSpool {
@@ -102,6 +106,7 @@ impl ArchiveSpool {
             key,
             cap_bytes,
             fail_next_pending_clear: AtomicBool::new(false),
+            enrollment_path: None,
         };
         spool.recover_ack_staging();
         spool.recover_acknowledged_pending();
@@ -113,8 +118,44 @@ impl ArchiveSpool {
         self.fail_next_pending_clear.store(true, Ordering::SeqCst);
     }
 
+    pub fn set_enrollment_path(&mut self, path: impl Into<PathBuf>) {
+        self.enrollment_path = Some(path.into());
+    }
+
+    pub fn cleanup_required(&self) -> bool {
+        self.cleanup_required_path().exists()
+    }
+
+    /// Persist terminal revocation before purge so relaunch retries cleanup without the server.
+    pub fn persist_terminal_revocation(&self) -> ArchiveSyncResult<()> {
+        let marker = self.cleanup_required_path();
+        if let Some(parent) = marker.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        {
+            let file = File::create(&marker)?;
+            file.sync_all()?;
+        }
+        if let Some(path) = &self.enrollment_path {
+            ArchiveEnrollmentRecord::save(path, ArchivePolicy::Revoked)?;
+        }
+        Ok(())
+    }
+
     pub fn on_disk_bytes(&self) -> ArchiveSyncResult<u64> {
         sum_dir(&self.root)
+    }
+
+    pub fn ack_transition_len(&self, pending: &PendingArchiveRequest) -> ArchiveSyncResult<u64> {
+        match checkpoint_from_pending_body(&pending.body) {
+            Ok(checkpoint) => self.encrypted_progress_len(
+                pending.source,
+                &pending.source_session_id,
+                &pending.source_transcript_part_id,
+                &checkpoint,
+            ),
+            Err(_) => Ok(ACK_TRANSITION_RESERVE_FALLBACK),
+        }
     }
 
     pub fn persist_pending(&self, pending: &PendingArchiveRequest) -> ArchiveSyncResult<()> {
@@ -132,7 +173,8 @@ impl ArchiveSpool {
             &pending.source_transcript_part_id,
         );
         let blob = encrypt(&self.key, &aad, &plaintext)?;
-        self.write_capped(&path, &blob)
+        let reserve = self.ack_transition_len(pending)?;
+        self.write_capped_reserving(&path, &blob, reserve, atomic_write)
     }
 
     pub fn pending(
@@ -341,8 +383,8 @@ impl ArchiveSpool {
         )?)
     }
 
-    /// Stage durable progress as an uncounted `.ack.tmp`, then drop pending, then promote.
-    /// Counted bytes never include both pending and progress `.bin` files.
+    /// Stage durable progress as `.ack.tmp` (counted), then drop pending, then promote.
+    /// Pending stays until progress is durable; reserved transition bytes keep the exact cap.
     pub fn commit_acknowledgement(
         &self,
         pending: &PendingArchiveRequest,
@@ -368,10 +410,7 @@ impl ArchiveSpool {
             &pending.source_transcript_part_id,
         );
         let blob = encrypt(&self.key, &aad, &plaintext)?;
-        if let Some(parent) = progress_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        atomic_write_named(&staging_path, &blob)?;
+        self.write_capped_reserving(&staging_path, &blob, 0, atomic_write_named)?;
         if self.fail_next_pending_clear.swap(false, Ordering::SeqCst) {
             return Err(ArchiveSyncError::Io(io::Error::other(
                 "pending clear failed",
@@ -434,6 +473,7 @@ impl ArchiveSpool {
                     key,
                     cap_bytes: ARCHIVE_SPOOL_CAP_BYTES,
                     fail_next_pending_clear: AtomicBool::new(false),
+                    enrollment_path: None,
                 };
                 spool.recover_ack_staging();
                 spool.recover_acknowledged_pending();
@@ -510,18 +550,50 @@ impl ArchiveSpool {
     }
 
     fn write_capped(&self, path: &Path, blob: &[u8]) -> ArchiveSyncResult<()> {
+        self.write_capped_reserving(path, blob, 0, atomic_write)
+    }
+
+    fn write_capped_reserving(
+        &self,
+        path: &Path,
+        blob: &[u8],
+        reserve: u64,
+        write: fn(&Path, &[u8]) -> ArchiveSyncResult<()>,
+    ) -> ArchiveSyncResult<()> {
         let used = self.on_disk_bytes()?;
         let existing = path.metadata().map(|meta| meta.len()).unwrap_or(0);
         let next = used
             .saturating_sub(existing)
-            .saturating_add(blob.len() as u64);
+            .saturating_add(blob.len() as u64)
+            .saturating_add(reserve);
         if next > self.cap_bytes {
             return Err(ArchiveSyncError::CapacityExceeded);
         }
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        atomic_write(path, blob)
+        write(path, blob)
+    }
+
+    fn cleanup_required_path(&self) -> PathBuf {
+        self.root.join("cleanup-required")
+    }
+
+    fn encrypted_progress_len(
+        &self,
+        source: ArchiveSource,
+        source_session_id: &str,
+        source_transcript_part_id: &str,
+        checkpoint: &CompletedScanCheckpoint,
+    ) -> ArchiveSyncResult<u64> {
+        let plaintext = serde_json::to_vec(checkpoint)?;
+        let aad = self.aad(
+            "progress",
+            source,
+            source_session_id,
+            source_transcript_part_id,
+        );
+        Ok(encrypt(&self.key, &aad, &plaintext)?.len() as u64)
     }
 
     fn read_encrypted<T>(
@@ -764,7 +836,7 @@ fn sum_dir(root: &Path) -> ArchiveSyncResult<u64> {
     }
     let mut total = 0u64;
     for entry in walkdir_files(root)? {
-        if entry.extension().and_then(|ext| ext.to_str()) == Some("tmp") {
+        if is_scratch_tmp(&entry) {
             continue;
         }
         total = total.saturating_add(entry.metadata()?.len());
@@ -783,17 +855,30 @@ fn durable_files_exist(root: &Path) -> ArchiveSyncResult<bool> {
 
 fn cleanup_tmp_files(root: &Path) -> ArchiveSyncResult<()> {
     for path in walkdir_files(root)? {
-        if path.extension().and_then(|ext| ext.to_str()) == Some("tmp") && !is_ack_staging(&path) {
+        if is_scratch_tmp(&path) {
             remove_if_present(&path)?;
         }
     }
     Ok(())
 }
 
+fn is_scratch_tmp(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str()) == Some("tmp") && !is_ack_staging(path)
+}
+
 fn is_ack_staging(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.ends_with(".ack.tmp"))
+}
+
+fn checkpoint_from_pending_body(body: &[u8]) -> ArchiveSyncResult<CompletedScanCheckpoint> {
+    let value: serde_json::Value = serde_json::from_slice(body)?;
+    let checkpoint = value
+        .get("checkpoint")
+        .cloned()
+        .ok_or(ArchiveSyncError::Corrupt)?;
+    serde_json::from_value(checkpoint).map_err(|_| ArchiveSyncError::Corrupt)
 }
 
 fn ack_staging_path(progress_path: &Path) -> PathBuf {
