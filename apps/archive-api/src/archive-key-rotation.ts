@@ -33,14 +33,7 @@ import {
   type ArchiveKeyRotationState,
 } from './archive-key-rotation-state';
 
-export {
-  ARCHIVE_ROTATION_TEMP_SUFFIX,
-  isRotationTempObjectKey,
-  rotationHealth,
-  rotationTempObjectKey,
-  type ArchiveKeyRotationFailureInjection,
-  type ArchiveKeyRotationHealth,
-} from './archive-key-rotation-state';
+export { ARCHIVE_ROTATION_TEMP_SUFFIX } from './archive-key-rotation-state';
 
 function objectClassFromBudget(
   value: 'agent_archive_chunk' | 'agent_archive_manifest',
@@ -96,7 +89,7 @@ async function putEncryptedObject(
   });
 }
 
-export async function reencryptArchiveObject(
+async function reencryptArchiveObject(
   env: Pick<ArchiveApiEnv, 'ARCHIVE_STORAGE' | 'ARCHIVE_KEY_WRAPPING_SECRET'>,
   storage: DurableObjectStorage,
   input: {
