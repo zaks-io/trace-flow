@@ -29,12 +29,14 @@ use anyhow::{Context, Result};
 use collector_api_client::{CollectorApiClient, CollectorApiClientConfig};
 use collector_archive::ArchiveSource;
 use collector_archive_sync::{
-    archive_source_session_id, policy_from_denial_reason, run_archive_cycle, transcript_part_for,
-    ArchiveClient, ArchiveClientConfig, ArchiveCycleReport, ArchiveEnrollmentRecord,
-    ArchiveKeyStore, ArchiveSnapshot, ArchiveSpool, OsKeyStore,
+    archive_source_session_id, finish_terminal_cleanup, policy_from_denial_reason,
+    run_archive_cycle, transcript_part_for, ArchiveClient, ArchiveClientConfig, ArchiveCycleReport,
+    ArchiveEnrollmentRecord, ArchiveSnapshot, OsKeyStore,
 };
 
-pub use collector_archive_sync::{ArchivePolicy, MemoryKeyStore};
+pub use collector_archive_sync::{
+    cleanup_obligation_exists, ArchiveKeyStore, ArchivePolicy, ArchiveSpool, MemoryKeyStore,
+};
 use collector_contracts::AgentSource;
 use collector_sync::{
     assemble_cursor_units, assemble_sync_unit_from_bytes, run_sync_cycle, select_changed,
@@ -135,14 +137,30 @@ pub fn load_archive_run_config(
     key_store: Arc<dyn ArchiveKeyStore>,
 ) -> Result<Option<ArchiveRunConfig>> {
     let enrollment_path = paths.archive_enrollment_file(org_id);
-    let policy =
-        ArchiveEnrollmentRecord::load(&enrollment_path).context("load archive enrollment")?;
+    let spool_dir = paths.archive_spool_dir(org_id);
+    let cleanup_required = cleanup_obligation_exists(&spool_dir);
+    let policy = match ArchiveEnrollmentRecord::load(&enrollment_path) {
+        Ok(policy) => policy,
+        Err(_) if cleanup_required => ArchivePolicy::Revoked,
+        Err(err) => {
+            return Err(err).context("load archive enrollment");
+        }
+    };
+    if cleanup_required {
+        return Ok(Some(ArchiveRunConfig {
+            archive_url,
+            spool_dir,
+            enrollment_path,
+            key_store,
+            policy: ArchivePolicy::Revoked,
+        }));
+    }
     if policy == ArchivePolicy::Inactive {
         return Ok(None);
     }
     Ok(Some(ArchiveRunConfig {
         archive_url,
-        spool_dir: paths.archive_spool_dir(org_id),
+        spool_dir,
         enrollment_path,
         key_store,
         policy,
@@ -353,11 +371,11 @@ fn apply_archive_policy_after_cycle(
     });
     let archive_halted = archive.as_ref().is_some_and(|report| report.halted);
     if archive_purged || fact_revoked || archive_halted {
-        let _ = ArchiveEnrollmentRecord::save(&archive_cfg.enrollment_path, ArchivePolicy::Revoked);
-        match ArchiveSpool::purge_at(
+        match finish_terminal_cleanup(
             &archive_cfg.spool_dir,
             org_id,
             archive_cfg.key_store.as_ref(),
+            Some(&archive_cfg.enrollment_path),
         ) {
             Ok(()) => {
                 if let Some(report) = archive {
@@ -542,10 +560,14 @@ async fn run_archive_work(
     credential: &str,
     snapshots: &[ArchiveSnapshot],
 ) -> ArchiveCycleReport {
-    if archive.policy.purges() {
-        let _ = ArchiveEnrollmentRecord::save(&archive.enrollment_path, ArchivePolicy::Revoked);
+    if archive.policy.purges() || cleanup_obligation_exists(&archive.spool_dir) {
         let mut report = ArchiveCycleReport::default();
-        match ArchiveSpool::purge_at(&archive.spool_dir, org_id, archive.key_store.as_ref()) {
+        match finish_terminal_cleanup(
+            &archive.spool_dir,
+            org_id,
+            archive.key_store.as_ref(),
+            Some(&archive.enrollment_path),
+        ) {
             Ok(()) => report.purged = true,
             Err(err) => {
                 report.failed = 1;
@@ -567,18 +589,6 @@ async fn run_archive_work(
         }
     };
     spool.set_enrollment_path(archive.enrollment_path.clone());
-    if spool.cleanup_required() {
-        let _ = spool.persist_terminal_revocation();
-        let mut report = ArchiveCycleReport::default();
-        match spool.purge(archive.key_store.as_ref()) {
-            Ok(()) => report.purged = true,
-            Err(err) => {
-                report.failed = 1;
-                report.first_error = Some(err.class().to_string());
-            }
-        }
-        return report;
-    }
 
     let uploader = match ArchiveClient::new(ArchiveClientConfig::new(
         archive.archive_url.clone(),
@@ -658,8 +668,10 @@ mod tests {
     use super::*;
     use collector_archive::default_transcript_part_id;
     use collector_archive_sync::{
-        ArchiveEnrollmentRecord, ArchiveKeyStore, ArchiveSpool, PendingArchiveRequest,
+        cleanup_obligation_exists, ArchiveEnrollmentRecord, ArchiveKeyStore, ArchiveSpool,
+        ArchiveSpoolKey, ArchiveSyncError, ArchiveSyncResult, PendingArchiveRequest,
     };
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -1278,5 +1290,194 @@ mod tests {
         assert_eq!(errors.len(), 2);
         assert!(errors.contains(&"archive_io".to_string()));
         assert!(errors.contains(&"invalid_archive_session".to_string()));
+    }
+
+    struct ControllableDeleteKeyStore {
+        inner: MemoryKeyStore,
+        fail_delete: AtomicBool,
+    }
+
+    impl ControllableDeleteKeyStore {
+        fn new() -> Self {
+            Self {
+                inner: MemoryKeyStore::new(),
+                fail_delete: AtomicBool::new(true),
+            }
+        }
+
+        fn allow_delete(&self) {
+            self.fail_delete.store(false, Ordering::SeqCst);
+        }
+    }
+
+    impl ArchiveKeyStore for ControllableDeleteKeyStore {
+        fn load(&self, org_id: &str) -> ArchiveSyncResult<Option<ArchiveSpoolKey>> {
+            self.inner.load(org_id)
+        }
+
+        fn store(&self, org_id: &str, key: &ArchiveSpoolKey) -> ArchiveSyncResult<()> {
+            self.inner.store(org_id, key)
+        }
+
+        fn delete(&self, org_id: &str) -> ArchiveSyncResult<()> {
+            if self.fail_delete.load(Ordering::SeqCst) {
+                return Err(ArchiveSyncError::KeyUnavailable);
+            }
+            self.inner.delete(org_id)
+        }
+    }
+
+    fn block_enrollment_replace(enrollment_path: &Path) {
+        let tmp = enrollment_path.with_extension("tmp");
+        if tmp.exists() {
+            let _ = std::fs::remove_file(&tmp);
+            let _ = std::fs::remove_dir_all(&tmp);
+        }
+        std::fs::create_dir(&tmp).unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_enrollment_replace_keeps_marker_and_loader_blocks_later_capture() {
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        write_home_transcripts(home.path());
+        let paths = Paths::at(state.path().to_path_buf());
+        paths.ensure().unwrap();
+        let enroll = paths.archive_enrollment_file("org_1");
+        let spool_dir = paths.archive_spool_dir("org_1");
+        ArchiveEnrollmentRecord::save(&enroll, ArchivePolicy::Enrolled).unwrap();
+        block_enrollment_replace(&enroll);
+
+        let keys = Arc::new(ControllableDeleteKeyStore::new());
+        let pending = test_pending(
+            "claude-session-001",
+            b"{\"source_session_id\":\"claude-session-001\"}",
+        );
+        {
+            let spool = ArchiveSpool::open(&spool_dir, "org_1", keys.as_ref()).unwrap();
+            spool.persist_pending(&pending).unwrap();
+        }
+
+        let archive_url =
+            spawn_http(|_raw| raw_response(403, "Forbidden", r#"{"reason":"enrollment_invalid"}"#))
+                .await;
+        let ingest_url = spawn_http(|_raw| {
+            raw_response(
+                202,
+                "Accepted",
+                r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#,
+            )
+        })
+        .await;
+
+        let first_cfg = load_archive_run_config(&paths, "org_1", archive_url.clone(), keys.clone())
+            .unwrap()
+            .unwrap();
+        assert_eq!(first_cfg.policy, ArchivePolicy::Enrolled);
+        let first = run_with_servers(
+            home.path(),
+            state.path(),
+            ingest_url.clone(),
+            Some(first_cfg),
+        )
+        .await;
+        assert!(first.archive.as_ref().unwrap().halted);
+        assert!(!first.archive.as_ref().unwrap().purged);
+        assert_eq!(first.archive.as_ref().unwrap().captured, 0);
+        assert!(cleanup_obligation_exists(&spool_dir));
+        assert!(keys.load("org_1").unwrap().is_some());
+        assert_eq!(
+            ArchiveEnrollmentRecord::load(&enroll).unwrap(),
+            ArchivePolicy::Enrolled
+        );
+
+        keys.allow_delete();
+        let archive_hits = Arc::new(Mutex::new(0u32));
+        let unavailable = spawn_http({
+            let archive_hits = Arc::clone(&archive_hits);
+            move |_raw| {
+                *archive_hits.lock().unwrap() += 1;
+                raw_response(
+                    503,
+                    "Service Unavailable",
+                    r#"{"reason":"archive unavailable"}"#,
+                )
+            }
+        })
+        .await;
+        let recovered_cfg =
+            load_archive_run_config(&paths, "org_1", unavailable.clone(), keys.clone())
+                .unwrap()
+                .expect("marker keeps Archive on the embedder cycle");
+        assert_eq!(recovered_cfg.policy, ArchivePolicy::Revoked);
+        let recovered = run_with_servers(
+            home.path(),
+            state.path(),
+            ingest_url.clone(),
+            Some(recovered_cfg),
+        )
+        .await;
+        assert!(!recovered.archive.as_ref().unwrap().purged);
+        assert_eq!(recovered.archive.as_ref().unwrap().captured, 0);
+        assert_eq!(*archive_hits.lock().unwrap(), 0);
+        assert!(cleanup_obligation_exists(&spool_dir));
+        assert_eq!(
+            ArchiveEnrollmentRecord::load(&enroll).unwrap(),
+            ArchivePolicy::Enrolled
+        );
+        assert!(keys.load("org_1").unwrap().is_none());
+
+        let later_cfg = load_archive_run_config(&paths, "org_1", unavailable, keys.clone())
+            .unwrap()
+            .expect("cleanup obligation still loads Archive work");
+        assert_eq!(later_cfg.policy, ArchivePolicy::Revoked);
+        let later = run_with_servers(home.path(), state.path(), ingest_url, Some(later_cfg)).await;
+        assert_eq!(later.archive.as_ref().unwrap().captured, 0);
+        assert!(keys.load("org_1").unwrap().is_none());
+        assert!(cleanup_obligation_exists(&spool_dir));
+        assert_eq!(
+            ArchiveEnrollmentRecord::load(&enroll).unwrap(),
+            ArchivePolicy::Enrolled
+        );
+    }
+
+    #[test]
+    fn unreadable_enrollment_with_marker_still_loads_cleanup() {
+        let state = tempfile::TempDir::new().unwrap();
+        let paths = Paths::at(state.path().to_path_buf());
+        paths.ensure().unwrap();
+        let enroll = paths.archive_enrollment_file("org_1");
+        let spool_dir = paths.archive_spool_dir("org_1");
+        let keys = Arc::new(MemoryKeyStore::new());
+        let _ = ArchiveSpool::open(&spool_dir, "org_1", keys.as_ref()).unwrap();
+        std::fs::write(&enroll, b"{not-json").unwrap();
+        std::fs::write(ArchiveSpool::durable_cleanup_marker_path(&spool_dir), b"").unwrap();
+        let cfg = load_archive_run_config(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            keys.clone(),
+        )
+        .unwrap()
+        .expect("marker keeps cleanup on the loader");
+        assert_eq!(cfg.policy, ArchivePolicy::Revoked);
+        assert!(keys.load("org_1").unwrap().is_some());
+    }
+
+    #[test]
+    fn unreadable_enrollment_without_marker_fails_loud() {
+        let state = tempfile::TempDir::new().unwrap();
+        let paths = Paths::at(state.path().to_path_buf());
+        paths.ensure().unwrap();
+        std::fs::write(paths.archive_enrollment_file("org_1"), b"{not-json").unwrap();
+        let err = load_archive_run_config(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            Arc::new(MemoryKeyStore::new()),
+        )
+        .err()
+        .expect("unreadable enrollment must not look inactive");
+        assert!(err.to_string().contains("load archive enrollment"));
     }
 }

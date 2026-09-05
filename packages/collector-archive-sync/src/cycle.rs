@@ -40,7 +40,7 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
 ) -> ArchiveCycleReport {
     let mut report = ArchiveCycleReport::default();
     if policy.purges() || spool.cleanup_required() {
-        match spool.purge(key_store) {
+        match spool.finish_cleanup(key_store) {
             Ok(()) => report.purged = true,
             Err(err) => {
                 report.failed += 1;
@@ -68,7 +68,7 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
             break;
         }
         if spool.cleanup_required() {
-            match spool.purge(key_store) {
+            match spool.finish_cleanup(key_store) {
                 Ok(()) => {
                     report.purged = true;
                     break;
@@ -159,7 +159,7 @@ async fn capture_snapshot<U: ArchiveUploader>(
     cancel: Option<&CancellationToken>,
 ) -> Result<(), &'static str> {
     if spool.cleanup_required() {
-        match spool.purge(key_store) {
+        match spool.finish_cleanup(key_store) {
             Ok(()) => return Err("purged"),
             Err(err) => {
                 report.failed += 1;
@@ -274,7 +274,7 @@ async fn upload_pending<U: ArchiveUploader>(
                 spool
                     .persist_terminal_revocation()
                     .map_err(|err| err.class())?;
-                match spool.purge(key_store) {
+                match spool.finish_cleanup(key_store) {
                     Ok(()) => Ok(UploadOutcome::Purged),
                     Err(err) => Ok(UploadOutcome::Halt(err.class())),
                 }

@@ -91,6 +91,9 @@ impl ArchiveSpool {
     ) -> ArchiveSyncResult<Self> {
         let root = root.into();
         let org_id = org_id.into();
+        if cleanup_obligation_exists(&root) && key_store.load(&org_id)?.is_none() {
+            return Err(ArchiveSyncError::KeyUnavailable);
+        }
         fs::create_dir_all(&root)?;
         let key = match key_store.load(&org_id)? {
             Some(key) => key,
@@ -132,23 +135,26 @@ impl ArchiveSpool {
     }
 
     pub fn cleanup_required(&self) -> bool {
-        self.cleanup_required_path().exists()
+        cleanup_obligation_exists(&self.root)
     }
 
     /// Persist terminal revocation before purge so relaunch retries cleanup without the server.
     pub fn persist_terminal_revocation(&self) -> ArchiveSyncResult<()> {
-        let marker = self.cleanup_required_path();
-        if let Some(parent) = marker.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        {
-            let file = File::create(&marker)?;
-            file.sync_all()?;
-        }
+        persist_cleanup_markers(&self.root)?;
         if let Some(path) = &self.enrollment_path {
             let _ = ArchiveEnrollmentRecord::save(path, ArchivePolicy::Revoked);
         }
         Ok(())
+    }
+
+    /// Finish terminal cleanup only after policy, key, and spool are all durably gone.
+    pub fn finish_cleanup(&self, key_store: &dyn ArchiveKeyStore) -> ArchiveSyncResult<()> {
+        finish_terminal_cleanup(
+            &self.root,
+            &self.org_id,
+            key_store,
+            self.enrollment_path.as_deref(),
+        )
     }
 
     pub fn on_disk_bytes(&self) -> ArchiveSyncResult<u64> {
@@ -472,6 +478,11 @@ impl ArchiveSpool {
         Ok(())
     }
 
+    /// Path for the cleanup marker that survives `remove_dir_all` of the spool root.
+    pub fn durable_cleanup_marker_path(root: &Path) -> PathBuf {
+        durable_cleanup_marker(root)
+    }
+
     /// Open a spool that already has a key. Frozen/grace retention must not mint a new key.
     pub fn open_existing(
         root: impl Into<PathBuf>,
@@ -619,10 +630,6 @@ impl ArchiveSpool {
             fs::create_dir_all(parent)?;
         }
         write(path, blob)
-    }
-
-    fn cleanup_required_path(&self) -> PathBuf {
-        self.root.join("cleanup-required")
     }
 
     fn encrypted_progress_len(
@@ -874,6 +881,77 @@ fn decode_pending(bytes: &[u8]) -> ArchiveSyncResult<PendingArchiveRequest> {
         expected_appended_records,
         body: bytes[appended_end..].to_vec(),
     })
+}
+
+/// True when in-spool or durable sibling cleanup markers remain.
+pub fn cleanup_obligation_exists(root: &Path) -> bool {
+    in_spool_cleanup_marker(root).exists() || durable_cleanup_marker(root).exists()
+}
+
+/// Persist markers, revoke enrollment, purge key/spool, and clear markers only when all succeed.
+pub fn finish_terminal_cleanup(
+    root: &Path,
+    org_id: &str,
+    key_store: &dyn ArchiveKeyStore,
+    enrollment_path: Option<&Path>,
+) -> ArchiveSyncResult<()> {
+    persist_cleanup_markers(root)?;
+    let policy_ok = match enrollment_path {
+        Some(path) => {
+            ArchiveEnrollmentRecord::save(path, ArchivePolicy::Revoked).is_ok()
+                && matches!(
+                    ArchiveEnrollmentRecord::load(path),
+                    Ok(ArchivePolicy::Revoked)
+                )
+        }
+        None => true,
+    };
+    ArchiveSpool::purge_at(root, org_id, key_store)?;
+    if policy_ok {
+        let _ = remove_if_present(&durable_cleanup_marker(root));
+        Ok(())
+    } else {
+        persist_cleanup_markers(root)?;
+        Err(ArchiveSyncError::Io(io::Error::other(
+            "enrollment persist failed",
+        )))
+    }
+}
+
+fn persist_cleanup_markers(root: &Path) -> ArchiveSyncResult<()> {
+    write_cleanup_marker(&durable_cleanup_marker(root))?;
+    if root.exists() {
+        write_cleanup_marker(&in_spool_cleanup_marker(root))?;
+    }
+    Ok(())
+}
+
+fn write_cleanup_marker(path: &Path) -> ArchiveSyncResult<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file = File::create(path)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+fn in_spool_cleanup_marker(root: &Path) -> PathBuf {
+    root.join("cleanup-required")
+}
+
+fn durable_cleanup_marker(root: &Path) -> PathBuf {
+    let name = root.file_name().map_or_else(
+        || std::ffi::OsString::from("cleanup-required"),
+        |name| {
+            let mut marker = name.to_os_string();
+            marker.push(".cleanup-required");
+            marker
+        },
+    );
+    match root.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.join(name),
+        _ => PathBuf::from(name),
+    }
 }
 
 fn sum_dir(root: &Path) -> ArchiveSyncResult<u64> {

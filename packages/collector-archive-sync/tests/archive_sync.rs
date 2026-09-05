@@ -1461,3 +1461,37 @@ async fn failing_policy_replace_blocks_all_sources_and_retries_purge() {
         .unwrap()
         .is_none());
 }
+
+#[test]
+fn finish_cleanup_keeps_marker_when_enrollment_replace_fails() {
+    let dir = TempDir::new().unwrap();
+    let spool_dir = dir.path().join("spool");
+    let enroll = dir.path().join("archive-enrollment.json");
+    ArchiveEnrollmentRecord::save(&enroll, ArchivePolicy::Enrolled).unwrap();
+    fs::create_dir(enroll.with_extension("tmp")).unwrap();
+    let keys = MemoryKeyStore::new();
+    let spool = ArchiveSpool::open(&spool_dir, "org_1", &keys).unwrap();
+    let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    spool.persist_pending(&pending).unwrap();
+    assert!(collector_archive_sync::finish_terminal_cleanup(
+        &spool_dir,
+        "org_1",
+        &keys,
+        Some(&enroll)
+    )
+    .is_err());
+    assert!(collector_archive_sync::cleanup_obligation_exists(
+        &spool_dir
+    ));
+    assert_eq!(
+        ArchiveEnrollmentRecord::load(&enroll).unwrap(),
+        ArchivePolicy::Enrolled
+    );
+    assert!(keys.load("org_1").unwrap().is_none());
+    assert!(!pending_disk_path(&spool_dir, &pending).exists());
+    assert!(
+        ArchiveSpool::open(&spool_dir, "org_1", &keys).is_err(),
+        "must not mint a replacement key while cleanup remains"
+    );
+    assert!(keys.load("org_1").unwrap().is_none());
+}

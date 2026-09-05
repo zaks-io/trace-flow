@@ -330,12 +330,12 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> bool {
 
 /// Load Archive inputs for this serialized cycle. Inactive enrollment stays `None` so no spool or
 /// key is created. Frozen/grace/revoked keep the existing local archive state without a second task.
-fn cycle_archive_config(org_id: &str) -> Option<sync::ArchiveRunConfig> {
-    let paths = Paths::resolve().ok()?;
+/// Cleanup markers keep Archive on the cycle even when enrollment is unreadable; parse failures
+/// without a marker fail loud instead of dropping mandatory purge work.
+fn cycle_archive_config(org_id: &str) -> Result<Option<sync::ArchiveRunConfig>, String> {
+    let paths = Paths::resolve().map_err(|err| format!("resolve collector paths: {err}"))?;
     let _ = paths.ensure();
-    sync::load_desktop_archive_run_config(&paths, org_id)
-        .ok()
-        .flatten()
+    sync::load_desktop_archive_run_config(&paths, org_id).map_err(|err| err.to_string())
 }
 
 /// The non-`Send` half: build a local current-thread runtime and drive one [`sync::run`] on it.
@@ -362,7 +362,17 @@ fn run_cycle_blocking(
         }
     };
 
-    let archive = cycle_archive_config(&org_id);
+    let archive = match cycle_archive_config(&org_id) {
+        Ok(archive) => archive,
+        Err(err) => {
+            return CycleOutcome {
+                advanced: 0,
+                failed: 0,
+                first_error: None,
+                setup_error: Some(err),
+            };
+        }
+    };
     let result = runtime.block_on(sync::run_detailed(sync::RunConfig {
         ingest_url,
         credential,
@@ -462,7 +472,10 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod archive_engine_tests {
     use super::*;
-    use collector_embedder::sync::{self, ArchivePolicy, MemoryKeyStore};
+    use collector_embedder::sync::{
+        self, cleanup_obligation_exists, ArchiveKeyStore, ArchivePolicy, ArchiveSpool,
+        MemoryKeyStore,
+    };
     use std::sync::Arc;
     use tempfile::TempDir;
 
@@ -523,5 +536,46 @@ mod archive_engine_tests {
         .unwrap();
         assert_eq!(cfg.policy, ArchivePolicy::Revoked);
         assert_eq!(cfg.spool_dir, paths.archive_spool_dir("org_1"));
+    }
+
+    #[test]
+    fn unreadable_policy_with_cleanup_marker_stays_on_the_serialized_cycle() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        let enroll = paths.archive_enrollment_file("org_1");
+        let spool = paths.archive_spool_dir("org_1");
+        let keys = Arc::new(MemoryKeyStore::new());
+        let _ = ArchiveSpool::open(&spool, "org_1", keys.as_ref()).unwrap();
+        std::fs::write(&enroll, b"{not-json").unwrap();
+        std::fs::write(ArchiveSpool::durable_cleanup_marker_path(&spool), b"").unwrap();
+        let cfg = sync::load_archive_run_config(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            keys.clone(),
+        )
+        .unwrap()
+        .expect("Desktop must keep Archive work when cleanup-required remains");
+        assert_eq!(cfg.policy, ArchivePolicy::Revoked);
+        assert!(cleanup_obligation_exists(&spool));
+        assert!(keys.load("org_1").unwrap().is_some());
+    }
+
+    #[test]
+    fn unreadable_policy_without_marker_fails_loud() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        std::fs::write(paths.archive_enrollment_file("org_1"), b"{not-json").unwrap();
+        let err = sync::load_archive_run_config(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            Arc::new(MemoryKeyStore::new()),
+        )
+        .err()
+        .expect("Desktop must not drop an unreadable enrollment as inactive");
+        assert!(err.to_string().contains("load archive enrollment"));
     }
 }
