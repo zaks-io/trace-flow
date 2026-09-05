@@ -90,7 +90,7 @@ async function putEncryptedObject(
   });
 }
 
-export async function reencryptArchiveObject(
+async function reencryptArchiveObject(
   env: Pick<ArchiveApiEnv, 'ARCHIVE_STORAGE' | 'ARCHIVE_KEY_WRAPPING_SECRET'>,
   storage: DurableObjectStorage,
   input: {
