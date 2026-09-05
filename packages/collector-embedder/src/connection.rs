@@ -96,6 +96,18 @@ impl Paths {
         self.root.join("scratch")
     }
 
+    /// Per-org encrypted Archive Spool. Isolated by org id; never shared across organizations.
+    pub fn archive_spool_dir(&self, org_id: &str) -> PathBuf {
+        self.root
+            .join(format!("archive-spool-{}", sanitize(org_id)))
+    }
+
+    /// Non-secret local Archive enrollment marker. Missing means inactive.
+    pub fn archive_enrollment_file(&self, org_id: &str) -> PathBuf {
+        self.root
+            .join(format!("archive-enrollment-{}.json", sanitize(org_id)))
+    }
+
     /// Create the state dir (and the scratch subdir) if absent. Idempotent.
     pub fn ensure(&self) -> Result<()> {
         std::fs::create_dir_all(&self.root)
@@ -248,5 +260,20 @@ mod tests {
         let file = name.file_name().unwrap().to_str().unwrap();
         assert!(!file.contains('/'));
         assert!(file.starts_with("cursors-org_"));
+    }
+
+    #[test]
+    fn archive_paths_are_org_scoped_and_filename_safe() {
+        let paths = Paths::at(PathBuf::from("/state"));
+        let spool = paths.archive_spool_dir("org/../etc");
+        let enrollment = paths.archive_enrollment_file("org/../etc");
+        assert_eq!(
+            spool.file_name().unwrap().to_str().unwrap(),
+            "archive-spool-org____etc"
+        );
+        assert_eq!(
+            enrollment.file_name().unwrap().to_str().unwrap(),
+            "archive-enrollment-org____etc.json"
+        );
     }
 }

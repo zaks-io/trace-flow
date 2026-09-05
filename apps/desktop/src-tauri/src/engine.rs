@@ -328,6 +328,16 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> bool {
     reached_ingest
 }
 
+/// Load Archive inputs for this serialized cycle. Inactive enrollment stays `None` so no spool or
+/// key is created. Frozen/grace/revoked keep the existing local archive state without a second task.
+fn cycle_archive_config(org_id: &str) -> Option<sync::ArchiveRunConfig> {
+    let paths = Paths::resolve().ok()?;
+    let _ = paths.ensure();
+    sync::load_desktop_archive_run_config(&paths, org_id)
+        .ok()
+        .flatten()
+}
+
 /// The non-`Send` half: build a local current-thread runtime and drive one [`sync::run`] on it.
 fn run_cycle_blocking(
     org_id: String,
@@ -352,7 +362,8 @@ fn run_cycle_blocking(
         }
     };
 
-    let result = runtime.block_on(sync::run(sync::RunConfig {
+    let archive = cycle_archive_config(&org_id);
+    let result = runtime.block_on(sync::run_detailed(sync::RunConfig {
         ingest_url,
         credential,
         org_id: &org_id,
@@ -360,18 +371,26 @@ fn run_cycle_blocking(
         window,
         now_ms,
         batch_id_prefix: "desktop",
+        archive,
+        state_dir: None,
     }));
 
     match result {
-        Ok(reports) => {
+        Ok(outcome) => {
             let mut advanced = 0u32;
             let mut failed = 0u32;
             let mut first_error = None;
-            for (_source, r) in &reports {
+            for (_source, r) in &outcome.reports {
                 advanced += r.advanced;
                 failed += r.failed;
                 if first_error.is_none() {
                     first_error = r.first_error.clone();
+                }
+            }
+            if let Some(archive) = &outcome.archive {
+                failed += archive.failed;
+                if first_error.is_none() {
+                    first_error = archive.first_error.clone();
                 }
             }
             CycleOutcome {
@@ -438,4 +457,71 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod archive_engine_tests {
+    use super::*;
+    use collector_embedder::sync::{self, ArchivePolicy, MemoryKeyStore};
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    fn enrollment(paths: &Paths, org_id: &str, status: &str) {
+        std::fs::write(
+            paths.archive_enrollment_file(org_id),
+            format!(r#"{{"status":"{status}"}}"#),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn missing_enrollment_keeps_archive_out_of_the_serialized_cycle() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        let cfg = sync::load_archive_run_config(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            Arc::new(MemoryKeyStore::new()),
+        )
+        .unwrap();
+        assert!(cfg.is_none());
+    }
+
+    #[test]
+    fn grace_enrollment_stays_on_the_same_cycle_without_a_second_task() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        enrollment(&paths, "org_1", "grace");
+        let cfg = sync::load_archive_run_config(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            Arc::new(MemoryKeyStore::new()),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(cfg.policy, ArchivePolicy::Grace);
+        assert!(!cfg.spool_dir.exists());
+    }
+
+    #[test]
+    fn revoked_enrollment_is_wired_into_the_same_cycle() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        enrollment(&paths, "org_1", "revoked");
+        let cfg = sync::load_archive_run_config(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            Arc::new(MemoryKeyStore::new()),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(cfg.policy, ArchivePolicy::Revoked);
+        assert_eq!(cfg.spool_dir, paths.archive_spool_dir("org_1"));
+    }
 }

@@ -175,6 +175,8 @@ async fn cmd_sync(since: &str) -> Result<()> {
         window,
         now_ms: now_ms(),
         batch_id_prefix: "cli",
+        archive: None,
+        state_dir: None,
     })
     .await?;
 

@@ -10,6 +10,8 @@ collector-contracts = { path = "../collector-contracts" }
 collector-parser = { path = "../collector-parser" }
 collector-sync = { path = "../collector-sync" }
 collector-api-client = { path = "../collector-api-client" }
+collector-archive = { path = "../collector-archive" }
+collector-archive-sync = { path = "../collector-archive-sync" }
 
 anyhow = "1"
 dirs = "5"
