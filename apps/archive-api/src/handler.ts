@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { axiomConfigFromEnv, createWorkerLogger } from '@trace-flow/logging';
+import { isArchiveIntegrityErrorClass, type ArchiveIntegrityErrorClass } from '@trace-flow/types';
 import { authenticateCollectorCredential } from '@trace-flow/utils';
 import type { ArchiveApiEnv } from './context';
 import { ArchiveContractError, assertIdentifier } from './archive-contract';
@@ -16,10 +17,42 @@ import {
   hasForeignCredentialClass,
 } from './export-grant';
 import { MAX_ARCHIVE_UPLOAD_BYTES, readBoundedJson } from './archive-request';
-import { statusFor } from './archive-ledger-support';
+import { appendArchiveAuditEvent } from './audit';
+import { publishArchiveIntegrityStatus } from './archive-integrity-status';
 
 const COLLECTOR_SECRET_HEADER = 'X-Trace-Flow-Collector-Secret';
 const ARCHIVE_SOURCE_HEADER = 'X-Trace-Flow-Archive-Source';
+
+interface LedgerIntegrityResponse {
+  error: 'integrity_error';
+  source: 'claude' | 'codex';
+  source_session_id: string;
+  error_class: ArchiveIntegrityErrorClass;
+  operation_id: string;
+  newly_recorded: boolean;
+}
+
+function parseLedgerIntegrityResponse(
+  value: unknown,
+  source: 'claude' | 'codex',
+  sourceSessionId: string,
+): LedgerIntegrityResponse | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const body = value as Record<string, unknown>;
+  if (
+    body.error !== 'integrity_error' ||
+    body.source !== source ||
+    body.source_session_id !== sourceSessionId ||
+    typeof body.error_class !== 'string' ||
+    !isArchiveIntegrityErrorClass(body.error_class) ||
+    typeof body.operation_id !== 'string' ||
+    !/^integrity:[a-f0-9]{64}$/u.test(body.operation_id) ||
+    typeof body.newly_recorded !== 'boolean'
+  ) {
+    return null;
+  }
+  return body as unknown as LedgerIntegrityResponse;
+}
 
 function requestLogger(c: Context<{ Bindings: ArchiveApiEnv }>, operation: string) {
   return createWorkerLogger({
@@ -194,12 +227,20 @@ export async function handleUpload(c: Context<{ Bindings: ArchiveApiEnv }>): Pro
         sourceSessionId,
       });
     } catch (error) {
-      if (!(error instanceof ArchiveContractError)) throw error;
-      logger.warn('archive_api.invalid_upload', { reason: error.errorClass });
-      return new Response(JSON.stringify({ error: 'upload_rejected', reason: error.errorClass }), {
-        status: statusFor(error.errorClass),
-        headers: { 'Content-Type': 'application/json' },
-      });
+      if (
+        !(error instanceof ArchiveContractError) ||
+        !isArchiveIntegrityErrorClass(error.errorClass)
+      ) {
+        if (!(error instanceof ArchiveContractError)) throw error;
+        logger.warn('archive_api.invalid_upload', { reason: error.errorClass });
+        return new Response(
+          JSON.stringify({ error: 'upload_rejected', reason: error.errorClass }),
+          {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      }
     }
 
     const keyVersion = Number(c.env.ARCHIVE_KEY_VERSION);
@@ -243,9 +284,76 @@ export async function handleUpload(c: Context<{ Bindings: ArchiveApiEnv }>): Pro
     );
     const responseBody = await ledgerResponse.text();
     if (!ledgerResponse.ok) {
+      let parsedBody: unknown;
+      try {
+        parsedBody = JSON.parse(responseBody);
+      } catch {
+        parsedBody = undefined;
+      }
+      const integrity = parseLedgerIntegrityResponse(parsedBody, source, sourceSessionId);
+      if (integrity) {
+        if (integrity.newly_recorded) {
+          logger.warn('archive_api.integrity_failure', {
+            source: integrity.source,
+            sourceSessionId: integrity.source_session_id,
+            errorClass: integrity.error_class,
+          });
+        }
+        const publications = await Promise.allSettled([
+          publishArchiveIntegrityStatus(c.env, {
+            collectorCredentialId: currentDecision.collectorCredentialId,
+            source: integrity.source,
+            sourceSessionId: integrity.source_session_id,
+            errorClass: integrity.error_class,
+          }),
+          appendArchiveAuditEvent(
+            c.env,
+            {
+              binding: {
+                kind: 'contribution',
+                contributionId: currentDecision.contributionId,
+              },
+              expectedOrgId: currentDecision.orgId,
+              action: 'integrity_failure',
+              outcome: 'failure',
+              operationId: integrity.operation_id,
+              targetKind: 'session',
+              targetId: integrity.source_session_id,
+              source: integrity.source,
+              sourceSessionId: integrity.source_session_id,
+            },
+            logger,
+          ),
+        ]);
+        publications.forEach((result, index) => {
+          if (result.status === 'rejected') {
+            logger.error('archive_api.integrity_publication_failed', undefined, {
+              destination: index === 0 ? 'status' : 'audit',
+            });
+          }
+        });
+        if (publications.some((result) => result.status === 'rejected')) {
+          return c.json(
+            { error: 'archive_unavailable', reason: 'integrity_publication_failed' },
+            503,
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            error: 'integrity_error',
+            source: integrity.source,
+            source_session_id: integrity.source_session_id,
+            error_class: integrity.error_class,
+          }),
+          {
+            status: 409,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      }
       let reason = 'archive_commit_failed';
       try {
-        const parsed = JSON.parse(responseBody) as { error?: unknown };
+        const parsed = parsedBody as { error?: unknown };
         if (typeof parsed.error === 'string') reason = parsed.error;
       } catch {
         // The ledger response is not part of the client contract when malformed.

@@ -23,16 +23,106 @@ import {
   envelope,
   call,
   newLedger,
+  seedPendingCommit,
+  expectIntegrity,
 } from './ledger.integration.fixtures';
 import type {
   ArchiveScope,
   ArchiveUploadRequest,
   CompletedScanCheckpoint,
+  StoredElement,
 } from './ledger.integration.fixtures';
+import { assertPlannedChain, buildRecord, checkpointChainHash } from '../archive-chain';
 
 describe('Archive Session Ledger', () => {
   beforeEach(() => {
     expect(runtimeEnv.ARCHIVE_KEY_WRAPPING_SECRET).toBe(WRAPPING_SECRET);
+  });
+
+  it('rejects tampered record links and checkpoint hashes in a planned append', async () => {
+    const currentScope = scope('claude', `chain-verification-${crypto.randomUUID()}`);
+    const record = await observation(
+      currentScope.source,
+      currentScope.sourceSessionId,
+      partFor(currentScope.source),
+      'chain-record',
+      '{"chain":true}',
+    );
+    const storedRecord = await buildRecord(record, 0, GENESIS_CHAIN_HASH);
+    const completedCheckpoint = await checkpoint(
+      currentScope.source,
+      currentScope.sourceSessionId,
+      partFor(currentScope.source),
+      [record],
+    );
+    const storedCheckpoint: StoredElement = {
+      kind: 'checkpoint',
+      archive_format_version: ARCHIVE_FORMAT_VERSION,
+      chain_hash_version: CHAIN_HASH_VERSION,
+      source: currentScope.source,
+      source_session_id: currentScope.sourceSessionId,
+      source_transcript_part_id: partFor(currentScope.source),
+      checkpoint: completedCheckpoint,
+      chain_sequence: 1,
+      previous_chain_hash: storedRecord.chain_hash,
+      chain_hash: await checkpointChainHash(storedRecord.chain_hash, 1, completedCheckpoint),
+    };
+    const elements = [storedRecord, storedCheckpoint];
+    await expect(assertPlannedChain(GENESIS_CHAIN_HASH, 0, elements)).resolves.toBeUndefined();
+    await expect(
+      assertPlannedChain(GENESIS_CHAIN_HASH, 0, [
+        { ...storedRecord, previous_chain_hash: `sha256:${'11'.repeat(32)}` },
+        storedCheckpoint,
+      ]),
+    ).rejects.toMatchObject({ errorClass: 'chain_link_verification_failed' });
+    await expect(
+      assertPlannedChain(GENESIS_CHAIN_HASH, 0, [
+        storedRecord,
+        { ...storedCheckpoint, chain_hash: `sha256:${'22'.repeat(32)}` },
+      ]),
+    ).rejects.toMatchObject({ errorClass: 'chain_link_verification_failed' });
+    const objects = await runtimeEnv.ARCHIVE_STORAGE.list({
+      prefix: await archiveSessionPrefix(currentScope),
+    });
+    expect(objects.objects).toHaveLength(0);
+  });
+
+  it('latches an authenticated pending intent with a broken chain link before acknowledgement', async () => {
+    const currentScope = scope('codex', `pending-chain-${crypto.randomUUID()}`);
+    const record = await observation(
+      currentScope.source,
+      currentScope.sourceSessionId,
+      partFor(currentScope.source),
+      'pending-chain-record',
+      '{"chain":"tampered"}',
+    );
+    const upload = {
+      source_session_id: currentScope.sourceSessionId,
+      observations: [record],
+      checkpoint: await checkpoint(
+        currentScope.source,
+        currentScope.sourceSessionId,
+        partFor(currentScope.source),
+        [record],
+      ),
+      complete_prefix_base64: base64(exactPrefix([record])),
+    } satisfies ArchiveUploadRequest;
+    const { stub } = await seedPendingCommit(currentScope, upload, (commit) => {
+      const first = commit.newElements[0];
+      if (!first) throw new Error('pending record missing');
+      commit.newElements[0] = {
+        ...first,
+        previous_chain_hash: `sha256:${'33'.repeat(32)}`,
+      };
+    });
+
+    const rejected = await call(stub, await envelope(currentScope, upload));
+    expectIntegrity(rejected, 'chain_link_verification_failed');
+    const canonical = await runInDurableObject(stub, (_instance, state) => ({
+      ledger: [...state.storage.sql.exec('SELECT data FROM ledger_state')],
+      elements: [...state.storage.sql.exec('SELECT data FROM ledger_elements')],
+    }));
+    expect(canonical).toEqual({ ledger: [], elements: [] });
   });
 
   it.each(['claude', 'codex'] as const)(

@@ -29,6 +29,7 @@ import {
   envelope,
   call,
   newLedger,
+  expectIntegrity,
 } from './ledger.integration.fixtures';
 import type {
   ArchiveUploadRequest,
@@ -588,8 +589,7 @@ describe('Archive Session Ledger', () => {
         prior_checkpoint: firstCheckpoint,
       }),
     );
-    expect(rejected.response.status).toBe(400);
-    expect(rejected.body.error).toBe('checkpoint_prefix_unverifiable');
+    expectIntegrity(rejected, 'checkpoint_prefix_unverifiable');
     const state = await runInDurableObject(
       stub,
       (_instance, durableState) =>
@@ -661,8 +661,7 @@ describe('Archive Session Ledger', () => {
         },
       }),
     );
-    expect(changedHistory.response.status).toBe(409);
-    expect(changedHistory.body.error).toBe('historical_prefix_changed');
+    expectIntegrity(changedHistory, 'historical_prefix_changed');
 
     const shortenedHistory = await call(
       stub,
@@ -680,8 +679,7 @@ describe('Archive Session Ledger', () => {
         },
       }),
     );
-    expect(shortenedHistory.response.status).toBe(409);
-    expect(shortenedHistory.body.error).toBe('checkpoint_regressed');
+    expectIntegrity(shortenedHistory, 'historical_prefix_changed');
     const stateRows = await runInDurableObject(stub, (_instance, durableState) => [
       ...durableState.storage.sql.exec<{ data: string }>(
         'SELECT data FROM ledger_state WHERE id = 1',

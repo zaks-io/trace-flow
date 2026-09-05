@@ -1,3 +1,5 @@
+import { isArchiveCanonicalIdentifier } from '@trace-flow/types';
+
 export const ARCHIVE_FORMAT_VERSION = 1;
 export const CHAIN_HASH_VERSION = 1;
 export const MAX_CHUNK_BYTES = 1_572_864;
@@ -154,30 +156,6 @@ export class ArchiveContractError extends Error {
   }
 }
 
-const IDENTIFIER_PATTERN = /^[\s\S]+$/u;
-
-function hasControlCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index);
-    if (code <= 0x1f || code === 0x7f) return true;
-  }
-  return false;
-}
-
-function isWellFormedString(value: string): boolean {
-  for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (next < 0xdc00 || next > 0xdfff || Number.isNaN(next)) return false;
-      index++;
-    } else if (code >= 0xdc00 && code <= 0xdfff) {
-      return false;
-    }
-  }
-  return true;
-}
-
 export function assertArchiveSource(value: unknown): asserts value is ArchiveSource {
   if (value !== 'claude' && value !== 'codex') {
     throw new ArchiveContractError('unsupported_source');
@@ -185,21 +163,7 @@ export function assertArchiveSource(value: unknown): asserts value is ArchiveSou
 }
 
 export function assertIdentifier(value: unknown, errorClass: string): asserts value is string {
-  if (
-    typeof value !== 'string' ||
-    !isWellFormedString(value) ||
-    value.length === 0 ||
-    value.length > 1024 ||
-    !IDENTIFIER_PATTERN.test(value) ||
-    hasControlCharacter(value) ||
-    value.startsWith('/') ||
-    value.startsWith('\\') ||
-    value.includes('/') ||
-    value.includes('\\') ||
-    value === '.' ||
-    value === '..' ||
-    /^[A-Za-z]:/u.test(value)
-  ) {
+  if (!isArchiveCanonicalIdentifier(value)) {
     throw new ArchiveContractError(errorClass);
   }
 }

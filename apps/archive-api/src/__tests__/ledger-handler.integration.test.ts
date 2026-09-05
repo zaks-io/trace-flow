@@ -83,18 +83,15 @@ describe('Archive Session Ledger', () => {
             return target.idFromName(name);
           };
         }
-        return Reflect.get(target, property, receiver);
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
       },
     });
     const handlerEnv = {
-      COLLECTOR_CREDS: runtimeEnv.COLLECTOR_CREDS,
+      ...runtimeEnv,
       CONVEX_SITE_URL: 'https://archive-convex.test',
       ARCHIVE_API_SHARED_SECRET: 'archive-api-shared-test-value',
-      ARCHIVE_STORAGE: runtimeEnv.ARCHIVE_STORAGE,
       ARCHIVE_SESSION_LEDGER: guardedNamespace,
-      STORAGE_BUDGET: runtimeEnv.STORAGE_BUDGET,
-      ARCHIVE_KEY_VERSION: String(KEY_VERSION),
-      ARCHIVE_KEY_WRAPPING_SECRET: WRAPPING_SECRET,
     } as unknown as ArchiveApiEnv;
 
     try {
@@ -130,7 +127,7 @@ describe('Archive Session Ledger', () => {
     }
   });
 
-  it('rejects malformed uploads before archive key, DO, state, or R2 access', async () => {
+  it('persists integrity failures while rejecting structural uploads before ledger access', async () => {
     const currentScope = scope('codex', `handler-validation-${crypto.randomUUID()}`);
     const collectorSecret = 'handler-validation-collector-secret';
     const hashedSecret = await sha256Hex(collectorSecret);
@@ -212,6 +209,13 @@ describe('Archive Session Ledger', () => {
     ];
     let idFromNameCalls = 0;
     let keyRequests = 0;
+    let statusRequests = 0;
+    let auditRequests = 0;
+    const collectorCredentialId = 'n57axc8sefsfp6k28nx6c481js806pwv';
+    const policyBodies: Record<string, unknown>[] = [];
+    const statusBodies: Record<string, unknown>[] = [];
+    const statusRecords = new Set<string>();
+    const auditRecords = new Set<string>();
     const realNamespace = runtimeEnv.ARCHIVE_SESSION_LEDGER;
     const guardedNamespace = new Proxy(realNamespace, {
       get(target, property, receiver) {
@@ -221,13 +225,15 @@ describe('Archive Session Ledger', () => {
             return target.idFromName(name);
           };
         }
-        return Reflect.get(target, property, receiver);
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
       },
     });
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const request = new Request(input, init);
       const url = new URL(request.url);
       if (url.pathname === '/archive-api/authorize-write') {
+        policyBodies.push(await request.json<Record<string, unknown>>());
         return Response.json({
           allowed: true,
           enrollmentId: 'handler-validation-enrollment',
@@ -235,7 +241,7 @@ describe('Archive Session Ledger', () => {
           orgId: currentScope.orgId,
           userId: currentScope.userId,
           collectorId: 'handler-validation-collector',
-          collectorCredentialId: hashedSecret,
+          collectorCredentialId,
         });
       }
       if (url.pathname === '/archive-api/key') {
@@ -245,17 +251,30 @@ describe('Archive Session Ledger', () => {
           keyVersion: KEY_VERSION,
         });
       }
+      if (url.pathname === '/archive-api/session-integrity') {
+        statusRequests++;
+        const body = await request.json<Record<string, unknown>>();
+        statusBodies.push(body);
+        if (statusRequests === 1) return new Response(null, { status: 503 });
+        statusRecords.add(JSON.stringify([body.source, body.sourceSessionId, body.errorClass]));
+        return Response.json(body);
+      }
+      if (url.pathname === '/archive-api/audit-events') {
+        auditRequests++;
+        const body = await request.json<Record<string, unknown>>();
+        if (auditRequests === 2) return new Response(null, { status: 503 });
+        const operationId = String(body.operationId);
+        const created = !auditRecords.has(operationId);
+        auditRecords.add(operationId);
+        return Response.json({ eventId: 'event-integrity', created });
+      }
       throw new Error(`unexpected fetch: ${request.method} ${request.url}`);
     });
     const handlerEnv = {
-      COLLECTOR_CREDS: runtimeEnv.COLLECTOR_CREDS,
+      ...runtimeEnv,
       CONVEX_SITE_URL: 'https://archive-convex.test',
       ARCHIVE_API_SHARED_SECRET: 'archive-api-shared-test-value',
-      ARCHIVE_STORAGE: runtimeEnv.ARCHIVE_STORAGE,
       ARCHIVE_SESSION_LEDGER: guardedNamespace,
-      STORAGE_BUDGET: runtimeEnv.STORAGE_BUDGET,
-      ARCHIVE_KEY_VERSION: String(KEY_VERSION),
-      ARCHIVE_KEY_WRAPPING_SECRET: WRAPPING_SECRET,
     } as unknown as ArchiveApiEnv;
     try {
       for (const [index, upload] of malformedUploads.entries()) {
@@ -274,25 +293,71 @@ describe('Archive Session Ledger', () => {
           executionContext,
         );
         await waitOnExecutionContext(executionContext);
-        expect(response.status).toBe([400, 400, 400, 409, 409, 400][index]);
-        await expect(response.json()).resolves.toMatchObject({
-          error: 'upload_rejected',
-          reason: [
-            'payload_hash_mismatch',
-            'invalid_transcript_part_id',
-            'invalid_checkpoint',
-            'historical_prefix_changed',
-            'missing_historical_prefix_proof',
-            'checkpoint_prefix_unverifiable',
-          ][index],
-        });
+        expect(response.status, `malformed upload ${index}`).toBe(
+          [503, 400, 503, 409, 409, 409][index],
+        );
+        const body = await response.json<Record<string, unknown>>();
+        if (index === 1) {
+          expect(body).toMatchObject({
+            error: 'upload_rejected',
+            reason: 'invalid_transcript_part_id',
+          });
+        } else if (index < 3) {
+          expect(body).toEqual({
+            error: 'archive_unavailable',
+            reason: 'integrity_publication_failed',
+          });
+        } else {
+          expect(body).toMatchObject({
+            error: 'integrity_error',
+            error_class: 'payload_hash_mismatch',
+            source: currentScope.source,
+            source_session_id: currentScope.sourceSessionId,
+          });
+        }
       }
-      expect(idFromNameCalls).toBe(0);
-      expect(keyRequests).toBe(0);
+      expect(idFromNameCalls).toBe(5);
+      expect(keyRequests).toBe(5);
+      expect(statusRequests).toBe(5);
+      expect(auditRequests).toBe(5);
+      expect(statusRecords.size).toBe(1);
+      expect(auditRecords.size).toBe(1);
+      expect(policyBodies).toHaveLength(malformedUploads.length * 2);
+      for (const body of policyBodies) {
+        expect(body.hashedSecret).toBe(hashedSecret);
+        expect(body.hashedSecret).not.toBe(collectorCredentialId);
+      }
+      expect(statusBodies).toHaveLength(5);
+      for (const body of statusBodies) {
+        expect(body.collectorCredentialId).toBe(collectorCredentialId);
+        expect(body.collectorCredentialId).not.toBe(hashedSecret);
+      }
       const stored = await runtimeEnv.ARCHIVE_STORAGE.list({
         prefix: await archiveSessionPrefix(currentScope),
       });
       expect(stored.objects).toHaveLength(0);
+      const state = await runInDurableObject(newLedger(currentScope), (_instance, durableState) => {
+        const count = (table: string) =>
+          [
+            ...durableState.storage.sql.exec<{ count: number }>(
+              `SELECT COUNT(*) AS count FROM ${table}`,
+            ),
+          ][0]?.count;
+        return {
+          ledgerState: count('ledger_state'),
+          ledgerElements: count('ledger_elements'),
+          integrity: [
+            ...durableState.storage.sql.exec<{ error_class: string }>(
+              'SELECT error_class FROM ledger_integrity_state WHERE id = 1',
+            ),
+          ],
+        };
+      });
+      expect(state).toEqual({
+        ledgerState: 0,
+        ledgerElements: 0,
+        integrity: [{ error_class: 'payload_hash_mismatch' }],
+      });
     } finally {
       fetchMock.mockRestore();
     }
@@ -338,8 +403,16 @@ describe('Archive Session Ledger', () => {
   it('propagates concurrent handler acknowledgements for two enrolled collectors', async () => {
     const currentScope = scope('claude', `handler-first-use-${crypto.randomUUID()}`);
     const identities = [
-      { secret: 'handler-collector-secret-one', collectorId: 'handler-collector-one' },
-      { secret: 'handler-collector-secret-two', collectorId: 'handler-collector-two' },
+      {
+        secret: 'handler-collector-secret-one',
+        collectorId: 'handler-collector-one',
+        collectorCredentialId: 'n57axc8sefsfp6k28nx6c481js806pwv',
+      },
+      {
+        secret: 'handler-collector-secret-two',
+        collectorId: 'handler-collector-two',
+        collectorCredentialId: 'm57axc8sefsfp6k28nx6c481js806pwv',
+      },
     ];
     const hashedIdentities = await Promise.all(
       identities.map(async (identity) => ({
@@ -362,6 +435,9 @@ describe('Archive Session Ledger', () => {
     }
 
     const policyRequests: { collectorId: string; hashedSecret: string }[] = [];
+    const integrityStatusBodies: Record<string, unknown>[] = [];
+    const integrityAuditBodies: Record<string, unknown>[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const request = new Request(input, init);
       const url = new URL(request.url);
@@ -387,7 +463,7 @@ describe('Archive Session Ledger', () => {
           orgId: currentScope.orgId,
           userId: currentScope.userId,
           collectorId: identity.collectorId,
-          collectorCredentialId: identity.hashedSecret,
+          collectorCredentialId: identity.collectorCredentialId,
         });
       }
       if (url.pathname === '/archive-api/key') {
@@ -396,18 +472,25 @@ describe('Archive Session Ledger', () => {
           keyVersion: KEY_VERSION,
         });
       }
+      if (url.pathname === '/archive-api/session-integrity') {
+        const body = await request.json<Record<string, unknown>>();
+        integrityStatusBodies.push(body);
+        return Response.json(body);
+      }
+      if (url.pathname === '/archive-api/audit-events') {
+        integrityAuditBodies.push(await request.json<Record<string, unknown>>());
+        return Response.json({
+          eventId: 'event-handler-integrity',
+          created: integrityAuditBodies.length === 1,
+        });
+      }
       throw new Error(`unexpected fetch: ${request.method} ${request.url}`);
     });
 
     const handlerEnv = {
-      COLLECTOR_CREDS: runtimeEnv.COLLECTOR_CREDS,
+      ...runtimeEnv,
       CONVEX_SITE_URL: 'https://archive-convex.test',
       ARCHIVE_API_SHARED_SECRET: 'archive-api-shared-test-value',
-      ARCHIVE_STORAGE: runtimeEnv.ARCHIVE_STORAGE,
-      ARCHIVE_SESSION_LEDGER: runtimeEnv.ARCHIVE_SESSION_LEDGER,
-      STORAGE_BUDGET: runtimeEnv.STORAGE_BUDGET,
-      ARCHIVE_KEY_VERSION: String(KEY_VERSION),
-      ARCHIVE_KEY_WRAPPING_SECRET: WRAPPING_SECRET,
     } as unknown as ArchiveApiEnv;
     const record = await observation(
       currentScope.source,
@@ -489,13 +572,55 @@ describe('Archive Session Ledger', () => {
       });
       expect(changed.response.status).toBe(409);
       expect(changed.body).toMatchObject({
-        error: 'upload_rejected',
-        reason: 'historical_prefix_changed',
+        error: 'integrity_error',
+        error_class: 'historical_prefix_changed',
       });
+      const stableRetry = await send(identities[0]!.secret, {
+        ...upload,
+        observations: [],
+      });
+      expect(stableRetry.response.status).toBe(409);
+      expect(stableRetry.body).toEqual(changed.body);
+      expect(integrityStatusBodies).toHaveLength(2);
+      expect(integrityStatusBodies[0]).toEqual({
+        collectorCredentialId: hashedIdentities[1]!.collectorCredentialId,
+        source: currentScope.source,
+        sourceSessionId: currentScope.sourceSessionId,
+        errorClass: 'historical_prefix_changed',
+      });
+      expect(integrityStatusBodies[1]).toMatchObject({
+        collectorCredentialId: hashedIdentities[0]!.collectorCredentialId,
+        source: currentScope.source,
+        sourceSessionId: currentScope.sourceSessionId,
+        errorClass: 'historical_prefix_changed',
+      });
+      expect(integrityAuditBodies).toHaveLength(2);
+      expect(integrityAuditBodies[0]).toMatchObject({
+        action: 'integrity_failure',
+        outcome: 'failure',
+        targetKind: 'session',
+        targetId: currentScope.sourceSessionId,
+        source: currentScope.source,
+        sourceSessionId: currentScope.sourceSessionId,
+      });
+      expect(integrityAuditBodies[1]).toEqual(integrityAuditBodies[0]);
+      expect(JSON.stringify(integrityStatusBodies)).not.toContain(record.payload);
+      expect(JSON.stringify(integrityAuditBodies)).not.toContain(record.payload);
+      const integrityLogs = warn.mock.calls
+        .flatMap((args) => args)
+        .filter(
+          (value): value is string =>
+            typeof value === 'string' && value.includes('archive_api.integrity_failure'),
+        );
+      expect(integrityLogs).toHaveLength(1);
+      expect(integrityLogs[0]).toContain(currentScope.sourceSessionId);
+      expect(integrityLogs[0]).toContain('historical_prefix_changed');
+      expect(integrityLogs[0]).not.toContain(record.payload);
+      expect(integrityLogs[0]).not.toContain(identities[0]!.secret);
       expect(new Set(policyRequests.map((request) => request.collectorId))).toEqual(
         new Set(identities.map((identity) => identity.collectorId)),
       );
-      expect(policyRequests).toHaveLength(identities.length * 4);
+      expect(policyRequests).toHaveLength(identities.length * 5);
 
       const listed = await runtimeEnv.ARCHIVE_STORAGE.list({
         prefix: await archiveSessionPrefix(currentScope),
@@ -530,6 +655,7 @@ describe('Archive Session Ledger', () => {
         ).resolves.toBeInstanceOf(Uint8Array);
       }
     } finally {
+      warn.mockRestore();
       fetchMock.mockRestore();
     }
   });

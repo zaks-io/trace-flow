@@ -7,3 +7,4 @@ export * from './sentry';
 export * from './agent-ingest';
 export * from './feedback';
 export * from './body-access';
+export * from './archive';

@@ -5,6 +5,10 @@ import { ArchiveContractError } from './archive-contract';
 import { commitArchiveSession } from './archive-ledger-commit';
 import { assertIncomingObservationCount } from './archive-validation';
 import { statusFor } from './archive-ledger-support';
+import {
+  ArchiveSessionIntegrityError,
+  ensureSessionIntegrityTable,
+} from './archive-session-integrity';
 
 export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
   private commitQueue: Promise<void> = Promise.resolve();
@@ -44,6 +48,7 @@ export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
     this.ctx.storage.sql.exec(
       'CREATE TABLE IF NOT EXISTS pending_intent_parts (intent_hash TEXT NOT NULL, object_index INTEGER NOT NULL, part_index INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (intent_hash, object_index, part_index))',
     );
+    ensureSessionIntegrityTable(this.ctx.storage);
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -62,15 +67,29 @@ export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
           : undefined;
       assertIncomingObservationCount(upload);
       const turn = this.commitQueue.then(() =>
-        commitArchiveSession(this.ctx.storage, this.env, body),
+        commitArchiveSession(this.ctx.storage, this.env, body).then(
+          (acknowledgement) => ({ acknowledgement }),
+          (error: unknown) => ({ error }),
+        ),
       );
-      this.commitQueue = turn.then(
-        () => undefined,
-        () => undefined,
-      );
-      const acknowledgement = await turn;
-      return Response.json(acknowledgement);
+      this.commitQueue = turn.then(() => undefined);
+      const result = await turn;
+      if ('error' in result) throw result.error;
+      return Response.json(result.acknowledgement);
     } catch (error) {
+      if (error instanceof ArchiveSessionIntegrityError) {
+        return Response.json(
+          {
+            error: error.errorClass,
+            source: error.failure.source,
+            source_session_id: error.failure.sourceSessionId,
+            error_class: error.failure.errorClass,
+            operation_id: error.failure.operationId,
+            newly_recorded: error.newlyRecorded,
+          },
+          { status: 409 },
+        );
+      }
       const errorClass =
         error instanceof ArchiveContractError ? error.errorClass : 'archive_commit_failed';
       if (!(error instanceof ArchiveContractError)) {

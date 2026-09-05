@@ -21,6 +21,7 @@ import {
   verifyEncryptedPlannedObject,
   verifyOrPutImmutableObject,
 } from './archive-r2';
+import { assertPlannedChain } from './archive-chain';
 import type { LedgerSnapshot } from './archive-ledger-state';
 
 export async function recoverPendingIntent(
@@ -48,6 +49,11 @@ export async function recoverPendingIntent(
   ) {
     throw new ArchiveContractError('pending_intent_head_mismatch');
   }
+  await assertPlannedChain(
+    pending.baseChainHead,
+    pending.baseElementCount,
+    pending.commit.newElements,
+  );
   if (pending.status === 'building') markIntentReady(storage, pending.intentHash);
   const expected = new Map(
     expectedObjects.map((object) => [

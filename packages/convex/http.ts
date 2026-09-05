@@ -13,6 +13,7 @@ import { registerArchiveAuditRoutes } from './httpRoutes/archiveAudit';
 import { registerArchiveAuthorizeRoutes } from './httpRoutes/archiveAuthorize';
 import { registerArchiveKeyRoutes } from './httpRoutes/archiveKey';
 import { registerArchiveStatusRoutes } from './httpRoutes/archiveStatus';
+import { registerArchiveSessionIntegrityRoutes } from './httpRoutes/archiveSessionIntegrity';
 import { registerCollectorAuthorizeRoutes } from './httpRoutes/collectorAuthorize';
 import { registerMcpAuthorizeRoutes } from './httpRoutes/mcpAuthorize';
 import { registerMcpBackendRoutes } from './httpRoutes/mcpBackend';
@@ -51,6 +52,7 @@ export function createApp(
   registerArchiveAuditRoutes(app);
   registerArchiveKeyRoutes(app);
   registerArchiveStatusRoutes(app);
+  registerArchiveSessionIntegrityRoutes(app);
   registerMcpBackendRoutes(app);
   registerCollectorAuthorizeRoutes(app, deps);
 
