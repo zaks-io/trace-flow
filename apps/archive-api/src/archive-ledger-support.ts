@@ -121,6 +121,7 @@ const CONFLICT_ERROR_CLASSES = new Set([
   'archive_key_destroy_rejected',
   'archive_key_rotation_in_progress',
   'archive_key_version_retired',
+  'archive_key_rotation_stale',
 ]);
 
 const TRANSIENT_ERROR_CLASSES = new Set([

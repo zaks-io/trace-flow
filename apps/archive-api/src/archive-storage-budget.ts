@@ -127,6 +127,19 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     limit?: number;
     injectFailure?: ArchiveKeyRotationFailureInjection;
   }): Promise<ArchiveKeyRotationHealth> {
+    const turn = this.reconciliationQueue.then(() => this.runKeyRotationAdvance(input));
+    this.reconciliationQueue = turn.then(
+      () => undefined,
+      () => undefined,
+    );
+    return turn;
+  }
+
+  private async runKeyRotationAdvance(input: {
+    orgId: string;
+    limit?: number;
+    injectFailure?: ArchiveKeyRotationFailureInjection;
+  }): Promise<ArchiveKeyRotationHealth> {
     budgetState(this.ctx.storage, input.orgId);
     const logger = createWorkerLogger({
       service: 'archive-api',

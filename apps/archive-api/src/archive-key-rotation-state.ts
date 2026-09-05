@@ -11,13 +11,17 @@ export type ArchiveKeyRotationStatus =
   | 'succeeded'
   | 'failed';
 
-export type ArchiveKeyRotationFailureInjection = 'before_replace' | 'after_replace';
+export type ArchiveKeyRotationFailureInjection =
+  | 'before_replace'
+  | 'after_replace'
+  | 'after_destroy';
 
 export interface ArchiveKeyRotationState {
   operationId: string;
   fromVersion: number;
   toVersion: number;
   status: ArchiveKeyRotationStatus;
+  generation: number;
   cursor?: string;
   reencryptedCount: number;
   remainingReferences: number;
@@ -54,6 +58,7 @@ export function ensureRotationSchema(storage: DurableObjectStorage): void {
       from_version INTEGER NOT NULL,
       to_version INTEGER NOT NULL,
       status TEXT NOT NULL CHECK (status IN ('activating', 'reencrypting', 'destroying', 'succeeded', 'failed')),
+      generation INTEGER NOT NULL DEFAULT 1,
       cursor TEXT,
       reencrypted_count INTEGER NOT NULL DEFAULT 0,
       remaining_references INTEGER NOT NULL DEFAULT 0,
@@ -63,6 +68,16 @@ export function ensureRotationSchema(storage: DurableObjectStorage): void {
       updated_at INTEGER NOT NULL
     );
   `);
+  const columns = new Set(
+    [...storage.sql.exec<{ name: string }>('PRAGMA table_info(archive_key_rotation)')].map(
+      (column) => column.name,
+    ),
+  );
+  if (!columns.has('generation')) {
+    storage.sql.exec(
+      'ALTER TABLE archive_key_rotation ADD COLUMN generation INTEGER NOT NULL DEFAULT 1',
+    );
+  }
 }
 
 export function readRotationState(storage: DurableObjectStorage): ArchiveKeyRotationState | null {
@@ -72,6 +87,7 @@ export function readRotationState(storage: DurableObjectStorage): ArchiveKeyRota
       from_version: number;
       to_version: number;
       status: ArchiveKeyRotationStatus;
+      generation: number | null;
       cursor: string | null;
       reencrypted_count: number;
       remaining_references: number;
@@ -101,6 +117,7 @@ export function readRotationState(storage: DurableObjectStorage): ArchiveKeyRota
     fromVersion: row.from_version,
     toVersion: row.to_version,
     status: row.status,
+    generation: row.generation && row.generation >= 1 ? row.generation : 1,
     cursor: row.cursor ?? undefined,
     reencryptedCount: row.reencrypted_count,
     remainingReferences: row.remaining_references,
@@ -117,14 +134,15 @@ export function writeRotationState(
 ): void {
   storage.sql.exec(
     `INSERT INTO archive_key_rotation (
-      id, operation_id, from_version, to_version, status, cursor, reencrypted_count,
+      id, operation_id, from_version, to_version, status, generation, cursor, reencrypted_count,
       remaining_references, activation_id, last_error_class, manifest_root_hashes, updated_at
-    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       operation_id = excluded.operation_id,
       from_version = excluded.from_version,
       to_version = excluded.to_version,
       status = excluded.status,
+      generation = excluded.generation,
       cursor = excluded.cursor,
       reencrypted_count = excluded.reencrypted_count,
       remaining_references = excluded.remaining_references,
@@ -136,6 +154,7 @@ export function writeRotationState(
     value.fromVersion,
     value.toVersion,
     value.status,
+    value.generation,
     value.cursor ?? null,
     value.reencryptedCount,
     value.remainingReferences,
@@ -161,6 +180,29 @@ export function rotationHealth(
     reencryptedCount: state.reencryptedCount,
     remainingReferences: state.remainingReferences,
   };
+}
+
+export function assertRotationReplaceAllowed(
+  storage: DurableObjectStorage,
+  expected: {
+    operationId: string;
+    generation: number;
+    fromVersion: number;
+    toVersion: number;
+  },
+): void {
+  const current = readRotationState(storage);
+  if (
+    current?.operationId !== expected.operationId ||
+    current?.generation !== expected.generation ||
+    current?.fromVersion !== expected.fromVersion ||
+    current?.toVersion !== expected.toVersion ||
+    current?.status === 'succeeded' ||
+    current?.status === 'failed' ||
+    current?.status === 'destroying'
+  ) {
+    throw new ArchiveContractError('archive_key_rotation_stale');
+  }
 }
 
 export function assertWritableKeyVersion(

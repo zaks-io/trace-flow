@@ -27,7 +27,7 @@ import { __resetArchivePolicyCache } from '../enrollment';
 import type { StorageBudget } from '../archive-storage-budget';
 import type { ArchiveApiEnv } from '../context';
 import { app } from '../index';
-import { ARCHIVE_ROTATION_TEMP_SUFFIX } from '../archive-key-rotation';
+import { ARCHIVE_ROTATION_TEMP_SUFFIX, reencryptArchiveObject } from '../archive-key-rotation';
 
 const WRAPPING_SECRET = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
 const CONVEX = 'https://archive-convex.test';
@@ -427,7 +427,7 @@ describe('Archive encryption key rotation', () => {
     input: {
       orgId: string;
       limit?: number;
-      injectFailure?: 'before_replace' | 'after_replace';
+      injectFailure?: 'before_replace' | 'after_replace' | 'after_destroy';
     },
   ): Promise<string> {
     return runInDurableObject(stub, async (instance: StorageBudget) => {
@@ -835,5 +835,113 @@ describe('Archive encryption key rotation', () => {
     await waitOnExecutionContext(healthCtx);
     expect(healthRes.status).toBe(200);
     await expect(healthRes.json()).resolves.toMatchObject({ status: 'succeeded', toVersion: 2 });
+  });
+
+  it('resumes destroy after the retiring key is already gone', async () => {
+    const { orgId, objects, v2 } = await seedOrg('lost-destroy');
+    const stub = await startRotation(orgId, 'rotate-lost-destroy');
+    expect(
+      await advanceExpectingError(stub, { orgId, limit: 8, injectFailure: 'after_destroy' }),
+    ).toBe('rotation_failure_injected');
+    expect(custody.versions.has(1)).toBe(false);
+    expect(custody.rotationStatus).toBe('succeeded');
+    expect(await stub.getKeyRotationHealth({ orgId })).toMatchObject({ status: 'rotating' });
+    expect(await stub.countKeyVersionReferences({ orgId, keyVersion: 1 })).toBe(0);
+    const resumed = await stub.advanceKeyRotation({ orgId, limit: 8 });
+    expect(resumed.status).toBe('succeeded');
+    expect(custody.destroyCalls.length).toBeGreaterThanOrEqual(2);
+    expect(custody.versions.has(1)).toBe(false);
+    expect(await decryptStored(objects[0]!.objectKey, orgId, 2, v2)).toEqual(
+      new TextEncoder().encode('chunk-body-lost-destroy'),
+    );
+  });
+
+  it('does not accept a relabeled envelope on the already-new path', async () => {
+    const { orgId, v1, objects } = await seedOrg('already-new');
+    const stub = await startRotation(orgId, 'rotate-already-new');
+    const firstKey = [...objects].sort((left, right) =>
+      left.objectKey.localeCompare(right.objectKey),
+    )[0]!.objectKey;
+    const envelope = await readEnvelope(firstKey);
+    await runtimeEnv.ARCHIVE_STORAGE.put(firstKey, JSON.stringify({ ...envelope, keyVersion: 2 }));
+    expect(await advanceExpectingError(stub, { orgId, limit: 1 })).toBe(
+      'Archive cryptographic operation failed',
+    );
+    expect(await stub.countKeyVersionReferences({ orgId, keyVersion: 1 })).toBe(2);
+    expect(await stub.countKeyVersionReferences({ orgId, keyVersion: 2 })).toBe(0);
+    expect(custody.destroyCalls).toHaveLength(0);
+    expect(
+      await decryptArchiveObject(
+        { ...envelope, keyVersion: 1 },
+        {
+          key: await cryptoKey(orgId, 1, v1),
+          orgId,
+          objectKey: firstKey,
+          objectClass: envelope.objectClass,
+          keyVersion: 1,
+        },
+      ),
+    ).toBeInstanceOf(Uint8Array);
+  });
+
+  it('does not let a stale v1-to-v2 worker overwrite after v2-to-v3 completes', async () => {
+    const { orgId, v1, v2, objects } = await seedOrg('stale-worker');
+    const stub = await startRotation(orgId, 'rotate-stale-v1-v2');
+    const objectKey = objects[0]!.objectKey;
+    let releaseHold = (): void => undefined;
+    let held = (): void => undefined;
+    const hold = new Promise<void>((resolve) => {
+      releaseHold = resolve;
+    });
+    const reached = new Promise<void>((resolve) => {
+      held = resolve;
+    });
+    const stale = runInDurableObject(stub, async (_instance, state) => {
+      try {
+        await reencryptArchiveObject(runtimeEnv, state.storage, {
+          orgId,
+          objectKey,
+          objectClass: 'agent_archive_chunk',
+          operationId: 'rotate-stale-v1-v2',
+          generation: 1,
+          fromVersion: 1,
+          toVersion: 2,
+          fromWrappedKey: v1,
+          toWrappedKey: v2,
+          holdBeforeReplace: async () => {
+            held();
+            await hold;
+          },
+        });
+        return 'wrote';
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+    await reached;
+    const first = await stub.advanceKeyRotation({ orgId, limit: 8 });
+    expect(first.status).toBe('succeeded');
+    const v3 = await wrapKey(orgId, 3);
+    custody.versions.set(3, v3);
+    custody.retiringVersion = 2;
+    custody.activeVersion = 3;
+    custody.operationId = 'rotate-stale-v2-v3';
+    custody.rotationStatus = 'rotating';
+    await stub.startKeyRotation({
+      orgId,
+      operationId: 'rotate-stale-v2-v3',
+      fromVersion: 2,
+      toVersion: 3,
+      activationId: ACTIVATION_ID,
+    });
+    const second = await stub.advanceKeyRotation({ orgId, limit: 8 });
+    expect(second.status).toBe('succeeded');
+    expect((await readEnvelope(objectKey)).keyVersion).toBe(3);
+    releaseHold();
+    expect(await stale).toBe('archive_key_rotation_stale');
+    expect((await readEnvelope(objectKey)).keyVersion).toBe(3);
+    expect(await decryptStored(objectKey, orgId, 3, v3)).toEqual(
+      new TextEncoder().encode('chunk-body-stale-worker'),
+    );
   });
 });
