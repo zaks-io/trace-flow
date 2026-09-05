@@ -12,6 +12,9 @@ use serde::Serialize;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
+use collector_embedder::archive_flow::{ArchiveHistoryChoice, ArchiveIntent};
+
+use crate::archive::{ArchiveSession, ArchiveWindowDto};
 use crate::connector::Connector;
 use crate::engine::{self, EngineCommand, EngineHandle};
 use crate::logging::ErrorRing;
@@ -38,6 +41,9 @@ pub struct StatusDto {
     pub expired: bool,
     pub sync: String,
     pub update: UpdateStatus,
+    pub archive_error: Option<String>,
+    pub archive_spool_bytes: u64,
+    pub archive_policy: Option<String>,
 }
 
 fn now_ms() -> i64 {
@@ -95,11 +101,37 @@ pub fn connection_status(bus: State<'_, AppStateBus>) -> StatusDto {
     };
     StatusDto {
         connected,
-        org_id,
+        org_id: org_id.clone(),
         credential_present,
         expired,
         sync: snapshot.sync.label().to_string(),
         update: snapshot.update,
+        archive_error: snapshot.archive_error.clone().or_else(|| {
+            org_id.as_deref().and_then(|org| {
+                Paths::resolve()
+                    .ok()
+                    .map(|paths| {
+                        collector_embedder::archive_local::local_archive_status(&paths, org)
+                    })
+                    .and_then(|status| status.load_error)
+            })
+        }),
+        archive_spool_bytes: org_id
+            .as_deref()
+            .and_then(|org| {
+                Paths::resolve().ok().map(|paths| {
+                    collector_embedder::archive_local::local_archive_status(&paths, org).spool_bytes
+                })
+            })
+            .unwrap_or(snapshot.archive_spool_bytes),
+        archive_policy: org_id.as_deref().and_then(|org| {
+            Paths::resolve().ok().map(|paths| {
+                collector_embedder::archive_local::local_archive_status(&paths, org)
+                    .policy
+                    .as_str()
+                    .to_string()
+            })
+        }),
     }
 }
 
@@ -213,6 +245,131 @@ fn dashboard_url() -> String {
         Ok(value) if !value.trim().is_empty() => value,
         _ => "https://trace-flow.dev/app/agents".to_string(),
     }
+}
+
+#[tauri::command]
+pub fn archive_status(
+    bus: State<'_, AppStateBus>,
+    archive: State<'_, ArchiveSession>,
+) -> Result<ArchiveWindowDto, String> {
+    archive.view(&bus)
+}
+
+#[tauri::command]
+pub async fn start_archive_enable(
+    bus: State<'_, AppStateBus>,
+    archive: State<'_, ArchiveSession>,
+) -> Result<ArchiveWindowDto, String> {
+    let bus = bus.inner().clone();
+    let archive = archive.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        archive.start(&bus, ArchiveIntent::EnableOrganization)
+    })
+    .await
+    .map_err(|err| format!("archive enable task panicked: {err}"))?;
+    result
+}
+
+#[tauri::command]
+pub async fn start_archive_contribute(
+    bus: State<'_, AppStateBus>,
+    archive: State<'_, ArchiveSession>,
+) -> Result<ArchiveWindowDto, String> {
+    let bus = bus.inner().clone();
+    let archive = archive.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        archive.start(&bus, ArchiveIntent::ContributeThisComputer)
+    })
+    .await
+    .map_err(|err| format!("archive contribute task panicked: {err}"))?;
+    result
+}
+
+#[tauri::command]
+pub fn choose_archive_history(
+    bus: State<'_, AppStateBus>,
+    archive: State<'_, ArchiveSession>,
+    choice: String,
+) -> Result<ArchiveWindowDto, String> {
+    let history = match choice.as_str() {
+        "all_history" => ArchiveHistoryChoice::AllHistory,
+        _ => ArchiveHistoryChoice::NewOnly,
+    };
+    archive.choose_history(&bus, history)
+}
+
+#[tauri::command]
+pub fn decline_archive_history(
+    bus: State<'_, AppStateBus>,
+    archive: State<'_, ArchiveSession>,
+) -> Result<ArchiveWindowDto, String> {
+    archive.decline(&bus)
+}
+
+#[tauri::command]
+pub fn cancel_archive_flow(
+    bus: State<'_, AppStateBus>,
+    archive: State<'_, ArchiveSession>,
+) -> Result<ArchiveWindowDto, String> {
+    archive.cancel(&bus)
+}
+
+#[tauri::command]
+pub async fn confirm_archive_flow(
+    bus: State<'_, AppStateBus>,
+    archive: State<'_, ArchiveSession>,
+) -> Result<ArchiveWindowDto, String> {
+    let bus = bus.inner().clone();
+    let archive = archive.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || archive.confirm(&bus))
+        .await
+        .map_err(|err| format!("archive confirm task panicked: {err}"))?;
+    result
+}
+
+#[tauri::command]
+pub async fn retry_archive_flow(
+    bus: State<'_, AppStateBus>,
+    archive: State<'_, ArchiveSession>,
+) -> Result<ArchiveWindowDto, String> {
+    let bus = bus.inner().clone();
+    let archive = archive.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || archive.retry(&bus))
+        .await
+        .map_err(|err| format!("archive retry task panicked: {err}"))?;
+    result
+}
+
+#[tauri::command]
+pub async fn unenroll_archive(
+    bus: State<'_, AppStateBus>,
+    archive: State<'_, ArchiveSession>,
+) -> Result<ArchiveWindowDto, String> {
+    let bus = bus.inner().clone();
+    let archive = archive.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        archive.start(&bus, ArchiveIntent::UnenrollThisComputer)?;
+        archive.confirm(&bus)
+    })
+    .await
+    .map_err(|err| format!("archive unenroll task panicked: {err}"))?;
+    result
+}
+
+#[tauri::command]
+pub async fn revoke_archive_collector(
+    bus: State<'_, AppStateBus>,
+    archive: State<'_, ArchiveSession>,
+) -> Result<ArchiveWindowDto, String> {
+    let bus = bus.inner().clone();
+    let archive = archive.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        archive.start(&bus, ArchiveIntent::RevokeThisCollector)?;
+        archive.confirm(&bus)
+    })
+    .await
+    .map_err(|err| format!("archive revoke task panicked: {err}"))?;
+    result
 }
 
 fn source_label(source: collector_contracts::AgentSource) -> &'static str {

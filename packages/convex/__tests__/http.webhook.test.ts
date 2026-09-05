@@ -45,6 +45,8 @@ function createMockDeps(): HttpDeps {
       verifyState: vi.fn(),
       signConsent: vi.fn(),
       verifyConsent: vi.fn(),
+      signArchiveSession: vi.fn(),
+      verifyArchiveSession: vi.fn(),
       buildAuth0AuthorizeUrl: vi.fn(),
       exchangeAuth0Code: vi.fn(),
       getAuth0UserInfo: vi.fn(),

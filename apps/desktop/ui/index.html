@@ -128,6 +128,23 @@
         margin-top: 16px;
         text-align: center;
       }
+      .choice {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        padding: 8px 0;
+      }
+      .choice input {
+        margin-top: 3px;
+      }
+      .disclosure {
+        color: var(--muted);
+        font-size: 12px;
+        margin: 6px 0;
+      }
+      .hidden {
+        display: none;
+      }
     </style>
   </head>
   <body>
@@ -154,8 +171,46 @@
       <button class="secondary" id="update">Update to latest</button>
     </div>
 
+    <div class="card" id="archive-card">
+      <div class="row"><strong>Conversation Archive</strong></div>
+      <p class="disclosure" id="archive-summary">
+        Parsed fact sync stays on. Archive enrollment is a separate Pro consent.
+      </p>
+      <p class="disclosure" id="archive-health"></p>
+      <div id="archive-consent" class="hidden">
+        <p class="disclosure" id="archive-sources"></p>
+        <div id="archive-disclosures"></div>
+        <label class="choice">
+          <input type="radio" name="history" value="new_only" checked />
+          <span>
+            <strong>Start with new conversations</strong>
+            <span class="disclosure" id="history-new-detail"></span>
+          </span>
+        </label>
+        <label class="choice">
+          <input type="radio" name="history" value="all_history" />
+          <span>
+            <strong>Include all currently available history</strong>
+            <span class="disclosure" id="history-all-detail"></span>
+          </span>
+        </label>
+      </div>
+      <div class="stack" id="archive-actions">
+        <button class="primary" id="archive-enable" disabled>Enable Conversation Archive</button>
+        <button class="secondary" id="archive-contribute" disabled>Contribute this computer</button>
+        <button class="primary hidden" id="archive-confirm">Continue</button>
+        <button class="secondary hidden" id="archive-decline">Cancel history choice</button>
+        <button class="secondary hidden" id="archive-retry">Retry</button>
+        <button class="secondary hidden" id="archive-unenroll">Unenroll this computer</button>
+        <button class="secondary hidden" id="archive-revoke">Revoke this Collector</button>
+      </div>
+    </div>
+
     <p class="msg" id="msg"></p>
-    <p class="footer">Nothing is uploaded until you click <strong>Start syncing</strong>.</p>
+    <p class="footer">
+      Nothing is uploaded until you click <strong>Start syncing</strong>. Conversation Archive never
+      starts from login or Start syncing.
+    </p>
 
     <script src="./main.js"></script>
   </body>

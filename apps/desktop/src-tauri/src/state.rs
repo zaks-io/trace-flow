@@ -84,6 +84,8 @@ pub struct AppState {
     pub update: UpdateStatus,
     pub last_sync_at: Option<SystemTime>,
     pub recent_errors: Vec<RecentError>,
+    pub archive_error: Option<String>,
+    pub archive_spool_bytes: u64,
 }
 
 #[derive(Clone)]

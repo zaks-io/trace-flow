@@ -40,6 +40,12 @@ export interface ConsentPayload {
   responseType?: string;
 }
 
+export interface ArchiveSessionPayload {
+  tokenUse: 'archive_session';
+  userId: string;
+  orgId: string;
+}
+
 async function fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -226,6 +232,56 @@ function isConsentPayload(payload: unknown): payload is ConsentPayload {
     typeof value.codeChallengeMethod === 'string' &&
     (value.responseType === undefined || typeof value.responseType === 'string')
   );
+}
+
+export async function signArchiveSession(
+  payload: Omit<ArchiveSessionPayload, 'tokenUse'>,
+): Promise<string> {
+  const secret = process.env.MCP_JWT_SECRET;
+
+  if (!secret) {
+    throw new Error('MCP_JWT_SECRET not configured');
+  }
+
+  const secretKey = new TextEncoder().encode(secret);
+
+  return new SignJWT({ ...payload, tokenUse: 'archive_session' })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setExpirationTime('10m')
+    .setIssuedAt()
+    .sign(secretKey);
+}
+
+function isArchiveSessionPayload(payload: unknown): payload is ArchiveSessionPayload {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return false;
+  const value = payload as Partial<ArchiveSessionPayload>;
+  return (
+    value.tokenUse === 'archive_session' &&
+    typeof value.userId === 'string' &&
+    typeof value.orgId === 'string'
+  );
+}
+
+export async function verifyArchiveSession(token: string): Promise<ArchiveSessionPayload | null> {
+  const secret = process.env.MCP_JWT_SECRET;
+
+  if (!secret) {
+    throw new Error('MCP_JWT_SECRET not configured');
+  }
+
+  const secretKey = new TextEncoder().encode(secret);
+
+  try {
+    const { payload } = await jwtVerify(token, secretKey);
+    if (!isArchiveSessionPayload(payload)) return null;
+    return {
+      tokenUse: payload.tokenUse,
+      userId: payload.userId,
+      orgId: payload.orgId,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function verifyConsent(token: string): Promise<ConsentPayload | null> {

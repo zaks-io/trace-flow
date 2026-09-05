@@ -174,18 +174,11 @@ fn apply_authorized_cycle(settings: &mut Settings, outcome: &CycleOutcome) -> Wi
 }
 
 fn sync_status_from_outcome(outcome: &CycleOutcome) -> SyncStatus {
-    match (
-        &outcome.setup_error,
-        &outcome.archive_setup_error,
-        &outcome.first_error,
-    ) {
-        (Some(err), _, _) => SyncStatus::Error {
+    match (&outcome.setup_error, &outcome.first_error) {
+        (Some(err), _) => SyncStatus::Error {
             message: err.clone(),
         },
-        (None, Some(err), _) => SyncStatus::Error {
-            message: err.clone(),
-        },
-        (None, None, Some(err)) if outcome.advanced == 0 => SyncStatus::Error {
+        (None, Some(err)) if outcome.advanced == 0 => SyncStatus::Error {
             message: err.clone(),
         },
         _ => SyncStatus::Idle,
@@ -349,6 +342,7 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> Option<CycleOutcome> {
             bus.update(|s| {
                 s.last_sync_at = Some(SystemTime::now());
                 s.sync = sync_status_from_outcome(&outcome);
+                s.archive_error = outcome.archive_setup_error.clone();
             });
             Some(outcome)
         }
@@ -911,11 +905,8 @@ mod archive_engine_tests {
                 outcome.failed
             );
             assert!(
-                matches!(
-                    sync_status_from_outcome(&outcome),
-                    SyncStatus::Error { message } if message.contains("transport")
-                ),
-                "cycle {cycle}: Archive diagnostic must stay visible in status"
+                matches!(sync_status_from_outcome(&outcome), SyncStatus::Idle),
+                "cycle {cycle}: archive-only transport failure must not stop fact sync"
             );
             assert!(
                 fact_cycle_reached_ingest(&outcome),
@@ -993,10 +984,14 @@ mod archive_engine_tests {
             windows.push(window);
             persist(&file, &settings);
             assert!(
-                matches!(
-                    sync_status_from_outcome(&outcome),
-                    SyncStatus::Error { message } if message.contains("load archive enrollment")
-                ),
+                matches!(sync_status_from_outcome(&outcome), SyncStatus::Idle),
+                "archive-only failure must not stop fact sync"
+            );
+            assert!(
+                outcome
+                    .archive_setup_error
+                    .as_deref()
+                    .is_some_and(|message| message.contains("load archive enrollment")),
                 "Archive diagnostic must stay visible"
             );
         }

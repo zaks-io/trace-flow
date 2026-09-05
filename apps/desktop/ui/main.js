@@ -34,6 +34,9 @@ async function refreshStatus() {
   } else {
     label = `Connected — ${status.org_id} — ${status.sync}`;
   }
+  if (status.archive_error) {
+    label += ` — Archive: ${status.archive_error}`;
+  }
   el('status').textContent = label;
 
   const ready = status.connected && status.credential_present && !status.expired;
@@ -143,9 +146,154 @@ el('update').addEventListener('click', async () => {
   }
 });
 
+function show(id, visible) {
+  el(id).classList.toggle('hidden', !visible);
+}
+
+function selectedHistory() {
+  const checked = document.querySelector('input[name="history"]:checked');
+  return checked ? checked.value : 'new_only';
+}
+
+function renderArchive(dto) {
+  if (!dto) return;
+  const flow = dto.flow;
+  const local = dto.local;
+  const health = [];
+  if (local.policy && local.policy !== 'inactive') {
+    health.push(`Local enrollment: ${local.policy}`);
+  }
+  if (local.spool_bytes != null) {
+    health.push(`Spool ${local.spool_bytes} / ${local.spool_cap_bytes} bytes`);
+  }
+  if (local.archive_error || local.load_error) {
+    health.push(local.archive_error || local.load_error);
+  }
+  if (local.acknowledged_content_remains && (flow.step === 'left' || local.policy === 'revoked')) {
+    health.push(
+      'Acknowledged archive content remains until the owner deletes it. Re-enrollment needs a fresh history choice.',
+    );
+  }
+  el('archive-health').textContent = health.join(' · ');
+
+  el('archive-sources').textContent =
+    `Covered now: ${flow.covered_sources.join(', ')}. Later Sources (${flow.unsupported_sources.join(', ')}) stay off until you add them.`;
+  el('history-new-detail').textContent = flow.history_new_only_detail;
+  el('history-all-detail').textContent = flow.history_all_detail;
+  const disclosures = el('archive-disclosures');
+  disclosures.replaceChildren();
+  for (const text of flow.disclosures) {
+    const p = document.createElement('p');
+    p.className = 'disclosure';
+    p.textContent = text;
+    disclosures.append(p);
+  }
+
+  const consent = flow.step === 'consent';
+  const failed = flow.step === 'failed';
+  const enrolled = flow.step === 'enrolled' || local.policy === 'enrolled';
+  const ineligible = flow.step === 'ineligible';
+  show('archive-consent', consent);
+  show('archive-confirm', consent);
+  show('archive-decline', consent);
+  show('archive-retry', failed);
+  show('archive-unenroll', enrolled);
+  show('archive-revoke', enrolled);
+  const connectedReady = !el('start').disabled;
+  el('archive-enable').disabled = !connectedReady || consent || enrolled;
+  el('archive-contribute').disabled = !connectedReady || consent || enrolled;
+
+  if (ineligible) {
+    el('archive-summary').textContent = `Cannot continue: ${flow.ineligible_reason}`;
+  } else if (flow.step === 'declined_history') {
+    el('archive-summary').textContent =
+      'History choice declined. Nothing was enrolled. Start again to choose.';
+  } else if (enrolled) {
+    el('archive-summary').textContent = 'This computer is enrolled. Fact sync continues independently.';
+  } else {
+    el('archive-summary').textContent =
+      'Parsed fact sync stays on. Archive enrollment is a separate Pro consent.';
+  }
+  if (flow.error) msg(flow.error);
+}
+
+async function refreshArchive() {
+  try {
+    const dto = await invoke('archive_status');
+    renderArchive(dto);
+  } catch {
+    // Not connected yet — keep the card in its idle copy.
+  }
+}
+
+el('archive-enable').addEventListener('click', async () => {
+  msg('Sign in as the Organization owner to enable Conversation Archive…');
+  try {
+    renderArchive(await invoke('start_archive_enable'));
+  } catch (err) {
+    msg(`${err}`);
+  }
+});
+
+el('archive-contribute').addEventListener('click', async () => {
+  msg('Sign in to contribute this computer…');
+  try {
+    renderArchive(await invoke('start_archive_contribute'));
+  } catch (err) {
+    msg(`${err}`);
+  }
+});
+
+el('archive-confirm').addEventListener('click', async () => {
+  try {
+    await invoke('choose_archive_history', { choice: selectedHistory() });
+    renderArchive(await invoke('confirm_archive_flow'));
+  } catch (err) {
+    msg(`${err}`);
+  }
+});
+
+el('archive-decline').addEventListener('click', async () => {
+  try {
+    renderArchive(await invoke('decline_archive_history'));
+  } catch (err) {
+    msg(`${err}`);
+  }
+});
+
+el('archive-retry').addEventListener('click', async () => {
+  try {
+    renderArchive(await invoke('retry_archive_flow'));
+  } catch (err) {
+    msg(`${err}`);
+  }
+});
+
+el('archive-unenroll').addEventListener('click', async () => {
+  msg('Unenrolling stops archive upload with no final flush.');
+  try {
+    renderArchive(await invoke('unenroll_archive'));
+  } catch (err) {
+    msg(`${err}`);
+  }
+});
+
+el('archive-revoke').addEventListener('click', async () => {
+  msg('Owner revocation stops this Collector with no final archive upload.');
+  try {
+    renderArchive(await invoke('revoke_archive_collector'));
+  } catch (err) {
+    msg(`${err}`);
+  }
+});
+
 listen('desktop-update-status', (event) => applyUpdateStatus(event.payload)).catch((err) => {
   msg(`Update status listener failed: ${err}`);
 });
 
 refresh();
-setInterval(refresh, 4000);
+refreshArchive();
+setInterval(() => {
+  refresh();
+  refreshArchive();
+}, 4000);

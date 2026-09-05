@@ -541,4 +541,76 @@ describe('convex/http.ts internal routes', () => {
       expect(ctx.runQuery).not.toHaveBeenCalled();
     });
   });
+
+  describe('GET /archive/authorize', () => {
+    it('rejects a non-loopback redirect', async () => {
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/archive/authorize?redirect_uri=https://evil.example/callback&state=abc',
+        {},
+        ctx,
+      );
+      expect(res.status).toBe(400);
+    });
+
+    it('signs archive state and redirects to Auth0', async () => {
+      const app = createApp(deps);
+      (deps.oauth.signState as ReturnType<typeof vi.fn>).mockResolvedValue('signed-state');
+      (deps.oauth.buildAuth0AuthorizeUrl as ReturnType<typeof vi.fn>).mockReturnValue(
+        'https://auth.example/authorize',
+      );
+      const res = await app.request(
+        'http://localhost/archive/authorize?redirect_uri=http://127.0.0.1:9/callback&state=abc',
+        {},
+        ctx,
+      );
+      expect(res.status).toBe(302);
+      expect(deps.oauth.signState).toHaveBeenCalledWith(
+        expect.objectContaining({ clientState: 'archive:abc' }),
+      );
+    });
+  });
+
+  describe('POST /archive/desktop/snapshot', () => {
+    it('rejects a missing archive session', async () => {
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/archive/desktop/snapshot',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ collectorId: 'collector-1' }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(401);
+    });
+
+    it('returns the user snapshot for a valid session', async () => {
+      const app = createApp(deps);
+      (deps.oauth.verifyArchiveSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+        tokenUse: 'archive_session',
+        userId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+        orgId: 'k57axc8sefsfp6k28nx6c481js806pww',
+      });
+      ctx.runQuery.mockResolvedValue({
+        orgId: 'k57axc8sefsfp6k28nx6c481js806pww',
+        role: 'owner',
+      });
+      const res = await app.request(
+        'http://localhost/archive/desktop/snapshot',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer archive-session',
+          },
+          body: JSON.stringify({ collectorId: 'collector-1' }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(200);
+      expect(ctx.runQuery).toHaveBeenCalledOnce();
+    });
+  });
 });

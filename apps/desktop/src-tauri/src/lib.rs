@@ -9,6 +9,7 @@
 //! window hosts source detection and the explicit "Start syncing" egress gate; the tray menu
 //! mirrors status and drives the engine thereafter.
 
+mod archive;
 mod autostart;
 mod commands;
 mod connector;
@@ -70,6 +71,16 @@ pub fn run() {
             commands::recent_errors,
             commands::clear_errors,
             commands::open_dashboard,
+            commands::archive_status,
+            commands::start_archive_enable,
+            commands::start_archive_contribute,
+            commands::choose_archive_history,
+            commands::decline_archive_history,
+            commands::cancel_archive_flow,
+            commands::confirm_archive_flow,
+            commands::retry_archive_flow,
+            commands::unenroll_archive,
+            commands::revoke_archive_collector,
             updater::update_to_latest,
         ])
         .setup(|app| {
@@ -94,6 +105,7 @@ pub fn run() {
 
             // The single login seam, shared by every command and the tray (one in-flight guard).
             app.manage(crate::connector::Connector::default());
+            app.manage(crate::archive::ArchiveSession::default());
             app.manage(updater::UpdateState::default());
 
             let (menu, handles) = build_menu(app.handle()).map_err(|err| {

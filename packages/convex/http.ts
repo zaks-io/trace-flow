@@ -12,6 +12,7 @@ import { registerAgentIngestRoutes } from './httpRoutes/agentIngest';
 import { registerArchiveAuditRoutes } from './httpRoutes/archiveAudit';
 import { registerArchiveAuthorizeRoutes } from './httpRoutes/archiveAuthorize';
 import { registerArchiveKeyRoutes } from './httpRoutes/archiveKey';
+import { registerArchiveDesktopRoutes } from './httpRoutes/archiveDesktop';
 import { registerCollectorAuthorizeRoutes } from './httpRoutes/collectorAuthorize';
 import { registerMcpAuthorizeRoutes } from './httpRoutes/mcpAuthorize';
 import { registerMcpBackendRoutes } from './httpRoutes/mcpBackend';
@@ -51,6 +52,7 @@ export function createApp(
   registerArchiveKeyRoutes(app);
   registerMcpBackendRoutes(app);
   registerCollectorAuthorizeRoutes(app, deps);
+  registerArchiveDesktopRoutes(app, deps);
 
   return app;
 }

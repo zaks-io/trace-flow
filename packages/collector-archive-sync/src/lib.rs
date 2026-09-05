@@ -24,7 +24,7 @@ pub use bound::{
 pub use client::{ArchiveClient, ArchiveClientConfig, ArchiveUploader};
 pub use collector_archive::ArchiveSource;
 pub use cycle::{run_archive_cycle, ArchiveCycleReport, ArchiveSnapshot};
-pub use enrollment::ArchiveEnrollmentRecord;
+pub use enrollment::{ArchiveEnrollmentRecord, ArchiveSourceConsentRecord};
 pub use error::{ArchiveClientError, ArchiveSyncError, ArchiveSyncResult};
 pub use key_store::{ArchiveKeyStore, ArchiveSpoolKey, MemoryKeyStore, OsKeyStore};
 pub use policy::{policy_from_denial_reason, ArchivePolicy, ArchivePolicyParseError};

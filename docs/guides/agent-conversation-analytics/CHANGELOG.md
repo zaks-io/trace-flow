@@ -15,6 +15,13 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-09-05 — TRA-222 — cursor/desktop-archive-activation-3337
+
+**Status:** 🚧 in progress
+**Changed:** Desktop Conversation Archive consent: Enable / Contribute guided flow, two history choices (default new-only), Claude+Codex disclosures, local spool/unenroll/revoke, Convex archive session + desktop control-plane routes, and a fake control-plane runtime. Login and Start syncing still never enroll.
+**Verified:** pending focused Rust + Convex tests, then `bun run ci:check`.
+**Next / blockers:** Run required checks, local review, PR.
+
 ## 2026-09-04 — TRA-213 — cursor/remove-legacy-raw-upload-66d3
 
 **Status:** ✅ done

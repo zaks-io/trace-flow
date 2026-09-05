@@ -416,6 +416,69 @@ describe('convex/http.ts OAuth routes', () => {
       expect(json.error).toBe('Auth0 token exchange failed');
     });
 
+    it('mints a short-lived archive session to loopback and never a collector secret', async () => {
+      const app = createApp(deps);
+      (deps.oauth.verifyState as Mock).mockResolvedValue({
+        clientState: 'archive:nonce1',
+        redirectUri: 'http://127.0.0.1:9/callback',
+      });
+      (deps.oauth.exchangeAuth0Code as Mock).mockResolvedValue({
+        access_token: 'auth0-access-token',
+      });
+      (deps.oauth.getAuth0UserInfo as Mock).mockResolvedValue({
+        sub: 'auth0|123',
+        email: 'owner@example.com',
+      });
+      (deps.oauth.signArchiveSession as Mock).mockResolvedValue('archive.session.jwt');
+      ctx.runMutation.mockResolvedValue('user-id-123');
+      ctx.runQuery.mockResolvedValue({
+        orgId: 'k57axc8sefsfp6k28nx6c481js806pww',
+        orgName: 'Acme',
+      });
+
+      const res = await app.request(
+        'http://localhost/mcp/callback?code=auth0-code&state=state-token',
+        {},
+        ctx,
+      );
+
+      expect(res.status).toBe(302);
+      const location = new URL(res.headers.get('Location') ?? '');
+      expect(location.origin).toBe('http://127.0.0.1:9');
+      expect(location.searchParams.get('session')).toBe('archive.session.jwt');
+      expect(location.searchParams.get('secret')).toBeNull();
+      expect(location.searchParams.get('state')).toBe('nonce1');
+      expect(deps.oauth.signArchiveSession).toHaveBeenCalledWith({
+        userId: 'user-id-123',
+        orgId: 'k57axc8sefsfp6k28nx6c481js806pww',
+      });
+    });
+
+    it('rejects an archive callback that is not loopback', async () => {
+      const app = createApp(deps);
+      (deps.oauth.verifyState as Mock).mockResolvedValue({
+        clientState: 'archive:nonce1',
+        redirectUri: 'https://evil.example/callback',
+      });
+      (deps.oauth.exchangeAuth0Code as Mock).mockResolvedValue({
+        access_token: 'auth0-access-token',
+      });
+      (deps.oauth.getAuth0UserInfo as Mock).mockResolvedValue({
+        sub: 'auth0|123',
+        email: 'owner@example.com',
+      });
+      ctx.runMutation.mockResolvedValue('user-id-123');
+
+      const res = await app.request(
+        'http://localhost/mcp/callback?code=auth0-code&state=state-token',
+        {},
+        ctx,
+      );
+
+      expect(res.status).toBe(400);
+      expect(deps.oauth.signArchiveSession).not.toHaveBeenCalled();
+    });
+
     it('returns 400 when user email is missing', async () => {
       const app = createApp(deps);
       (deps.oauth.verifyState as Mock).mockResolvedValue({

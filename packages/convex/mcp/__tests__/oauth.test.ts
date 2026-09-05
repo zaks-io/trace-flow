@@ -3,8 +3,10 @@ import {
   exchangeAuth0Code,
   refreshAuth0Token,
   getAuth0UserInfo,
+  signArchiveSession,
   signConsent,
   signState,
+  verifyArchiveSession,
   verifyConsent,
   verifyState,
   buildAuth0AuthorizeUrl,
@@ -396,5 +398,29 @@ describe('buildAuth0AuthorizeUrl', () => {
     expect(() => buildAuth0AuthorizeUrl('state', 'https://example.com/callback')).toThrow(
       'Auth0 configuration missing',
     );
+  });
+});
+
+describe('archive session tokens', () => {
+  beforeEach(() => {
+    vi.stubEnv('MCP_JWT_SECRET', 'test-secret-key-for-signing');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('round-trips a short-lived archive session that is not an MCP state token', async () => {
+    const token = await signArchiveSession({
+      userId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+      orgId: 'k57axc8sefsfp6k28nx6c481js806pww',
+    });
+    const session = await verifyArchiveSession(token);
+    expect(session).toEqual({
+      tokenUse: 'archive_session',
+      userId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+      orgId: 'k57axc8sefsfp6k28nx6c481js806pww',
+    });
+    await expect(verifyState(token)).resolves.toBeNull();
   });
 });

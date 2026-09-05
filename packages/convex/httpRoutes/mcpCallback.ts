@@ -76,6 +76,42 @@ export function registerMcpCallbackRoutes(
       // and hand the one-time secret back to the CLI's loopback listener instead of running the MCP
       // auth-code path. The redirect target is re-validated as loopback so the secret can only reach
       // 127.0.0.1.
+      if (statePayload.clientState.startsWith('archive:')) {
+        if (!isLoopbackRedirect(statePayload.redirectUri)) {
+          logger.warn('convex.archive_login_bad_redirect');
+          await logger.flush();
+          return c.json({ error: 'Invalid redirect target' }, 400);
+        }
+
+        const org = await ctx.runQuery(internal.collectorLogin.resolveLoginOrg, { userId });
+        if (!org) {
+          const redirectUrl = new URL(statePayload.redirectUri);
+          redirectUrl.searchParams.set('error', 'no_organization');
+          redirectUrl.searchParams.set('state', statePayload.clientState.slice('archive:'.length));
+          await logger.flush();
+          return new Response(null, {
+            status: 302,
+            headers: { Location: redirectUrl.toString(), 'Cache-Control': 'no-store' },
+          });
+        }
+
+        const session = await oauth.signArchiveSession({
+          userId,
+          orgId: org.orgId,
+        });
+        const redirectUrl = new URL(statePayload.redirectUri);
+        redirectUrl.searchParams.set('session', session);
+        redirectUrl.searchParams.set('org_id', org.orgId);
+        redirectUrl.searchParams.set('user_id', userId);
+        redirectUrl.searchParams.set('state', statePayload.clientState.slice('archive:'.length));
+        logger.info('convex.archive_session_minted', { org_id: org.orgId });
+        await logger.flush();
+        return new Response(null, {
+          status: 302,
+          headers: { Location: redirectUrl.toString(), 'Cache-Control': 'no-store' },
+        });
+      }
+
       if (statePayload.clientState.startsWith('collector:')) {
         if (!isLoopbackRedirect(statePayload.redirectUri)) {
           logger.warn('convex.collector_login_bad_redirect');

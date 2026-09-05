@@ -2096,6 +2096,82 @@ export declare const internal: {
       }>
     >;
   };
+  archiveDesktop: {
+    activateForUser: FunctionReference<
+      "mutation",
+      "internal",
+      { userId: Id<"users"> },
+      { activationId: Id<"archiveActivations">; created: boolean }
+    >;
+    addAuthorizedSourceForUser: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        enrollmentId: Id<"archiveEnrollments">;
+        historyChoice: "new_only" | "all_history";
+        source: "claude" | "codex";
+        userId: Id<"users">;
+      },
+      null
+    >;
+    enrollForUser: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        authorizedSources: Array<{
+          historyChoice: "new_only" | "all_history";
+          source: "claude" | "codex";
+        }>;
+        collectorId: string;
+        idempotencyKey: string;
+        userId: Id<"users">;
+      },
+      {
+        contributionId: Id<"archiveContributions">;
+        created: boolean;
+        enrollmentId: Id<"archiveEnrollments">;
+      }
+    >;
+    revokeForUser: FunctionReference<
+      "mutation",
+      "internal",
+      { enrollmentId: Id<"archiveEnrollments">; userId: Id<"users"> },
+      null
+    >;
+    snapshotForUser: FunctionReference<
+      "query",
+      "internal",
+      { collectorId: string; userId: Id<"users"> },
+      {
+        activation:
+          | "not_enabled"
+          | "active"
+          | "frozen"
+          | "deleting";
+        activationId?: Id<"archiveActivations">;
+        collectorId: string;
+        collectorUserId: Id<"users">;
+        enrollmentId?: Id<"archiveEnrollments">;
+        enrollmentStatus?:
+          | "active"
+          | "unenrolled"
+          | "revoked"
+          | "member_removed";
+        orgId: Id<"organizations">;
+        plan: "hobby" | "pro";
+        planStatus: "active" | "inactive" | "canceled" | "none";
+        role: "owner" | "member";
+        serverEnabled: boolean;
+        userId: Id<"users">;
+      }
+    >;
+    unenrollForUser: FunctionReference<
+      "mutation",
+      "internal",
+      { enrollmentId: Id<"archiveEnrollments">; userId: Id<"users"> },
+      null
+    >;
+  };
   archiveIntegrationSeed: {
     cleanupConcurrentEnrollment: FunctionReference<
       "mutation",
