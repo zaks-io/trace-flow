@@ -21,7 +21,7 @@ export function FooterCTA({ isWaitlistMode }: FooterCTAProps) {
         </h2>
         <p className="mx-auto mb-8 max-w-lg text-base leading-7 text-muted-foreground">
           Use the desktop app for coding-session analytics or connect your SDK for model-call
-          tracking. Contact us to request hosted access.
+          tracking.
         </p>
 
         <div className="mb-14">
