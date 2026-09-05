@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { axiomConfigFromEnv, createWorkerLogger } from '@trace-flow/logging';
+import { isArchiveIntegrityErrorClass, type ArchiveIntegrityErrorClass } from '@trace-flow/types';
 import { authenticateCollectorCredential } from '@trace-flow/utils';
 import type { ArchiveApiEnv } from './context';
 import { ArchiveContractError, assertIdentifier } from './archive-contract';
@@ -18,7 +19,6 @@ import {
 import { MAX_ARCHIVE_UPLOAD_BYTES, readBoundedJson } from './archive-request';
 import { appendArchiveAuditEvent } from './audit';
 import { publishArchiveIntegrityStatus } from './archive-integrity-status';
-import { isSessionIntegrityErrorClass } from './archive-session-integrity';
 
 const COLLECTOR_SECRET_HEADER = 'X-Trace-Flow-Collector-Secret';
 const ARCHIVE_SOURCE_HEADER = 'X-Trace-Flow-Archive-Source';
@@ -27,7 +27,7 @@ interface LedgerIntegrityResponse {
   error: 'integrity_error';
   source: 'claude' | 'codex';
   source_session_id: string;
-  error_class: string;
+  error_class: ArchiveIntegrityErrorClass;
   operation_id: string;
   newly_recorded: boolean;
 }
@@ -44,7 +44,7 @@ function parseLedgerIntegrityResponse(
     body.source !== source ||
     body.source_session_id !== sourceSessionId ||
     typeof body.error_class !== 'string' ||
-    !isSessionIntegrityErrorClass(body.error_class) ||
+    !isArchiveIntegrityErrorClass(body.error_class) ||
     typeof body.operation_id !== 'string' ||
     !/^integrity:[a-f0-9]{64}$/u.test(body.operation_id) ||
     typeof body.newly_recorded !== 'boolean'
@@ -229,7 +229,7 @@ export async function handleUpload(c: Context<{ Bindings: ArchiveApiEnv }>): Pro
     } catch (error) {
       if (
         !(error instanceof ArchiveContractError) ||
-        !isSessionIntegrityErrorClass(error.errorClass)
+        !isArchiveIntegrityErrorClass(error.errorClass)
       ) {
         if (!(error instanceof ArchiveContractError)) throw error;
         logger.warn('archive_api.invalid_upload', { reason: error.errorClass });
@@ -301,7 +301,7 @@ export async function handleUpload(c: Context<{ Bindings: ArchiveApiEnv }>): Pro
         }
         const publications = await Promise.allSettled([
           publishArchiveIntegrityStatus(c.env, {
-            collectorCredentialId: auth.credential.collectorCredentialId,
+            collectorCredentialId: currentDecision.collectorCredentialId,
             source: integrity.source,
             sourceSessionId: integrity.source_session_id,
             errorClass: integrity.error_class,
@@ -332,6 +332,12 @@ export async function handleUpload(c: Context<{ Bindings: ArchiveApiEnv }>): Pro
             });
           }
         });
+        if (publications.some((result) => result.status === 'rejected')) {
+          return c.json(
+            { error: 'archive_unavailable', reason: 'integrity_publication_failed' },
+            503,
+          );
+        }
         return new Response(
           JSON.stringify({
             error: 'integrity_error',

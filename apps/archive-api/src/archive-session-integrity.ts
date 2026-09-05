@@ -1,3 +1,4 @@
+import type { ArchiveIntegrityErrorClass } from '@trace-flow/types';
 import { ArchiveContractError, type ArchiveScope } from './archive-contract';
 import { intentDigest } from './archive-ledger-support';
 
@@ -16,37 +17,6 @@ export class ArchiveSessionIntegrityError extends ArchiveContractError {
     super('integrity_error');
     this.name = 'ArchiveSessionIntegrityError';
   }
-}
-
-const INTEGRITY_ERROR_CLASSES = new Set([
-  'checkpoint_describes_wrong_scan',
-  'checkpoint_part_mismatch',
-  'checkpoint_prefix_unverifiable',
-  'checkpoint_regressed',
-  'chain_link_verification_failed',
-  'compressed_chunk_verification_failed',
-  'duplicate_record_version',
-  'historical_prefix_changed',
-  'immutable_object_collision',
-  'invalid_checkpoint',
-  'invalid_checkpoint_first_observed_at',
-  'invalid_checkpoint_identity',
-  'invalid_checkpoint_offset',
-  'invalid_checkpoint_prefix',
-  'manifest_encryption_verification_failed',
-  'missing_historical_prefix_proof',
-  'payload_hash_mismatch',
-  'pending_intent_corrupt',
-  'pending_intent_head_mismatch',
-  'pending_intent_mismatch',
-  'pending_object_verification_failed',
-  'r2_object_verification_failed',
-  'scope_mismatch',
-  'unexpected_historical_prefix_proof',
-]);
-
-export function isSessionIntegrityErrorClass(errorClass: string): boolean {
-  return INTEGRITY_ERROR_CLASSES.has(errorClass);
 }
 
 export function ensureSessionIntegrityTable(storage: DurableObjectStorage): void {
@@ -78,7 +48,7 @@ export function readSessionIntegrity(
 export async function recordSessionIntegrity(
   storage: DurableObjectStorage,
   scope: ArchiveScope,
-  errorClass: string,
+  errorClass: ArchiveIntegrityErrorClass,
 ): Promise<ArchiveSessionIntegrityError> {
   const existing = readSessionIntegrity(storage, scope);
   if (existing) return new ArchiveSessionIntegrityError(existing, false);

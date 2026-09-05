@@ -1,3 +1,4 @@
+import type { ArchiveIntegrityErrorClass } from '@trace-flow/types';
 import type { ArchiveApiEnv } from './context';
 import type { ArchiveScope } from './archive-contract';
 
@@ -5,7 +6,7 @@ export interface ArchiveIntegrityStatusUpdate {
   collectorCredentialId: string;
   source: ArchiveScope['source'];
   sourceSessionId: string;
-  errorClass: string;
+  errorClass: ArchiveIntegrityErrorClass;
 }
 
 const STATUS_TIMEOUT_MS = 5000;

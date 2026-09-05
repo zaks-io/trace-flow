@@ -1,6 +1,12 @@
 import { decryptArchiveObject, type ArchiveObjectEnvelope } from '@trace-flow/utils';
-import { ArchiveContractError } from './archive-contract';
+import {
+  ArchiveContractError,
+  digestString,
+  type ArchiveScope,
+  type ArchiveSessionManifest,
+} from './archive-contract';
 import { decompress } from './archive-packing';
+import { archiveObjectKey } from './archive-storage-key';
 import type { StorageBudgetObject } from './archive-storage-budget';
 
 export interface ArchiveR2Object {
@@ -148,5 +154,48 @@ export async function verifyEncryptedPlannedObject(
     await verifyEncryptedChunk(object, key, orgId, keyVersion, expectedPlaintext);
   } else {
     await verifyEncryptedManifest(object, key, orgId, keyVersion, expectedPlaintext);
+  }
+}
+
+export async function verifyCommittedManifestObject(
+  bucket: R2Bucket,
+  objectKey: string,
+  key: CryptoKey,
+  scope: ArchiveScope,
+  keyVersion: number,
+  expected: { generation: number; elementCount: number; chainHead: string },
+): Promise<void> {
+  const object = await bucket.get(objectKey);
+  if (!object) throw new ArchiveContractError('r2_object_verification_failed');
+  const serialized = await object.text();
+
+  try {
+    const plaintext = await decryptArchiveObject(JSON.parse(serialized) as ArchiveObjectEnvelope, {
+      key,
+      orgId: scope.orgId,
+      objectKey,
+      objectClass: 'manifest',
+      keyVersion,
+    });
+    const digest = digestString(new Uint8Array(await crypto.subtle.digest('SHA-256', plaintext)));
+    if ((await archiveObjectKey(scope, 'manifests', digest)) !== objectKey) {
+      throw new Error('manifest_object_key_mismatch');
+    }
+    const manifest = JSON.parse(
+      new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(plaintext),
+    ) as ArchiveSessionManifest;
+    if (
+      manifest.archive_format_version !== 1 ||
+      manifest.chain_hash_version !== 1 ||
+      manifest.source !== scope.source ||
+      manifest.source_session_id !== scope.sourceSessionId ||
+      manifest.generation !== expected.generation ||
+      manifest.element_count !== expected.elementCount ||
+      manifest.chain_head !== expected.chainHead
+    ) {
+      throw new Error('manifest_state_mismatch');
+    }
+  } catch {
+    throw new ArchiveContractError('r2_object_verification_failed');
   }
 }

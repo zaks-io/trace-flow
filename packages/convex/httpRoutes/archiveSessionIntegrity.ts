@@ -1,18 +1,9 @@
 import type { HonoWithConvex } from 'convex-helpers/server/hono';
+import { isArchiveCanonicalIdentifier, isArchiveIntegrityErrorClass } from '@trace-flow/types';
 import type { ActionCtx } from '../_generated/server';
 import type { Id } from '../_generated/dataModel';
 import { internal } from '../_generated/api';
 import { getRequestLogger, hasValidBearerSecret, isConvexDocumentId } from './shared';
-
-function isMetadataString(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    value.length > 0 &&
-    value.length <= 1024 &&
-    !value.includes('/') &&
-    !value.includes('\\')
-  );
-}
 
 export function registerArchiveSessionIntegrityRoutes(app: HonoWithConvex<ActionCtx>): void {
   app.post('/archive-api/session-integrity', async (c) => {
@@ -40,8 +31,8 @@ export function registerArchiveSessionIntegrityRoutes(app: HonoWithConvex<Action
     if (
       !isConvexDocumentId(body.collectorCredentialId) ||
       (body.source !== 'claude' && body.source !== 'codex') ||
-      !isMetadataString(body.sourceSessionId) ||
-      !isMetadataString(body.errorClass)
+      !isArchiveCanonicalIdentifier(body.sourceSessionId) ||
+      !isArchiveIntegrityErrorClass(body.errorClass)
     ) {
       logger.warn('convex.archive_session_integrity_request_invalid');
       await logger.flush();

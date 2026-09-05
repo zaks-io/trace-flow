@@ -1,3 +1,4 @@
+import { isArchiveIntegrityErrorClass } from '@trace-flow/types';
 import type { ArchiveApiEnv } from './context';
 import { ArchiveContractError, type ArchiveScope } from './archive-contract';
 import { packNewElementsPaged } from './archive-packing';
@@ -10,6 +11,7 @@ import {
 import {
   ArchiveR2BatchWriteError,
   storageBudgetObject,
+  verifyCommittedManifestObject,
   verifyEncryptedPlannedObject,
   type ArchiveR2Object,
 } from './archive-r2';
@@ -45,7 +47,6 @@ import {
 } from './archive-ledger-intent-recovery';
 import {
   ArchiveSessionIntegrityError,
-  isSessionIntegrityErrorClass,
   readSessionIntegrity,
   recordSessionIntegrity,
 } from './archive-session-integrity';
@@ -68,7 +69,7 @@ export async function commitArchiveSession(
         : error instanceof ArchiveR2BatchWriteError && error.cause instanceof ArchiveContractError
           ? error.cause
           : null;
-    if (contractError && isSessionIntegrityErrorClass(contractError.errorClass)) {
+    if (contractError && isArchiveIntegrityErrorClass(contractError.errorClass)) {
       throw await recordSessionIntegrity(storage, envelope.scope, contractError.errorClass);
     }
     throw error;
@@ -93,6 +94,18 @@ async function commitArchiveSessionEnvelope(
     throw new ArchiveContractError('archive_key_version_mismatch');
   }
   const archiveKey = await unwrapKey(env, envelope);
+  if (state.manifestKey) {
+    await verifyCommittedManifestObject(
+      env.ARCHIVE_STORAGE,
+      state.manifestKey,
+      archiveKey,
+      envelope.scope,
+      envelope.keyVersion,
+      state,
+    );
+  } else if (state.generation > 0) {
+    throw new ArchiveContractError('ledger_state_corrupt');
+  }
 
   const intentHash = await intentDigest({ scope: envelope.scope, upload });
   const priorIntent = readIntent(storage, intentHash);

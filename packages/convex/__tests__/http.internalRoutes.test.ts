@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ARCHIVE_INTEGRITY_ERROR_CLASSES } from '@trace-flow/types';
 import { createApp, type HttpDeps } from '../http';
 import { captureConsoleLogs, createMockCtx, createMockDeps, type MockCtx } from './httpTest.setup';
 
@@ -525,7 +526,7 @@ describe('convex/http.ts internal routes', () => {
       }
     });
 
-    it('forwards only Source, session, and error metadata', async () => {
+    it('forwards a document id once and rejects a credential hash', async () => {
       ctx.runMutation.mockResolvedValueOnce({
         contributionId: 'contribution-1',
         source: 'codex',
@@ -562,9 +563,40 @@ describe('convex/http.ts internal routes', () => {
         errorClass: 'payload_hash_mismatch',
       });
       expect(JSON.stringify(ctx.runMutation.mock.calls[0]?.[1])).not.toContain('must-not-forward');
+
+      const hashResponse = await createApp(deps).request(
+        'http://localhost/archive-api/session-integrity',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer archive-secret',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            collectorCredentialId: 'a'.repeat(64),
+            source: 'codex',
+            sourceSessionId: 'session-1',
+            errorClass: 'payload_hash_mismatch',
+          }),
+        },
+        ctx,
+      );
+      expect(hashResponse.status).toBe(400);
+      expect(ctx.runMutation).toHaveBeenCalledOnce();
     });
 
-    it('rejects path-like session and error metadata', async () => {
+    it.each([
+      '',
+      '.',
+      '..',
+      '/tmp/transcript.jsonl',
+      '\\tmp\\transcript.jsonl',
+      'C:transcript.jsonl',
+      'session\nnear-miss',
+      'session\u007fnear-miss',
+      'session\ud800',
+      'x'.repeat(1025),
+    ])('rejects noncanonical source session metadata %#', async (sourceSessionId) => {
       const res = await createApp(deps).request(
         'http://localhost/archive-api/session-integrity',
         {
@@ -576,7 +608,7 @@ describe('convex/http.ts internal routes', () => {
           body: JSON.stringify({
             collectorCredentialId: COLLECTOR_CREDENTIAL_ID,
             source: 'claude',
-            sourceSessionId: '/tmp/transcript.jsonl',
+            sourceSessionId,
             errorClass: 'payload_hash_mismatch',
           }),
         },
@@ -584,6 +616,62 @@ describe('convex/http.ts internal routes', () => {
       );
       expect(res.status).toBe(400);
       expect(ctx.runMutation).not.toHaveBeenCalled();
+    });
+
+    it('accepts every canonical error class and rejects arbitrary near-misses', async () => {
+      for (const errorClass of ARCHIVE_INTEGRITY_ERROR_CLASSES) {
+        ctx.runMutation.mockResolvedValueOnce({
+          contributionId: 'contribution-1',
+          source: 'claude',
+          sourceSessionId: 'session-1',
+          errorClass,
+          updatedAt: 123,
+        });
+        const response = await createApp(deps).request(
+          'http://localhost/archive-api/session-integrity',
+          {
+            method: 'POST',
+            headers: {
+              Authorization: 'Bearer archive-secret',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              collectorCredentialId: COLLECTOR_CREDENTIAL_ID,
+              source: 'claude',
+              sourceSessionId: 'session-1',
+              errorClass,
+            }),
+          },
+          ctx,
+        );
+        expect(response.status, errorClass).toBe(200);
+      }
+
+      for (const errorClass of [
+        'arbitrary_integrity_failure',
+        'payload_hash_mismatch_extra',
+        'Payload_hash_mismatch',
+      ]) {
+        const response = await createApp(deps).request(
+          'http://localhost/archive-api/session-integrity',
+          {
+            method: 'POST',
+            headers: {
+              Authorization: 'Bearer archive-secret',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              collectorCredentialId: COLLECTOR_CREDENTIAL_ID,
+              source: 'claude',
+              sourceSessionId: 'session-1',
+              errorClass,
+            }),
+          },
+          ctx,
+        );
+        expect(response.status, errorClass).toBe(400);
+      }
+      expect(ctx.runMutation).toHaveBeenCalledTimes(ARCHIVE_INTEGRITY_ERROR_CLASSES.length);
     });
   });
 
