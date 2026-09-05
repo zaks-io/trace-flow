@@ -923,9 +923,9 @@ describe('Archive encryption key rotation', () => {
     const second = await stub.advanceKeyRotation({ orgId, limit: 8 });
     expect(second.status).toBe('succeeded');
     expect((await readEnvelope(objectKey)).keyVersion).toBe(3);
-    const stale = await runInDurableObject(stub, async (instance: StorageBudget, state) => {
+    const stale = await runInDurableObject(stub, async (_instance, state) => {
       try {
-        await commitRotationReplacement(instance.env, state.storage, {
+        await commitRotationReplacement(runtimeEnv, state.storage, {
           objectKey,
           replacementBody: staleReplacement,
           operationId: 'rotate-stale-v1-v2',
