@@ -6,7 +6,11 @@ import {
   parseAndValidateUpload,
   sourceFingerprints,
 } from './archive-validation';
-import { verifyEncryptedPlannedObject, type ArchiveR2Object } from './archive-r2';
+import {
+  storageBudgetObject,
+  verifyEncryptedPlannedObject,
+  type ArchiveR2Object,
+} from './archive-r2';
 import {
   type ArchiveAcknowledgement,
   type LedgerCommit,
@@ -56,7 +60,14 @@ export async function commitArchiveSession(
 
   const intentHash = await intentDigest({ scope: envelope.scope, upload });
   const priorIntent = readIntent(storage, intentHash);
-  if (priorIntent?.status === 'committed') return priorIntent.acknowledgement;
+  const budget = env.STORAGE_BUDGET.getByName(envelope.scope.orgId);
+  if (priorIntent?.status === 'committed') {
+    await budget.recordArchiveAcknowledgement({
+      orgId: envelope.scope.orgId,
+      acknowledgedAt: Date.now(),
+    });
+    return priorIntent.acknowledgement;
+  }
   const existingPending = readPendingIntent(storage);
   if (existingPending && existingPending.intentHash !== intentHash) {
     await recoverPendingIntent(storage, env, envelope, state, existingPending);
@@ -206,9 +217,22 @@ export async function commitArchiveSession(
       envelope.scope.orgId,
       envelope.keyVersion,
     );
+    const reservation = await budget.reserveStorage({
+      orgId: envelope.scope.orgId,
+      objects: priorIntent.objects.map(storageBudgetObject),
+    });
+    if (!reservation.accepted) throw new ArchiveContractError('storage_cap_exceeded');
     await verifyObjects(env.ARCHIVE_STORAGE, priorIntent.objects);
+    await budget.commitStorage({
+      orgId: envelope.scope.orgId,
+      objects: priorIntent.objects.map(storageBudgetObject),
+    });
     if (priorIntent.status === 'building') markIntentReady(storage, intentHash);
     commitIntent(storage, intentHash, priorIntent.commit!, priorIntent.acknowledgement);
+    await budget.recordArchiveAcknowledgement({
+      orgId: envelope.scope.orgId,
+      acknowledgedAt: Date.now(),
+    });
     return priorIntent.acknowledgement;
   }
   const intent: PendingIntent = {
@@ -224,8 +248,21 @@ export async function commitArchiveSession(
   };
   writeIntent(storage, intent);
   markIntentReady(storage, intentHash);
+  const reservation = await budget.reserveStorage({
+    orgId: envelope.scope.orgId,
+    objects: objects.map(storageBudgetObject),
+  });
+  if (!reservation.accepted) throw new ArchiveContractError('storage_cap_exceeded');
   await verifyObjects(env.ARCHIVE_STORAGE, objects);
+  await budget.commitStorage({
+    orgId: envelope.scope.orgId,
+    objects: objects.map(storageBudgetObject),
+  });
   commitIntent(storage, intentHash, commit, acknowledgement);
+  await budget.recordArchiveAcknowledgement({
+    orgId: envelope.scope.orgId,
+    acknowledgedAt: Date.now(),
+  });
   return acknowledgement;
 }
 

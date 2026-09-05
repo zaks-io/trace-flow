@@ -12,7 +12,11 @@ import {
   commitIntent,
 } from './archive-ledger-intent';
 import type { ArchiveR2Object } from './archive-r2';
-import { verifyEncryptedPlannedObject, verifyOrPutImmutableObject } from './archive-r2';
+import {
+  storageBudgetObject,
+  verifyEncryptedPlannedObject,
+  verifyOrPutImmutableObject,
+} from './archive-r2';
 import type { LedgerSnapshot } from './archive-ledger-state';
 
 export async function recoverPendingIntent(
@@ -71,8 +75,22 @@ export async function recoverPendingIntent(
       throw new ArchiveContractError('pending_object_verification_failed');
     }
   }
+  const budget = env.STORAGE_BUDGET.getByName(envelope.scope.orgId);
+  const reservation = await budget.reserveStorage({
+    orgId: envelope.scope.orgId,
+    objects: pending.objects.map(storageBudgetObject),
+  });
+  if (!reservation.accepted) throw new ArchiveContractError('storage_cap_exceeded');
   await verifyObjects(env.ARCHIVE_STORAGE, pending.objects);
+  await budget.commitStorage({
+    orgId: envelope.scope.orgId,
+    objects: pending.objects.map(storageBudgetObject),
+  });
   commitIntent(storage, pending.intentHash, pending.commit, pending.acknowledgement);
+  await budget.recordArchiveAcknowledgement({
+    orgId: envelope.scope.orgId,
+    acknowledgedAt: Date.now(),
+  });
 }
 
 export function pendingExpectedObjects(

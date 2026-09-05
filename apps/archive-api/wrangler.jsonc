@@ -41,7 +41,13 @@
     },
   ],
   "durable_objects": {
-    "bindings": [{ "name": "ARCHIVE_SESSION_LEDGER", "class_name": "ArchiveSessionLedger" }],
+    "bindings": [
+      { "name": "ARCHIVE_SESSION_LEDGER", "class_name": "ArchiveSessionLedger" },
+      { "name": "STORAGE_BUDGET", "class_name": "StorageBudget" },
+    ],
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ArchiveSessionLedger"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ArchiveSessionLedger"] },
+    { "tag": "v2", "new_sqlite_classes": ["StorageBudget"] },
+  ],
 }

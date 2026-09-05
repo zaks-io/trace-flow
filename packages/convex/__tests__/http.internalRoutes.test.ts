@@ -541,4 +541,115 @@ describe('convex/http.ts internal routes', () => {
       expect(ctx.runQuery).not.toHaveBeenCalled();
     });
   });
+
+  describe('POST /archive-api/status', () => {
+    const ORG_ID = 'k57axc8sefsfp6k28nx6c481js806pwv';
+    const PROBE = 'status-probe-secret-must-not-be-logged';
+
+    beforeEach(() => {
+      vi.stubEnv('ARCHIVE_API_SHARED_SECRET', 'archive-secret');
+    });
+
+    it('requires the shared secret without logging the supplied credential', async () => {
+      const logs = captureConsoleLogs();
+      try {
+        const app = createApp(deps);
+        const res = await app.request(
+          'http://localhost/archive-api/status',
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${PROBE}` },
+            body: JSON.stringify({ orgId: ORG_ID, revision: 1, storedBytes: 3 }),
+          },
+          ctx,
+        );
+        expect(res.status).toBe(401);
+        expect(ctx.runMutation).not.toHaveBeenCalled();
+        expect(logs.text()).not.toContain(PROBE);
+      } finally {
+        logs.restore();
+      }
+    });
+
+    it('validates metadata and forwards no plaintext or credential fields', async () => {
+      const app = createApp(deps);
+      const malformed = await app.request(
+        'http://localhost/archive-api/status',
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer archive-secret' },
+          body: JSON.stringify({ orgId: ORG_ID, revision: 1, storedBytes: -1 }),
+        },
+        ctx,
+      );
+      expect(malformed.status).toBe(400);
+      expect(ctx.runMutation).not.toHaveBeenCalled();
+
+      ctx.runMutation.mockResolvedValueOnce({ revision: 4, replay: false });
+      const res = await app.request(
+        'http://localhost/archive-api/status',
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer archive-secret' },
+          body: JSON.stringify({
+            orgId: ORG_ID,
+            revision: 4,
+            storedBytes: 17,
+            lifecycle: 'blocked',
+            plaintext: 'must-not-forward',
+            ciphertext: 'must-not-forward',
+            collectorSecret: PROBE,
+          }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ revision: 4, replay: false });
+      expect(ctx.runMutation).toHaveBeenCalledOnce();
+      expect(ctx.runMutation.mock.calls[0]?.[1]).toEqual({
+        orgId: ORG_ID,
+        revision: 4,
+        storedBytes: 17,
+        lastDurableAcknowledgedAt: undefined,
+        lifecycle: 'blocked',
+      });
+      expect(JSON.stringify(ctx.runMutation.mock.calls[0]?.[1])).not.toContain('must-not-forward');
+    });
+
+    it('returns replay success and explicit revision conflicts for retry and stale paths', async () => {
+      const app = createApp(deps);
+      ctx.runMutation.mockResolvedValueOnce({ revision: 4, replay: true });
+      const replay = await app.request(
+        'http://localhost/archive-api/status',
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer archive-secret' },
+          body: JSON.stringify({ orgId: ORG_ID, revision: 4, storedBytes: 17 }),
+        },
+        ctx,
+      );
+      expect(replay.status).toBe(200);
+      await expect(replay.json()).resolves.toEqual({ revision: 4, replay: true });
+
+      for (const message of [
+        'Stale archive server status revision',
+        'Archive server status revision was reused with a different payload',
+      ]) {
+        ctx.runMutation.mockRejectedValueOnce(new Error(message));
+        const conflict = await app.request(
+          'http://localhost/archive-api/status',
+          {
+            method: 'POST',
+            headers: { Authorization: 'Bearer archive-secret' },
+            body: JSON.stringify({ orgId: ORG_ID, revision: 4, storedBytes: 17 }),
+          },
+          ctx,
+        );
+        expect(conflict.status).toBe(409);
+        await expect(conflict.json()).resolves.toEqual({
+          error: 'Archive status revision conflict',
+        });
+      }
+    });
+  });
 });

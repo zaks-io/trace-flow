@@ -9,11 +9,14 @@ export default defineConfig({
         compatibilityFlags: ['nodejs_compat'],
         bindings: {
           ARCHIVE_KEY_WRAPPING_SECRET: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
+          CONVEX_SITE_URL: 'https://archive-convex.test',
+          ARCHIVE_API_SHARED_SECRET: 'archive-status-test-secret',
         },
       },
     }),
   ],
   test: {
     include: ['src/__tests__/**/*.test.ts'],
+    setupFiles: ['./src/__tests__/setup.ts'],
   },
 });

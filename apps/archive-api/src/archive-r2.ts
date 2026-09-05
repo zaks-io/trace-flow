@@ -1,11 +1,21 @@
 import { decryptArchiveObject, type ArchiveObjectEnvelope } from '@trace-flow/utils';
 import { ArchiveContractError } from './archive-contract';
 import { decompress } from './archive-packing';
+import type { StorageBudgetObject } from './archive-storage-budget';
 
 export interface ArchiveR2Object {
   key: string;
   body: string;
   objectClass: 'chunk' | 'manifest';
+}
+
+export function storageBudgetObject(object: ArchiveR2Object): StorageBudgetObject {
+  return {
+    objectKey: object.key,
+    objectClass: object.objectClass === 'chunk' ? 'agent_archive_chunk' : 'agent_archive_manifest',
+    bytes: new TextEncoder().encode(object.body).byteLength,
+    expiresAt: null,
+  };
 }
 
 function equalBytes(left: Uint8Array, right: Uint8Array): boolean {

@@ -4,6 +4,40 @@ import { ARCHIVE_CAP_BYTES, ARCHIVE_HEARTBEAT_FUTURE_SKEW_MS } from '../archiveL
 import { asUser, enableArchive, enrollInput, seedWorld } from './archiveControlPlaneTest.setup';
 
 describe('archive control plane status and lifecycle', () => {
+  it('projects status by organization without crossing collector or organization boundaries', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    const otherOwner = asUser(world, world.otherOwner);
+    await owner.mutation(api.archive.activate, {});
+    await otherOwner.mutation(api.archive.activate, {});
+
+    await world.t.mutation(internal.archiveInternal.applyServerStatusByOrganization, {
+      orgId: world.owner.orgId,
+      revision: 1,
+      storedBytes: 11,
+      lifecycle: 'active',
+    });
+    await world.t.mutation(internal.archiveInternal.applyServerStatusByOrganization, {
+      orgId: world.otherOwner.orgId,
+      revision: 1,
+      storedBytes: 22,
+      lifecycle: 'blocked',
+    });
+
+    const statuses = await world.t.run(async (ctx) => ctx.db.query('archiveStatuses').collect());
+    expect(statuses).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ orgId: world.owner.orgId, storedBytes: 11, lifecycle: 'active' }),
+        expect.objectContaining({
+          orgId: world.otherOwner.orgId,
+          storedBytes: 22,
+          lifecycle: 'blocked',
+        }),
+      ]),
+    );
+  });
+
   it('lets collector heartbeats change only timestamped local fields', async () => {
     enableArchive();
     const world = await seedWorld();

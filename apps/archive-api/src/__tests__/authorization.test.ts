@@ -7,6 +7,8 @@ import {
 } from '@trace-flow/utils';
 import { app } from '../index';
 import type { ArchiveApiEnv } from '../context';
+import type { ArchiveSessionLedger } from '../archive-ledger';
+import type { StorageBudget } from '../archive-storage-budget';
 import { __resetArchivePolicyCache } from '../enrollment';
 
 const CONVEX = 'https://convex.test';
@@ -23,8 +25,12 @@ function makeEnvStorage(): R2Bucket {
   return {} as R2Bucket;
 }
 
-function makeLedger(): DurableObjectNamespace {
-  return {} as DurableObjectNamespace;
+function makeLedger(): DurableObjectNamespace<ArchiveSessionLedger> {
+  return {} as DurableObjectNamespace<ArchiveSessionLedger>;
+}
+
+function makeBudget(): DurableObjectNamespace<StorageBudget> {
+  return {} as DurableObjectNamespace<StorageBudget>;
 }
 
 async function validCredEntries(
@@ -50,6 +56,7 @@ function makeEnv(creds: Record<string, string> = {}): ArchiveApiEnv {
     ARCHIVE_API_SHARED_SECRET: SHARED,
     ARCHIVE_STORAGE: makeEnvStorage(),
     ARCHIVE_SESSION_LEDGER: makeLedger(),
+    STORAGE_BUDGET: makeBudget(),
     ARCHIVE_KEY_VERSION: '1',
     ARCHIVE_KEY_WRAPPING_SECRET: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
   };

@@ -2133,6 +2133,23 @@ export declare const internal: {
       },
       null
     >;
+    applyServerStatusByOrganization: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        lastDurableAcknowledgedAt?: number;
+        lifecycle?:
+          | "not_enabled"
+          | "active"
+          | "blocked"
+          | "frozen"
+          | "deleting";
+        orgId: Id<"organizations">;
+        revision: number;
+        storedBytes: number;
+      },
+      { replay: boolean; revision: number }
+    >;
     authorizeArchiveWrite: FunctionReference<
       "query",
       "internal",

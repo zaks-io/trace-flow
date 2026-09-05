@@ -3,6 +3,9 @@
  * and wrapped-key boundary. Forbidden classes (Body Object, Tinybird, proxy bucket,
  * agent queue) must not appear here or in wrangler.jsonc.
  */
+import type { ArchiveSessionLedger } from './archive-ledger';
+import type { StorageBudget } from './archive-storage-budget';
+
 export interface ArchiveApiEnv {
   /** Convex-synced Collector Credential records, keyed `collector:<sha256-hex-of-secret>`. */
   COLLECTOR_CREDS: KVNamespace;
@@ -13,7 +16,9 @@ export interface ArchiveApiEnv {
   /** Dedicated Agent Archive R2 bucket. */
   ARCHIVE_STORAGE: R2Bucket;
   /** Session ledger keyed by server-derived Organization/contribution/source/session. */
-  ARCHIVE_SESSION_LEDGER: DurableObjectNamespace;
+  ARCHIVE_SESSION_LEDGER: DurableObjectNamespace<ArchiveSessionLedger>;
+  /** Organization-sharded archive live-byte reservation ledger. */
+  STORAGE_BUDGET: DurableObjectNamespace<StorageBudget>;
   /** Active Archive Encryption Key version selected by server configuration. */
   ARCHIVE_KEY_VERSION: string;
   /** Secret used only to unwrap the per-Organization Archive Encryption Key. */
@@ -36,7 +41,10 @@ export const ARCHIVE_API_WRANGLER_CONTRACT = {
   r2_buckets: [
     { binding: 'ARCHIVE_STORAGE', bucket_name: 'trace-flow-agent-archive-dev', jurisdiction: 'us' },
   ],
-  durable_objects: [{ binding: 'ARCHIVE_SESSION_LEDGER', class_name: 'ArchiveSessionLedger' }],
+  durable_objects: [
+    { binding: 'ARCHIVE_SESSION_LEDGER', class_name: 'ArchiveSessionLedger' },
+    { binding: 'STORAGE_BUDGET', class_name: 'StorageBudget' },
+  ],
   queues: undefined as { producers?: { binding: string }[] } | undefined,
   proxy_bucket: undefined as string | undefined,
   agent_queue: undefined as string | undefined,

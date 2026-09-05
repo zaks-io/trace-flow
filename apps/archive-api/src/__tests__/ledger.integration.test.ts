@@ -37,6 +37,7 @@ import {
 import { archiveSessionPrefix, packNewElements, decompress } from '../archive-packing';
 import { verifyOrPutImmutableObject } from '../archive-r2';
 import type { ArchiveSessionLedger } from '../archive-ledger';
+import type { StorageBudget } from '../archive-storage-budget';
 import { app } from '../index';
 import type { ArchiveApiEnv } from '../context';
 import { payloadBytes } from '../archive-contract';
@@ -45,6 +46,7 @@ import { prefixChainHash } from '../archive-prefix-validation';
 import { MAX_ARCHIVE_UPLOAD_BYTES } from '../archive-request';
 import { buildAcknowledgement, intentDigest } from '../archive-ledger-support';
 import { commitArchiveSession } from '../archive-ledger-commit';
+import { ARCHIVE_STORAGE_CAP_BYTES } from '../archive-storage-budget';
 import type { ArchiveAcknowledgement, LedgerSnapshot } from '../archive-ledger-state';
 import { readLedgerScan, readLedgerSnapshot } from '../archive-ledger-storage';
 import {
@@ -63,6 +65,7 @@ const KEY_VERSION = 1;
 const runtimeEnv = workerEnv as unknown as {
   COLLECTOR_CREDS: KVNamespace;
   ARCHIVE_SESSION_LEDGER: DurableObjectNamespace<ArchiveSessionLedger>;
+  STORAGE_BUDGET: DurableObjectNamespace<StorageBudget>;
   ARCHIVE_STORAGE: R2Bucket;
   ARCHIVE_KEY_VERSION: string;
   ARCHIVE_KEY_WRAPPING_SECRET: string;
@@ -934,6 +937,7 @@ describe('Archive Session Ledger', () => {
       ARCHIVE_API_SHARED_SECRET: 'archive-api-shared-test-value',
       ARCHIVE_STORAGE: runtimeEnv.ARCHIVE_STORAGE,
       ARCHIVE_SESSION_LEDGER: guardedNamespace,
+      STORAGE_BUDGET: runtimeEnv.STORAGE_BUDGET,
       ARCHIVE_KEY_VERSION: String(KEY_VERSION),
       ARCHIVE_KEY_WRAPPING_SECRET: WRAPPING_SECRET,
     } as unknown as ArchiveApiEnv;
@@ -1094,6 +1098,7 @@ describe('Archive Session Ledger', () => {
       ARCHIVE_API_SHARED_SECRET: 'archive-api-shared-test-value',
       ARCHIVE_STORAGE: runtimeEnv.ARCHIVE_STORAGE,
       ARCHIVE_SESSION_LEDGER: guardedNamespace,
+      STORAGE_BUDGET: runtimeEnv.STORAGE_BUDGET,
       ARCHIVE_KEY_VERSION: String(KEY_VERSION),
       ARCHIVE_KEY_WRAPPING_SECRET: WRAPPING_SECRET,
     } as unknown as ArchiveApiEnv;
@@ -1245,6 +1250,7 @@ describe('Archive Session Ledger', () => {
       ARCHIVE_API_SHARED_SECRET: 'archive-api-shared-test-value',
       ARCHIVE_STORAGE: runtimeEnv.ARCHIVE_STORAGE,
       ARCHIVE_SESSION_LEDGER: runtimeEnv.ARCHIVE_SESSION_LEDGER,
+      STORAGE_BUDGET: runtimeEnv.STORAGE_BUDGET,
       ARCHIVE_KEY_VERSION: String(KEY_VERSION),
       ARCHIVE_KEY_WRAPPING_SECRET: WRAPPING_SECRET,
     } as unknown as ArchiveApiEnv;
@@ -1433,6 +1439,7 @@ describe('Archive Session Ledger', () => {
       ARCHIVE_API_SHARED_SECRET: 'archive-api-shared-test-value',
       ARCHIVE_STORAGE: runtimeEnv.ARCHIVE_STORAGE,
       ARCHIVE_SESSION_LEDGER: runtimeEnv.ARCHIVE_SESSION_LEDGER,
+      STORAGE_BUDGET: runtimeEnv.STORAGE_BUDGET,
       ARCHIVE_KEY_VERSION: String(KEY_VERSION),
       ARCHIVE_KEY_WRAPPING_SECRET: WRAPPING_SECRET,
     } as unknown as ArchiveApiEnv;
@@ -1599,6 +1606,7 @@ describe('Archive Session Ledger', () => {
       ARCHIVE_API_SHARED_SECRET: 'archive-api-shared-test-value',
       ARCHIVE_STORAGE: runtimeEnv.ARCHIVE_STORAGE,
       ARCHIVE_SESSION_LEDGER: runtimeEnv.ARCHIVE_SESSION_LEDGER,
+      STORAGE_BUDGET: runtimeEnv.STORAGE_BUDGET,
       ARCHIVE_KEY_VERSION: String(KEY_VERSION),
       ARCHIVE_KEY_WRAPPING_SECRET: WRAPPING_SECRET,
     } as unknown as ArchiveApiEnv;
@@ -1944,6 +1952,7 @@ describe('Archive Session Ledger', () => {
       ARCHIVE_API_SHARED_SECRET: 'archive-api-shared-test-value',
       ARCHIVE_STORAGE: runtimeEnv.ARCHIVE_STORAGE,
       ARCHIVE_SESSION_LEDGER: runtimeEnv.ARCHIVE_SESSION_LEDGER,
+      STORAGE_BUDGET: runtimeEnv.STORAGE_BUDGET,
       ARCHIVE_KEY_VERSION: String(KEY_VERSION),
       ARCHIVE_KEY_WRAPPING_SECRET: WRAPPING_SECRET,
     } as unknown as ArchiveApiEnv;
@@ -3016,6 +3025,35 @@ describe('Archive Session Ledger', () => {
     };
     await visitPage(root.pages[0]!.page_key);
     expect(pageElementCount).toBe(root.element_count);
+
+    const archiveObjects: { key: string; size: number }[] = [];
+    let inventoryCursor: string | undefined;
+    do {
+      const page = await runtimeEnv.ARCHIVE_STORAGE.list({
+        prefix: await archiveSessionPrefix(currentScope),
+        ...(inventoryCursor === undefined ? {} : { cursor: inventoryCursor }),
+      });
+      archiveObjects.push(...page.objects.map(({ key, size }) => ({ key, size })));
+      inventoryCursor = page.truncated ? page.cursor : undefined;
+    } while (inventoryCursor !== undefined);
+    const budgetSnapshot = await runtimeEnv.STORAGE_BUDGET.getByName(
+      currentScope.orgId,
+    ).getStorageBudget({
+      orgId: currentScope.orgId,
+    });
+    expect(budgetSnapshot.committedBytes).toBe(
+      archiveObjects.reduce((sum, archiveObject) => sum + archiveObject.size, 0),
+    );
+    expect(budgetSnapshot.byClass.agent_archive_chunk.committedBytes).toBe(
+      archiveObjects
+        .filter(({ key }) => key.includes('/chunks/'))
+        .reduce((sum, archiveObject) => sum + archiveObject.size, 0),
+    );
+    expect(budgetSnapshot.byClass.agent_archive_manifest.committedBytes).toBe(
+      archiveObjects
+        .filter(({ key }) => key.includes('/manifests/'))
+        .reduce((sum, archiveObject) => sum + archiveObject.size, 0),
+    );
   }, 60_000);
 
   it('stores a server-owned record wrapper when observations contain conflicting fields', async () => {
@@ -3697,6 +3735,59 @@ describe('Archive Session Ledger', () => {
         objectClass: 'chunk',
       }),
     ).rejects.toMatchObject({ errorClass: 'immutable_object_collision' });
+  });
+
+  it('rejects a storage-cap upload before the first R2 mutation and blocks archive status', async () => {
+    const currentScope = scope('codex', `storage-cap-${crypto.randomUUID()}`);
+    const budgetStub = runtimeEnv.STORAGE_BUDGET.getByName(currentScope.orgId);
+    const filler = {
+      objectKey: `budget/filler-${crypto.randomUUID()}`,
+      objectClass: 'agent_archive_chunk' as const,
+      bytes: ARCHIVE_STORAGE_CAP_BYTES - 1,
+      expiresAt: null,
+    };
+    await budgetStub.reserveStorage({ orgId: currentScope.orgId, objects: [filler] });
+    await budgetStub.commitStorage({ orgId: currentScope.orgId, objects: [filler] });
+    const record = await observation(
+      currentScope.source,
+      currentScope.sourceSessionId,
+      partFor(currentScope.source),
+      'storage-cap-record',
+      '{"storage_cap":true}',
+    );
+    const upload = {
+      source_session_id: currentScope.sourceSessionId,
+      observations: [record],
+      checkpoint: await checkpoint(
+        currentScope.source,
+        currentScope.sourceSessionId,
+        partFor(currentScope.source),
+        [record],
+      ),
+      complete_prefix_base64: base64(exactPrefix([record])),
+    } satisfies ArchiveUploadRequest;
+    const stub = newLedger(currentScope);
+    const result = await call(stub, await envelope(currentScope, upload));
+    expect(result.response.status).toBe(507);
+    expect(result.body).toEqual({ error: 'storage_cap_exceeded' });
+    const stored = await runtimeEnv.ARCHIVE_STORAGE.list({
+      prefix: await archiveSessionPrefix(currentScope),
+    });
+    expect(stored.objects).toHaveLength(0);
+    const ledgerState = await runInDurableObject(stub, (_instance, state) => [
+      ...state.storage.sql.exec<{ data: string }>('SELECT data FROM ledger_state WHERE id = 1'),
+    ]);
+    expect(ledgerState).toHaveLength(0);
+    const outbox = await runInDurableObject(budgetStub, (_instance, state) => [
+      ...state.storage.sql.exec<{ payload: string }>(
+        'SELECT payload FROM storage_budget_status_outbox WHERE id = 1',
+      ),
+    ]);
+    expect(JSON.parse(outbox[0]!.payload)).toMatchObject({
+      orgId: currentScope.orgId,
+      storedBytes: ARCHIVE_STORAGE_CAP_BYTES - 1,
+      lifecycle: 'blocked',
+    });
   });
 
   it('holds the one-and-a-half MiB uncompressed chunk boundary', async () => {

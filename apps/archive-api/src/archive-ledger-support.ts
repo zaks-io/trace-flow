@@ -92,6 +92,7 @@ export function statusFor(errorClass: string): number {
   )
     return 413;
   if (CONFLICT_ERROR_CLASSES.has(errorClass)) return 409;
+  if (errorClass === 'storage_cap_exceeded') return 507;
   if (TRANSIENT_ERROR_CLASSES.has(errorClass)) return 503;
   if (errorClass === 'archive_commit_failed') return 500;
   return 400;
@@ -112,6 +113,14 @@ const CONFLICT_ERROR_CLASSES = new Set([
   'pending_intent_head_mismatch',
   'pending_object_verification_failed',
   'ledger_state_corrupt',
+  'storage_object_metadata_mismatch',
+  'storage_reservation_missing',
+  'storage_budget_identity_mismatch',
+  'storage_budget_corrupt',
 ]);
 
-const TRANSIENT_ERROR_CLASSES = new Set(['key_unavailable', 'pending_commit_exists']);
+const TRANSIENT_ERROR_CLASSES = new Set([
+  'key_unavailable',
+  'pending_commit_exists',
+  'storage_budget_inventory_failed',
+]);

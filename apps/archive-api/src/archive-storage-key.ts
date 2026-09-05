@@ -23,13 +23,18 @@ async function derivedKey(domain: Uint8Array, values: string[]): Promise<string>
   ).slice(7);
 }
 
+export async function archiveOrganizationPrefix(orgId: string): Promise<string> {
+  assertIdentifier(orgId, 'invalid_scope');
+  const organizationKey = await derivedKey(ARCHIVE_ORGANIZATION_KEY_DOMAIN, [orgId]);
+  return `archive/${organizationKey}`;
+}
+
 export async function archiveSessionPrefix(scope: ArchiveScope): Promise<string> {
   assertIdentifier(scope.orgId, 'invalid_scope');
   assertIdentifier(scope.userId, 'invalid_scope');
   assertIdentifier(scope.contributionId, 'invalid_scope');
   assertArchiveSource(scope.source);
   assertIdentifier(scope.sourceSessionId, 'invalid_scope');
-  const organizationKey = await derivedKey(ARCHIVE_ORGANIZATION_KEY_DOMAIN, [scope.orgId]);
   const contributionKey = await derivedKey(ARCHIVE_CONTRIBUTION_KEY_DOMAIN, [
     scope.orgId,
     scope.contributionId,
@@ -40,7 +45,7 @@ export async function archiveSessionPrefix(scope: ArchiveScope): Promise<string>
     scope.source,
     scope.sourceSessionId,
   ]);
-  return `archive/${organizationKey}/contributions/${contributionKey}/sessions/${scope.source}/${sessionKey}`;
+  return `${await archiveOrganizationPrefix(scope.orgId)}/contributions/${contributionKey}/sessions/${scope.source}/${sessionKey}`;
 }
 
 export async function archiveObjectKey(
