@@ -16,6 +16,9 @@ jobs:
   authorize:
     name: Check automation caller
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       allowed: ${{ steps.permission.outputs.allowed }}
     steps:
@@ -24,6 +27,19 @@ jobs:
         with:
           script: |
             core.setOutput('allowed', 'false');
+            // A trusted comment must not give fork-controlled code our credentials.
+            const pullNumber = context.payload.pull_request?.number ??
+              (context.payload.issue?.pull_request ? context.payload.issue.number : undefined);
+            if (pullNumber !== undefined) {
+              const { data: pull } = await github.rest.pulls.get({
+                ...context.repo,
+                pull_number: pullNumber,
+              });
+              if (pull.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+                core.notice('Credentialed automation is disabled for fork pull requests.');
+                return;
+              }
+            }
             // Preserve the shared workflows' explicit integration bot allowlist.
             const allowedBots = ['blacksmith-sh[bot]', 'useotto[bot]'];
             if (context.eventName !== 'issues') allowedBots.push('useotto-dev[bot]');
