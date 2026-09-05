@@ -189,7 +189,7 @@ fn scan_jsonl_with_part(
     })
 }
 
-fn claude_transcript_part_id(raw_identity: &str) -> Result<String, JsonlError> {
+pub fn claude_transcript_part_id(raw_identity: &str) -> Result<String, JsonlError> {
     if raw_identity.is_empty() {
         return Err(JsonlError::Archive(ArchiveError::InvalidIdentifier {
             field: "transcript_part_identity",
@@ -267,5 +267,16 @@ mod tests {
         let scan = scan_codex_jsonl("session-1", br#"{"a":1}"#, 7, None).unwrap();
         assert_eq!(scan.checkpoint.last_complete_byte_offset, 7);
         assert_eq!(scan.observations.len(), 1);
+    }
+
+    #[test]
+    fn complete_record_end_offsets_match_scanned_records() {
+        let bytes = b"{\"a\":1}\n\n{\"b\":2}\n{\"partial\"";
+        let ends = crate::complete_record_end_offsets(bytes).unwrap();
+        assert_eq!(ends, vec![8, 17]);
+        assert_eq!(
+            crate::complete_record_end_offsets(br#"{"a":1}"#).unwrap(),
+            vec![7]
+        );
     }
 }

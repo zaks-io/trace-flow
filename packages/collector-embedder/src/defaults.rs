@@ -21,6 +21,9 @@ const INGEST_URL_ENV: &str = "TRACE_FLOW_INGEST_URL";
 /// Env override for the Convex *site* origin the device flow drives against.
 const CONVEX_SITE_URL_ENV: &str = "TRACE_FLOW_CONVEX_SITE_URL";
 
+/// Env override for the Archive API base URL. Distinct from ingest; never a second auth path.
+const ARCHIVE_URL_ENV: &str = "TRACE_FLOW_ARCHIVE_URL";
+
 /// Production ingest Worker base URL (`POST /v1/ingest`).
 pub const PROD_INGEST_URL: &str = "https://collector.trace-flow.dev";
 
@@ -33,6 +36,9 @@ pub const DEV_INGEST_URL: &str = "https://trace-flow-agent-ingest-dev.isaac-a46.
 /// Deployed non-prod Convex site origin used by the desktop/CLI dev flow.
 pub const DEV_CONVEX_SITE_URL: &str = "https://hardy-iguana-812.convex.site";
 
+/// Production Archive API base URL (`POST /v1/archive/uploads`).
+pub const PROD_ARCHIVE_URL: &str = "https://archive.trace-flow.dev";
+
 /// The ingest Worker base URL: `$TRACE_FLOW_INGEST_URL` if set and non-empty, else production.
 pub fn ingest_url() -> String {
     resolve(INGEST_URL_ENV, PROD_INGEST_URL)
@@ -41,6 +47,11 @@ pub fn ingest_url() -> String {
 /// The Convex site origin: `$TRACE_FLOW_CONVEX_SITE_URL` if set and non-empty, else production.
 pub fn convex_site_url() -> String {
     resolve(CONVEX_SITE_URL_ENV, PROD_CONVEX_SITE_URL)
+}
+
+/// The Archive API base URL: `$TRACE_FLOW_ARCHIVE_URL` if set and non-empty, else production.
+pub fn archive_url() -> String {
+    resolve(ARCHIVE_URL_ENV, PROD_ARCHIVE_URL)
 }
 
 pub fn ingest_url_for_convex(convex_url: &str) -> Option<&'static str> {

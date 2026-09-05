@@ -43,8 +43,24 @@ pub async fn assemble_sync_unit(
     // Synchronous read by design: this crate spawns nothing and carries no tokio `rt` feature (the
     // whole discovery/cursor layer reads on the embedder's thread). This fn is `async` only for the
     // `git` resolve below; the embedder budgets the read like every other scan I/O.
-    let text = std::fs::read_to_string(&file.path)?;
-    let records = read_transcript(&text);
+    let bytes = std::fs::read(&file.path)?;
+    assemble_sync_unit_from_bytes(file, source, cache, &bytes).await
+}
+
+/// Assemble a [`SyncUnit`] from an already-read snapshot of `file`.
+///
+/// Archive capture and parsed-fact sync share one source traversal; the embedder reads each
+/// transcript once and feeds the same bytes to both pipelines. Facts still require UTF-8, matching
+/// the historical `read_to_string` path.
+pub async fn assemble_sync_unit_from_bytes(
+    file: &DiscoveredFile,
+    source: AgentSource,
+    cache: &GitRemoteCache,
+    bytes: &[u8],
+) -> std::io::Result<SyncUnit> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+    let records = read_transcript(text);
 
     // Codex and Claude carry session identity + git differently: Claude repeats `sessionId`/`cwd`/
     // `gitBranch` per line and the repo is resolved live from `cwd`; Codex records one `session_meta`
@@ -84,7 +100,7 @@ pub async fn assemble_sync_unit(
         byte_offset: file.size_bytes,
         // Hash the same text we just read so the cursor matches what `discovery::read_head_hash`
         // recomputes from disk next scan; re-reading could race a concurrent write.
-        content_hash_head: head_hash(&text),
+        content_hash_head: head_hash(text),
     });
     Ok(SyncUnit {
         records,
