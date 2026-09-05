@@ -1577,6 +1577,9 @@ export declare const api: {
  * ```
  */
 export declare const internal: {
+  waitlist: {
+    getAdminEmails: FunctionReference<"query", "internal", {}, Array<string>>;
+  };
   admin: {
     admin: {
       beginOrgDeletion: FunctionReference<
@@ -3166,6 +3169,12 @@ export declare const internal: {
         "action",
         "internal",
         { email: string; token: string },
+        null
+      >;
+      sendWaitlistAdminEmail: FunctionReference<
+        "action",
+        "internal",
+        { email: string; waitlistId: Id<"waitlist"> },
         null
       >;
     };
