@@ -140,6 +140,40 @@ fn ack_staging_disk_path(
         ))
 }
 
+fn ack_scratch_disk_path(
+    root: &std::path::Path,
+    pending: &PendingArchiveRequest,
+) -> std::path::PathBuf {
+    root.join("progress")
+        .join(pending.source.as_str())
+        .join(&pending.source_session_id)
+        .join(format!(
+            "{}.ack.tmp.tmp",
+            pending.source_transcript_part_id.replace(':', "_")
+        ))
+}
+
+fn actual_file_bytes(root: &std::path::Path) -> u64 {
+    fn walk(dir: &std::path::Path, total: &mut u64) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, total);
+                continue;
+            }
+            if path.is_file() {
+                *total += path.metadata().map(|meta| meta.len()).unwrap_or(0);
+            }
+        }
+    }
+    let mut total = 0;
+    walk(root, &mut total);
+    total
+}
+
 fn checkpoint_from_pending(
     pending: &PendingArchiveRequest,
 ) -> collector_archive::CompletedScanCheckpoint {
@@ -1107,6 +1141,73 @@ fn acknowledgement_transition_stays_within_exact_cap() {
     assert!(!ack_staging_disk_path(dir.path(), &pending).exists());
 }
 
+#[test]
+fn repeated_acknowledgement_failure_counts_nested_tmp_file_bytes() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    let spool =
+        ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, ARCHIVE_SPOOL_CAP_BYTES).unwrap();
+    spool.persist_pending(&pending).unwrap();
+    let staging = spool.ack_transition_len(&pending).unwrap();
+    let used = actual_file_bytes(dir.path());
+    let pad = ARCHIVE_SPOOL_CAP_BYTES
+        .saturating_sub(used)
+        .saturating_sub(staging.saturating_mul(2));
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(dir.path().join("pad.bin"))
+        .unwrap();
+    file.set_len(pad).unwrap();
+    assert_eq!(
+        actual_file_bytes(dir.path()).saturating_add(staging.saturating_mul(2)),
+        ARCHIVE_SPOOL_CAP_BYTES
+    );
+
+    let checkpoint = checkpoint_from_pending(&pending);
+    spool.debug_fail_next_pending_clear();
+    assert!(spool.commit_acknowledgement(&pending, &checkpoint).is_err());
+    assert!(ack_staging_disk_path(dir.path(), &pending).exists());
+    assert!(!ack_scratch_disk_path(dir.path(), &pending).exists());
+    assert_eq!(
+        actual_file_bytes(dir.path()),
+        ARCHIVE_SPOOL_CAP_BYTES.saturating_sub(staging)
+    );
+
+    spool.debug_fail_next_ack_scratch_rename();
+    assert!(spool.commit_acknowledgement(&pending, &checkpoint).is_err());
+    assert!(ack_staging_disk_path(dir.path(), &pending).exists());
+    assert!(ack_scratch_disk_path(dir.path(), &pending).exists());
+    let after_repeat = actual_file_bytes(dir.path());
+    assert!(after_repeat <= ARCHIVE_SPOOL_CAP_BYTES);
+    assert_eq!(after_repeat, ARCHIVE_SPOOL_CAP_BYTES);
+    assert_eq!(spool.on_disk_bytes().unwrap(), after_repeat);
+
+    let relaunched =
+        ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, ARCHIVE_SPOOL_CAP_BYTES).unwrap();
+    let after_relaunch = actual_file_bytes(dir.path());
+    assert!(after_relaunch <= ARCHIVE_SPOOL_CAP_BYTES);
+    assert_eq!(relaunched.on_disk_bytes().unwrap(), after_relaunch);
+    assert!(relaunched
+        .pending(ArchiveSource::Claude, &pending.source_session_id)
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        relaunched
+            .progress(ArchiveSource::Claude, &pending.source_session_id)
+            .unwrap()
+            .unwrap()
+            .record_count,
+        checkpoint.record_count
+    );
+    assert!(!pending_disk_path(dir.path(), &pending).exists());
+    assert!(progress_disk_path(dir.path(), &pending).exists());
+    assert!(!ack_staging_disk_path(dir.path(), &pending).exists());
+    assert!(!ack_scratch_disk_path(dir.path(), &pending).exists());
+}
+
 #[tokio::test]
 async fn session_aggregate_duplicate_parent_rescan_advances() {
     let dir = TempDir::new().unwrap();
@@ -1287,4 +1388,76 @@ async fn enrollment_invalid_failed_delete_retries_cleanup_after_relaunch() {
         ArchiveEnrollmentRecord::load(&enroll).unwrap(),
         ArchivePolicy::Revoked
     );
+}
+
+#[tokio::test]
+async fn failing_policy_replace_blocks_all_sources_and_retries_purge() {
+    let dir = TempDir::new().unwrap();
+    let spool_dir = dir.path().join("spool");
+    let enroll = dir.path().join("archive-enrollment.json");
+    ArchiveEnrollmentRecord::save(&enroll, ArchivePolicy::Enrolled).unwrap();
+    fs::remove_file(&enroll).unwrap();
+    fs::create_dir(&enroll).unwrap();
+    let keys = FailingDeleteKeyStore::new();
+    let mut spool = ArchiveSpool::open(&spool_dir, "org_1", &keys).unwrap();
+    spool.set_enrollment_path(&enroll);
+    let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    spool.persist_pending(&pending).unwrap();
+    let later = snapshot(ArchiveSource::Codex, CODEX, 11);
+    let later_session = later.source_session_id.clone();
+    let uploader = ScriptedUploader::new([Err(ArchiveClientError::Forbidden {
+        reason: "enrollment_invalid".to_string(),
+    })]);
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[later],
+        ArchivePolicy::Enrolled,
+        None,
+    )
+    .await;
+    assert!(!report.purged);
+    assert!(report.halted);
+    assert_eq!(report.captured, 0);
+    assert!(spool.cleanup_required());
+    assert!(keys.load("org_1").unwrap().is_some());
+    assert!(pending_disk_path(&spool_dir, &pending).exists());
+    assert!(spool
+        .pending(ArchiveSource::Codex, &later_session)
+        .unwrap()
+        .is_none());
+
+    let mut relaunched = ArchiveSpool::open_existing(&spool_dir, "org_1", &keys)
+        .unwrap()
+        .expect("retained spool after failed purge");
+    relaunched.set_enrollment_path(&enroll);
+    let relaunch_later = snapshot(ArchiveSource::Codex, CODEX, 12);
+    let relaunch_session = relaunch_later.source_session_id.clone();
+    let unavailable = ScriptedUploader::new([Err(ArchiveClientError::Unavailable {
+        reason: "archive unavailable".to_string(),
+    })]);
+    let relaunch_report = run_archive_cycle(
+        &unavailable,
+        &mut relaunched,
+        &keys,
+        &[relaunch_later],
+        ArchivePolicy::Enrolled,
+        None,
+    )
+    .await;
+    assert_eq!(unavailable.calls.get(), 0);
+    assert_eq!(relaunch_report.captured, 0);
+    assert!(!relaunch_report.purged);
+    assert!(relaunch_report.failed >= 1);
+    assert_eq!(
+        relaunch_report.first_error.as_deref(),
+        Some("archive_key_unavailable")
+    );
+    assert!(keys.load("org_1").unwrap().is_some());
+    assert!(relaunched.cleanup_required());
+    assert!(relaunched
+        .pending(ArchiveSource::Codex, &relaunch_session)
+        .unwrap()
+        .is_none());
 }

@@ -70,6 +70,7 @@ pub struct ArchiveSpool {
     key: ArchiveSpoolKey,
     cap_bytes: u64,
     fail_next_pending_clear: AtomicBool,
+    fail_next_ack_scratch_rename: AtomicBool,
     enrollment_path: Option<PathBuf>,
 }
 
@@ -91,7 +92,6 @@ impl ArchiveSpool {
         let root = root.into();
         let org_id = org_id.into();
         fs::create_dir_all(&root)?;
-        cleanup_tmp_files(&root)?;
         let key = match key_store.load(&org_id)? {
             Some(key) => key,
             None => {
@@ -106,16 +106,25 @@ impl ArchiveSpool {
             key,
             cap_bytes,
             fail_next_pending_clear: AtomicBool::new(false),
+            fail_next_ack_scratch_rename: AtomicBool::new(false),
             enrollment_path: None,
         };
+        spool.recover_ack_scratch();
         spool.recover_ack_staging();
         spool.recover_acknowledged_pending();
+        cleanup_tmp_files(&spool.root)?;
         Ok(spool)
     }
 
     /// Test seam: fail the pending unlink after durable progress is staged.
     pub fn debug_fail_next_pending_clear(&self) {
         self.fail_next_pending_clear.store(true, Ordering::SeqCst);
+    }
+
+    /// Test seam: fsync `{part}.ack.tmp.tmp` and fail before promoting it to `.ack.tmp`.
+    pub fn debug_fail_next_ack_scratch_rename(&self) {
+        self.fail_next_ack_scratch_rename
+            .store(true, Ordering::SeqCst);
     }
 
     pub fn set_enrollment_path(&mut self, path: impl Into<PathBuf>) {
@@ -137,7 +146,7 @@ impl ArchiveSpool {
             file.sync_all()?;
         }
         if let Some(path) = &self.enrollment_path {
-            ArchiveEnrollmentRecord::save(path, ArchivePolicy::Revoked)?;
+            let _ = ArchiveEnrollmentRecord::save(path, ArchivePolicy::Revoked);
         }
         Ok(())
     }
@@ -159,6 +168,7 @@ impl ArchiveSpool {
     }
 
     pub fn persist_pending(&self, pending: &PendingArchiveRequest) -> ArchiveSyncResult<()> {
+        self.recover_ack_scratch();
         self.recover_ack_staging();
         let path = self.pending_path(
             pending.source,
@@ -173,7 +183,7 @@ impl ArchiveSpool {
             &pending.source_transcript_part_id,
         );
         let blob = encrypt(&self.key, &aad, &plaintext)?;
-        let reserve = self.ack_transition_len(pending)?;
+        let reserve = self.ack_transition_len(pending)?.saturating_mul(2);
         self.write_capped_reserving(&path, &blob, reserve, atomic_write)
     }
 
@@ -390,7 +400,6 @@ impl ArchiveSpool {
         pending: &PendingArchiveRequest,
         checkpoint: &CompletedScanCheckpoint,
     ) -> ArchiveSyncResult<()> {
-        self.recover_ack_staging();
         let pending_path = self.pending_path(
             pending.source,
             &pending.source_session_id,
@@ -410,6 +419,15 @@ impl ArchiveSpool {
             &pending.source_transcript_part_id,
         );
         let blob = encrypt(&self.key, &aad, &plaintext)?;
+        if self
+            .fail_next_ack_scratch_rename
+            .swap(false, Ordering::SeqCst)
+        {
+            self.write_capped_reserving(&staging_path, &blob, 0, atomic_write_named_leave_scratch)?;
+            return Err(ArchiveSyncError::Io(io::Error::other(
+                "ack scratch rename failed",
+            )));
+        }
         self.write_capped_reserving(&staging_path, &blob, 0, atomic_write_named)?;
         if self.fail_next_pending_clear.swap(false, Ordering::SeqCst) {
             return Err(ArchiveSyncError::Io(io::Error::other(
@@ -464,19 +482,21 @@ impl ArchiveSpool {
         let org_id = org_id.into();
         match key_store.load(&org_id)? {
             Some(key) => {
-                if root.exists() {
-                    cleanup_tmp_files(&root)?;
-                }
                 let spool = Self {
                     root,
                     org_id,
                     key,
                     cap_bytes: ARCHIVE_SPOOL_CAP_BYTES,
                     fail_next_pending_clear: AtomicBool::new(false),
+                    fail_next_ack_scratch_rename: AtomicBool::new(false),
                     enrollment_path: None,
                 };
+                spool.recover_ack_scratch();
                 spool.recover_ack_staging();
                 spool.recover_acknowledged_pending();
+                if spool.root.exists() {
+                    cleanup_tmp_files(&spool.root)?;
+                }
                 Ok(Some(spool))
             }
             None => {
@@ -486,6 +506,34 @@ impl ArchiveSpool {
                     Ok(None)
                 }
             }
+        }
+    }
+
+    fn recover_ack_scratch(&self) {
+        let Ok(files) = walkdir_files(&self.root.join("progress")) else {
+            return;
+        };
+        for scratch in files {
+            if !is_ack_scratch(&scratch) {
+                continue;
+            }
+            let Some((source, session, part)) = parse_ack_scratch(&self.root, &scratch) else {
+                let _ = remove_if_present(&scratch);
+                continue;
+            };
+            let aad = self.aad("progress", source, &session, &part);
+            let Ok(blob) = fs::read(&scratch) else {
+                continue;
+            };
+            if decrypt(&self.key, &aad, &blob).is_err() {
+                let _ = remove_if_present(&scratch);
+                continue;
+            }
+            let Ok(progress_path) = self.progress_path(source, &session, &part) else {
+                continue;
+            };
+            let staging = ack_staging_path(&progress_path);
+            let _ = fs::rename(&scratch, &staging);
         }
     }
 
@@ -561,9 +609,7 @@ impl ArchiveSpool {
         write: fn(&Path, &[u8]) -> ArchiveSyncResult<()>,
     ) -> ArchiveSyncResult<()> {
         let used = self.on_disk_bytes()?;
-        let existing = path.metadata().map(|meta| meta.len()).unwrap_or(0);
         let next = used
-            .saturating_sub(existing)
             .saturating_add(blob.len() as u64)
             .saturating_add(reserve);
         if next > self.cap_bytes {
@@ -836,9 +882,6 @@ fn sum_dir(root: &Path) -> ArchiveSyncResult<u64> {
     }
     let mut total = 0u64;
     for entry in walkdir_files(root)? {
-        if is_scratch_tmp(&entry) {
-            continue;
-        }
         total = total.saturating_add(entry.metadata()?.len());
     }
     Ok(total)
@@ -849,7 +892,9 @@ fn durable_files_exist(root: &Path) -> ArchiveSyncResult<bool> {
         return Ok(false);
     }
     Ok(walkdir_files(root)?.into_iter().any(|path| {
-        path.extension().and_then(|ext| ext.to_str()) != Some("tmp") || is_ack_staging(&path)
+        path.extension().and_then(|ext| ext.to_str()) != Some("tmp")
+            || is_ack_staging(&path)
+            || is_ack_scratch(&path)
     }))
 }
 
@@ -863,13 +908,21 @@ fn cleanup_tmp_files(root: &Path) -> ArchiveSyncResult<()> {
 }
 
 fn is_scratch_tmp(path: &Path) -> bool {
-    path.extension().and_then(|ext| ext.to_str()) == Some("tmp") && !is_ack_staging(path)
+    path.extension().and_then(|ext| ext.to_str()) == Some("tmp")
+        && !is_ack_staging(path)
+        && !is_ack_scratch(path)
 }
 
 fn is_ack_staging(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| name.ends_with(".ack.tmp"))
+        .is_some_and(|name| name.ends_with(".ack.tmp") && !name.ends_with(".ack.tmp.tmp"))
+}
+
+fn is_ack_scratch(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".ack.tmp.tmp"))
 }
 
 fn checkpoint_from_pending_body(body: &[u8]) -> ArchiveSyncResult<CompletedScanCheckpoint> {
@@ -903,6 +956,38 @@ fn parse_ack_staging(root: &Path, path: &Path) -> Option<(ArchiveSource, String,
     let stem = file.strip_suffix(".ack.tmp")?;
     let part = part_id_from_file_stem(stem)?;
     Some((source, session, part))
+}
+
+fn parse_ack_scratch(root: &Path, path: &Path) -> Option<(ArchiveSource, String, String)> {
+    let relative = path.strip_prefix(root).ok()?;
+    let mut parts = relative.components();
+    let _progress = parts.next()?;
+    let source = match parts.next()?.as_os_str().to_str()? {
+        "claude" => ArchiveSource::Claude,
+        "codex" => ArchiveSource::Codex,
+        _ => return None,
+    };
+    let session = parts.next()?.as_os_str().to_str()?.to_string();
+    let file = parts.next()?.as_os_str().to_str()?;
+    let stem = file.strip_suffix(".ack.tmp.tmp")?;
+    let part = part_id_from_file_stem(stem)?;
+    Some((source, session, part))
+}
+
+fn atomic_write_named_leave_scratch(path: &Path, bytes: &[u8]) -> ArchiveSyncResult<()> {
+    let tmp = {
+        let mut name = path.file_name().unwrap_or_default().to_os_string();
+        name.push(".tmp");
+        path.with_file_name(name)
+    };
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&tmp)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    Ok(())
 }
 
 fn atomic_write_named(path: &Path, bytes: &[u8]) -> ArchiveSyncResult<()> {

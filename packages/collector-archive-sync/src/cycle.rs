@@ -67,6 +67,20 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
         if cancel.is_some_and(CancellationToken::is_cancelled) {
             break;
         }
+        if spool.cleanup_required() {
+            match spool.purge(key_store) {
+                Ok(()) => {
+                    report.purged = true;
+                    break;
+                }
+                Err(err) => {
+                    report.failed += 1;
+                    record_error(&mut report, err.class());
+                    report.halted = true;
+                    break;
+                }
+            }
+        }
         if let Err(class) =
             capture_snapshot(uploader, spool, key_store, snapshot, &mut report, cancel).await
         {
@@ -144,6 +158,17 @@ async fn capture_snapshot<U: ArchiveUploader>(
     report: &mut ArchiveCycleReport,
     cancel: Option<&CancellationToken>,
 ) -> Result<(), &'static str> {
+    if spool.cleanup_required() {
+        match spool.purge(key_store) {
+            Ok(()) => return Err("purged"),
+            Err(err) => {
+                report.failed += 1;
+                record_error(report, err.class());
+                report.halted = true;
+                return Err("halt");
+            }
+        }
+    }
     loop {
         if cancel.is_some_and(CancellationToken::is_cancelled) {
             return Ok(());
