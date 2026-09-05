@@ -393,6 +393,42 @@ async fn server_frozen_denial_does_not_purge_or_advance() {
 }
 
 #[tokio::test]
+async fn live_frozen_during_capture_stops_later_sessions() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let claude = snapshot(ArchiveSource::Claude, CLAUDE, 10);
+    let codex = snapshot(ArchiveSource::Codex, CODEX, 11);
+    let claude_session = claude.source_session_id.clone();
+    let codex_session = codex.source_session_id.clone();
+    let uploader = ScriptedUploader::new([Err(ArchiveClientError::Forbidden {
+        reason: "frozen".to_string(),
+    })]);
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[claude, codex],
+        ArchivePolicy::Enrolled,
+        None,
+    )
+    .await;
+    assert!(report.frozen);
+    assert!(!report.purged);
+    assert_eq!(uploader.calls.get(), 1);
+    assert_eq!(report.captured, 1);
+    assert!(spool
+        .pending(ArchiveSource::Claude, &claude_session)
+        .unwrap()
+        .is_some());
+    assert!(spool
+        .pending(ArchiveSource::Codex, &codex_session)
+        .unwrap()
+        .is_none());
+    assert!(keys.load("org_1").unwrap().is_some());
+}
+
+#[tokio::test]
 async fn grace_and_frozen_retain_without_uploading() {
     for policy in [ArchivePolicy::Frozen, ArchivePolicy::Grace] {
         let dir = TempDir::new().unwrap();

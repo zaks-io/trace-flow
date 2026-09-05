@@ -75,6 +75,9 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
                 break;
             }
         }
+        if report.purged || report.frozen {
+            break;
+        }
     }
     report
 }

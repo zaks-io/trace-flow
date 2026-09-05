@@ -334,10 +334,10 @@ fn apply_archive_policy_after_cycle(
         return;
     };
     let archive_purged = archive.is_some_and(|report| report.purged);
-    let fact_revoked = !matches!(
-        archive_cfg.policy,
-        ArchivePolicy::Frozen | ArchivePolicy::Grace
-    ) && reports.iter().any(|(_, report)| {
+    // Terminal revocation from fact ingest always purges, including after Frozen/Grace
+    // retention. Those states only retain for frozen/expired/grace denials, not for
+    // credential_revoked / enrollment_invalid / deleting / revoked.
+    let fact_revoked = reports.iter().any(|(_, report)| {
         ingest_denial_reason(&report.first_error).and_then(policy_from_denial_reason)
             == Some(ArchivePolicy::Revoked)
     });
@@ -1018,6 +1018,57 @@ mod tests {
                 enrollment_path: enrollment_path.clone(),
                 key_store: keys.clone(),
                 policy: ArchivePolicy::Enrolled,
+            }),
+        )
+        .await;
+
+        assert!(outcome
+            .reports
+            .iter()
+            .any(|(_, report)| is_unauthorized(&report.first_error)));
+        assert!(keys.load("org_1").unwrap().is_none());
+        assert!(!spool_dir.exists());
+        assert_eq!(
+            ArchiveEnrollmentRecord::load(&enrollment_path).unwrap(),
+            ArchivePolicy::Revoked
+        );
+    }
+
+    #[tokio::test]
+    async fn frozen_enrollment_still_purges_on_fact_credential_revoked() {
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        write_home_transcripts(home.path());
+        let keys = Arc::new(MemoryKeyStore::new());
+        let spool_dir = state.path().join("archive-spool-org_1");
+        let enrollment_path = state.path().join("archive-enrollment-org_1.json");
+        let pending = PendingArchiveRequest {
+            source: ArchiveSource::Claude,
+            source_session_id: "claude-session-001".to_string(),
+            expected_record_count: 1,
+            body: b"{\"source_session_id\":\"claude-session-001\"}".to_vec(),
+        };
+        {
+            let spool = ArchiveSpool::open(&spool_dir, "org_1", keys.as_ref()).unwrap();
+            spool.persist_pending(&pending).unwrap();
+        }
+        ArchiveEnrollmentRecord::save(&enrollment_path, ArchivePolicy::Frozen).unwrap();
+
+        let ingest_url = spawn_http(|_raw| {
+            raw_response(401, "Unauthorized", r#"{"reason":"credential_revoked"}"#)
+        })
+        .await;
+
+        let outcome = run_with_servers(
+            home.path(),
+            state.path(),
+            ingest_url,
+            Some(ArchiveRunConfig {
+                archive_url: "http://127.0.0.1:1".to_string(),
+                spool_dir: spool_dir.clone(),
+                enrollment_path: enrollment_path.clone(),
+                key_store: keys.clone(),
+                policy: ArchivePolicy::Frozen,
             }),
         )
         .await;
