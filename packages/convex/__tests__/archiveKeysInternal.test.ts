@@ -453,6 +453,15 @@ describe('archive key metadata internal boundary', () => {
       activeKeyVersion: 2,
       rotationStatus: 'succeeded',
     });
+    expect(
+      await t.mutation(internal.archiveKeysInternal.markRotationFailed, {
+        orgId: orgA,
+        operationId: 'rotate:org-a:1:2',
+      }),
+    ).toBe(false);
+    expect(await t.query(internal.archiveKeysInternal.getCustody, { orgId: orgA })).toMatchObject({
+      rotationStatus: 'succeeded',
+    });
   });
 
   it('refuses a skipped version, a second in-flight operation, and destroy with the wrong operation', async () => {

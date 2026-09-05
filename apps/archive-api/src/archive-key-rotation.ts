@@ -338,9 +338,14 @@ export async function advanceStoredRotation(
     state.lastErrorClass = undefined;
     state.updatedAt = Date.now();
     writeRotationState(storage, state);
-    await publishRotationAudit(env, logger, input.orgId, state, 'success');
+    try {
+      await publishRotationAudit(env, logger, input.orgId, state, 'success');
+    } catch (error) {
+      logger.error('archive_api.key_rotation_audit_failed', error, { outcome: 'success' });
+    }
     return rotationHealth(input.orgId, state);
   } catch (error) {
+    if (state.status === 'succeeded') throw error;
     const errorClass =
       error instanceof ArchiveContractError ? error.errorClass : 'archive_key_rotation_failed';
     state.remainingReferences = countKeyVersionReferences(storage, state.fromVersion);

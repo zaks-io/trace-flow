@@ -308,6 +308,7 @@ export const markRotationFailed = internalMutation({
     const custody = await getCustodyRow(ctx, args.orgId);
     if (custody?.rotationOperationId !== args.operationId) return false;
     if (custody.rotationStatus === 'failed') return true;
+    if (custody.rotationStatus === 'succeeded') return false;
     await ctx.db.patch(custody._id, {
       rotationStatus: 'failed',
       updatedAt: Date.now(),
