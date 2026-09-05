@@ -189,6 +189,7 @@ class FakeArchiveCustody {
     liveReferenceCount: number;
     operationId: string;
   }[] = [];
+  readonly keyFetches: number[] = [];
   readonly auditBodies: Record<string, unknown>[] = [];
 
   handle(pathname: string, body: Record<string, unknown>): Response {
@@ -259,6 +260,7 @@ class FakeArchiveCustody {
     }
     if (pathname === '/archive-api/key') {
       const keyVersion = body.keyVersion as number;
+      this.keyFetches.push(keyVersion);
       const wrappedKey = this.versions.get(keyVersion);
       if (!wrappedKey) {
         return new Response(JSON.stringify({ error: 'Archive key unavailable' }), { status: 404 });
@@ -847,10 +849,24 @@ describe('Archive encryption key rotation', () => {
     expect(custody.rotationStatus).toBe('succeeded');
     expect(await stub.getKeyRotationHealth({ orgId })).toMatchObject({ status: 'rotating' });
     expect(await stub.countKeyVersionReferences({ orgId, keyVersion: 1 })).toBe(0);
+    const v1FetchesAfterDestroy = custody.keyFetches.filter((version) => version === 1).length;
     const resumed = await stub.advanceKeyRotation({ orgId, limit: 8 });
     expect(resumed.status).toBe('succeeded');
-    expect(custody.destroyCalls.length).toBeGreaterThanOrEqual(2);
+    expect(custody.destroyCalls).toEqual([
+      { keyVersion: 1, liveReferenceCount: 0, operationId: 'rotate-lost-destroy' },
+      { keyVersion: 1, liveReferenceCount: 0, operationId: 'rotate-lost-destroy' },
+    ]);
+    expect(custody.keyFetches.filter((version) => version === 1)).toHaveLength(
+      v1FetchesAfterDestroy,
+    );
     expect(custody.versions.has(1)).toBe(false);
+    expect(custody.auditBodies).toEqual([
+      expect.objectContaining({
+        action: 'key_rotation',
+        outcome: 'success',
+        operationId: 'rotate-lost-destroy:success',
+      }),
+    ]);
     expect(await decryptStored(objects[0]!.objectKey, orgId, 2, v2)).toEqual(
       new TextEncoder().encode('chunk-body-lost-destroy'),
     );
@@ -882,6 +898,36 @@ describe('Archive encryption key rotation', () => {
         },
       ),
     ).toBeInstanceOf(Uint8Array);
+  });
+
+  it('does not credit already-new refs when a to-version envelope fails authentication', async () => {
+    const { orgId, objects } = await seedOrg('already-new-tamper');
+    const stub = await startRotation(orgId, 'rotate-already-new-tamper');
+    const firstKey = [...objects].sort((left, right) =>
+      left.objectKey.localeCompare(right.objectKey),
+    )[0]!.objectKey;
+    expect(
+      await advanceExpectingError(stub, { orgId, limit: 1, injectFailure: 'after_replace' }),
+    ).toBe('rotation_failure_injected');
+    expect((await readEnvelope(firstKey)).keyVersion).toBe(2);
+    expect(await stub.countKeyVersionReferences({ orgId, keyVersion: 1 })).toBeGreaterThan(0);
+    expect(await stub.countKeyVersionReferences({ orgId, keyVersion: 2 })).toBe(0);
+    const envelope = await readEnvelope(firstKey);
+    const last = envelope.ciphertext.at(-1) ?? 'A';
+    await runtimeEnv.ARCHIVE_STORAGE.put(
+      firstKey,
+      JSON.stringify({
+        ...envelope,
+        ciphertext: `${envelope.ciphertext.slice(0, -1)}${last === 'A' ? 'B' : 'A'}`,
+      }),
+    );
+    expect(await advanceExpectingError(stub, { orgId, limit: 1 })).toBe(
+      'Archive cryptographic operation failed',
+    );
+    expect(await stub.countKeyVersionReferences({ orgId, keyVersion: 1 })).toBeGreaterThan(0);
+    expect(await stub.countKeyVersionReferences({ orgId, keyVersion: 2 })).toBe(0);
+    expect(custody.destroyCalls).toHaveLength(0);
+    expect(await stub.getKeyRotationHealth({ orgId })).toMatchObject({ status: 'failed' });
   });
 
   it('does not let a stale v1-to-v2 worker overwrite after v2-to-v3 completes', async () => {
