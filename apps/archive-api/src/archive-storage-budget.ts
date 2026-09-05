@@ -8,6 +8,7 @@ import {
   ensureBudgetSchema,
   parseStoredStatusPayload,
   releaseBudgetStorage,
+  rebaseStatusAfterConflict,
   reserveBudgetStorage,
   snapshot,
   storageAdmissionUnsafe,
@@ -23,7 +24,7 @@ import {
   startBudgetReconciliation,
   type ReconciliationState,
 } from './archive-storage-budget-reconciliation';
-import { publishArchiveStatus } from './archive-status';
+import { isArchiveStatusRevisionConflict, publishArchiveStatus } from './archive-status';
 
 export {
   ARCHIVE_STORAGE_CAP_BYTES,
@@ -132,13 +133,16 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
       );
       return true;
     } catch (error) {
+      await this.ctx.storage.setAlarm(Date.now() + STATUS_RETRY_MS);
+      if (isArchiveStatusRevisionConflict(error)) {
+        rebaseStatusAfterConflict(this.ctx.storage, this.orgId(), row.revision);
+      }
       console.error(
         JSON.stringify({
           event: 'archive_api.status_publication_failed',
           errorClass: error instanceof Error ? error.message : 'unknown_error',
         }),
       );
-      await this.ctx.storage.setAlarm(Date.now() + STATUS_RETRY_MS);
       return false;
     }
   }

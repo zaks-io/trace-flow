@@ -247,6 +247,23 @@ export function enqueueStatus(
   );
 }
 
+export function rebaseStatusAfterConflict(
+  storage: DurableObjectStorage,
+  orgId: string,
+  conflictedRevision: number,
+): boolean {
+  return storage.transactionSync(() => {
+    const outbox = [
+      ...storage.sql.exec<{ revision: number }>(
+        'SELECT revision FROM storage_budget_status_outbox WHERE id = 1',
+      ),
+    ][0];
+    if (outbox?.revision !== conflictedRevision) return false;
+    enqueueStatus(storage, budgetState(storage, orgId));
+    return true;
+  });
+}
+
 function setStorageCapBlocked(storage: DurableObjectStorage): void {
   storage.sql.exec(
     "INSERT INTO storage_budget_blocks (id, reason) VALUES (1, 'storage_cap_exceeded') ON CONFLICT(id) DO UPDATE SET reason = excluded.reason",

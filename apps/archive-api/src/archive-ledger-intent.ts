@@ -14,7 +14,7 @@ export {
 
 export interface PendingIntent {
   intentHash: string;
-  status: 'building' | 'ready' | 'committed';
+  status: 'building' | 'ready' | 'write_authorized' | 'committed';
   baseElementCount: number;
   baseChainHead: string;
   objects: ArchiveR2Object[];
@@ -155,7 +155,7 @@ export function readIntent(
 export function readPendingIntent(storage: DurableObjectStorage): PendingIntent | null {
   const row = [
     ...storage.sql.exec<{ intent_hash: string }>(
-      "SELECT intent_hash FROM pending_intents WHERE status IN ('building', 'ready') LIMIT 1",
+      "SELECT intent_hash FROM pending_intents WHERE status IN ('building', 'ready', 'write_authorized') LIMIT 1",
     ),
   ][0];
   return row ? readIntent(storage, row.intent_hash) : null;
@@ -218,12 +218,27 @@ export function markIntentReady(storage: DurableObjectStorage, intentHash: strin
   });
 }
 
-export function discardPendingIntent(storage: DurableObjectStorage, intentHash: string): void {
+export function markIntentWriteAuthorized(storage: DurableObjectStorage, intentHash: string): void {
   storage.transactionSync(() => {
     storage.sql.exec(
-      "DELETE FROM pending_intents WHERE intent_hash = ? AND status IN ('building', 'ready')",
+      'UPDATE pending_intents SET status = ? WHERE intent_hash = ? AND status = ?',
+      'write_authorized',
       intentHash,
+      'ready',
     );
+  });
+}
+
+export function discardPendingIntent(storage: DurableObjectStorage, intentHash: string): void {
+  storage.transactionSync(() => {
+    const deletable = [
+      ...storage.sql.exec<{ intent_hash: string }>(
+        "SELECT intent_hash FROM pending_intents WHERE intent_hash = ? AND status IN ('building', 'ready')",
+        intentHash,
+      ),
+    ][0];
+    if (!deletable) return;
+    storage.sql.exec('DELETE FROM pending_intents WHERE intent_hash = ?', intentHash);
     storage.sql.exec('DELETE FROM pending_intent_parts WHERE intent_hash = ?', intentHash);
     storage.sql.exec('DELETE FROM pending_intent_metadata WHERE intent_hash = ?', intentHash);
   });

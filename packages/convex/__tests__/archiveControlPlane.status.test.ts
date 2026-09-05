@@ -261,6 +261,70 @@ describe('archive control plane status and lifecycle', () => {
     expect(status.lifecycle).toBe('blocked');
   });
 
+  it('accepts a rebased server status after entitlement sync changes lifecycle at the same revision', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    await world.t.mutation(internal.archiveInternal.applyServerStatusByOrganization, {
+      orgId: world.owner.orgId,
+      revision: 1,
+      storedBytes: 10,
+      lifecycle: 'blocked',
+    });
+
+    await world.t.run(async (ctx) => {
+      const subscription = (
+        await ctx.db
+          .query('subscriptions')
+          .withIndex('by_org_id', (q) => q.eq('orgId', world.owner.orgId))
+          .collect()
+      )[0]!;
+      await ctx.db.patch(subscription._id, { status: 'canceled' });
+    });
+    await world.t.mutation(internal.archiveInternal.syncLifecycleForOrg, {
+      orgId: world.owner.orgId,
+    });
+    await world.t.run(async (ctx) => {
+      const subscription = (
+        await ctx.db
+          .query('subscriptions')
+          .withIndex('by_org_id', (q) => q.eq('orgId', world.owner.orgId))
+          .collect()
+      )[0]!;
+      await ctx.db.patch(subscription._id, { status: 'active' });
+    });
+    await world.t.mutation(internal.archiveInternal.syncLifecycleForOrg, {
+      orgId: world.owner.orgId,
+    });
+
+    const entitlementUpdated = await owner.query(api.archive.getStatus, {});
+    expect(entitlementUpdated).toMatchObject({
+      storedBytes: 10,
+      lifecycle: 'active',
+    });
+    await expect(
+      world.t.mutation(internal.archiveInternal.applyServerStatusByOrganization, {
+        orgId: world.owner.orgId,
+        revision: 1,
+        storedBytes: 10,
+        lifecycle: 'blocked',
+      }),
+    ).rejects.toThrow('reused with a different payload');
+    await expect(
+      world.t.mutation(internal.archiveInternal.applyServerStatusByOrganization, {
+        orgId: world.owner.orgId,
+        revision: 2,
+        storedBytes: 10,
+        lifecycle: 'blocked',
+      }),
+    ).resolves.toEqual({ revision: 2, replay: false });
+    expect(await owner.query(api.archive.getStatus, {})).toMatchObject({
+      storedBytes: 10,
+      lifecycle: 'blocked',
+    });
+  });
+
   it('keys session integrity by contribution and never reassigns ownership on collision', async () => {
     enableArchive();
     const world = await seedWorld();

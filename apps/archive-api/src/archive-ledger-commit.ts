@@ -19,10 +19,10 @@ import {
 import { readLedgerScan, readLedgerSnapshot } from './archive-ledger-storage';
 import {
   commitIntent,
-  discardPendingIntent,
   readIntent,
   readPendingIntent,
   markIntentReady,
+  markIntentWriteAuthorized,
   writeIntent,
   assertPendingIntentAuthenticated,
   encryptPendingIntentState,
@@ -33,6 +33,7 @@ import { reconcileArchiveUpload } from './archive-ledger-reconciliation';
 import { buildAcknowledgement, intentDigest, parseCommitEnvelope } from './archive-ledger-support';
 import {
   assertPendingIntentMatches,
+  discardDefinitelyUnwrittenIntent,
   pendingExpectedObjects,
   recoverPendingIntent,
   unwrapKey,
@@ -218,11 +219,18 @@ export async function commitArchiveSession(
       envelope.scope.orgId,
       envelope.keyVersion,
     );
+    if (priorIntent.status === 'building') markIntentReady(storage, intentHash);
     const reservation = await budget.reserveStorage({
       orgId: envelope.scope.orgId,
       objects: priorIntent.objects.map(storageBudgetObject),
     });
-    if (!reservation.accepted) throw new ArchiveContractError('storage_cap_exceeded');
+    if (!reservation.accepted) {
+      await discardDefinitelyUnwrittenIntent(storage, budget, envelope.scope.orgId, priorIntent);
+      throw new ArchiveContractError('storage_cap_exceeded');
+    }
+    if (priorIntent.status !== 'write_authorized') {
+      markIntentWriteAuthorized(storage, intentHash);
+    }
     await verifyObjectsAndReleaseDefinitivelyUnwritten(
       env.ARCHIVE_STORAGE,
       priorIntent.objects,
@@ -236,7 +244,6 @@ export async function commitArchiveSession(
       orgId: envelope.scope.orgId,
       objects: priorIntent.objects.map(storageBudgetObject),
     });
-    if (priorIntent.status === 'building') markIntentReady(storage, intentHash);
     commitIntent(storage, intentHash, priorIntent.commit!, priorIntent.acknowledgement);
     await budget.recordArchiveAcknowledgement({
       orgId: envelope.scope.orgId,
@@ -262,9 +269,10 @@ export async function commitArchiveSession(
     objects: objects.map(storageBudgetObject),
   });
   if (!reservation.accepted) {
-    discardPendingIntent(storage, intentHash);
+    await discardDefinitelyUnwrittenIntent(storage, budget, envelope.scope.orgId, intent);
     throw new ArchiveContractError('storage_cap_exceeded');
   }
+  markIntentWriteAuthorized(storage, intentHash);
   await verifyObjectsAndReleaseDefinitivelyUnwritten(env.ARCHIVE_STORAGE, objects, (unwritten) =>
     budget.releaseStorage({
       orgId: envelope.scope.orgId,

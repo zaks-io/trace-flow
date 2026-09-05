@@ -9,6 +9,18 @@ export interface ArchiveStatusUpdate {
 }
 
 const STATUS_TIMEOUT_MS = 5000;
+const REVISION_CONFLICT_ERROR = 'Archive status revision conflict';
+
+class ArchiveStatusRevisionConflictError extends Error {
+  constructor() {
+    super('archive_status_revision_conflict');
+    this.name = 'ArchiveStatusRevisionConflictError';
+  }
+}
+
+export function isArchiveStatusRevisionConflict(error: unknown): boolean {
+  return error instanceof ArchiveStatusRevisionConflictError;
+}
 
 export function parseArchiveStatusUpdate(value: unknown): ArchiveStatusUpdate {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -56,7 +68,20 @@ export async function publishArchiveStatus(
     body: JSON.stringify(update),
     signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
   });
-  if (!response.ok) throw new Error('archive_status_publication_failed');
+  if (!response.ok) {
+    if (response.status === 409) {
+      const body: unknown = await response.json().catch(() => undefined);
+      if (
+        typeof body === 'object' &&
+        body !== null &&
+        !Array.isArray(body) &&
+        (body as Record<string, unknown>).error === REVISION_CONFLICT_ERROR
+      ) {
+        throw new ArchiveStatusRevisionConflictError();
+      }
+    }
+    throw new Error('archive_status_publication_failed');
+  }
 
   const body = await response.json();
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {

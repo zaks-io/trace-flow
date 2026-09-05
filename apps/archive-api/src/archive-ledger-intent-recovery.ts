@@ -9,7 +9,9 @@ import {
   type PendingExpectedObject,
   type PendingIntent,
   markIntentReady,
+  markIntentWriteAuthorized,
   commitIntent,
+  discardPendingIntent,
 } from './archive-ledger-intent';
 import type { ArchiveR2Object } from './archive-r2';
 import {
@@ -82,7 +84,13 @@ export async function recoverPendingIntent(
     orgId: envelope.scope.orgId,
     objects: pending.objects.map(storageBudgetObject),
   });
-  if (!reservation.accepted) throw new ArchiveContractError('storage_cap_exceeded');
+  if (!reservation.accepted) {
+    await discardDefinitelyUnwrittenIntent(storage, budget, envelope.scope.orgId, pending);
+    throw new ArchiveContractError('storage_cap_exceeded');
+  }
+  if (pending.status !== 'write_authorized') {
+    markIntentWriteAuthorized(storage, pending.intentHash);
+  }
   await verifyObjectsAndReleaseDefinitivelyUnwritten(
     env.ARCHIVE_STORAGE,
     pending.objects,
@@ -101,6 +109,25 @@ export async function recoverPendingIntent(
     orgId: envelope.scope.orgId,
     acknowledgedAt: Date.now(),
   });
+}
+
+export async function discardDefinitelyUnwrittenIntent(
+  storage: DurableObjectStorage,
+  budget: {
+    releaseStorage(input: {
+      orgId: string;
+      objects: ReturnType<typeof storageBudgetObject>[];
+    }): Promise<unknown>;
+  },
+  orgId: string,
+  pending: PendingIntent,
+): Promise<void> {
+  if (pending.status === 'write_authorized') return;
+  await budget.releaseStorage({
+    orgId,
+    objects: pending.objects.map(storageBudgetObject),
+  });
+  discardPendingIntent(storage, pending.intentHash);
 }
 
 export function pendingExpectedObjects(

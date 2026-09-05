@@ -11,7 +11,7 @@ import { verifyObjectsAndReleaseDefinitivelyUnwritten } from '../archive-ledger-
 import { archiveObjectKey, archiveOrganizationPrefix } from '../archive-storage-key';
 import type { ArchiveScope } from '../archive-contract';
 import { reconcileBudgetInventoryPage } from '../archive-storage-budget-reconciliation';
-import { reserveBudgetStorage } from '../archive-storage-budget-ledger';
+import { rebaseStatusAfterConflict, reserveBudgetStorage } from '../archive-storage-budget-ledger';
 
 const runtimeEnv = workerEnv as unknown as Pick<
   ArchiveApiEnv,
@@ -923,5 +923,87 @@ describe('StorageBudget Durable Object', () => {
       ),
     ]);
     expect(retained).toEqual([{ revision: outbox[0]!.revision }]);
+  });
+
+  it('rebases a confirmed Convex revision conflict and eventually publishes current budget state', async () => {
+    const orgId = `budget-status-conflict-${crypto.randomUUID()}`;
+    const stub = budget(orgId);
+    const planned = object(`budget/${crypto.randomUUID()}`, 23);
+    await stub.reserveStorage({ orgId, objects: [planned] });
+    await stub.commitStorage({ orgId, objects: [planned] });
+    const original = await runInDurableObject(stub, (_instance, state) => [
+      ...state.storage.sql.exec<{ revision: number }>(
+        'SELECT revision FROM storage_budget_status_outbox WHERE id = 1',
+      ),
+    ]);
+    const published: Record<string, unknown>[] = [];
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const request = new Request(input, init);
+      const payload: Record<string, unknown> = await request.json();
+      published.push(payload);
+      if (published.length === 1) {
+        return Response.json({ error: 'Archive status revision conflict' }, { status: 409 });
+      }
+      return Response.json({ revision: payload.revision, replay: false });
+    });
+    try {
+      await expect(stub.flushStatusOutbox()).resolves.toBe(false);
+      const rebased = await runInDurableObject(stub, (_instance, state) => [
+        ...state.storage.sql.exec<{ revision: number; payload: string }>(
+          'SELECT revision, payload FROM storage_budget_status_outbox WHERE id = 1',
+        ),
+      ]);
+      expect(rebased).toHaveLength(1);
+      expect(rebased[0]!.revision).toBe(original[0]!.revision + 1);
+      expect(JSON.parse(rebased[0]!.payload)).toMatchObject({
+        orgId,
+        revision: original[0]!.revision + 1,
+        storedBytes: 23,
+        lifecycle: 'active',
+      });
+
+      await expect(stub.flushStatusOutbox()).resolves.toBe(true);
+      expect(published.map((payload) => payload.revision)).toEqual([
+        original[0]!.revision,
+        original[0]!.revision + 1,
+      ]);
+      const remaining = await runInDurableObject(stub, (_instance, state) => [
+        ...state.storage.sql.exec<{ revision: number }>(
+          'SELECT revision FROM storage_budget_status_outbox WHERE id = 1',
+        ),
+      ]);
+      expect(remaining).toEqual([]);
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it('does not clobber a newer outbox row while handling a confirmed revision conflict', async () => {
+    const orgId = `budget-status-concurrent-${crypto.randomUUID()}`;
+    const stub = budget(orgId);
+    const planned = object(`budget/${crypto.randomUUID()}`, 29);
+    await stub.reserveStorage({ orgId, objects: [planned] });
+    await stub.commitStorage({ orgId, objects: [planned] });
+    const original = await runInDurableObject(stub, (_instance, state) => [
+      ...state.storage.sql.exec<{ revision: number }>(
+        'SELECT revision FROM storage_budget_status_outbox WHERE id = 1',
+      ),
+    ]);
+    await stub.recordArchiveAcknowledgement({ orgId, acknowledgedAt: 1234 });
+    const rebased = await runInDurableObject(stub, (_instance, state) =>
+      rebaseStatusAfterConflict(state.storage, orgId, original[0]!.revision),
+    );
+    expect(rebased).toBe(false);
+    const retained = await runInDurableObject(stub, (_instance, state) => [
+      ...state.storage.sql.exec<{ revision: number; payload: string }>(
+        'SELECT revision, payload FROM storage_budget_status_outbox WHERE id = 1',
+      ),
+    ]);
+    expect(retained).toHaveLength(1);
+    expect(retained[0]!.revision).toBe(original[0]!.revision + 1);
+    expect(JSON.parse(retained[0]!.payload)).toMatchObject({
+      revision: original[0]!.revision + 1,
+      lastDurableAcknowledgedAt: 1234,
+    });
   });
 });

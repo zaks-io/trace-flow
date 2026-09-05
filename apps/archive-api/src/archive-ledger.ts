@@ -36,7 +36,7 @@ export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
       'CREATE TABLE IF NOT EXISTS pending_intents (intent_hash TEXT PRIMARY KEY, status TEXT NOT NULL, base_element_count INTEGER NOT NULL, base_chain_head TEXT NOT NULL)',
     );
     this.ctx.storage.sql.exec(
-      "CREATE INDEX IF NOT EXISTS pending_intents_active_status ON pending_intents (status) WHERE status IN ('building', 'ready')",
+      "CREATE INDEX IF NOT EXISTS pending_intents_active_status_v2 ON pending_intents (status) WHERE status IN ('building', 'ready', 'write_authorized')",
     );
     this.ctx.storage.sql.exec(
       'CREATE TABLE IF NOT EXISTS pending_intent_metadata (intent_hash TEXT NOT NULL, part_index INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (intent_hash, part_index))',

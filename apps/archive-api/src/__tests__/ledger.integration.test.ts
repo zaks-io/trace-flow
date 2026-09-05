@@ -35,7 +35,7 @@ import {
   recordChainHash,
 } from '../archive-chain';
 import { archiveSessionPrefix, packNewElements, decompress } from '../archive-packing';
-import { verifyOrPutImmutableObject } from '../archive-r2';
+import { storageBudgetObject, verifyOrPutImmutableObject } from '../archive-r2';
 import type { ArchiveSessionLedger } from '../archive-ledger';
 import type { StorageBudget } from '../archive-storage-budget';
 import { app } from '../index';
@@ -52,7 +52,11 @@ import { readLedgerScan, readLedgerSnapshot } from '../archive-ledger-storage';
 import {
   encodePendingPlaintext,
   encryptPendingIntentState,
+  discardPendingIntent,
+  markIntentReady,
+  markIntentWriteAuthorized,
   pendingIntentStateHash,
+  readPendingIntent,
   writeIntent,
   type PendingIntent,
 } from '../archive-ledger-intent';
@@ -503,7 +507,7 @@ describe('Archive Session Ledger', () => {
       }
       const explain = () => [
         ...durableState.storage.sql.exec<{ detail: string }>(
-          "EXPLAIN QUERY PLAN SELECT intent_hash FROM pending_intents WHERE status IN ('building', 'ready') LIMIT 1",
+          "EXPLAIN QUERY PLAN SELECT intent_hash FROM pending_intents WHERE status IN ('building', 'ready', 'write_authorized') LIMIT 1",
         ),
       ];
       const planBefore = explain();
@@ -1796,6 +1800,16 @@ describe('Archive Session Ledger', () => {
       complete_prefix_base64: base64(exactPrefix([record])),
     };
     const { stub, acknowledgement } = await seedPendingCommit(currentScope, upload);
+    const authorizedIntent = await runInDurableObject(stub, (_instance, state) => {
+      const pending = readPendingIntent(state.storage);
+      if (!pending) throw new Error('pending intent missing');
+      markIntentReady(state.storage, pending.intentHash);
+      markIntentWriteAuthorized(state.storage, pending.intentHash);
+      discardPendingIntent(state.storage, pending.intentHash);
+      return readPendingIntent(state.storage);
+    });
+    expect(authorizedIntent).toMatchObject({ status: 'write_authorized' });
+    expect(authorizedIntent?.objects.length).toBeGreaterThan(0);
     const persistedIntent = await runInDurableObject(stub, (_instance, state) =>
       [
         ...state.storage.sql.exec<{ data: string }>(
@@ -1831,6 +1845,100 @@ describe('Archive Session Ledger', () => {
         ][0]?.status,
     );
     expect(intentState).toBe('committed');
+  });
+
+  it('preserves an authorized partial write through a relaunched cap rejection', async () => {
+    const currentScope = scope('codex', `authorized-cap-${crypto.randomUUID()}`);
+    const record = await observation(
+      currentScope.source,
+      currentScope.sourceSessionId,
+      partFor(currentScope.source),
+      'authorized-partial-record',
+      '{"authorized_partial":true}',
+    );
+    const upload = {
+      source_session_id: currentScope.sourceSessionId,
+      observations: [record],
+      checkpoint: await checkpoint(
+        currentScope.source,
+        currentScope.sourceSessionId,
+        partFor(currentScope.source),
+        [record],
+      ),
+      complete_prefix_base64: base64(exactPrefix([record])),
+    } satisfies ArchiveUploadRequest;
+    const request = await envelope(currentScope, upload);
+    const stub = newLedger(currentScope);
+    let objectReads = 0;
+    const partialWriteBucket = {
+      get: async (key: string) => {
+        objectReads += 1;
+        if (objectReads === 3) throw new Error('partial_r2_read_failure');
+        return runtimeEnv.ARCHIVE_STORAGE.get(key);
+      },
+      put: runtimeEnv.ARCHIVE_STORAGE.put.bind(runtimeEnv.ARCHIVE_STORAGE),
+      head: runtimeEnv.ARCHIVE_STORAGE.head.bind(runtimeEnv.ARCHIVE_STORAGE),
+    } as unknown as R2Bucket;
+
+    await expect(
+      runInDurableObject(stub, (_instance, state) =>
+        commitArchiveSession(
+          state.storage,
+          { ...runtimeEnv, ARCHIVE_STORAGE: partialWriteBucket } as ArchiveApiEnv,
+          request,
+        ),
+      ),
+    ).rejects.toThrow('partial_r2_read_failure');
+
+    const pending = await runInDurableObject(stub, (_instance, state) =>
+      readPendingIntent(state.storage),
+    );
+    expect(pending).toMatchObject({ status: 'write_authorized' });
+    expect(pending?.objects.length).toBeGreaterThan(1);
+    const survivingObject = pending!.objects[0]!;
+    const survivingBudgetObject = storageBudgetObject(survivingObject);
+    await expect(runtimeEnv.ARCHIVE_STORAGE.head(survivingObject.key)).resolves.not.toBeNull();
+
+    const budgetStub = runtimeEnv.STORAGE_BUDGET.getByName(currentScope.orgId);
+    const partialSnapshot = await budgetStub.getStorageBudget({ orgId: currentScope.orgId });
+    expect(partialSnapshot).toMatchObject({
+      reservedBytes: survivingBudgetObject.bytes,
+      committedBytes: 0,
+    });
+    const filler = {
+      objectKey: `budget/${crypto.randomUUID()}`,
+      objectClass: 'agent_archive_chunk' as const,
+      bytes: ARCHIVE_STORAGE_CAP_BYTES - survivingBudgetObject.bytes - 1,
+      expiresAt: null,
+    };
+    await expect(
+      budgetStub.reserveStorage({ orgId: currentScope.orgId, objects: [filler] }),
+    ).resolves.toMatchObject({ accepted: true });
+    const beforeRejection = await budgetStub.getStorageBudget({ orgId: currentScope.orgId });
+
+    const rejected = await call(newLedger(currentScope), request);
+    expect(rejected.response.status).toBe(507);
+    expect(rejected.body).toEqual({ error: 'storage_cap_exceeded' });
+    expect(
+      await runInDurableObject(stub, (_instance, state) => readPendingIntent(state.storage)),
+    ).toMatchObject({ status: 'write_authorized' });
+    const afterRejection = await budgetStub.getStorageBudget({ orgId: currentScope.orgId });
+    expect(afterRejection.reservedBytes).toBe(beforeRejection.reservedBytes);
+    expect(afterRejection.reservedBytes).toBe(filler.bytes + survivingBudgetObject.bytes);
+
+    await budgetStub.releaseStorage({ orgId: currentScope.orgId, objects: [filler] });
+    const recovered = await call(newLedger(currentScope), request);
+    expect(recovered.response.status).toBe(200);
+    expect(recovered.body).toMatchObject({ generation: 1 });
+    await expect(budgetStub.getStorageBudget({ orgId: currentScope.orgId })).resolves.toMatchObject(
+      {
+        reservedBytes: 0,
+        committedBytes: pending!.objects.reduce(
+          (total, object) => total + storageBudgetObject(object).bytes,
+          0,
+        ),
+      },
+    );
   });
 
   it.each(['claude', 'codex'] as const)(
@@ -3934,7 +4042,7 @@ describe('Archive Session Ledger', () => {
     expect(failure).toBe('storage_reservation_result_ambiguous');
     const pending = await runInDurableObject(stub, (_instance, state) => [
       ...state.storage.sql.exec<{ status: string }>(
-        "SELECT status FROM pending_intents WHERE status IN ('building', 'ready')",
+        "SELECT status FROM pending_intents WHERE status IN ('building', 'ready', 'write_authorized')",
       ),
     ]);
     expect(pending).toEqual([{ status: 'ready' }]);
@@ -3945,6 +4053,114 @@ describe('Archive Session Ledger', () => {
     const recovered = await call(stub, request);
     expect(recovered.response.status).toBe(200);
     expect(recovered.body).toMatchObject({ generation: 1 });
+  });
+
+  it('removes a definitely unwritten intent after a relaunched reservation is capped', async () => {
+    const currentScope = scope('codex', `pre-reservation-cap-${crypto.randomUUID()}`);
+    const randomPayload = new Uint8Array(12_000);
+    crypto.getRandomValues(randomPayload);
+    const record = await observation(
+      currentScope.source,
+      currentScope.sourceSessionId,
+      partFor(currentScope.source),
+      'large-unwritten-record',
+      JSON.stringify({ payload: base64(randomPayload) }),
+    );
+    const upload = {
+      source_session_id: currentScope.sourceSessionId,
+      observations: [record],
+      checkpoint: await checkpoint(
+        currentScope.source,
+        currentScope.sourceSessionId,
+        partFor(currentScope.source),
+        [record],
+      ),
+      complete_prefix_base64: base64(exactPrefix([record])),
+    } satisfies ArchiveUploadRequest;
+    const request = await envelope(currentScope, upload);
+    const stub = newLedger(currentScope);
+    const abortBeforeReservation = {
+      ...runtimeEnv,
+      STORAGE_BUDGET: {
+        getByName: () => ({
+          reserveStorage: async () => {
+            throw new Error('abort_before_storage_reservation');
+          },
+        }),
+      },
+    } as unknown as ArchiveApiEnv;
+
+    await expect(
+      runInDurableObject(stub, (_instance, state) =>
+        commitArchiveSession(state.storage, abortBeforeReservation, request),
+      ),
+    ).rejects.toThrow('abort_before_storage_reservation');
+    const persisted = await runInDurableObject(stub, (_instance, state) => {
+      const pending = readPendingIntent(state.storage);
+      return {
+        status: pending?.status,
+        bytes: pending?.objects.reduce(
+          (total, object) => total + new TextEncoder().encode(object.body).byteLength,
+          0,
+        ),
+      };
+    });
+    expect(persisted.status).toBe('ready');
+    expect(persisted.bytes).toBeGreaterThan(5_000);
+    expect(
+      await runtimeEnv.ARCHIVE_STORAGE.list({ prefix: await archiveSessionPrefix(currentScope) }),
+    ).toMatchObject({ objects: [] });
+
+    const budgetStub = runtimeEnv.STORAGE_BUDGET.getByName(currentScope.orgId);
+    const filler = {
+      objectKey: `budget/${crypto.randomUUID()}`,
+      objectClass: 'agent_archive_chunk' as const,
+      bytes: ARCHIVE_STORAGE_CAP_BYTES - 5_000,
+      expiresAt: null,
+    };
+    await expect(
+      budgetStub.reserveStorage({ orgId: currentScope.orgId, objects: [filler] }),
+    ).resolves.toMatchObject({ accepted: true });
+    await budgetStub.commitStorage({ orgId: currentScope.orgId, objects: [filler] });
+
+    const rejected = await call(newLedger(currentScope), request);
+    expect(rejected.response.status).toBe(507);
+    expect(rejected.body).toEqual({ error: 'storage_cap_exceeded' });
+    expect(
+      await runInDurableObject(stub, (_instance, state) => readPendingIntent(state.storage)),
+    ).toBeNull();
+    await expect(budgetStub.getStorageBudget({ orgId: currentScope.orgId })).resolves.toMatchObject(
+      {
+        reservedBytes: 0,
+        committedBytes: ARCHIVE_STORAGE_CAP_BYTES - 5_000,
+        availableBytes: 5_000,
+      },
+    );
+
+    const replacement = await observation(
+      currentScope.source,
+      currentScope.sourceSessionId,
+      partFor(currentScope.source),
+      'small-replacement-record',
+      '{}',
+    );
+    const replacementUpload = {
+      source_session_id: currentScope.sourceSessionId,
+      observations: [replacement],
+      checkpoint: await checkpoint(
+        currentScope.source,
+        currentScope.sourceSessionId,
+        partFor(currentScope.source),
+        [replacement],
+      ),
+      complete_prefix_base64: base64(exactPrefix([replacement])),
+    } satisfies ArchiveUploadRequest;
+    const replacementResult = await call(
+      newLedger(currentScope),
+      await envelope(currentScope, replacementUpload),
+    );
+    expect(replacementResult.response.status).toBe(200);
+    expect(replacementResult.body).toMatchObject({ generation: 1 });
   });
 
   it('holds the one-and-a-half MiB uncompressed chunk boundary', async () => {
