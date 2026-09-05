@@ -3,7 +3,7 @@
 # break-glass / local path; CI is the normal deploy path (.github/workflows/deploy.yml runs the apply
 # on merge to main, ci.yml runs `--check` on every PR that touches datasources/** or pipes/**).
 # `tb build` + `tb --cloud deploy --check` is the only thing that counts as schema verification
-# (TRA-110, TRA-118). There is no manual admin-token insert path.
+# before deployment. There is no manual admin-token insert path.
 #
 # Auth: defaults to the ambient `tb` cloud login (.tinyb). For headless/CI use, set TB_TOKEN (and
 # TB_HOST if not api.tinybird.co) — `tb` reads those natively, no interactive login needed. The token
@@ -19,7 +19,7 @@
 # Every `tb --cloud …` command (deploy, deploy --check, workspace current) prompts to confirm "running
 # from an untracked folder" unless tb detects CI via the GITHUB_ACTIONS/CI env vars. The Blacksmith
 # runner image doesn't reliably export those, so on empty stdin the prompt made the deploy exit 1 with
-# no output — silently killing the whole prod deploy (TRA-118). Forcing CI=1 ourselves makes tb skip
+# no output, silently killing the whole prod deploy. Forcing CI=1 ourselves makes tb skip
 # the prompt regardless of runner; the token then defines the workspace and a bad token fails loudly.
 #
 # Phased rollout:

@@ -1,4 +1,4 @@
-// Post-deploy production smoke test for the Agent Conversation Analytics cloud ingest path (TRA-110).
+// Post-deploy production smoke test for the Agent Conversation Analytics cloud ingest path.
 //
 // Verifies the real path end to end:
 //   Collector Credential -> agent-ingest prod Worker -> agent-ingest-prod queue ->

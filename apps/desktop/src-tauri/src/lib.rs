@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Trace Flow Desktop: the menu-bar Collector. Adapted from otto-desktop's lib.rs.
 
-//! The desktop Collector (TRA-115).
+//! The desktop Collector.
 //!
 //! A macOS menu-bar app that runs the same Collector path as the CLI through the shared
 //! `collector-embedder` crate: sign in via the browser device flow, store the Collector Credential in

@@ -463,7 +463,7 @@ mod tests {
             named_call("c1", "get_issue", "2026-05-16T20:53:00.000Z"),
             output(
                 "c1",
-                "{\"id\":\"TRA-1\",\"title\":\"x\"}",
+                "{\"id\":\"ISSUE-1\",\"title\":\"x\"}",
                 "2026-05-16T20:53:00.400Z",
             ),
         ];

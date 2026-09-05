@@ -6,9 +6,9 @@
 //! Both URLs resolve the same way: an environment override wins (so a local dev box, a smoke run, or
 //! deployed dev can retarget by env alone), else the baked production default. This is the zero-config
 //! path — `trace-flow login` and the desktop app reach production out of the box, and only an explicit
-//! env var points them elsewhere (TRA-120).
+//! env var points them elsewhere.
 //!
-//! The baked values are the production resources stood up in TRA-110:
+//! The baked values target the production resources:
 //! - ingest: the `collector.trace-flow.dev/*` route on the prod `trace-flow-agent-ingest` Worker
 //!   (`apps/agent-ingest/wrangler.jsonc`, `env.production.routes`).
 //! - Convex site: the prod deployment's `*.convex.site` origin (the device-flow / compatibility-policy

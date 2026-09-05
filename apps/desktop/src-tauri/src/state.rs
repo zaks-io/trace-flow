@@ -19,7 +19,7 @@ pub enum ConnectionState {
 }
 
 /// What the background sync engine is doing. Starts `Paused` so nothing leaves the machine until the
-/// user explicitly clicks "Start syncing" (the first-egress gate, TRA-115 AC #2).
+/// user explicitly clicks "Start syncing" through the first-egress gate.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SyncStatus {
     /// Connected and watching, but the user has not authorized egress yet.
@@ -46,7 +46,7 @@ impl SyncStatus {
     }
 }
 
-/// Per-source `.jsonl` file counts on this machine (Claude/Codex). Cursor is unsupported (TRA-108).
+/// Per-source `.jsonl` file counts on this machine. Cursor transcripts are not supported.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SourceCounts {
     pub claude_files: u32,

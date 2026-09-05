@@ -63,7 +63,7 @@
       },
     ],
   },
-  // Production agent pipeline (TRA-110). Prod-named worker drains the prod queue and writes to the
+  // Production agent pipeline. Prod-named worker drains the prod queue and writes to the
   // trace_flow_prod Tinybird workspace via the prod append-only TINYBIRD_TOKEN secret. Pricing reads
   // the existing prod MODEL_PRICING catalog (45dd0d5e…), the same namespace the prod proxy consumer
   // binds — never the dev catalog. Secrets (TINYBIRD_TOKEN, SENTRY_DSN) are set per-env via

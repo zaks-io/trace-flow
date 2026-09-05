@@ -200,7 +200,7 @@ jobs:
           packageManager: bun
 
   # Schema must land before any consumer ships, or a consumer can write rows in the new shape while the
-  # live workspace still has the old schema -> inserts rejected into _quarantine (TRA-118). Both
+  # live workspace still has the old schema -> inserts rejected into _quarantine. Both
   # consumers `needs:` this job. A no-op (no schema diff) is a clean exit; `tb --cloud deploy` reports
   # "no changes" and succeeds.
   deploy-tinybird-schema:
@@ -341,7 +341,7 @@ jobs:
           command: deploy --env production
           packageManager: bun
 
-  # Agent pipeline (TRA-110). Production-real: prod-named workers bound to prod queue/DLQ/KV via the
+  # Agent pipeline: prod-named workers bound to prod queue/DLQ/KV via the
   # [env.production] blocks, deployed with `--env production`. A guard step asserts the resolved prod
   # config binds no dev resources before either Worker deploys.
   deploy-agent-ingest:

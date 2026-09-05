@@ -2,10 +2,8 @@
 #
 # Turborepo deliberately does NOT manage Cargo — keep cargo builds out of the
 # Turbo graph. A dedicated CI job (ROADMAP task 6a) runs `cargo` directly on
-# this workspace. `apps/cli` is the user-facing collector CLI (TRA-112) and
-# `apps/desktop/src-tauri` is the desktop collector (TRA-115); both join the
-# workspace so they share the lock, the `collector-embedder` crate, and the
-# dedicated cargo CI job.
+# this workspace. The user-facing CLI and desktop collector both join the workspace so they share
+# the lock, the `collector-embedder` crate, and the dedicated cargo CI job.
 [workspace]
 resolver = "2"
 members = ["packages/collector-*", "apps/cli", "apps/desktop/src-tauri"]

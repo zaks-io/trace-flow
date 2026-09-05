@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Guard: fail if the production agent Workers would deploy dev-named resources.
 #
-# TRA-110 makes the agent ingest/consumer pipeline production-real. The failure mode this guards
-# against is a Production deploy that silently binds dev queues/KV/worker names or the dev rate-limit
-# namespace — exactly the pre-TRA-110 state (flat dev config deployed from the Production workflow).
+# This prevents a production deploy from silently binding dev queues, KV namespaces, Worker names,
+# or the dev rate-limit namespace through inherited top-level configuration.
 #
 # It renders each Worker's *resolved* production config via `wrangler deploy --env production
 # --dry-run` and asserts the output contains no forbidden dev tokens. Rendering (not grepping the

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Production smoke test for the Agent Conversation Analytics cloud ingest path (TRA-110).
+# Production smoke test for the Agent Conversation Analytics cloud ingest path.
 #
 # Runs scripts/agent-ingest-smoke.mjs under bun (the script imports the Worker's TS surrogate-key
 # derivation, so it must run under bun, not node). The credential and org JWT must come from the real

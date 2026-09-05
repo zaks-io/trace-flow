@@ -3,7 +3,7 @@
 
 //! The user's sync choices, persisted across relaunches.
 //!
-//! The first-egress gate (TRA-115 AC #2) asks the user once whether the app may upload. Before this
+//! The first-egress gate asks the user once whether the app may upload. Before this
 //! file existed that answer lived only in process memory, so every relaunch (login autostart, an
 //! update, a crash) silently reset the engine to paused and nothing synced until the user noticed the
 //! tray. Now the answer is written here and a relaunch resumes where the user left it.

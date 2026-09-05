@@ -51,7 +51,7 @@
       "simple": { "limit": 600, "period": 60 },
     },
   ],
-  // Production agent pipeline (TRA-110). Prod-named worker reachable at collector.trace-flow.dev
+  // Production agent pipeline. Prod-named worker reachable at collector.trace-flow.dev
   // (same trace-flow.dev zone as gateway/api). Binds the prod COLLECTOR_CREDS namespace and the
   // prod ingest queue; the rate limiter uses a fresh namespace_id 2007 (dev uses 2006 — never reuse
   // a namespace_id, per the rate-limit budget registry). CONVEX_SITE_URL is injected by
