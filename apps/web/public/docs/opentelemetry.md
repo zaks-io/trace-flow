@@ -1,9 +1,7 @@
 # OpenTelemetry
 
-These examples refer to Zaks.io's company deployment and require access. Trace Flow is internal
-development tooling shared as source, with no service availability or support commitment. For a
-fork, substitute your own endpoints and credentials. Requests and uploaded activity go to the
-configured deployment; use synthetic data when testing.
+These examples use the hosted Trace Flow service. An account with access is required.
+For your own deployment, see [self-hosted setup](/docs/quick-start#self-hosted-deployments).
 
 Set up your own tracer for custom spans, events, and attributes, then link LLM calls into the same trace tree.
 

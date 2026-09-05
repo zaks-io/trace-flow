@@ -244,6 +244,9 @@ export function CodeExample() {
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-border to-transparent" />
       <div className="mx-auto max-w-5xl px-6">
         <div className="mb-12 text-center">
+          <div className="mb-4 font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-primary">
+            API capture
+          </div>
           <h2 className="mb-3 text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
             Keep your SDK. Change the route.
           </h2>

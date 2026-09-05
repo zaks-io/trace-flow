@@ -17,22 +17,22 @@ const firaCode = Fira_Code({
 });
 
 export const metadata: Metadata = {
-  title: 'Trace Flow | Observability for models and coding agents',
+  title: 'Trace Flow | Your AI cost and performance history',
   description:
-    'Follow LLM requests and local coding-agent sessions in one place. Trace Flow is currently in private alpha.',
+    'Collect model and coding-agent analytics in the background. Track costs and performance over time with Trace Flow. Private alpha.',
   openGraph: {
-    title: 'Trace Flow | Observability for models and coding agents',
+    title: 'Trace Flow | Your AI cost and performance history',
     description:
-      'See cost, context growth, tool reliability, and model usage across LLM requests and coding-agent sessions.',
+      'Keep a history of your AI work. Track spending, performance, and wasted tokens across model calls and coding agents. Private alpha.',
     url: 'https://trace-flow.dev',
     siteName: 'Trace Flow',
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Trace Flow | Observability for models and coding agents',
+    title: 'Trace Flow | Your AI cost and performance history',
     description:
-      'See cost, context growth, tool reliability, and model usage across LLM requests and coding-agent sessions.',
+      'Keep a history of your AI work. Track spending, performance, and wasted tokens across model calls and coding agents. Private alpha.',
   },
 };
 

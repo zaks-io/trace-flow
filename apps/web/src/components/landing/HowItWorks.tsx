@@ -1,21 +1,21 @@
 const STEPS = [
   {
     step: '1',
-    title: 'Capture at the right boundary',
+    title: 'Connect your AI tools',
     description:
-      'Route model calls through the edge proxy. Private testers can also connect local Claude Code, Codex CLI, and macOS Cursor sessions.',
+      'Install the desktop app for coding-agent analytics, or point your existing SDK at Trace Flow for model API capture.',
   },
   {
     step: '2',
-    title: 'Keep the work moving',
+    title: 'Collect while you work',
     description:
-      'Responses keep streaming while traces, costs, and redacted agent facts are processed off the response path.',
+      'Model responses keep streaming. The desktop app syncs coding-session analytics in the background so you can keep working.',
   },
   {
     step: '3',
-    title: 'Investigate the pattern',
+    title: 'Come back to the history',
     description:
-      'Filter by provider, model, source, or repository. Compare changes across request and session views.',
+      'Filter by provider, model, source, or repository. Compare costs and performance across the work you have captured.',
   },
 ];
 
@@ -26,14 +26,14 @@ export function HowItWorks() {
       <div className="mx-auto max-w-5xl px-6">
         <div className="mb-16 text-center">
           <div className="mb-4 font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-primary">
-            The signal path
+            How it works
           </div>
           <h2 className="mb-4 text-3xl font-semibold tracking-[-0.035em] text-foreground sm:text-5xl">
-            Observe the work without getting in its way.
+            Keep working. Keep collecting.
           </h2>
           <p className="mx-auto max-w-2xl text-lg leading-8 text-muted-foreground">
-            Trace Flow keeps collection separate from the product path, then gives every signal the
-            same place to land.
+            Connect supported tools once, then collect data as you use them. Open Trace Flow when
+            you want to understand the cost or investigate a problem.
           </p>
         </div>
 
