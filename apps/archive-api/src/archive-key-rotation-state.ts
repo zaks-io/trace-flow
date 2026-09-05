@@ -163,6 +163,19 @@ export function rotationHealth(
   };
 }
 
+export function assertWritableKeyVersion(
+  storage: DurableObjectStorage,
+  keyVersion: number | undefined,
+): void {
+  if (keyVersion === undefined) return;
+  const state = readRotationState(storage);
+  if (!state) return;
+  if (state.status !== 'destroying' && state.status !== 'succeeded') return;
+  if (keyVersion === state.fromVersion) {
+    throw new ArchiveContractError('archive_key_version_retired');
+  }
+}
+
 export function countKeyVersionReferences(
   storage: DurableObjectStorage,
   keyVersion: number,

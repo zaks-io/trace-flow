@@ -315,6 +315,13 @@ export async function advanceStoredRotation(
     state.cursor = undefined;
     state.updatedAt = Date.now();
     writeRotationState(storage, state);
+    state.remainingReferences = countKeyVersionReferences(storage, state.fromVersion);
+    if (state.remainingReferences > 0) {
+      state.status = 'reencrypting';
+      state.updatedAt = Date.now();
+      writeRotationState(storage, state);
+      return rotationHealth(input.orgId, state);
+    }
 
     await destroyRetiringArchiveKey(
       env,
@@ -389,7 +396,10 @@ export async function mintAndActivateNextKey(
 ): Promise<ArchiveKeyActivation> {
   const active = await getActiveArchiveWrappedKey(env, orgId, logger);
   if (!active) throw new ArchiveContractError('key_unavailable');
-  if (active.rotationStatus === 'rotating' && active.retiringKeyVersion !== undefined) {
+  if (
+    active.retiringKeyVersion !== undefined &&
+    (active.rotationStatus === 'rotating' || active.rotationStatus === 'failed')
+  ) {
     return {
       orgId,
       fromVersion: active.retiringKeyVersion,

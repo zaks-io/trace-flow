@@ -120,6 +120,7 @@ const CONFLICT_ERROR_CLASSES = new Set([
   'archive_key_has_live_references',
   'archive_key_destroy_rejected',
   'archive_key_rotation_in_progress',
+  'archive_key_version_retired',
 ]);
 
 const TRANSIENT_ERROR_CLASSES = new Set([

@@ -1,6 +1,7 @@
 import type { ArchiveApiEnv } from './context';
 import { ArchiveContractError, assertIdentifier } from './archive-contract';
 import { parseArchiveStatusUpdate, type ArchiveStatusUpdate } from './archive-status';
+import { assertWritableKeyVersion } from './archive-key-rotation-state';
 
 export const ARCHIVE_STORAGE_CAP_BYTES = 100 * 1024 * 1024 * 1024;
 export const STORAGE_BUDGET_OBJECT_CLASSES = [
@@ -441,6 +442,7 @@ export async function reserveBudgetStorage(
     const additions: StorageBudgetObject[] = [];
     const existingObjects: StorageBudgetObject[] = [];
     for (const object of objects) {
+      assertWritableKeyVersion(storage, object.keyVersion);
       const existing = [
         ...storage.sql.exec<{
           object_class: StorageBudgetObjectClass;
@@ -510,6 +512,7 @@ export function commitBudgetStorage(
     budgetState(storage, input.orgId);
     const rows = new Map<string, { bytes: number; status: 'reserved' | 'committed' }>();
     for (const object of objects) {
+      assertWritableKeyVersion(storage, object.keyVersion);
       const row = [
         ...storage.sql.exec<{
           object_class: StorageBudgetObjectClass;

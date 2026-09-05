@@ -531,5 +531,13 @@ describe('archive key metadata internal boundary', () => {
       retiringKeyVersion: 1,
       activeKeyVersion: 2,
     });
+    await expect(
+      t.mutation(internal.archiveKeysInternal.activateVersion, {
+        orgId: orgA,
+        keyVersion: 3,
+        wrappedKey: thirdWrappedKey,
+        operationId: 'rotate:after-failure',
+      }),
+    ).rejects.toThrow('already in progress');
   });
 });

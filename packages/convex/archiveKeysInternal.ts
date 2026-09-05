@@ -266,7 +266,8 @@ export const activateVersion = internalMutation({
       }
     }
     if (
-      existingCustody.rotationStatus === 'rotating' &&
+      (existingCustody.rotationStatus === 'rotating' ||
+        existingCustody.rotationStatus === 'failed') &&
       existingCustody.rotationOperationId !== args.operationId
     ) {
       throw new Error('Archive key rotation already in progress');

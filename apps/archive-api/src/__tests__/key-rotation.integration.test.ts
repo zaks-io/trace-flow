@@ -624,6 +624,59 @@ describe('Archive encryption key rotation', () => {
     expect(custody.versions.has(1)).toBe(false);
   });
 
+  it('rejects a late reserve of a destroyed retiring key and resumes a failed rotation without minting another version', async () => {
+    const { orgId } = await seedOrg('retired');
+    const stub = await startRotation(orgId, 'rotate-retired');
+    const completed = await stub.advanceKeyRotation({ orgId, limit: 8 });
+    expect(completed.status).toBe('succeeded');
+    const lateReserve = await runInDurableObject(stub, async (instance: StorageBudget) => {
+      try {
+        await instance.reserveStorage({
+          orgId,
+          objects: plannedBudgetObjects([
+            {
+              objectKey: `org/${orgId}/chunks/late-v1`,
+              objectClass: 'chunk',
+              bytes: 16,
+              keyVersion: 1,
+            },
+          ]),
+        });
+        return 'accepted';
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+    expect(lateReserve).toBe('archive_key_version_retired');
+
+    const { orgId: failedOrgId } = await seedOrg('failed-resume');
+    await startRotation(failedOrgId, 'rotate-failed-resume');
+    custody.rotationStatus = 'failed';
+    const executionContext = createExecutionContext();
+    const resumed = await app.fetch(
+      new Request('https://archive.test/v1/archive/key-rotations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${SHARED}`,
+        },
+        body: JSON.stringify({ orgId: failedOrgId }),
+      }),
+      runtimeEnv,
+      executionContext,
+    );
+    await waitOnExecutionContext(executionContext);
+    expect(resumed.status).toBe(200);
+    await expect(resumed.json()).resolves.toMatchObject({
+      status: 'succeeded',
+      fromVersion: 1,
+      toVersion: 2,
+    });
+    expect(custody.activeVersion).toBe(2);
+    expect(custody.versions.has(3)).toBe(false);
+    expect(custody.versions.has(1)).toBe(false);
+  });
+
   it('does not double-count rotation temp objects in live storage bytes', async () => {
     const { orgId, objects } = await seedOrg('budget');
     const stub = budget(orgId);
