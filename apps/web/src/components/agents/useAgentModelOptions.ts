@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo } from 'react';
-import type { TinybirdResponse } from '@/components/usage/types';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import type { AgentUsageBreakdownRow } from './types';
 
@@ -16,7 +15,7 @@ export function modelOptionsFromRows(rows: AgentUsageBreakdownRow[]): string[] {
  * still scope the list so the menu only offers models present in the current slice.
  */
 export function useAgentModelOptions(filterParams: Record<string, string | number>): string[] {
-  const query = useTinybirdQuery<TinybirdResponse<AgentUsageBreakdownRow>>({
+  const query = useTinybirdQuery<AgentUsageBreakdownRow>({
     pipe: 'agent_usage_breakdown',
     params: {
       ...filterParams,

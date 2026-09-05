@@ -1,6 +1,6 @@
 import * as Sentry from '@sentry/cloudflare';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { axiomConfigFromEnv, createWorkerLogger, type Logger } from '@trace-flow/logging';
 import { applySecurityHeaders } from '@trace-flow/utils';
@@ -38,7 +38,7 @@ const ALLOWED_BROWSER_HEADERS = ['Content-Type', 'Authorization', 'Baggage', 'Se
 
 export const apiApp = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-apiApp.use('*', async (c, next) => {
+apiApp.use('*', async (c: Context<{ Bindings: Env; Variables: Variables }, string>, next) => {
   const isDev = c.env.SENTRY_ENVIRONMENT !== 'prod';
   const allowed = isDev
     ? [...PRODUCTION_ORIGINS, ...NON_PROD_ORIGINS, ...DEV_ORIGINS]
@@ -48,7 +48,6 @@ apiApp.use('*', async (c, next) => {
     allowMethods: ['GET', 'OPTIONS'],
     allowHeaders: ALLOWED_BROWSER_HEADERS,
   });
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
   return mw(c, next);
 });
 

@@ -47,17 +47,14 @@ function bytesToHex(bytes: Uint8Array): string {
 /**
  * btoa needs a binary (latin-1) string. Building it via `s += fromCharCode(b)`
  * in a loop is O(n²) because each `+=` re-allocates. Chunking through
- * `String.fromCharCode.apply` keeps it O(n) while staying under the
- * apply-argument limit.
+ * `String.fromCharCode` keeps it O(n) while staying under the
+ * argument limit.
  */
 const BASE64_CHUNK = 0x8000;
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = '';
   for (let i = 0; i < bytes.length; i += BASE64_CHUNK) {
-    binary += String.fromCharCode.apply(
-      null,
-      bytes.subarray(i, i + BASE64_CHUNK) as unknown as number[],
-    );
+    binary += String.fromCharCode(...bytes.subarray(i, i + BASE64_CHUNK));
   }
   return btoa(binary);
 }

@@ -47,16 +47,16 @@ export default function Billing() {
 
   const subscriptionAutoOverage = summary?.subscription?.autoOverage;
   const subscriptionOverageCapCents = summary?.subscription?.overageCapCents;
+  const hasSubscription = summary?.subscription !== undefined;
   useEffect(() => {
-    if (!summary?.subscription) return;
+    if (!hasSubscription) return;
     setAutoOverage(Boolean(subscriptionAutoOverage));
     if (subscriptionOverageCapCents !== undefined) {
       setOverageCap((subscriptionOverageCapCents / 100).toFixed(2));
     }
     // Depend on the scalar fields, not the subscription object identity — the reactive billing
     // query re-emits a new object on every usage change, which would otherwise reset unsaved edits.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subscriptionAutoOverage, subscriptionOverageCapCents]);
+  }, [hasSubscription, subscriptionAutoOverage, subscriptionOverageCapCents]);
 
   useEffect(() => {
     if (summary === null) {

@@ -23,10 +23,6 @@ import {
 } from '@/components/requests/data-table';
 import { evaluateAlertsForTraces } from '@/lib/alerts';
 
-interface TinybirdResponse {
-  data: RequestRow[];
-}
-
 function getRequestId(row: RequestRow): string | undefined {
   return parseSpanAttributes(row.SpanAttributes)[GEN_AI.REQUEST_ID];
 }
@@ -87,7 +83,7 @@ export default function Requests({ preloadedAlerts, preloadedApiKeys }: Requests
     return params;
   }, [filters, isLiveMode, latestReceivedAt, apiKeyFilter]);
 
-  const { data, isLoading, error, refetch, dataUpdatedAt } = useTinybirdQuery<TinybirdResponse>({
+  const { data, isLoading, error, refetch, dataUpdatedAt } = useTinybirdQuery<RequestRow>({
     pipe: 'traces_list',
     params: pipeParams,
     enabled: (!filters.apiKey || Boolean(apiKeyFilter)) && !apiKeyFilterError,

@@ -17,8 +17,7 @@ export type TraceFlowToolSurface = 'mcp' | 'analyst';
 export type ToolHandler = (
   ctx: ToolCtx,
   keys: string[],
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  args: any,
+  args: Record<string, unknown>,
   retentionDays: number,
 ) => Promise<ToolCallResult>;
 

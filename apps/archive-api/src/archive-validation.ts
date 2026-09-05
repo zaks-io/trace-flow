@@ -73,18 +73,21 @@ export async function parseAndValidateUpload(
   if (completePrefixBase64 !== undefined && typeof completePrefixBase64 !== 'string') {
     throw new ArchiveContractError('invalid_checkpoint_prefix');
   }
-  const appendProof = value.append_proof as ArchiveUploadRequest['append_proof'];
-  if (appendProof !== undefined) {
-    if (typeof appendProof !== 'object' || appendProof === null || Array.isArray(appendProof)) {
-      throw new ArchiveContractError('invalid_checkpoint_prefix');
-    }
-    const proof = appendProof as unknown as Record<string, unknown>;
+  const proof = value.append_proof;
+  let appendProof: ArchiveUploadRequest['append_proof'];
+  if (proof !== undefined) {
     if (
+      !isRecord(proof) ||
       typeof proof.prior_prefix_chain_sha256 !== 'string' ||
       typeof proof.appended_prefix_base64 !== 'string'
     ) {
       throw new ArchiveContractError('invalid_checkpoint_prefix');
     }
+    appendProof = {
+      ...proof,
+      prior_prefix_chain_sha256: proof.prior_prefix_chain_sha256,
+      appended_prefix_base64: proof.appended_prefix_base64,
+    };
   }
   const lastObservationIdentity = observations.at(-1)?.source_record_identity ?? null;
   const isFullScan =

@@ -15,9 +15,7 @@ export const backfillHashedTokenIds = internalMutation({
       // Skip tokens that already have hashedTokenId
       if (token.hashedTokenId) continue;
       // Old rows have tokenId but no hashedTokenId — hash and backfill
-      const rawTokenId = (token as unknown as Record<string, unknown>).tokenId as
-        | string
-        | undefined;
+      const rawTokenId = token.tokenId;
       if (!rawTokenId) {
         // Token has neither field — delete as orphaned
         await ctx.db.delete(token._id);
@@ -179,9 +177,8 @@ export const backfillAll = internalMutation({
     let memberPatched = 0;
     for (const member of members) {
       const updates: Record<string, unknown> = {};
-      const raw = member as unknown as Record<string, unknown>;
-      if (raw.role === undefined) updates.role = 'member';
-      if (raw.status === undefined) updates.status = 'active';
+      if (!Object.prototype.hasOwnProperty.call(member, 'role')) updates.role = 'member';
+      if (!Object.prototype.hasOwnProperty.call(member, 'status')) updates.status = 'active';
       if (Object.keys(updates).length > 0) {
         await ctx.db.patch(member._id, updates);
         memberPatched++;

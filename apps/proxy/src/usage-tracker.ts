@@ -32,6 +32,14 @@ interface ConfigRow {
   period_end: number;
 }
 
+interface CounterRow {
+  subscription_units_used: number;
+  addon_units_used: number;
+  addon_baseline: number;
+  last_pushed_subscription: number;
+  last_pushed_addon: number;
+}
+
 interface UsageSyncPayload {
   orgId: string;
   periodStart: number;
@@ -111,12 +119,11 @@ export class UsageTracker extends DurableObject<Env> {
 
   private getConfig(): ConfigRow | null {
     const rows = this.ctx.storage.sql
-      .exec(
-        'SELECT org_id, tier, monthly_units, addon_units, period_start, period_end FROM config WHERE id = 1',
-      )
+      .exec<
+        Pick<ConfigRow, keyof ConfigRow>
+      >('SELECT org_id, tier, monthly_units, addon_units, period_start, period_end FROM config WHERE id = 1')
       .toArray();
-    if (rows.length === 0) return null;
-    return rows[0] as unknown as ConfigRow;
+    return rows[0] ?? null;
   }
 
   private requireConfig(): ConfigRow {
@@ -125,19 +132,14 @@ export class UsageTracker extends DurableObject<Env> {
     return config;
   }
 
-  private getCounters(): {
-    subscription_units_used: number;
-    addon_units_used: number;
-    addon_baseline: number;
-    last_pushed_subscription: number;
-    last_pushed_addon: number;
-  } {
+  private getCounters(): CounterRow {
     const rows = this.ctx.storage.sql
-      .exec(
-        'SELECT subscription_units_used, addon_units_used, addon_baseline, last_pushed_subscription, last_pushed_addon FROM counters WHERE id = 1',
-      )
+      .exec<
+        Pick<CounterRow, keyof CounterRow>
+      >('SELECT subscription_units_used, addon_units_used, addon_baseline, last_pushed_subscription, last_pushed_addon FROM counters WHERE id = 1')
       .toArray();
-    if (rows.length === 0) {
+    const counters = rows[0];
+    if (!counters) {
       return {
         subscription_units_used: 0,
         addon_units_used: 0,
@@ -146,13 +148,7 @@ export class UsageTracker extends DurableObject<Env> {
         last_pushed_addon: 0,
       };
     }
-    return rows[0] as unknown as {
-      subscription_units_used: number;
-      addon_units_used: number;
-      addon_baseline: number;
-      last_pushed_subscription: number;
-      last_pushed_addon: number;
-    };
+    return counters;
   }
 
   private seedConfig(subConfig: SubscriptionKVData, orgId: string) {

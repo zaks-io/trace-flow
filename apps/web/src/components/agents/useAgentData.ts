@@ -102,39 +102,39 @@ export function useAgentData({
     [usageParams, timezone],
   );
 
-  const timeseriesQuery = useTinybirdQuery<TinybirdResponse<AgentTimeseriesRow>>({
+  const timeseriesQuery = useTinybirdQuery<AgentTimeseriesRow>({
     pipe: 'agent_usage_timeseries',
     params: timeseriesParams,
   });
 
-  const burnSeriesQuery = useTinybirdQuery<TinybirdResponse<AgentTimeseriesRow>>({
+  const burnSeriesQuery = useTinybirdQuery<AgentTimeseriesRow>({
     pipe: 'agent_usage_timeseries',
     params: burnSeriesParams,
   });
 
-  const priorBurnSeriesQuery = useTinybirdQuery<TinybirdResponse<AgentTimeseriesRow>>({
+  const priorBurnSeriesQuery = useTinybirdQuery<AgentTimeseriesRow>({
     pipe: 'agent_usage_timeseries',
     params: priorBurnSeriesParams,
   });
 
-  const usageSeriesQuery = useTinybirdQuery<TinybirdResponse<AgentTimeseriesRow>>({
+  const usageSeriesQuery = useTinybirdQuery<AgentTimeseriesRow>({
     pipe: 'agent_usage_timeseries',
     params: usageSeriesParams,
   });
 
-  const summaryQuery = useTinybirdQuery<TinybirdResponse<AgentSummaryRow>>({
+  const summaryQuery = useTinybirdQuery<AgentSummaryRow>({
     pipe: 'agent_usage_summary',
     params: usageParams,
   });
 
-  const costDistributionQuery = useTinybirdQuery<TinybirdResponse<AgentCostDistributionRow>>({
+  const costDistributionQuery = useTinybirdQuery<AgentCostDistributionRow>({
     pipe: 'agent_session_cost_distribution',
     params: usageParams,
   });
 
   // Per-turn cost/context as conversations deepen (population view over turn_index). Model-scoped
   // like the other message-grain surfaces; one row per depth, fetched for every window.
-  const costByDepthQuery = useTinybirdQuery<TinybirdResponse<AgentCostByDepthRow>>({
+  const costByDepthQuery = useTinybirdQuery<AgentCostByDepthRow>({
     pipe: 'agent_cost_by_depth',
     params: usageParams,
   });
@@ -146,13 +146,13 @@ export function useAgentData({
     [usageParams],
   );
 
-  const topSessionsQuery = useTinybirdQuery<TinybirdResponse<AgentSessionRow>>({
+  const topSessionsQuery = useTinybirdQuery<AgentSessionRow>({
     pipe: 'agent_sessions_browser',
     params: topSessionsParams,
     enabled: spendDetailEnabled,
   });
 
-  const reviewUnitCostsQuery = useTinybirdQuery<TinybirdResponse<AgentReviewUnitCostRow>>({
+  const reviewUnitCostsQuery = useTinybirdQuery<AgentReviewUnitCostRow>({
     pipe: 'agent_review_unit_costs',
     params: { ...usageParams, limit: 10 },
   });
@@ -163,17 +163,17 @@ export function useAgentData({
     [usageParams],
   );
 
-  const notableTotalQuery = useTinybirdQuery<TinybirdResponse<AgentNotableChangeRow>>({
+  const notableTotalQuery = useTinybirdQuery<AgentNotableChangeRow>({
     pipe: 'agent_notable_changes',
     params: usageParams,
   });
 
-  const notableByRepoQuery = useTinybirdQuery<TinybirdResponse<AgentNotableChangeRow>>({
+  const notableByRepoQuery = useTinybirdQuery<AgentNotableChangeRow>({
     pipe: 'agent_notable_changes',
     params: notableByRepoParams,
   });
 
-  const contextQuery = useTinybirdQuery<TinybirdResponse<AgentContextHealthRow>>({
+  const contextQuery = useTinybirdQuery<AgentContextHealthRow>({
     pipe: 'agent_context_health',
     params: buildContextHealthParams({
       filterParams,
@@ -183,12 +183,12 @@ export function useAgentData({
     }),
   });
 
-  const failuresQuery = useTinybirdQuery<TinybirdResponse<FailureLeaderboardRow>>({
+  const failuresQuery = useTinybirdQuery<FailureLeaderboardRow>({
     pipe: 'agent_failure_leaderboard',
     params: { ...filterParams, limit: 100 },
   });
 
-  const deltaQuery = useTinybirdQuery<TinybirdResponse<ToolDeltaRow>>({
+  const deltaQuery = useTinybirdQuery<ToolDeltaRow>({
     pipe: 'agent_tool_period_delta',
     params: { ...filterParams, limit: 100 },
   });

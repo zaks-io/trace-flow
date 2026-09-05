@@ -25,14 +25,17 @@ type GenerateWebReadTokenFn = (args: {
 interface FetchTinybirdPipeOptions<T> {
   pipe: string;
   params?: Record<string, PipeParam>;
-  /**
-   * Receives the full Tinybird response wrapper (`{ data: rows }`) for backward
-   * compatibility with existing call sites. Phase 2 of the spans deepening will
-   * flip this to receive `rows` directly.
-   */
-  transform?: (data: unknown) => T;
-  schema?: FetchPipeOptions<unknown>['schema'];
+  schema?: FetchPipeOptions<T>['schema'];
   generateWebReadToken: GenerateWebReadTokenFn;
+}
+
+export interface TinybirdResponse<T> {
+  data: T[];
+}
+
+interface TransformedFetchTinybirdPipeOptions<T, TResult> extends FetchTinybirdPipeOptions<T> {
+  /** Receives the full response wrapper for compatibility with existing callers. */
+  transform: (response: TinybirdResponse<T>) => TResult;
 }
 
 function isUsableToken(entry: TokenEntry): boolean {
@@ -100,8 +103,11 @@ function baseUrl(): string {
   return process.env.NEXT_PUBLIC_PIPES_API_URL ?? 'http://localhost:8788';
 }
 
-async function fetchOnce<T>(token: string, opts: FetchTinybirdPipeOptions<T>): Promise<T> {
-  const rows = await fetchPipeCore({
+async function fetchOnce<T>(
+  token: string,
+  opts: FetchTinybirdPipeOptions<T>,
+): Promise<TinybirdResponse<T>> {
+  const rows = await fetchPipeCore<T>({
     baseUrl: baseUrl(),
     token,
     pipe: opts.pipe,
@@ -109,25 +115,32 @@ async function fetchOnce<T>(token: string, opts: FetchTinybirdPipeOptions<T>): P
     retry: true,
     schema: opts.schema,
   });
-  const wrapped = { data: rows };
-  if (opts.transform) {
-    return opts.transform(wrapped);
-  }
-  return wrapped as unknown as T;
+  return { data: rows };
 }
 
-export async function fetchTinybirdPipe<T = unknown>(
+export function fetchTinybirdPipe<T = unknown>(
   opts: FetchTinybirdPipeOptions<T>,
-): Promise<T> {
+): Promise<TinybirdResponse<T>>;
+export function fetchTinybirdPipe<T, TResult>(
+  opts: TransformedFetchTinybirdPipeOptions<T, TResult>,
+): Promise<TResult>;
+export async function fetchTinybirdPipe<T, TResult>(
+  opts: FetchTinybirdPipeOptions<T> | TransformedFetchTinybirdPipeOptions<T, TResult>,
+): Promise<TinybirdResponse<T> | TResult> {
+  const fetchAndTransform = async (token: string): Promise<TinybirdResponse<T> | TResult> => {
+    const response = await fetchOnce(token, opts);
+    return 'transform' in opts ? opts.transform(response) : response;
+  };
+
   try {
     const token = await getToken(opts.pipe, opts.generateWebReadToken);
-    return await fetchOnce<T>(token, opts);
+    return await fetchAndTransform(token);
   } catch (err) {
     if (err instanceof TinybirdAuthError) {
       // Evict stale token and retry once
       evictToken(opts.pipe);
       const freshToken = await getToken(opts.pipe, opts.generateWebReadToken);
-      return await fetchOnce<T>(freshToken, opts);
+      return await fetchAndTransform(freshToken);
     }
     throw err;
   }

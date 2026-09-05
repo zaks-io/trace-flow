@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import {
-  type TinybirdResponse,
   type OperationLeaderboardRow,
   type OperationUserRow,
   type ModelRow,
@@ -23,23 +22,23 @@ export function useOperationsData({
   sortKey,
   sortDesc,
 }: UseOperationsDataParams) {
-  const operationsQuery = useTinybirdQuery<TinybirdResponse<OperationLeaderboardRow>>({
+  const operationsQuery = useTinybirdQuery<OperationLeaderboardRow>({
     pipe: 'operations_leaderboard',
     params: { ...filterParams, limit: 100 },
   });
 
-  const usersQuery = useTinybirdQuery<TinybirdResponse<OperationUserRow>>({
+  const usersQuery = useTinybirdQuery<OperationUserRow>({
     pipe: 'operation_user_breakdown',
     params: { ...filterParams, baggage_operation: activeOperation, limit: 50 },
     enabled: activeOperation !== '',
   });
 
-  const providersQuery = useTinybirdQuery<TinybirdResponse<ProviderRow>>({
+  const providersQuery = useTinybirdQuery<ProviderRow>({
     pipe: 'llm_usage_by_provider',
     params: filterParams,
   });
 
-  const modelsQuery = useTinybirdQuery<TinybirdResponse<ModelRow>>({
+  const modelsQuery = useTinybirdQuery<ModelRow>({
     pipe: 'llm_usage_by_model',
     params: filterParams,
   });

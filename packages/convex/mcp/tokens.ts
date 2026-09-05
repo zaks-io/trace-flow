@@ -131,7 +131,10 @@ export async function validateAccessToken(
       issuer,
       audience: resource,
     });
-    return payload as unknown as AccessTokenPayload;
+    if (typeof payload.userId !== 'string' || typeof payload.tokenId !== 'string') {
+      return null;
+    }
+    return { userId: payload.userId, tokenId: payload.tokenId };
   } catch {
     return null;
   }

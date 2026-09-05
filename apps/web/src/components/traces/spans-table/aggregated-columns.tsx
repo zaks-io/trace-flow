@@ -6,6 +6,7 @@ import { ModelPill } from './ModelPill';
 import { formatRelativeTime } from '@/lib/format';
 import { formatNumber, formatCurrency } from '@/lib/format';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { readAlertSummary } from '@/components/requests/data-table/metadata';
 
 export interface SpanGroupRow {
   TraceId: string;
@@ -53,7 +54,7 @@ export const spanGroupColumns: ColumnDef<SpanGroupRow>[] = [
       const models = (Models ?? []).filter(Boolean);
       const operations = (Operations ?? []).filter(Boolean);
 
-      const alertSummary = table.options.meta?.alertSummary;
+      const alertSummary = readAlertSummary(table.options.meta);
       const summary = alertSummary?.get(TraceId);
       const hasAlerts = summary && summary.triggeredAlerts.length > 0;
 

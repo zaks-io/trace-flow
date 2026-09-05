@@ -8,9 +8,7 @@ import { useDefaultApiKey } from '@/hooks/useDefaultApiKey';
 import { GettingStarted } from '@/components/onboarding/GettingStarted';
 import { UsageAnalytics } from './UsageAnalytics';
 
-type TinybirdTraceListResponse = {
-  data: Array<{ TraceId: string }>;
-};
+type TinybirdTraceListRow = { TraceId: string };
 
 function UsageLoadingState() {
   return (
@@ -38,7 +36,7 @@ export default function Usage({
   const onboardingCompleted = Boolean(sessionContext?.onboardingCompletedAt);
   const completeOnboarding = useMutation(api.auth.organizations.completeOnboarding);
 
-  const firstTraceQuery = useTinybirdQuery<TinybirdTraceListResponse>({
+  const firstTraceQuery = useTinybirdQuery<TinybirdTraceListRow>({
     pipe: 'traces_list',
     params: { limit: 1 },
     enabled: Boolean(sessionContext?.user) && !onboardingCompleted,

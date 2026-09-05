@@ -82,8 +82,7 @@ const FORBIDDEN_FIELDS = [
 export function assertArchiveAuditRequest(
   input: ArchiveAuditAppendRequest,
 ): ArchiveAuditAppendRequest {
-  const record = input as unknown as Record<string, unknown>;
-  for (const key of Object.keys(record)) {
+  for (const key of Object.keys(input)) {
     if ((FORBIDDEN_FIELDS as readonly string[]).includes(key)) {
       throw new Error('Caller-supplied actor, tenant, or transcript fields are not allowed');
     }

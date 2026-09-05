@@ -16,7 +16,6 @@ import {
   durationChartConfig,
   type TimeRange,
   type TimeseriesMetric,
-  type TinybirdResponse,
   type SummaryRow,
   type TimeseriesRow,
   type ModelRow,
@@ -144,57 +143,57 @@ export function UsageAnalytics({
     [filterParams, prevStartTimeNs, prevEndTimeNs],
   );
 
-  const summaryQuery = useTinybirdQuery<TinybirdResponse<SummaryRow>>({
+  const summaryQuery = useTinybirdQuery<SummaryRow>({
     pipe: 'llm_usage_summary',
     params: filterParams,
   });
 
-  const prevSummaryQuery = useTinybirdQuery<TinybirdResponse<SummaryRow>>({
+  const prevSummaryQuery = useTinybirdQuery<SummaryRow>({
     pipe: 'llm_usage_summary',
     params: prevFilterParams,
   });
 
-  const requestStatsQuery = useTinybirdQuery<TinybirdResponse<RequestStatsRow>>({
+  const requestStatsQuery = useTinybirdQuery<RequestStatsRow>({
     pipe: 'llm_request_stats',
     params: filterParams,
   });
 
-  const timeseriesQuery = useTinybirdQuery<TinybirdResponse<TimeseriesRow>>({
+  const timeseriesQuery = useTinybirdQuery<TimeseriesRow>({
     pipe: 'llm_usage_timeseries',
     params: filterParams,
   });
 
-  const modelsQuery = useTinybirdQuery<TinybirdResponse<ModelRow>>({
+  const modelsQuery = useTinybirdQuery<ModelRow>({
     pipe: 'llm_usage_by_model',
     params: filterParams,
   });
 
-  const providersQuery = useTinybirdQuery<TinybirdResponse<ProviderRow>>({
+  const providersQuery = useTinybirdQuery<ProviderRow>({
     pipe: 'llm_usage_by_provider',
     params: filterParams,
   });
 
-  const operationsQuery = useTinybirdQuery<TinybirdResponse<OperationLeaderboardRow>>({
+  const operationsQuery = useTinybirdQuery<OperationLeaderboardRow>({
     pipe: 'operations_leaderboard',
     params: { ...filterParams, limit: 100 },
   });
 
-  const apiKeysQuery = useTinybirdQuery<TinybirdResponse<ApiKeyRow>>({
+  const apiKeysQuery = useTinybirdQuery<ApiKeyRow>({
     pipe: 'llm_usage_by_api_key',
     params: filterParams,
   });
 
-  const forecastQuery = useTinybirdQuery<TinybirdResponse<CostForecastRow>>({
+  const forecastQuery = useTinybirdQuery<CostForecastRow>({
     pipe: 'llm_cost_forecast',
     params: forecastParams,
   });
 
-  const tailRiskQuery = useTinybirdQuery<TinybirdResponse<CostTailRiskRow>>({
+  const tailRiskQuery = useTinybirdQuery<CostTailRiskRow>({
     pipe: 'llm_cost_tail_risk',
     params: tailRiskParams,
   });
 
-  const tokenRatioQuery = useTinybirdQuery<TinybirdResponse<TokenRatioDriftRow>>({
+  const tokenRatioQuery = useTinybirdQuery<TokenRatioDriftRow>({
     pipe: 'llm_token_ratio_drift',
     params: tokenRatioParams,
   });
