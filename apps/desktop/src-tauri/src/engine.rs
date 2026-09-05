@@ -144,13 +144,50 @@ async fn run_loop(
 /// that failed (network down, then a relaunch) is retried rather than quietly replaced by an
 /// incremental pass that would leave the older sessions unsynced.
 async fn run_authorized_cycle(bus: &AppStateBus, settings: &mut Settings) {
-    let window = if settings.backfilled {
+    let window = window_for_authorized_cycle(settings);
+    if run_cycle(bus, window).await {
+        settings.backfilled = true;
+    }
+}
+
+fn window_for_authorized_cycle(settings: &Settings) -> Window {
+    if settings.backfilled {
         Window::Incremental
     } else {
         sync::window_from_since(FIRST_BACKFILL).unwrap_or(Window::Incremental)
-    };
-    if run_cycle(bus, window).await {
+    }
+}
+
+/// True when parsed-fact ingest completed. Optional Archive setup failures stay visible but do not
+/// hold the one-time backfill watermark.
+fn fact_cycle_reached_ingest(outcome: &CycleOutcome) -> bool {
+    outcome.setup_error.is_none() && outcome.first_error.is_none()
+}
+
+fn apply_authorized_cycle(settings: &mut Settings, outcome: &CycleOutcome) -> Window {
+    let window = window_for_authorized_cycle(settings);
+    if fact_cycle_reached_ingest(outcome) {
         settings.backfilled = true;
+    }
+    window
+}
+
+fn sync_status_from_outcome(outcome: &CycleOutcome) -> SyncStatus {
+    match (
+        &outcome.setup_error,
+        &outcome.archive_setup_error,
+        &outcome.first_error,
+    ) {
+        (Some(err), _, _) => SyncStatus::Error {
+            message: err.clone(),
+        },
+        (None, Some(err), _) => SyncStatus::Error {
+            message: err.clone(),
+        },
+        (None, None, Some(err)) if outcome.advanced == 0 => SyncStatus::Error {
+            message: err.clone(),
+        },
+        _ => SyncStatus::Idle,
     }
 }
 
@@ -183,6 +220,8 @@ struct CycleOutcome {
     first_error: Option<String>,
     /// A setup failure (bad client config, broken cursor DB) — distinct from per-session ingest errors.
     setup_error: Option<String>,
+    /// Optional Archive enrollment/load failure. Visible in status, but must not block fact backfill.
+    archive_setup_error: Option<String>,
 }
 
 /// Run one sync pass over all sources, mirroring the result into the state bus. A failed cycle records
@@ -278,12 +317,17 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> bool {
         Ok(outcome) => {
             let first_error = outcome.first_error.as_deref().unwrap_or("");
             let setup_error = outcome.setup_error.as_deref().unwrap_or("");
-            if outcome.first_error.is_some() || outcome.setup_error.is_some() {
+            let archive_setup_error = outcome.archive_setup_error.as_deref().unwrap_or("");
+            if outcome.first_error.is_some()
+                || outcome.setup_error.is_some()
+                || outcome.archive_setup_error.is_some()
+            {
                 tracing::warn!(
                     advanced = outcome.advanced,
                     failed = outcome.failed,
                     first_error = %first_error,
                     setup_error = %setup_error,
+                    archive_setup_error = %archive_setup_error,
                     "sync cycle failed"
                 );
             } else {
@@ -293,23 +337,12 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> bool {
                     "sync cycle finished"
                 );
             }
-            // Retire the one-time backfill only when the pass fully reached ingest: no setup failure
-            // (bad client/cursor DB) AND no per-source transport failure. A first pass where every
-            // POST failed surfaces as `first_error`, not `setup_error`, and must keep the wider
-            // history window so the next attempt retries it instead of silently skipping days-old
-            // sessions (whose cursors never advanced).
-            let ok = outcome.setup_error.is_none() && outcome.first_error.is_none();
+            // Retire the one-time backfill when parsed-fact ingest reached the worker. Optional
+            // Archive setup failures stay visible in status and must not keep History(Last7Days).
+            let ok = fact_cycle_reached_ingest(&outcome);
             bus.update(|s| {
                 s.last_sync_at = Some(SystemTime::now());
-                s.sync = match (&outcome.setup_error, &outcome.first_error) {
-                    (Some(err), _) => SyncStatus::Error {
-                        message: err.clone(),
-                    },
-                    (None, Some(err)) if outcome.advanced == 0 => SyncStatus::Error {
-                        message: err.clone(),
-                    },
-                    _ => SyncStatus::Idle,
-                };
+                s.sync = sync_status_from_outcome(&outcome);
             });
             ok
         }
@@ -362,6 +395,7 @@ fn run_cycle_blocking(
                 failed: 0,
                 first_error: None,
                 setup_error: Some(format!("build runtime: {err}")),
+                archive_setup_error: None,
             };
         }
     };
@@ -401,7 +435,8 @@ fn run_cycle_blocking(
                 advanced,
                 failed,
                 first_error,
-                setup_error: archive_setup_error,
+                setup_error: None,
+                archive_setup_error,
             }
         }
         // Setup failure (bad client config, broken cursor DB). The Display is a class, not a secret.
@@ -410,6 +445,7 @@ fn run_cycle_blocking(
             failed: 0,
             first_error: None,
             setup_error: Some(err.to_string()),
+            archive_setup_error: None,
         },
     }
 }
@@ -630,17 +666,102 @@ mod archive_engine_tests {
 
         assert!(
             outcome
-                .setup_error
+                .archive_setup_error
                 .as_deref()
                 .is_some_and(|err| err.contains("load archive enrollment")),
             "Archive diagnostics must stay fail-loud: {:?}",
-            outcome.setup_error
+            outcome.archive_setup_error
         );
+        assert!(outcome.setup_error.is_none());
         assert!(
             outcome.advanced >= 1,
             "corrupt Archive policy must not abort fact sync: advanced={}",
             outcome.advanced
         );
         assert!(fact_posts.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+        assert!(fact_cycle_reached_ingest(&outcome));
+    }
+
+    #[test]
+    fn corrupt_archive_policy_completes_fact_backfill_and_next_window_is_incremental() {
+        let dir = TempDir::new().unwrap();
+        let file = SettingsFile::at(dir.path());
+        let mut settings = Settings {
+            syncing: true,
+            backfilled: false,
+        };
+        file.save(&settings).unwrap();
+
+        let archive_diag = Some("load archive enrollment".to_string());
+        let cycles = [
+            CycleOutcome {
+                advanced: 1,
+                failed: 0,
+                first_error: None,
+                setup_error: None,
+                archive_setup_error: archive_diag.clone(),
+            },
+            CycleOutcome {
+                advanced: 0,
+                failed: 0,
+                first_error: None,
+                setup_error: None,
+                archive_setup_error: archive_diag.clone(),
+            },
+            CycleOutcome {
+                advanced: 0,
+                failed: 0,
+                first_error: None,
+                setup_error: None,
+                archive_setup_error: archive_diag,
+            },
+        ];
+        let mut windows = Vec::new();
+        let mut fact_posts = 0u32;
+        for outcome in cycles {
+            let window = apply_authorized_cycle(&mut settings, &outcome);
+            fact_posts += outcome.advanced;
+            windows.push(window);
+            persist(&file, &settings);
+            assert!(
+                matches!(
+                    sync_status_from_outcome(&outcome),
+                    SyncStatus::Error { message } if message.contains("load archive enrollment")
+                ),
+                "Archive diagnostic must stay visible"
+            );
+        }
+
+        match (windows[0], sync::window_from_since("7d").unwrap()) {
+            (Window::History(actual), Window::History(expected)) => assert_eq!(actual, expected),
+            _ => panic!("cycle 1 must use FIRST_BACKFILL History(Last7Days)"),
+        }
+        assert!(matches!(windows[1], Window::Incremental));
+        assert!(matches!(windows[2], Window::Incremental));
+        assert_eq!(fact_posts, 1);
+        assert!(settings.backfilled);
+        assert!(file.load().unwrap().backfilled);
+        assert!(settings.syncing);
+
+        let mut blocked = Settings {
+            syncing: true,
+            backfilled: false,
+        };
+        let fatal = CycleOutcome {
+            advanced: 0,
+            failed: 0,
+            first_error: None,
+            setup_error: Some("open cursor store".to_string()),
+            archive_setup_error: None,
+        };
+        match (
+            apply_authorized_cycle(&mut blocked, &fatal),
+            sync::window_from_since("7d").unwrap(),
+        ) {
+            (Window::History(actual), Window::History(expected)) => assert_eq!(actual, expected),
+            _ => panic!("failed fact setup must keep FIRST_BACKFILL"),
+        }
+        assert!(!blocked.backfilled);
+        assert!(!fact_cycle_reached_ingest(&fatal));
     }
 }
