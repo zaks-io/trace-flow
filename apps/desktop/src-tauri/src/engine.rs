@@ -145,8 +145,8 @@ async fn run_loop(
 /// incremental pass that would leave the older sessions unsynced.
 async fn run_authorized_cycle(bus: &AppStateBus, settings: &mut Settings) {
     let window = window_for_authorized_cycle(settings);
-    if run_cycle(bus, window).await {
-        settings.backfilled = true;
+    if let Some(outcome) = run_cycle(bus, window).await {
+        apply_authorized_cycle(settings, &outcome);
     }
 }
 
@@ -233,16 +233,15 @@ struct CycleOutcome {
 /// a dedicated blocking thread with its own current-thread runtime — exactly like the CLI's
 /// `#[tokio::main]` block-on — and only its `Send` outcome crosses back. This keeps the command loop
 /// spawnable on the multi-threaded Tauri runtime without widening the shared crate's contract.
-/// Returns `true` only when the cycle actually reached the ingest worker without a setup failure or
-/// panic — so a caller (the first backfill) can tell a real pass from a no-op/abort and avoid marking
-/// a one-time backfill done when nothing landed.
-async fn run_cycle(bus: &AppStateBus, window: Window) -> bool {
+/// Returns the cycle outcome when a pass ran. `None` means the engine skipped (not connected,
+/// missing credential) or the blocking task panicked — those must not retire the backfill window.
+async fn run_cycle(bus: &AppStateBus, window: Window) -> Option<CycleOutcome> {
     let conn = match Paths::resolve().and_then(|p| p.load_connection()) {
         Ok(Some(conn)) => conn,
         Ok(None) => {
             tracing::warn!("sync skipped: not connected");
             bus.update(|s| s.connection = ConnectionState::Disconnected);
-            return false;
+            return None;
         }
         Err(err) => {
             tracing::error!(error = %err, "sync skipped: connection read failed");
@@ -251,7 +250,7 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> bool {
                     message: "connection read failed - sign in again".to_string(),
                 }
             });
-            return false;
+            return None;
         }
     };
 
@@ -267,7 +266,7 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> bool {
                     message: "connection missing ingest URL - sign in again".to_string(),
                 };
             });
-            return false;
+            return None;
         }
     };
 
@@ -287,7 +286,7 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> bool {
                     message: "no credential - sign in again".to_string(),
                 }
             });
-            return false;
+            return None;
         }
         Err(err) => {
             tracing::error!(error = %err, "sync skipped: keychain read failed");
@@ -296,24 +295,24 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> bool {
                     message: "keychain read failed - sign in again".to_string(),
                 }
             });
-            return false;
+            return None;
         }
     };
 
     let Some(home) = dirs_home() else {
         tracing::error!("sync skipped: no home directory");
-        return false;
+        return None;
     };
 
     bus.update(|s| s.sync = SyncStatus::Syncing);
 
     let now_ms = now_ms();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
-        run_cycle_blocking(org_id, credential, ingest_url, home, window, now_ms)
+        run_cycle_blocking(org_id, credential, ingest_url, home, window, now_ms, None)
     })
     .await;
 
-    let reached_ingest = match outcome {
+    let outcome = match outcome {
         Ok(outcome) => {
             let first_error = outcome.first_error.as_deref().unwrap_or("");
             let setup_error = outcome.setup_error.as_deref().unwrap_or("");
@@ -337,14 +336,11 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> bool {
                     "sync cycle finished"
                 );
             }
-            // Retire the one-time backfill when parsed-fact ingest reached the worker. Optional
-            // Archive setup failures stay visible in status and must not keep History(Last7Days).
-            let ok = fact_cycle_reached_ingest(&outcome);
             bus.update(|s| {
                 s.last_sync_at = Some(SystemTime::now());
                 s.sync = sync_status_from_outcome(&outcome);
             });
-            ok
+            Some(outcome)
         }
         Err(err) => {
             tracing::error!(error = %err, "sync task panicked");
@@ -353,26 +349,31 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> bool {
                     message: "sync task crashed".to_string(),
                 }
             });
-            false
+            None
         }
     };
 
     refresh_sources(bus);
-    reached_ingest
+    outcome
 }
 
 /// Load Archive inputs for this serialized cycle. Inactive enrollment stays `None` so no spool or
 /// key is created. Frozen/grace/revoked keep the existing local archive state without a second task.
 /// Cleanup markers keep Archive on the cycle even when enrollment is unreadable. Parse failures
 /// without a marker stay fail-loud in the error string but do not abort parsed-fact sync.
-fn cycle_archive_config(org_id: &str) -> (Option<sync::ArchiveRunConfig>, Option<String>) {
-    match Paths::resolve() {
-        Ok(paths) => {
-            let _ = paths.ensure();
-            sync::prepare_desktop_serialized_archive(&paths, org_id)
-        }
-        Err(err) => (None, Some(format!("resolve collector paths: {err}"))),
-    }
+fn cycle_archive_config(
+    org_id: &str,
+    state_dir: Option<&std::path::Path>,
+) -> (Option<sync::ArchiveRunConfig>, Option<String>) {
+    let paths = match state_dir {
+        Some(dir) => Paths::at(dir.to_path_buf()),
+        None => match Paths::resolve() {
+            Ok(paths) => paths,
+            Err(err) => return (None, Some(format!("resolve collector paths: {err}"))),
+        },
+    };
+    let _ = paths.ensure();
+    sync::prepare_desktop_serialized_archive(&paths, org_id)
 }
 
 /// The non-`Send` half: build a local current-thread runtime and drive one [`sync::run`] on it.
@@ -383,6 +384,7 @@ fn run_cycle_blocking(
     home: std::path::PathBuf,
     window: Window,
     now_ms: i64,
+    state_dir: Option<std::path::PathBuf>,
 ) -> CycleOutcome {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -400,7 +402,7 @@ fn run_cycle_blocking(
         }
     };
 
-    let (archive, archive_setup_error) = cycle_archive_config(&org_id);
+    let (archive, archive_setup_error) = cycle_archive_config(&org_id, state_dir.as_deref());
     let result = runtime.block_on(sync::run_detailed(sync::RunConfig {
         ingest_url,
         credential,
@@ -410,7 +412,7 @@ fn run_cycle_blocking(
         now_ms,
         batch_id_prefix: "desktop",
         archive,
-        state_dir: None,
+        state_dir: state_dir.as_deref(),
     }));
 
     match result {
@@ -659,18 +661,7 @@ mod archive_engine_tests {
         std::fs::create_dir_all(&claude_dir).unwrap();
         std::fs::write(claude_dir.join("claude-session-001.jsonl"), CLAUDE).unwrap();
 
-        struct RestoreStateDir(Option<std::ffi::OsString>);
-        impl Drop for RestoreStateDir {
-            fn drop(&mut self) {
-                match &self.0 {
-                    Some(value) => std::env::set_var("TRACE_FLOW_STATE_DIR", value),
-                    None => std::env::remove_var("TRACE_FLOW_STATE_DIR"),
-                }
-            }
-        }
-        let _restore = RestoreStateDir(std::env::var_os("TRACE_FLOW_STATE_DIR"));
-        std::env::set_var("TRACE_FLOW_STATE_DIR", state.path());
-        let paths = Paths::resolve().expect("TRACE_FLOW_STATE_DIR seam");
+        let paths = Paths::at(state.path().to_path_buf());
         paths.ensure().unwrap();
         std::fs::write(paths.archive_enrollment_file("org_1"), b"{not-json").unwrap();
 
@@ -702,6 +693,7 @@ mod archive_engine_tests {
             home.path().to_path_buf(),
             Window::Incremental,
             1_779_840_000_000,
+            Some(state.path().to_path_buf()),
         );
 
         assert!(
@@ -732,18 +724,7 @@ mod archive_engine_tests {
         std::fs::create_dir_all(&claude_dir).unwrap();
         std::fs::write(claude_dir.join("claude-session-001.jsonl"), CLAUDE).unwrap();
 
-        struct RestoreStateDir(Option<std::ffi::OsString>);
-        impl Drop for RestoreStateDir {
-            fn drop(&mut self) {
-                match &self.0 {
-                    Some(value) => std::env::set_var("TRACE_FLOW_STATE_DIR", value),
-                    None => std::env::remove_var("TRACE_FLOW_STATE_DIR"),
-                }
-            }
-        }
-        let _restore = RestoreStateDir(std::env::var_os("TRACE_FLOW_STATE_DIR"));
-        std::env::set_var("TRACE_FLOW_STATE_DIR", state.path());
-        let paths = Paths::resolve().expect("TRACE_FLOW_STATE_DIR seam");
+        let paths = Paths::at(state.path().to_path_buf());
         paths.ensure().unwrap();
         enrollment(&paths, "org_1", "enrolle");
 
@@ -775,6 +756,7 @@ mod archive_engine_tests {
             home.path().to_path_buf(),
             Window::Incremental,
             1_779_840_000_000,
+            Some(state.path().to_path_buf()),
         );
 
         assert!(
