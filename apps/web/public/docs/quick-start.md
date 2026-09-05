@@ -1,9 +1,6 @@
 # Quick Start
 
-These examples refer to Zaks.io's company deployment and require access. Trace Flow is internal
-development tooling shared as source, with no service availability or support commitment. For a
-fork, substitute your own endpoints and credentials. Requests and uploaded activity go to the
-configured deployment; use synthetic data when testing.
+These examples use the hosted Trace Flow service. An account with access is required.
 
 This guide connects model API traffic to Trace Flow. Gateway requests produce LLM spans and
 event metadata. Add W3C trace context or export application spans over OTLP when you want those LLM
@@ -102,3 +99,9 @@ parentSpan.end();
 - [Coding-Agent Collector](/docs/collector)
 - [SDK Reference](/docs/sdk-reference)
 - [OpenTelemetry](/docs/opentelemetry)
+
+## Self-hosted deployments
+
+For your own deployment, replace the hosted endpoints and credentials in these examples with
+those from your installation. Requests and captured activity are sent to the deployment you
+configure. Use synthetic data when testing your setup.

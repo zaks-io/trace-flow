@@ -16,12 +16,12 @@ export function FooterCTA({ isWaitlistMode }: FooterCTAProps) {
           Private alpha
         </div>
         <h2 className="mb-5 text-3xl font-semibold tracking-[-0.035em] text-foreground sm:text-5xl">
-          Your AI systems already leave a trail.
-          <span className="block text-primary">Trace Flow makes it useful.</span>
+          Start keeping your AI history.
+          <span className="block text-primary">Put it to work.</span>
         </h2>
         <p className="mx-auto mb-8 max-w-lg text-base leading-7 text-muted-foreground">
-          We&apos;re working directly with early testers while the collector, agent analytics, and
-          alerting workflows settle into their final shape.
+          Join the private alpha to track costs and performance across your model calls and coding
+          sessions. Help shape what we capture and how you learn from it.
         </p>
 
         <div className="mb-14">

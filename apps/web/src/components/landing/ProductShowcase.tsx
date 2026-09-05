@@ -17,14 +17,15 @@ export function ProductShowcase() {
       <div className="mx-auto max-w-7xl px-5 sm:px-8">
         <div className="mb-16 max-w-3xl">
           <div className="mb-4 font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-primary">
-            Two inputs, one vocabulary
+            Capture and analytics
           </div>
           <h2 className="text-balance text-3xl font-semibold tracking-[-0.035em] text-foreground sm:text-5xl">
-            Trace each model request. Understand each coding session.
+            Understand where your time and tokens go.
           </h2>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-muted-foreground">
-            The alpha brings API traffic and local coding-agent activity into the same vocabulary:
-            cost, tokens, latency, context, tools, repositories, and reviews.
+            Compare model costs and response times. See which coding sessions accumulate context or
+            run into tool failures. Use the dashboard and analytics tools to investigate what
+            changed.
           </p>
         </div>
 
@@ -37,7 +38,7 @@ export function ProductShowcase() {
                     LLM requests
                   </div>
                   <h3 className="mt-2 text-xl font-semibold tracking-tight sm:text-2xl">
-                    Supported providers, one cost model
+                    Track spending and performance over time
                   </h3>
                 </div>
                 <span className="rounded-full border border-border bg-card px-3 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground">
@@ -45,8 +46,8 @@ export function ProductShowcase() {
                 </span>
               </div>
               <p className="max-w-xl text-sm leading-6 text-muted-foreground">
-                Stream through the edge proxy to capture tokens, estimated cost, latency, traces,
-                tool calls, and debuggable body samples without waiting on the analytics write.
+                Capture estimated costs, token usage, latency, and errors as model responses stream.
+                Compare usage over time and inspect captured requests when something goes wrong.
               </p>
             </div>
             <div className="p-3 sm:p-5">
@@ -88,15 +89,15 @@ export function ProductShowcase() {
 
           <article className="rounded-xl border border-primary/25 bg-primary/4 p-6 sm:p-8 lg:col-span-5">
             <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-primary">
-              Agent conversations
+              Coding-agent analytics
             </div>
             <h3 className="mt-3 text-xl font-semibold tracking-tight sm:text-2xl">
-              See where long sessions go off course
+              Find the sessions worth investigating
             </h3>
             <p className="mt-4 text-sm leading-6 text-muted-foreground">
-              The private alpha parses Claude Code, Codex CLI, and macOS Cursor sessions locally,
-              redacts excerpts, and turns them into bounded analytics instead of uploading a raw
-              transcript by default.
+              The desktop app captures analytics from Claude Code and Codex CLI, plus Cursor on
+              macOS. Sessions are parsed locally, with redacted excerpts for investigation. Full
+              conversation archiving is in development.
             </p>
             <div className="mt-8 space-y-5">
               <Capability
@@ -118,9 +119,9 @@ export function ProductShowcase() {
                   <CollectorIcon />
                 </span>
                 <div>
-                  <div className="text-xs font-medium">Collector in private testing</div>
+                  <div className="text-xs font-medium">Desktop app in private alpha</div>
                   <div className="mt-1 text-[10px] text-muted-foreground">
-                    Claude Code, Codex CLI, and Cursor on macOS.
+                    macOS and Windows. Cursor capture on macOS.
                   </div>
                 </div>
               </div>

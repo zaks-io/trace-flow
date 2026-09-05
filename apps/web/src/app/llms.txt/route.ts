@@ -12,10 +12,10 @@ function buildLlmsTxt(siteUrl: string) {
 
   return `# Trace Flow
 
-> Trace Flow is Zaks.io's internal development tooling for model API requests and coding-agent sessions, shared as source under Apache-2.0.
+> Trace Flow captures model API and coding-agent analytics so you can track costs and performance over time.
 
-Hosted URLs refer to the company deployment and require access. Agent Conversation Analytics is not production-ready.
-See the repository README and roadmap for setup limits and unfinished work.
+The hosted service requires an account with access. Coding-agent analytics is available in private alpha.
+For your own deployment, see /docs/quick-start#self-hosted-deployments.
 
 Use this file as your starting point. Fetch only the linked documentation you need for the current task.
 For model API integration, read /agents.md first, then fetch /docs/quick-start.md for env vars and the first traced request.

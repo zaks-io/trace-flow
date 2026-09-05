@@ -61,14 +61,14 @@ export function HeroSection({ isWaitlistMode }: HeroSectionProps) {
           </div>
 
           <h1 className="delay-150 animate-hero-fade text-balance text-4xl font-semibold tracking-[-0.045em] text-foreground sm:text-6xl lg:text-7xl">
-            See what your models and
-            <span className="block text-primary">coding agents are doing.</span>
+            Keep a history of your AI work.
+            <span className="block text-primary">See what it costs.</span>
           </h1>
 
           <p className="delay-300 animate-hero-fade mx-auto mt-7 max-w-2xl text-balance text-lg leading-8 text-muted-foreground sm:text-xl">
-            Trace Flow puts model requests and coding sessions in one observability workspace, so
-            you can find cost growth, context pressure, and unreliable tools before they become
-            expensive habits.
+            Use the desktop app to capture coding-agent analytics, or connect your SDK to capture
+            model calls. Trace Flow collects in the background. Track spending and performance over
+            time, investigate wasted tokens, and keep a history you can come back to.
           </p>
 
           <div className="delay-450 animate-hero-fade mt-9 flex flex-col items-center gap-4">
@@ -77,7 +77,7 @@ export function HeroSection({ isWaitlistMode }: HeroSectionProps) {
               href="#product"
               className="text-sm font-medium text-muted-foreground underline decoration-border underline-offset-4 transition-colors hover:text-foreground hover:decoration-primary"
             >
-              Explore the alpha dashboard
+              See what you can track
             </Link>
           </div>
         </div>

@@ -1,12 +1,9 @@
 # Coding-Agent Collector
 
-These examples refer to Zaks.io's company deployment and require access. Trace Flow is internal
-development tooling shared as source, with no service availability or support commitment. For a
-fork, substitute your own endpoints and credentials. Requests and uploaded activity go to the
-configured deployment; use synthetic data when testing.
+These examples use the hosted Trace Flow service. An account with access is required.
+For your own deployment, see [self-hosted setup](/docs/quick-start#self-hosted-deployments).
 
-Agent Conversation Analytics is not production-ready. The repository roadmap tracks the remaining
-production checks; downloadable builds do not establish readiness.
+Coding-agent analytics is available in private alpha. Features and availability may change.
 
 Trace Flow's private-alpha collector turns local coding-agent activity into cost, token, context,
 tool, repository, and review analytics in `/app/agents`.
@@ -63,10 +60,3 @@ downtime. Failed sessions keep their prior cursor and retry on the next cycle.
 - Transcript parsing, excerpt redaction, and source discovery happen locally.
 - Agent Ingest re-redacts free-text excerpts before enqueueing facts.
 - The desktop app remembers the user's sync or pause choice across relaunches.
-
-## Current status
-
-The collector, production-shaped ingest Workers, agent Tinybird schema, dashboard, Rust CI, Cursor
-reader, and signed desktop update channel exist. Agent Conversation Analytics remains in private alpha
-until the normal-user production sync, authenticated dashboard walkthrough, and live alert gates are
-verified.

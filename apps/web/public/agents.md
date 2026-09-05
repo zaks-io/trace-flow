@@ -1,8 +1,8 @@
 # Trace Flow Agent Guide
 
-Trace Flow is company development tooling shared as source. The hosted URLs below refer to the
-Zaks.io deployment and require access. Agent Conversation Analytics is not production-ready; see
-the repository roadmap for the remaining gates. For a fork, use its own endpoints and credentials.
+Trace Flow captures model API and coding-agent analytics to track costs and performance.
+The hosted service requires an account with access. Coding-agent analytics is available in private alpha.
+For your own deployment, see [self-hosted setup](/docs/quick-start#self-hosted-deployments).
 
 Trace Flow has two inputs:
 
@@ -21,10 +21,10 @@ their coding-agent sessions. Do not confuse a gateway API key with a Collector C
 
 When a user asks you to add Trace Flow to a codebase, follow this order:
 
-1. Read this file first, then fetch only the linked docs you need. Establish which deployment the user intends to use before changing configuration. Do not infer permission to send their application data to the company deployment from this guide.
+1. Read this file first, then fetch only the linked docs you need. Establish which deployment the user intends to use before changing configuration. Do not infer permission to send their application data to the hosted service from this guide.
 2. Look for an existing local env file (`.env`, `.env.local`, `.dev.vars`, etc.) and add `TRACE_FLOW_API_KEY` there.
 3. Keep the upstream provider key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.) configured exactly as the app already expects.
-4. Update the app to use the chosen deployment's gateway. `https://gateway.trace-flow.dev/{provider}` is the company deployment.
+4. Update the app to use the chosen deployment's gateway. `https://gateway.trace-flow.dev/{provider}` is the hosted service.
 5. Run one traced request with a synthetic prompt against the chosen deployment and confirm it appears in Trace Flow. Do not use private prompts or transcripts as test data.
 
 ## Environment Variables
@@ -65,7 +65,7 @@ const result = await generateText({
 
 When configuring MCP, preserve the existing server entries in `.mcp.json` or the equivalent client config.
 
-For an authorized connection to the company deployment, use the hosted server below. For a fork,
+For an authorized connection to the hosted service, use the hosted server below. For a fork,
 replace the URL with its MCP endpoint. Add an MCP connection when the user asks for it; gateway
 integration does not need one.
 

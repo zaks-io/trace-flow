@@ -1,27 +1,24 @@
 # Trace Flow
 
-Trace Flow is the tooling Zaks.io built to watch its own model API spend and coding-agent sessions.
-One small team runs it for its own work, and each component exists because that team uses it or is
-about to. We publish the source under [Apache-2.0](./LICENSE) because it may be useful to other
-builders working on similar problems.
+**Keep a history of your AI work. See what it costs.**
 
-This is an early, company-specific project. Expect rough edges, changing APIs, and setup work.
-It is not a supported observability service or a turnkey self-hosted package. Maintenance follows
-our internal needs; there is no support SLA or release schedule.
+Trace Flow collects data from model calls and coding agents in the background so you can track
+spending and performance over time. Use the desktop app to capture coding-session analytics, or
+connect your existing SDK to capture model API calls. Investigate wasted tokens, growing context,
+and tool failures through the dashboard and MCP tools.
 
-## Status
+The history gives you something to come back to as your models and workflows change. Monthly
+model usage totals are retained for five years and coding-agent analytics for one year. Individual
+model traces have shorter, plan-based access windows. See the
+[retention policy](https://trace-flow.dev/privacy).
 
-Today Trace Flow is mostly data capture: model API calls from the gateway, coding-agent sessions
-from the collector, and soon the raw conversation history behind those sessions. The dashboard and
-MCP server read what was captured. The scope is wide for the size of the user base because it
-follows one team's workflow rather than a market, and that use is the validation behind it.
-Roadmaps and specifications describe intended work, not necessarily working features.
+We're building an opt-in archive of full agent conversations so the exchanges behind the metrics
+can become part of your own record. Conversation archiving and search are not available yet.
+The longer-term goal is Trace Flow Analyst: analyzing that history to find where agents get stuck
+or waste time and tokens, with future uses in fine-tuning and alignment research.
 
-| Capture path                             | Status                                 | Detail                                                                                                                                                                                                                         |
-| ---------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Model gateway                            | In use                                 | Our applications route model calls through the gateway for cost, token, latency, and body capture.                                                                                                                             |
-| Coding-agent collector and `/app/agents` | In use by us; private alpha for others | The desktop app syncs our Claude Code, Codex CLI, and Cursor sessions. Signed installers are published. Not every production gate in the [roadmap](./docs/guides/agent-conversation-analytics/ROADMAP.md) is green.            |
-| Conversation Archive                     | In development, not deployed           | The collector-side encrypted spool, session ledger, and Convex control plane are merged. `apps/archive-api` is a disabled authorization scaffold with no persistence or origin. This is how we will keep conversation history. |
+Trace Flow grew out of Zaks.io's own work and is available in private alpha. The source is published
+under [Apache-2.0](./LICENSE). Expect changing features and setup work; there is no support SLA.
 
 ## What Trace Flow observes
 
