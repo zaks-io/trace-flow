@@ -1,8 +1,8 @@
 'use client';
 
-import { useFlags } from 'launchdarkly-react-client-sdk';
+import { useQuery } from 'convex/react';
+import { api } from '@trace-flow/convex/_generated/api';
 
 export function useProSubscriptionEnabled(): boolean {
-  const flags = useFlags<{ proSubscriptionEnabled?: boolean }>();
-  return flags.proSubscriptionEnabled ?? false;
+  return useQuery(api.integrations.splitch.proSubscriptionEnabled) ?? false;
 }

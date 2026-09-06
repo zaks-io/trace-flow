@@ -61,10 +61,10 @@ describe('MCP worker auth discovery', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('Content-Type')).toBe('application/mcp-server-card+json');
 
-    const card = (await res.json()) as {
+    const card: {
       remotes: { url: string }[];
       transport: { endpoint: string };
-    };
+    } = await res.json();
     expect(card.remotes[0]?.url).toBe('http://localhost/mcp');
     expect(card.transport.endpoint).toBe('http://localhost/mcp');
   });

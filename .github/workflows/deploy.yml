@@ -124,6 +124,11 @@ jobs:
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
 
+      - name: Install Splitch configuration sync
+        run: bunx convex run integrations/splitch:install --prod
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
   deploy-web:
     name: Deploy Web Worker
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -157,7 +162,6 @@ jobs:
           NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
           NEXT_PUBLIC_SENTRY_ENVIRONMENT: prod
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_SIDE_ID: ${{ vars.NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_SIDE_ID }}
           AUTH0_SECRET: ${{ secrets.AUTH0_SECRET }}
           AUTH0_CLIENT_SECRET: ${{ secrets.AUTH0_CLIENT_SECRET }}
           BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}

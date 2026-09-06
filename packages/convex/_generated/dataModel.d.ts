@@ -477,12 +477,7 @@ export type DataModel = {
       _creationTime: number;
     };
     fieldPaths:
-      | "_creationTime"
-      | "_id"
-      | "createdAt"
-      | "orgId"
-      | "status"
-      | "userId";
+      "_creationTime" | "_id" | "createdAt" | "orgId" | "status" | "userId";
     indexes: {
       by_id: ["_id"];
       by_creation_time: ["_creationTime"];
@@ -536,9 +531,7 @@ export type DataModel = {
       idempotencyKey: string;
       invalidatedAt?: number;
       invalidationReason?:
-        | "user_unenrolled"
-        | "owner_revoked"
-        | "member_removed";
+        "user_unenrolled" | "owner_revoked" | "member_removed";
       localError?: string;
       localObservedAt?: number;
       orgId: Id<"organizations">;
@@ -1069,11 +1062,7 @@ export type DataModel = {
       _creationTime: number;
     };
     fieldPaths:
-      | "_creationTime"
-      | "_id"
-      | "clientId"
-      | "clientName"
-      | "redirectUris";
+      "_creationTime" | "_id" | "clientId" | "clientName" | "redirectUris";
     indexes: {
       by_id: ["_id"];
       by_creation_time: ["_creationTime"];

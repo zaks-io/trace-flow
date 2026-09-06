@@ -106,19 +106,18 @@ The dashboard uses Convex for:
 
 ## Environment Variables
 
-| Variable                                  | Purpose                                     |
-| ----------------------------------------- | ------------------------------------------- |
-| `NEXT_PUBLIC_CONVEX_URL`                  | Convex deployment URL baked into the build  |
-| `NEXT_PUBLIC_AUTH0_DOMAIN`                | Auth0 tenant domain                         |
-| `NEXT_PUBLIC_AUTH0_CLIENT_ID`             | Auth0 application ID                        |
-| `NEXT_PUBLIC_API_URL`                     | API Worker URL for body fetching            |
-| `NEXT_PUBLIC_TINYBIRD_API_URL`            | Tinybird API endpoint                       |
-| `NEXT_PUBLIC_SENTRY_DSN`                  | Browser Sentry DSN                          |
-| `NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_SIDE_ID` | LaunchDarkly client-side ID                 |
-| `NEXT_PUBLIC_DEPLOY_ID`                   | Build/deploy identifier                     |
-| `APP_BASE_URL`                            | Canonical Web origin for server-side checks |
-| `AUTH0_SECRET`                            | Auth0 session encryption secret             |
-| `AUTH0_CLIENT_SECRET`                     | Auth0 app client secret                     |
+| Variable                       | Purpose                                     |
+| ------------------------------ | ------------------------------------------- |
+| `NEXT_PUBLIC_CONVEX_URL`       | Convex deployment URL baked into the build  |
+| `NEXT_PUBLIC_AUTH0_DOMAIN`     | Auth0 tenant domain                         |
+| `NEXT_PUBLIC_AUTH0_CLIENT_ID`  | Auth0 application ID                        |
+| `NEXT_PUBLIC_API_URL`          | API Worker URL for body fetching            |
+| `NEXT_PUBLIC_TINYBIRD_API_URL` | Tinybird API endpoint                       |
+| `NEXT_PUBLIC_SENTRY_DSN`       | Browser Sentry DSN                          |
+| `NEXT_PUBLIC_DEPLOY_ID`        | Build/deploy identifier                     |
+| `APP_BASE_URL`                 | Canonical Web origin for server-side checks |
+| `AUTH0_SECRET`                 | Auth0 session encryption secret             |
+| `AUTH0_CLIENT_SECRET`          | Auth0 app client secret                     |
 
 ## Key Files
 

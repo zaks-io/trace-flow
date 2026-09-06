@@ -6,7 +6,6 @@ import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client
 import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister';
 import { type ReactNode, useMemo } from 'react';
 import { useConvexAuthSession } from '@/hooks/useConvexAuthSession';
-import { LaunchDarklyProvider } from '@/components/providers/LaunchDarklyProvider';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -43,7 +42,7 @@ export function Providers({ children }: { children: ReactNode }) {
           buster: process.env.NEXT_PUBLIC_DEPLOY_ID ?? 'dev',
         }}
       >
-        <LaunchDarklyProvider>{children}</LaunchDarklyProvider>
+        {children}
       </PersistQueryClientProvider>
     </ConvexAuthProvider>
   );

@@ -10,7 +10,6 @@ import { AnalystProvider } from '@/components/analyst/AnalystContext';
 import { AnalystSidebar } from '@/components/analyst/AnalystSidebar';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { useUserInitialization } from '@/hooks/useUserInitialization';
-import { useLaunchDarklyIdentity } from '@/hooks/useLaunchDarklyIdentity';
 import { Loader2 } from 'lucide-react';
 
 type SessionContext = typeof api.app.sessionContext;
@@ -73,7 +72,6 @@ function AppLayoutContent({
   children: React.ReactNode;
 }) {
   useUserInitialization();
-  useLaunchDarklyIdentity(data.user, data.subscription);
   const analystEnabled = data.subscription?.tier === 'pro' && data.subscription.status === 'active';
 
   return (
