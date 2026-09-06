@@ -271,6 +271,7 @@ A **Trace Flow Tool** exposed through the MCP server (e.g. `getTraceAction`, `li
 
 **Trace Flow Analyst**:
 The dedicated conversational analysis product surface for asking questions about Trace Flow data.
+Requires an active Pro subscription; not available on Hobby.
 _Avoid_: "agent" (collides with **Agent Session** and **Source**).
 
 **Analyst Sidebar**:

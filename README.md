@@ -5,7 +5,7 @@
 Trace Flow collects data from model calls and coding agents in the background so you can track
 spending and performance over time. Use the desktop app to capture coding-session analytics, or
 connect your existing SDK to capture model API calls. Investigate wasted tokens, growing context,
-and tool failures through the dashboard, MCP tools, and Trace Flow Analyst.
+and tool failures through the dashboard and MCP tools, or use Trace Flow Analyst on Pro.
 
 The history gives you something to come back to as your models and workflows change. Monthly
 model usage totals are retained for five years and coding-agent analytics for one year. Individual
@@ -13,6 +13,7 @@ model traces have shorter, plan-based access windows. See the
 [retention policy](https://trace-flow.dev/privacy).
 
 Trace Flow Analyst is the in-app chat for asking questions about the analytics you already collect.
+It requires an active Pro subscription and is not available on Hobby.
 It opens as a sidebar on every dashboard page, keeps threads private to their creator, and can
 attach objects from the current page to a message. Data questions run in a sealed Cloudflare
 Sandbox where a Python analysis agent queries your Trace Flow data and reports back with its cost.

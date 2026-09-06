@@ -29,6 +29,7 @@ import {
   getEnabledActionUser,
   getEnabledUserById,
   getOwnedThread,
+  requireAnalystProEntitlement,
   type PageContextReference,
 } from './analyst';
 import { action, internalAction, internalMutation, query } from './_generated/server';
@@ -274,6 +275,8 @@ async function launchSandboxRun(
   ctx: ActionCtx,
   input: LaunchSandboxRunInput,
 ): Promise<LaunchSandboxRunResult> {
+  await requireAnalystProEntitlement(ctx, input.orgId);
+
   const { token, hash } = await createSandboxRunToken();
   const now = Date.now();
   const sandboxId = buildPiSandboxId();
@@ -372,6 +375,10 @@ async function controlPiAgentRun(
 
   if ((input.action === 'steer' || input.action === 'follow_up') && !input.message?.trim()) {
     return { ok: false, error: `${input.action} requires a message.` };
+  }
+
+  if (input.action === 'steer' || input.action === 'follow_up') {
+    await requireAnalystProEntitlement(ctx, run.orgId);
   }
 
   const events =
@@ -738,6 +745,7 @@ export const verifySandboxRunToken = action({
   args: {
     runId: v.id('analystSandboxRuns'),
     token: v.string(),
+    purpose: v.optional(v.union(v.literal('inference'), v.literal('callback'))),
   },
   handler: async (ctx, args) => {
     const tokenHash = await sha256Hex(args.token);
@@ -745,6 +753,9 @@ export const verifySandboxRunToken = action({
       runId: args.runId,
       tokenHash,
     });
+    if (run && args.purpose === 'inference') {
+      await requireAnalystProEntitlement(ctx, run.orgId);
+    }
     return { ok: Boolean(run), status: run?.status ?? null };
   },
 });
@@ -870,6 +881,7 @@ export const executeSandboxToolCall = action({
     }
 
     const user = await getEnabledUserById(ctx, run.creatorUserId);
+    await requireAnalystProEntitlement(ctx, run.orgId);
 
     // The work log is built from the runner's own clean tool rows (the agent's
     // bash/read steps). The data-fetch endpoint used to also write tool_call /
@@ -911,6 +923,7 @@ export const continueAfterSandboxRun = internalAction({
     if (run?.status !== 'completed' || !run.resultText) return;
 
     await getEnabledUserById(ctx, run.creatorUserId);
+    await requireAnalystProEntitlement(ctx, run.orgId);
     await ctx.runAction(internal.analyst.streamMessage, {
       threadId: run.analystThreadId,
       userId: run.creatorUserId,

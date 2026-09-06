@@ -21,7 +21,13 @@ interface AnalystContextValue {
 const AnalystContext = createContext<AnalystContextValue | null>(null);
 const ANALYST_OPEN_STORAGE_KEY = 'trace-flow:analyst-sidebar-open';
 
-export function AnalystProvider({ children }: { children: React.ReactNode }) {
+export function AnalystProvider({
+  enabled,
+  children,
+}: {
+  enabled: boolean;
+  children: React.ReactNode;
+}) {
   const [open, setOpenState] = useState(false);
   const [currentThreadId, setCurrentThreadId] = useState<Id<'analystThreads'> | null>(null);
   const [selectionModeState, setSelectionModeState] = useState(false);
@@ -108,7 +114,9 @@ export function AnalystProvider({ children }: { children: React.ReactNode }) {
     ],
   );
 
-  return <AnalystContext.Provider value={value}>{children}</AnalystContext.Provider>;
+  return (
+    <AnalystContext.Provider value={enabled ? value : null}>{children}</AnalystContext.Provider>
+  );
 }
 
 export function useAnalyst() {

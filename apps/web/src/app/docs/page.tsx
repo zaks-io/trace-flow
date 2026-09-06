@@ -18,7 +18,8 @@ export default function DocsIndexPage() {
         </h1>
         <p className="max-w-2xl text-lg text-muted-foreground">
           Connect model API traffic or the local coding-agent collector, then investigate both with
-          the dashboard and MCP.
+          the dashboard and MCP. Trace Flow Analyst, the in-app analytics chat, requires an active
+          Pro subscription and is not available on Hobby.
         </p>
         <div className="mt-6 flex flex-wrap gap-3">
           <Link

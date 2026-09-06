@@ -515,7 +515,11 @@ export declare const api: {
     verifySandboxRunToken: FunctionReference<
       "action",
       "public",
-      { runId: Id<"analystSandboxRuns">; token: string },
+      {
+        purpose?: "inference" | "callback";
+        runId: Id<"analystSandboxRuns">;
+        token: string;
+      },
       any
     >;
   };

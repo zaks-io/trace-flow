@@ -900,6 +900,7 @@ async function handleOpenRouterProxy(request: Request, env: Env, url: URL): Prom
   const verified = (await getConvex(env).action(verifyRunRef, {
     runId: runId as SandboxRunId,
     token,
+    purpose: 'inference',
   })) as {
     ok?: boolean;
     status?: string | null;
