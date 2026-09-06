@@ -69,10 +69,11 @@ export function AIHistory() {
             Analyze archived conversations
           </h3>
           <p className="mt-4 text-sm leading-6 text-muted-foreground">
-            Trace Flow Analyst lets you ask questions about the analytics you collect today. We plan
-            to extend it to archived conversations to investigate repeated failures and wasted time
-            or tokens. That archive-based analysis is not available yet. Longer term, we want to
-            explore how opt-in archives could support fine-tuning and alignment research.
+            Trace Flow Analyst requires an active Pro subscription and is not available on Hobby. It
+            lets you ask questions about the analytics you collect today. We plan to extend it to
+            archived conversations to investigate repeated failures and wasted time or tokens. That
+            archive-based analysis is not available yet. Longer term, we want to explore how opt-in
+            archives could support fine-tuning and alignment research.
           </p>
         </div>
       </div>

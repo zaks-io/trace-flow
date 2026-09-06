@@ -74,10 +74,11 @@ function AppLayoutContent({
 }) {
   useUserInitialization();
   useLaunchDarklyIdentity(data.user, data.subscription);
+  const analystEnabled = data.subscription?.tier === 'pro' && data.subscription.status === 'active';
 
   return (
     <AdminProvider value={data.isAdmin}>
-      <AnalystProvider>
+      <AnalystProvider enabled={analystEnabled}>
         <SidebarProvider>
           <AppSidebar isAdmin={data.isAdmin} />
           <div className="flex min-w-0 flex-1">
@@ -86,7 +87,7 @@ function AppLayoutContent({
                 {children}
               </div>
             </SidebarInset>
-            <AnalystSidebar />
+            {analystEnabled && <AnalystSidebar />}
           </div>
         </SidebarProvider>
       </AnalystProvider>
