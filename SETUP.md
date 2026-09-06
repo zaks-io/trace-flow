@@ -40,8 +40,8 @@ scripts/dev/verify.sh
 - `apps/agent-ingest`
 - `apps/agent-consumer`
 
-It does not start Web, Convex, MCP, Analyst Sandbox, or Archive API. Archive API is an intentionally
-disabled authorization scaffold with no persistence or production environment.
+It does not start Web, Convex, MCP, Analyst Sandbox, or Archive API. Archive API is implemented but
+has no production environment, and Convex keeps archive availability off.
 
 Run Convex and Web separately:
 
@@ -111,9 +111,9 @@ Set secrets through the owning platform only. Do not commit them.
 | `agent-consumer`  | `TINYBIRD_TOKEN`, `SENTRY_DSN`                                                    |
 | `analyst-sandbox` | `ANALYST_SANDBOX_SHARED_SECRET`, `OPENROUTER_API_KEY`                             |
 
-`archive-api` is not a production service and has no production secret setup. Its development-only
-authorization scaffold expects `ARCHIVE_API_SHARED_SECRET` and `SENTRY_DSN`; do not provision it as
-if archive persistence were available.
+`archive-api` is not a production service and has no production secret setup. Its development
+configuration expects `ARCHIVE_API_SHARED_SECRET`, `ARCHIVE_KEY_WRAPPING_SECRET`, and `SENTRY_DSN`;
+do not provision production as if archive persistence were available.
 
 ### Convex Environment
 
