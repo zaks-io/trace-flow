@@ -40,6 +40,13 @@ export function FooterCTA({ isWaitlistMode }: FooterCTAProps) {
           </p>
 
           <div className="flex gap-4 text-xs text-muted-foreground/50">
+            <a
+              href="https://github.com/zaks-io/trace-flow"
+              className="transition-colors hover:text-foreground"
+            >
+              GitHub
+            </a>
+            <span>&middot;</span>
             <Link href="/terms" className="transition-colors hover:text-foreground">
               Terms
             </Link>
