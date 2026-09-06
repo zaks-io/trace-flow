@@ -632,6 +632,8 @@ async function streamAnalystText(
         stopWhen: stepCountIs(ANALYST_MAX_STEPS - 1),
         abortSignal: stopWatcher.signal,
         prepareStep: prepareEntitledStep,
+        // SDK retries bypass prepareStep and could submit inference after a downgrade.
+        maxRetries: 0,
       },
       analystStreamOptions(),
     );
@@ -652,6 +654,7 @@ async function streamAnalystText(
           stopWhen: stepCountIs(1),
           abortSignal: stopWatcher.signal,
           prepareStep: prepareEntitledStep,
+          maxRetries: 0,
         },
         analystStreamOptions(),
       );
