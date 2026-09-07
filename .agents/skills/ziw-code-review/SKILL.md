@@ -39,9 +39,11 @@ Choose the mode before reviewing:
   clearing review evidence for the reviewed head, but only Agent Orchestrator
   performs tracker and merge-ready mutations.
 
-Both modes are read-only for workflow state. Do not apply or clear
-review-evidence labels, move the issue to `Ready to Merge`, or apply merge-ready
-PR labels.
+Both modes leave existing workflow state read-only by default. Author QA never
+creates tracker issues. Independent review may create review-debt issues only in
+configured main-drift/checkpoint mode or when the user explicitly authorizes
+review-debt intake. Do not apply or clear review-evidence labels, move the issue
+to `Ready to Merge`, or apply merge-ready PR labels.
 
 ## Context
 
@@ -141,16 +143,20 @@ local review through GitHub after verifying the PR head has not changed. Follow
 [references/github-review-submission.md](references/github-review-submission.md).
 
 Submission is the only code-host mutation this mode authorizes. It does not
-authorize fixes, labels, tracker transitions, external review-bot triggers, or
-merge actions. A PR URL or number without `--submit` remains read-only.
+authorize fixes, labels, tracker transitions, tracker issue creation, external
+review-bot triggers, or merge actions. Tracker issue creation still requires the
+configured main-drift/checkpoint mode or explicit user authorization for
+review-debt intake. A PR URL or number without `--submit` remains read-only.
 
 ## Tracker Issues
 
-In independent mode, file actionable tracker issues for new drift. Search for
-duplicates by problem, files, PR, and commit range first. Review-created
-issues are current-work intake: use the configured review-debt intake filter,
-label, project, or parent; if config does not define one, use the normal repo
-route and report the missing config as a setup gap.
+In configured main-drift/checkpoint mode, or when the user explicitly authorizes
+review-debt intake, file actionable tracker issues for new drift. Search for
+duplicates by problem, files, PR, and commit range first. Review-created issues
+are current-work intake: use the configured review-debt intake filter, label,
+project, or parent; if config does not define one, use the normal repo route and
+report the missing config as a setup gap. For ordinary user-requested PR review,
+report or recommend follow-up issues without creating them.
 
 New issue rules:
 
@@ -262,7 +268,8 @@ Recommend `PR REVIEW` only for high-risk or genuinely complex work: auth,
 authorization, secrets, payments, destructive data, migrations, background jobs,
 public contracts, broad refactors, or unresolved reviewer uncertainty. For an
 existing PR, do not recommend `CLI`. If auto-review mode is unknown, or a
-push-triggered hosted review is enabled or pending for the current PR head,
+push-triggered hosted review is enabled or pending for the current
+review-relevant diff,
 report `auto-review unknown` or `auto-review pending` and recommend no command.
 Treat missing auth, rate limits, or credits as skipped unless the user explicitly
 requested that provider.
@@ -287,11 +294,14 @@ Ready-for-review means non-draft.
 In Author QA mode, always recommend `LEAVE UNCHANGED` for review evidence. In
 independent review mode, recommend applying the configured review evidence
 label only when the verdict is `READY FOR PR` or `APPROVE` for a concrete
-branch or PR head SHA and the conformance table is exhibited for that head with
-no `FAIL` rows. Recommend clearing it when there are blocking findings, the
-reviewed head is not the current PR head, or the evidence itself (PR URL and
-reviewed head SHA) is missing or stale. A label without current evidence is a
-claim, not proof.
+branch or PR head SHA and the conformance table is exhibited for that review
+with no `FAIL` rows. Record the review-diff fingerprint. Recommend clearing the
+label when there are blocking findings, the review-relevant diff changed, or
+the evidence itself (PR URL, reviewed head SHA, and review-diff fingerprint) is
+missing or stale. A label without current evidence is a claim, not proof.
+Use the fingerprint supplied by the current orchestrator snapshot. Do not
+derive a competing value from the head SHA or treat a missing fingerprint as
+current evidence.
 
 Do not treat a clean review alone as permission to apply the configured
 code-host human-merge PR label such as `needs-human-merge`. That label requires
@@ -318,6 +328,7 @@ Hosted bot review command: <none|configured PR command|@coderabbitai review|@cod
 PR readiness: KEEP DRAFT | MARK READY FOR REVIEW | ALREADY READY, because <reason>
 Review evidence label: APPLY configured label | CLEAR | LEAVE UNCHANGED, because <reason>
 GitHub submission: NOT REQUESTED | POSTED <review URL> | ALREADY CURRENT <review URL> | FAILED, because <reason>
+Next owner/action: <owner and exact next action>
 
 Conformance:
 
@@ -355,5 +366,7 @@ the handoff to Agent Orchestrator.
   state, or apply merge-ready PR labels. Report recommendations to Agent
   Orchestrator instead.
 - Do not broaden scope or decide product/security questions during review.
-- Create or recommend follow-up tracker issues for adjacent work.
+- Create follow-up tracker issues only in the configured main-drift/checkpoint
+  mode or with explicit user authorization for review-debt intake; otherwise
+  recommend them without creating them.
 - Never include sensitive values in review output.

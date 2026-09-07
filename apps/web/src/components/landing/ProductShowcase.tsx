@@ -17,7 +17,7 @@ export function ProductShowcase() {
       <div className="mx-auto max-w-7xl px-5 sm:px-8">
         <div className="mb-16 max-w-3xl">
           <div className="mb-4 font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-primary">
-            Capture and analytics
+            What you can use today
           </div>
           <h2 className="text-balance text-3xl font-semibold tracking-[-0.035em] text-foreground sm:text-5xl">
             Understand where your time and tokens go.
@@ -30,6 +30,47 @@ export function ProductShowcase() {
         </div>
 
         <div className="grid gap-5 lg:grid-cols-12">
+          <article className="rounded-xl border border-primary/25 bg-primary/4 p-6 sm:p-8 lg:col-span-5">
+            <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-primary">
+              Coding-agent analytics
+            </div>
+            <h3 className="mt-3 text-xl font-semibold tracking-tight sm:text-2xl">
+              Find the sessions worth investigating
+            </h3>
+            <p className="mt-4 text-sm leading-6 text-muted-foreground">
+              The desktop app captures analytics from Claude Code and Codex CLI, plus Cursor on
+              macOS. Sessions are parsed locally, with redacted excerpts for investigation. Full
+              conversation archiving is in development.
+            </p>
+            <div className="mt-8 space-y-5">
+              <Capability
+                label="Cost and context by conversation depth"
+                detail="See how context and estimated cost grow through a session."
+              />
+              <Capability
+                label="Tool reliability and notable changes"
+                detail="Compare failure rates and shifts by source, model, or repository."
+              />
+              <Capability
+                label="Review and file attention"
+                detail="Connect agent spend to the code and review units it touched."
+              />
+            </div>
+            <div className="mt-8 rounded-lg border border-primary/20 bg-background/55 p-4">
+              <div className="flex items-center gap-3">
+                <span className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/10 text-primary">
+                  <CollectorIcon />
+                </span>
+                <div>
+                  <div className="text-xs font-medium">Desktop app</div>
+                  <div className="mt-1 text-[10px] text-muted-foreground">
+                    macOS and Windows. Cursor capture on macOS.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </article>
+
           <article className="overflow-hidden rounded-xl border border-border bg-background lg:col-span-7">
             <div className="border-b border-border p-6 sm:p-8">
               <div className="mb-5 flex items-center justify-between gap-4">
@@ -41,9 +82,6 @@ export function ProductShowcase() {
                     Track spending and performance over time
                   </h3>
                 </div>
-                <span className="rounded-full border border-border bg-card px-3 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground">
-                  Alpha
-                </span>
               </div>
               <p className="max-w-xl text-sm leading-6 text-muted-foreground">
                 Capture estimated costs, token usage, latency, and errors as model responses stream.
@@ -83,47 +121,6 @@ export function ProductShowcase() {
               </div>
               <div className="mt-3 font-mono text-[9px] text-muted-foreground">
                 Illustrative request data
-              </div>
-            </div>
-          </article>
-
-          <article className="rounded-xl border border-primary/25 bg-primary/4 p-6 sm:p-8 lg:col-span-5">
-            <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-primary">
-              Coding-agent analytics
-            </div>
-            <h3 className="mt-3 text-xl font-semibold tracking-tight sm:text-2xl">
-              Find the sessions worth investigating
-            </h3>
-            <p className="mt-4 text-sm leading-6 text-muted-foreground">
-              The desktop app captures analytics from Claude Code and Codex CLI, plus Cursor on
-              macOS. Sessions are parsed locally, with redacted excerpts for investigation. Full
-              conversation archiving is in development.
-            </p>
-            <div className="mt-8 space-y-5">
-              <Capability
-                label="Cost and context by conversation depth"
-                detail="Catch compounding context before late turns get expensive."
-              />
-              <Capability
-                label="Tool reliability and notable changes"
-                detail="Compare failure rates and shifts by source, model, or repository."
-              />
-              <Capability
-                label="Review and file attention"
-                detail="Connect agent spend to the code and review units it touched."
-              />
-            </div>
-            <div className="mt-8 rounded-lg border border-primary/20 bg-background/55 p-4">
-              <div className="flex items-center gap-3">
-                <span className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/10 text-primary">
-                  <CollectorIcon />
-                </span>
-                <div>
-                  <div className="text-xs font-medium">Desktop app in private alpha</div>
-                  <div className="mt-1 text-[10px] text-muted-foreground">
-                    macOS and Windows. Cursor capture on macOS.
-                  </div>
-                </div>
               </div>
             </div>
           </article>

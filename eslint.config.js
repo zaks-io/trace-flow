@@ -97,6 +97,10 @@ export default tseslint.config(
       '**/.turbo/**',
       '**/coverage/**',
       '**/packages/convex/_generated/**',
+      // Centrally-managed workflow skills and the stray installer copies; never validated locally
+      '.agents/skills/ziw-*/**',
+      'agent/**',
+      'skills/ziw-*/**',
     ],
   },
 );

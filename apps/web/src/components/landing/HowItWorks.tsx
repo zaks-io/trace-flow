@@ -13,7 +13,7 @@ const STEPS = [
   },
   {
     step: '3',
-    title: 'Come back to the history',
+    title: 'Compare your analytics',
     description:
       'Filter by provider, model, source, or repository. Compare costs and performance across the work you have captured.',
   },

@@ -2,6 +2,9 @@
 
 These examples use the hosted Trace Flow service. An account with access is required.
 
+Trace Flow Analyst, the in-app chat for investigating your analytics, requires an active Pro
+subscription and is not available on Hobby.
+
 This guide connects model API traffic to Trace Flow. Gateway requests produce LLM spans and
 event metadata. Add W3C trace context or export application spans over OTLP when you want those LLM
 spans joined to the rest of an application trace.

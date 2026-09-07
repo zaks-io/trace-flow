@@ -224,11 +224,6 @@ export default function SecurityPage() {
                   'Performance monitoring, error tracking, and masked website session replay',
                   'https://sentry.io/security/',
                 ],
-                [
-                  'LaunchDarkly',
-                  'Feature flag evaluation and rollout targeting',
-                  'https://launchdarkly.com/security/',
-                ],
               ] as const
             ).map(([name, desc, url]) => (
               <li key={name} className="flex items-baseline gap-2">

@@ -33,6 +33,7 @@ import {
 import { api, components, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { rateLimiter } from './rateLimits';
+import { isActiveProSubscription } from './archiveLib';
 
 export const ANALYST_DEFAULT_MODEL = 'z-ai/glm-5.2';
 export const ANALYST_MAX_STEPS = 50;
@@ -47,6 +48,7 @@ const ANALYST_FINAL_RESPONSE_PROMPT = `You reached the Analyst step limit. Do no
 const INTERNAL_SANDBOX_CONTINUATION_PREFIX =
   'A background Trace Flow data analysis run completed. Use this final composed response to answer the user';
 const MAX_PI_FINAL_CONTEXT_CHARS = 24_000;
+export const ANALYST_PRO_REQUIRED_MESSAGE = 'Analyst requires an active Pro subscription.';
 
 const BASE_ANALYST_INSTRUCTIONS = `You are Trace Flow Analyst.
 
@@ -274,6 +276,16 @@ export async function getEnabledUserById(
   return user as EnabledOrgUser;
 }
 
+export async function requireAnalystProEntitlement(
+  ctx: ActionCtx,
+  orgId: Id<'organizations'>,
+): Promise<void> {
+  const subscription = await ctx.runQuery(internal.billing.subscriptions.getByOrgId, { orgId });
+  if (!isActiveProSubscription(subscription)) {
+    throw new Error(ANALYST_PRO_REQUIRED_MESSAGE);
+  }
+}
+
 export async function getOwnedThread(
   ctx: QueryCtx | MutationCtx,
   userId: Id<'users'>,
@@ -490,6 +502,7 @@ export const sendMessage = action({
   },
   handler: async (ctx, args): Promise<{ threadId: Id<'analystThreads'> }> => {
     const user = await getEnabledActionUser(ctx);
+    await requireAnalystProEntitlement(ctx, user.orgId);
     await rateLimiter.limit(ctx, 'analystSendMessage', { key: user._id, throws: true });
 
     const prompt = args.prompt.trim();
@@ -503,6 +516,7 @@ export const sendMessage = action({
         userId: user._id,
       });
       if (!existing) throw new Error('Conversation not found');
+      await requireAnalystProEntitlement(ctx, existing.orgId);
       analystThread = existing;
     } else {
       const { threadId: agentThreadId } = await bootstrapAgent.createThread(ctx, {
@@ -571,6 +585,12 @@ async function streamAnalystText(
     stopBaselineAt?: number;
   },
 ) {
+  await requireAnalystProEntitlement(ctx, args.analystThread.orgId);
+  const prepareEntitledStep = async () => {
+    await requireAnalystProEntitlement(ctx, args.analystThread.orgId);
+    return undefined;
+  };
+
   const stopBaselineAt = args.stopBaselineAt ?? Date.now();
   if (
     await shouldStopAnalystRun(ctx, {
@@ -611,6 +631,9 @@ async function streamAnalystText(
         }),
         stopWhen: stepCountIs(ANALYST_MAX_STEPS - 1),
         abortSignal: stopWatcher.signal,
+        prepareStep: prepareEntitledStep,
+        // SDK retries bypass prepareStep and could submit inference after a downgrade.
+        maxRetries: 0,
       },
       analystStreamOptions(),
     );
@@ -619,6 +642,7 @@ async function streamAnalystText(
 
     if (await shouldRunFinalAnalystSynthesis(result)) {
       if (stopWatcher.signal.aborted) return;
+      await requireAnalystProEntitlement(ctx, args.analystThread.orgId);
       await agent.streamText(
         ctx,
         { threadId: args.analystThread.agentThreadId, userId: String(args.userId) },
@@ -629,6 +653,8 @@ async function streamAnalystText(
           tools: {},
           stopWhen: stepCountIs(1),
           abortSignal: stopWatcher.signal,
+          prepareStep: prepareEntitledStep,
+          maxRetries: 0,
         },
         analystStreamOptions(),
       );

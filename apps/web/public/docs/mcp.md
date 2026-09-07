@@ -7,6 +7,9 @@ Coding-agent analytics is available in private alpha. Features and availability 
 
 Connect your AI assistant directly to Trace Flow data with MCP.
 
+Trace Flow Analyst is the separate in-app analytics chat. It requires an active Pro subscription
+and is not available on Hobby. This guide connects your own assistant through MCP.
+
 Endpoint: `https://mcp.trace-flow.dev/mcp`
 
 ## What it gives you

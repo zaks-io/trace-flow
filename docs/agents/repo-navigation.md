@@ -23,36 +23,38 @@ For agent workflow or Linear work, also read:
 
 ## Runtime Apps
 
-| Path                  | Purpose                                                                                   | Read when                                                                         |
-| --------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `apps/proxy`          | Edge LLM gateway. Handles provider routing, stream capture, R2 writes, and queue enqueue. | Provider proxying, streaming, capture, billing enforcement, body omission.        |
-| `apps/proxy-consumer` | Queue consumer and durable batching for trace ingestion into Tinybird.                    | Queue delivery, OpenTelemetry rows, Tinybird writes, batch retries, DLQ behavior. |
-| `apps/api`            | Raw API Worker for authenticated Body Object retrieval.                                   | R2 body reads, Body Access Token auth, retention checks.                          |
-| `apps/pipes-api`      | Pipes API Worker for Tinybird Pipe passthrough.                                           | Tinybird Pipe forwarding, Pipe Token CORS/cache/rate-limit behavior.              |
-| `apps/web`            | Next.js dashboard on OpenNext/Workers.                                                    | UI, routes, dashboard data views, auth UX, docs pages.                            |
-| `apps/mcp`            | Cloudflare Worker MCP server for agent access to trace data.                              | MCP auth, tool calls, trace-read integration.                                     |
-| `apps/agent-ingest`   | Agent conversation ingest worker.                                                         | Parsed agent fact upload, ingest validation, queue enqueue.                       |
-| `apps/agent-consumer` | Agent conversation queue consumer.                                                        | Agent analytics rows, pricing, transcript fact processing.                        |
-| `apps/archive-api`    | Planned Conversation Archive data plane.                                                  | Enrolled lossless upload, R2 storage, owner export, deletion, key rotation.       |
-| `apps/cli`            | User-facing collector CLI.                                                                | Login, source listing, sync, status, disconnect, release packaging.               |
-| `apps/desktop`        | Tauri desktop collector.                                                                  | Tray UX, keychain storage, first-egress gate, desktop sync loop, autostart.       |
+| Path                   | Purpose                                                                                   | Read when                                                                              |
+| ---------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `apps/proxy`           | Edge LLM gateway. Handles provider routing, stream capture, R2 writes, and queue enqueue. | Provider proxying, streaming, capture, billing enforcement, body omission.             |
+| `apps/proxy-consumer`  | Queue consumer and durable batching for trace ingestion into Tinybird.                    | Queue delivery, OpenTelemetry rows, Tinybird writes, batch retries, DLQ behavior.      |
+| `apps/api`             | Raw API Worker for authenticated Body Object retrieval.                                   | R2 body reads, Body Access Token auth, retention checks.                               |
+| `apps/pipes-api`       | Pipes API Worker for Tinybird Pipe passthrough.                                           | Tinybird Pipe forwarding, Pipe Token CORS/cache/rate-limit behavior.                   |
+| `apps/web`             | Next.js dashboard on OpenNext/Workers.                                                    | UI, routes, dashboard data views, auth UX, docs pages.                                 |
+| `apps/mcp`             | Cloudflare Worker MCP server for agent access to trace data.                              | MCP auth, tool calls, trace-read integration.                                          |
+| `apps/agent-ingest`    | Agent conversation ingest worker.                                                         | Parsed agent fact upload, ingest validation, queue enqueue.                            |
+| `apps/agent-consumer`  | Agent conversation queue consumer.                                                        | Agent analytics rows, pricing, transcript fact processing.                             |
+| `apps/analyst-sandbox` | Sealed Cloudflare Sandbox Worker that runs Analyst code execution and the Pi data agent.  | Analyst tool runs, sandbox egress seal, run events, snapshots, sandbox pricing.        |
+| `apps/archive-api`     | Conversation Archive data plane; upload path implemented, not deployed.                   | Enrolled lossless upload, Session Ledger, Storage Budget, R2 chunks, audit, integrity. |
+| `apps/cli`             | User-facing collector CLI.                                                                | Login, source listing, sync, status, disconnect, release packaging.                    |
+| `apps/desktop`         | Tauri desktop collector.                                                                  | Tray UX, keychain storage, first-egress gate, desktop sync loop, autostart.            |
 
 ## Shared Packages
 
-| Path                        | Purpose                                                      | Read when                                                    |
-| --------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| `packages/types`            | Shared cross-app TypeScript contracts.                       | Worker/API/web contract changes.                             |
-| `packages/utils`            | Shared helpers, redaction, auth, and request utilities.      | Common behavior used by multiple apps.                       |
-| `packages/llm-providers`    | Provider-specific parsing and token usage extraction.        | OpenAI, Anthropic, Google, OpenRouter, or Groq behavior.     |
-| `packages/otel-conventions` | Canonical OTel attribute names and row-building conventions. | Span attributes, Tinybird SQL key consistency, OTel naming.  |
-| `packages/spans`            | Span parsing and normalization.                              | Trace detail, span modeling, row transforms.                 |
-| `packages/tinybird-client`  | Tinybird insert/query client helpers.                        | Tinybird API calls, retries, insert failures.                |
-| `packages/pricing`          | Model pricing and token cost logic.                          | Cost calculation or pricing catalog changes.                 |
-| `packages/convex`           | Convex backend, auth/session actions, billing, org state.    | Auth0, Tinybird JWTs, orgs, subscriptions, Stripe, MCP auth. |
-| `packages/logging`          | Structured logging helpers.                                  | Log fields, event names, Sentry/Axiom consistency.           |
-| `packages/sdk-tests`        | SDK and integration test tooling.                            | End-to-end client or CLI test harness changes.               |
-| `packages/collector-*`      | Desktop collector contracts and shared collector code.       | Agent conversation analytics desktop collector work.         |
-| `packages/emails`           | Email templates and rendering.                               | User-facing email copy or delivery.                          |
+| Path                        | Purpose                                                      | Read when                                                                                            |
+| --------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `packages/types`            | Shared cross-app TypeScript contracts.                       | Worker/API/web contract changes.                                                                     |
+| `packages/utils`            | Shared helpers, redaction, auth, and request utilities.      | Common behavior used by multiple apps.                                                               |
+| `packages/llm-providers`    | Provider-specific parsing and token usage extraction.        | OpenAI, Anthropic, Google, OpenRouter, or Groq behavior.                                             |
+| `packages/otel-conventions` | Canonical OTel attribute names and row-building conventions. | Span attributes, Tinybird SQL key consistency, OTel naming.                                          |
+| `packages/spans`            | Span parsing and normalization.                              | Trace detail, span modeling, row transforms.                                                         |
+| `packages/tinybird-client`  | Tinybird insert/query client helpers.                        | Tinybird API calls, retries, insert failures.                                                        |
+| `packages/pricing`          | Model pricing and token cost logic.                          | Cost calculation or pricing catalog changes.                                                         |
+| `packages/convex`           | Convex backend, auth/session actions, billing, org state.    | Auth0, Tinybird JWTs, orgs, subscriptions, Stripe, MCP auth, Analyst Runtime, archive control plane. |
+| `packages/mcp-core`         | Trace Flow Tool implementations shared by MCP and Analyst.   | Tool definitions, per-surface tool exposure, tool auth.                                              |
+| `packages/logging`          | Structured logging helpers.                                  | Log fields, event names, Sentry/Axiom consistency.                                                   |
+| `packages/sdk-tests`        | SDK and integration test tooling.                            | End-to-end client or CLI test harness changes.                                                       |
+| `packages/collector-*`      | Desktop collector contracts and shared collector code.       | Agent conversation analytics desktop collector work.                                                 |
+| `packages/emails`           | Email templates and rendering.                               | User-facing email copy or delivery.                                                                  |
 
 ## Data And Query Layer
 

@@ -1,4 +1,4 @@
-import { mutation, query } from './_generated/server';
+import { internalQuery, mutation, query } from './_generated/server';
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import { requireAdmin } from './auth/users';
@@ -45,6 +45,20 @@ export const joinWaitlist = mutation({
   },
 });
 
+export const getAdminEmails = internalQuery({
+  args: {},
+  returns: v.array(v.string()),
+  handler: async (ctx) => {
+    const admins = await ctx.db
+      .query('users')
+      .filter((q) => q.and(q.eq(q.field('isAdmin'), true), q.eq(q.field('enabled'), true)))
+      .collect();
+    const emails = admins.map((admin) => admin.email.trim().toLowerCase());
+    if (emails.some((email) => !email)) throw new Error('Admin email is missing');
+    return [...new Set(emails)];
+  },
+});
+
 export const confirmEmail = mutation({
   args: { token: v.string() },
   returns: v.object({ alreadyConfirmed: v.boolean() }),
@@ -65,6 +79,10 @@ export const confirmEmail = mutation({
     }
 
     await ctx.db.patch(entry._id, { confirmed: true });
+    await ctx.scheduler.runAfter(0, internal.integrations.emails.sendWaitlistAdminEmail, {
+      waitlistId: entry._id,
+      email: entry.email,
+    });
     return { alreadyConfirmed: false };
   },
 });

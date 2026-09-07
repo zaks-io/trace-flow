@@ -1,5 +1,7 @@
 # Trace Flow Analyst runs in Convex with external code execution
 
+Trace Flow Analyst requires an active Pro subscription and is not available on Hobby because its model calls incur inference costs. The Web app hides Analyst for other subscriptions, and the backend enforces entitlement before new inference and sandbox work. Downgrades block subsequent model requests; an in-flight request may finish, and completion callbacks and cancellation remain authorized by the existing ownership and run-token checks. See [Analyst entitlement](../../packages/convex/analyst.ts), [sandbox authorization](../../packages/convex/analystSandbox.ts), and [the provider proxy](../../apps/analyst-sandbox/src/index.ts).
+
 Trace Flow Analyst will use Convex Agents for the Analyst Runtime instead of a separate Analyst API Worker. Convex already owns users, orgs, Tinybird token minting, rate limiting, and reactive Web integration, so keeping threads, messages, tool orchestration, model usage, and OpenRouter calls there removes a deployment unit without weakening the existing data-access boundary.
 
 The Web app should call Convex directly for Analyst threads, messages, actions, and reactive streaming state. Do not add a Trace Flow Analyst HTTP API in front of Convex for the Web surface; reserve HTTP actions for future non-Web clients that cannot use the Convex client.

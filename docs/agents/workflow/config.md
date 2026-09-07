@@ -1,6 +1,6 @@
 # Agent Config
 
-Last updated: 2026-07-05
+Last updated: 2026-09-06
 
 Workflow lookup table for the `ziw-*` skills. Repo-specific values live here;
 workflow logic lives in the centrally managed org skills pinned by
@@ -14,7 +14,8 @@ workflow logic lives in the centrally managed org skills pinned by
   `scripts/ci-check.sh`, `.husky/*`, `.github/workflows/{ci,deploy,preview}.yml`,
   `.coderabbit.yaml`, `skills-lock.json`, `AGENTS.md`, `CLAUDE.md`, `.agents/`,
   `.claude/`, `.codex/`, `.cursor/`, `CONTEXT.md`, `docs/agents/*`, live Linear,
-  live GitHub, explicit user instruction on 2026-07-05 for Linear estimates.
+  live GitHub, explicit user instruction on 2026-07-05 for Linear estimates;
+  re-verified against live GitHub and Linear on 2026-09-06.
 - Safe commands run: `git status --short`, `git branch --show-current`,
   `git remote -v`, `git symbolic-ref refs/remotes/origin/HEAD`,
   `git log -1 --format=... origin/main`, `jq .scripts package.json`,
@@ -25,9 +26,11 @@ workflow logic lives in the centrally managed org skills pinned by
   `list_issues team=TRA project="Trace Flow Roadmap"`, ready-label and done-label
   verification queries.
 - Live provider checks: GitHub repo `zaks-io/trace-flow`, default branch `main`,
-  ruleset `Main` id `8795064`, required check `CI Status`; open PRs: none;
-  latest `main` head `39c58ca036cd735219270220133627ec254177f4` had green `CI`
-  and `Deploy` runs on 2026-07-05.
+  ruleset `Main` id `8795064`, required check `CI Status`; open PRs on
+  2026-09-06: `#475` (archive key rotation, TRA-223) and `#469` (Desktop archive
+  activation flows); latest `main` head
+  `4a0e59c4cc72abc9f3f22a28ec146177ed61ce41` had a green `CI` run and a red
+  `Deploy` run on 2026-09-06 (see baseline health below).
 - Inferred/default values: no repo-enforced branch prefix; issue-assigned stuck
   timeout uses the shared 30+ minute default until repo tunes it; no dedicated
   friction intake route is configured.
@@ -61,8 +64,12 @@ workflow logic lives in the centrally managed org skills pinned by
 - Required merge check: GitHub ruleset requires `CI Status` from
   `.github/workflows/ci.yml`
 - Default-branch baseline health: latest `main` head
-  `39c58ca036cd735219270220133627ec254177f4` has `CI Status: success` and
-  `Deployment Status: success`; no known red jobs as of 2026-07-05
+  `4a0e59c4cc72abc9f3f22a28ec146177ed61ce41` has `CI Status: success` and
+  `Deployment Status: failure` as of 2026-09-06. The Analyst Sandbox deploy job
+  failed after the container image pushed: wrangler's version lookup got a
+  Cloudflare API 503 (`upstream connect error`), so the failure is a transient
+  provider error, not a code change. Rerunning the deploy needs explicit
+  production approval.
 - Gate parity: config-gap. The required hosted `CI Status` does not invoke the
   single local entrypoint `bun run ci:check`; it fans out path-filtered jobs.
   Local `ci:check` also does not cover every hosted gate, including Rust,
@@ -98,7 +105,7 @@ workflow logic lives in the centrally managed org skills pinned by
 - Provider: Linear
 - Provider location: team `Trace Flow`, key `TRA`, id
   `e43310a3-ecb1-42f9-a349-3627820765a2`
-- Metadata verified: 2026-07-05 via Linear MCP
+- Metadata verified: 2026-09-06 via Linear MCP
 - Projects:
   - `Trace Flow Roadmap`: id `57d323d1-7740-4083-a950-d54288ec16d1`, active
   - `Trace Flow Launch`: id `cd017399-0a6c-40bf-a383-54dba9a34e5c`,
@@ -125,7 +132,7 @@ workflow logic lives in the centrally managed org skills pinned by
     `dd8a6d93-5948-4a4f-8bf2-5f9b106c7df7`
   - kind: `kind-spec` id `4557ca0a-2789-49e8-bfa9-20b98db893b8`,
     `kind-epic` id `f9df1af2-eadf-4416-91b2-14711905f4ef`,
-    `kind-slice` id `589d5521-e20e-4f6e-9706-274af67e19a6`
+    `kind-slice` id `589d5521-e20e-4e03-a16f-ec8765fc41dd`
   - readiness: `needs-triage` id `fb6979b5-13eb-431d-8294-451ccac200f5`,
     `needs-info` id `09dd2bf3-afc7-4f34-888d-9209fe87a644`,
     `ready-for-agent` id `4b2f0609-c8a0-4781-ab4a-e1ccca50e539`,
@@ -146,9 +153,9 @@ workflow logic lives in the centrally managed org skills pinned by
 - Read-only verification queries:
   - `list_issues team=TRA project="Trace Flow Roadmap"` returned current issues
   - `list_issues team=TRA project="Trace Flow Roadmap" state=Todo label=ready-for-agent`
-    returned `TRA-186`, `TRA-187`, `TRA-170`
+    returned `TRA-245`, `TRA-232`, `TRA-170`, `TRA-229`, `TRA-210` on 2026-09-06
   - `list_issues team=TRA project="Trace Flow Roadmap" state=Done label=ready-for-agent`
-    returned stale cleanup drift `TRA-169`
+    returned no issues on 2026-09-06 (the earlier `TRA-169` drift is cleaned up)
 - Tracker tool query contract: Linear MCP `list_issues`, `list_issue_statuses`,
   `list_issue_labels`, `list_projects`, `list_comments`; writes use `save_issue`
 - Status field names: `status` and `state`; `statusType` is returned in reads
@@ -173,7 +180,7 @@ workflow logic lives in the centrally managed org skills pinned by
 - Orphan policy: route only when project/team/parent/repo label is directly
   evidenced; otherwise leave in Triage with `needs-info` or `ready-for-human`;
   never cancel for staleness alone
-- Issue key examples: `TRA-186`, `TRA-187`, `TRA-170`
+- Issue key examples: `TRA-245`, `TRA-232`, `TRA-170`
 - Ready state: `Todo`
 - Intake states: `Triage`
 - Ready-state promotion source states: `Triage`; `Backlog` only on explicit
@@ -187,7 +194,7 @@ workflow logic lives in the centrally managed org skills pinned by
 - Code-host issue sync policy: when Linear and GitHub links both exist, assume
   sync is active; refresh both before manual repair
 - GitHub PR attention labels: not configured. GitHub labels `needs-human-merge`
-  and `needs-human-input` were absent on 2026-07-05; use Linear
+  and `needs-human-input` were still absent on 2026-09-06; use Linear
   `ready-for-human`/`needs-info` plus PR comments until labels are created.
 - Readiness labels: `needs-triage`, `needs-info`, `ready-for-agent`,
   `ready-for-human`, `wontfix`

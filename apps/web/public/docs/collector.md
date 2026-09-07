@@ -8,6 +8,9 @@ Coding-agent analytics is available in private alpha. Features and availability 
 Trace Flow's private-alpha collector turns local coding-agent activity into cost, token, context,
 tool, repository, and review analytics in `/app/agents`.
 
+To ask questions about those analytics in the app, use Trace Flow Analyst with an active Pro
+subscription. Analyst is not available on Hobby.
+
 ## Download Trace Flow Desktop
 
 - [macOS arm64 DMG](https://downloads.zaks.sh/trace-flow/desktop/latest/trace-flow-desktop.dmg)

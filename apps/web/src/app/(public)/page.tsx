@@ -20,10 +20,10 @@ export default async function HomePage() {
     <main>
       <HeroSection isWaitlistMode={isWaitlistMode} />
       <ProductShowcase />
-      <AIHistory />
       <HowItWorks />
       <DesktopCapture />
       <CodeExample />
+      <AIHistory />
       <FooterCTA isWaitlistMode={isWaitlistMode} />
     </main>
   );

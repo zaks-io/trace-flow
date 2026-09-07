@@ -32,7 +32,7 @@ export function DesktopCapture() {
           </h2>
           <p className="mx-auto max-w-2xl text-lg leading-8 text-muted-foreground">
             Capture coding-session analytics without changing your workflow. The desktop app runs in
-            your menu bar or system tray. Available to private-alpha testers.
+            your menu bar or system tray.
           </p>
         </div>
         <div className="grid gap-5 sm:grid-cols-3">
