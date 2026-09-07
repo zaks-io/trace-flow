@@ -1,9 +1,10 @@
 import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProxyEnv } from '../../context';
 import { analyticsKeyId } from '@trace-flow/utils';
 import { app } from '../../index';
 import { _clearUsageCache } from '../../usage';
+import type { OTLPExportTraceServiceRequest } from '../types';
 
 const API_KEY = 'otlp-durable-test-key';
 
@@ -53,7 +54,7 @@ function makeEnv(options?: { storageError?: Error; usageError?: Error }) {
   return { env, queueSend, storagePut, getStoredValue: () => storedValue };
 }
 
-function otlpBody(attributeValue = 'value') {
+function otlpBody(attributeValue = 'value'): OTLPExportTraceServiceRequest {
   return {
     resourceSpans: [
       {
@@ -96,6 +97,7 @@ async function postOTLP(env: ProxyEnv, body: unknown) {
 
 describe('OTLP durable acceptance', () => {
   beforeEach(() => _clearUsageCache());
+  afterEach(() => vi.restoreAllMocks());
 
   it('returns retryable 503 when the initial outbox write fails', async () => {
     const { env, queueSend } = makeEnv({ storageError: new Error('R2 unavailable') });
@@ -137,5 +139,38 @@ describe('OTLP durable acceptance', () => {
     const reference = queueSend.mock.calls[0]?.[0];
     expect(reference).toMatchObject({ type: 'delivery' });
     expect(JSON.stringify(reference).length).toBeLessThan(200);
+  });
+
+  it('rejects resource attributes whose per-span expansion exceeds the delivery budget', async () => {
+    const { env, storagePut, queueSend } = makeEnv();
+    const body = otlpBody();
+    body.resourceSpans[0]!.resource = {
+      attributes: [{ key: 'shared', value: { stringValue: 'x'.repeat(100_000) } }],
+    };
+    body.resourceSpans[0]!.scopeSpans[0]!.spans = Array.from({ length: 100 }, (_, index) => ({
+      ...body.resourceSpans[0]!.scopeSpans[0]!.spans[0]!,
+      spanId: index.toString(16).padStart(16, '0'),
+    }));
+
+    const { response, ctx } = await postOTLP(env, body);
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: { code: 413 } });
+    expect(storagePut).not.toHaveBeenCalled();
+    expect(queueSend).not.toHaveBeenCalled();
+    await waitOnExecutionContext(ctx);
+  });
+
+  it('logs OTLP attribute keys without logging their values', async () => {
+    const secretValue = 'customer-secret-value-that-must-not-be-logged';
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { env } = makeEnv();
+    const { response, ctx } = await postOTLP(env, otlpBody(secretValue));
+
+    expect(response.status).toBe(200);
+    await waitOnExecutionContext(ctx);
+    const logs = info.mock.calls.flat().join('\n');
+    expect(logs).toContain('large.value');
+    expect(logs).not.toContain(secretValue);
   });
 });

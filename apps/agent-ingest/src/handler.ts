@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import { axiomConfigFromEnv, createWorkerLogger } from '@trace-flow/logging';
 import { currentSentryTraceContext } from '@trace-flow/utils/sentry-tracing';
+import { BodySizeLimitError, readBodyWithLimit } from '@trace-flow/utils';
 import type {
   AgentIngestEnvelope,
   AgentIngestQueueFacts,
@@ -11,7 +12,7 @@ import { authenticateCollector } from './auth';
 import { checkCompatibility, getCompatibilityPolicy } from './policy';
 import { assembleQueueFacts } from './ids';
 import { ConvexUnreachableError, claimSessions } from './ownership';
-import { chunkFacts } from './chunker';
+import { assertFactsFitQueueMessages, chunkFacts, QueueFactTooLargeError } from './chunker';
 import {
   MAX_COMMAND_EXCERPT,
   MAX_ERROR_EXCERPT,
@@ -84,6 +85,12 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
     if (!auth.ok) return c.json({ error: 'unauthorized', reason: auth.reason }, 401);
     const { credential } = auth;
 
+    const { success } = await c.env.AGENT_INGEST_LIMITER.limit({ key: credential.orgId });
+    if (!success) {
+      logger.warn('agent_ingest.rate_limited', { org_id: credential.orgId });
+      return c.json({ error: 'rate_limited' }, 429);
+    }
+
     // Cheap pre-check: reject on the declared Content-Length before buffering the body.
     const declaredLength = Number(c.req.header('content-length'));
     if (Number.isFinite(declaredLength) && declaredLength > MAX_INGEST_BYTES) {
@@ -91,10 +98,15 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
       return c.json({ error: 'payload_too_large' }, 413);
     }
 
-    const buf = await c.req.arrayBuffer();
-    if (buf.byteLength > MAX_INGEST_BYTES) {
-      logger.warn('agent_ingest.payload_too_large', { bytes: buf.byteLength });
-      return c.json({ error: 'payload_too_large' }, 413);
+    let buf: ArrayBuffer;
+    try {
+      buf = await readBodyWithLimit(c.req.raw.body, MAX_INGEST_BYTES);
+    } catch (err) {
+      if (err instanceof BodySizeLimitError) {
+        logger.warn('agent_ingest.payload_too_large', { bytes: err.receivedBytes });
+        return c.json({ error: 'payload_too_large' }, 413);
+      }
+      throw err;
     }
 
     // The Collector gzips the envelope and sends `Content-Encoding: gzip`; Workers does not
@@ -149,17 +161,44 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
       );
     }
 
-    const { success } = await c.env.AGENT_INGEST_LIMITER.limit({ key: credential.orgId });
-    if (!success) {
-      logger.warn('agent_ingest.rate_limited', { org_id: credential.orgId });
-      return c.json({ error: 'rate_limited' }, 429);
-    }
-
     if (isEmpty(facts)) return c.json({ accepted: true, sessions: 0 }, 202);
 
     reRedact(facts);
 
     const { queueFacts, sessionPks } = await assembleQueueFacts(facts, batch.source);
+
+    const base: Omit<AgentIngestQueueMessage, 'facts'> = {
+      type: 'agent',
+      source: batch.source,
+      parser_version: batch.parser_version,
+      desktop_version: batch.desktop_version,
+      collector_batch_id: batch.collector_batch_id,
+      tenancy: {
+        org_id: credential.orgId,
+        user_id: credential.userId,
+        collector_id: credential.collectorId,
+        collector_credential_id: credential.collectorCredentialId,
+      },
+      enqueued_at: Date.now(),
+      // Carried on every chunk so the consumer's work joins this ingest request's trace. `chunkFacts`
+      // sizes each message from `base`, so the extra bytes stay inside the per-message byte budget.
+      sentry_trace_context: currentSentryTraceContext(),
+    };
+
+    // Validate queue fit before claiming ownership so an impossible write cannot create a claim.
+    try {
+      assertFactsFitQueueMessages(base, queueFacts);
+    } catch (err) {
+      if (err instanceof QueueFactTooLargeError) {
+        logger.warn('agent_ingest.fact_too_large', {
+          category: err.category,
+          bytes: err.factBytes,
+          max_bytes: err.maxBytes,
+        });
+        return c.json({ error: 'payload_too_large' }, 413);
+      }
+      throw err;
+    }
 
     let claims;
     try {
@@ -191,24 +230,7 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
       return c.json({ accepted: true, sessions: 0, skipped_conflict: conflicted.size }, 202);
     }
 
-    const base: Omit<AgentIngestQueueMessage, 'facts'> = {
-      type: 'agent',
-      source: batch.source,
-      parser_version: batch.parser_version,
-      desktop_version: batch.desktop_version,
-      collector_batch_id: batch.collector_batch_id,
-      tenancy: {
-        org_id: credential.orgId,
-        user_id: credential.userId,
-        collector_id: credential.collectorId,
-        collector_credential_id: credential.collectorCredentialId,
-      },
-      enqueued_at: Date.now(),
-      // Carried on every chunk so the consumer's work joins this ingest request's trace. `chunkFacts`
-      // sizes each message from `base`, so the extra bytes stay inside the per-message byte budget.
-      sentry_trace_context: currentSentryTraceContext(),
-    };
-    const messages = chunkFacts(base, owned);
+    const messages = chunkFacts({ ...base, enqueued_at: Date.now() }, owned);
 
     // Enqueue with sendBatch, not N parallel send()s. A multi-session envelope can chunk into hundreds
     // of queue messages; firing that many individual send() subrequests bursts past Cloudflare's

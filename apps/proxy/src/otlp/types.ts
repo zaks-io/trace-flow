@@ -6,7 +6,7 @@
 export interface OTLPAnyValue {
   stringValue?: string;
   boolValue?: boolean;
-  intValue?: string; // int64 as string in JSON
+  intValue?: string | number; // ProtoJSON parsers accept quoted and numeric int64 values
   doubleValue?: number;
   arrayValue?: { values: OTLPAnyValue[] };
   kvlistValue?: { values: OTLPKeyValue[] };

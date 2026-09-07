@@ -349,6 +349,7 @@ export const DEFAULT_PRICING: DefaultPricing[] = [
     model: 'openai/gpt-oss-120b',
     promptCostPerMillion: 150_000,
     completionCostPerMillion: 600_000,
+    cacheReadCostPerMillion: 75_000,
   },
   {
     provider: 'groq',

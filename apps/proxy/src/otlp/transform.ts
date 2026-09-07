@@ -35,7 +35,7 @@ const STATUS_CODE_MAP: Record<number, string> = {
 function extractValue(value: OTLPAnyValue): string {
   if (value.stringValue !== undefined) return value.stringValue;
   if (value.boolValue !== undefined) return String(value.boolValue);
-  if (value.intValue !== undefined) return value.intValue;
+  if (value.intValue !== undefined) return String(value.intValue);
   if (value.doubleValue !== undefined) return String(value.doubleValue);
   if (value.bytesValue !== undefined) return value.bytesValue;
   if (value.arrayValue) return JSON.stringify(value.arrayValue.values.map(extractValue));

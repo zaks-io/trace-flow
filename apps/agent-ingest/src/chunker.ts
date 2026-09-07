@@ -24,6 +24,19 @@ export const CATEGORIES: QueueFactCategory[] = [
 const encoder = new TextEncoder();
 const byteLength = (value: unknown): number => encoder.encode(JSON.stringify(value)).length;
 
+export class QueueFactTooLargeError extends Error {
+  constructor(
+    readonly category: QueueFactCategory,
+    readonly factBytes: number,
+    readonly maxBytes: number,
+  ) {
+    super(
+      `A ${category} fact requires ${factBytes} bytes in its queue message; limit is ${maxBytes}`,
+    );
+    this.name = 'QueueFactTooLargeError';
+  }
+}
+
 function emptyFacts(): AgentIngestQueueFacts {
   return {
     messages: [],
@@ -35,12 +48,27 @@ function emptyFacts(): AgentIngestQueueFacts {
   };
 }
 
+export function assertFactsFitQueueMessages(
+  base: Omit<AgentIngestQueueMessage, 'facts'>,
+  facts: AgentIngestQueueFacts,
+  maxBytes: number = MAX_QUEUE_MESSAGE_BYTES,
+): void {
+  const baseSize = byteLength({ ...base, facts: emptyFacts() });
+  for (const category of CATEGORIES) {
+    for (const fact of facts[category] ?? []) {
+      const messageBytes = baseSize + byteLength(fact);
+      if (messageBytes > maxBytes) {
+        throw new QueueFactTooLargeError(category, messageBytes, maxBytes);
+      }
+    }
+  }
+}
+
 /**
- * Greedily packs the five fact arrays into one or more queue messages, each under
+ * Greedily packs the fact arrays into one or more queue messages, each under
  * {@link MAX_QUEUE_MESSAGE_BYTES}. Facts are independent at rest (the consumer dedups on the
  * deterministic `*_pk`s), so a session may straddle messages without affecting correctness. A
- * single fact never exceeds the cap — excerpts are length-capped upstream — but if one ever did it
- * still ships alone in its own message rather than being dropped.
+ * single oversized fact is rejected instead of producing a queue message Cloudflare will refuse.
  */
 export function chunkFacts(
   base: Omit<AgentIngestQueueMessage, 'facts'>,
@@ -48,6 +76,7 @@ export function chunkFacts(
   maxBytes: number = MAX_QUEUE_MESSAGE_BYTES,
 ): AgentIngestQueueMessage[] {
   const baseSize = byteLength({ ...base, facts: emptyFacts() });
+  assertFactsFitQueueMessages(base, facts, maxBytes);
   const messages: AgentIngestQueueMessage[] = [];
 
   let current = emptyFacts();
@@ -64,8 +93,10 @@ export function chunkFacts(
 
   for (const category of CATEGORIES) {
     for (const fact of facts[category] ?? []) {
-      const factSize = byteLength(fact) + 1; // +1 for the array-element comma
+      const factBytes = byteLength(fact);
+      let factSize = factBytes + ((current[category]?.length ?? 0) > 0 ? 1 : 0);
       if (currentCount > 0 && currentSize + factSize > maxBytes) flush();
+      factSize = factBytes + ((current[category]?.length ?? 0) > 0 ? 1 : 0);
       (current[category] as unknown[]).push(fact);
       currentSize += factSize;
       currentCount += 1;

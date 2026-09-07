@@ -28,11 +28,7 @@ export class UpstreamFetchError extends Error {
 }
 
 /**
- * Tee the request body, forward to the resolved provider, capture timestamps.
- *
- * tee() is mandatory — Workers streams are read-once and both consumers (proxy
- * fetch + capture pipeline) need their own reader. If only one drains, the
- * other backpressures the worker indefinitely.
+ * Give forwarding and capture independent views of the request body validated by the prior stage.
  *
  * Strips proxy-internal headers (`X-Trace-Flow-Api-Key`,
  * `X-Trace-Flow-Omit-Body`) and W3C trace context — those are for us, not
@@ -47,7 +43,8 @@ export async function forwardToUpstream(
   const query = new URL(c.req.url).search;
   const targetUrl = validated.route.targetUrl + query;
 
-  const [streamToProxy, streamToCapture] = c.req.raw.body?.tee() ?? [null, null];
+  const body = validated.requestBody;
+  const streamToCapture = body.byteLength > 0 ? new Blob([body]).stream() : null;
 
   const headers = new Headers(c.req.raw.headers);
   headers.delete('X-Trace-Flow-Api-Key');
@@ -56,6 +53,7 @@ export async function forwardToUpstream(
   headers.delete('tracestate');
   headers.delete('baggage');
   headers.delete('host');
+  headers.delete('content-length');
 
   const requestSent = getCurrentTimestamp();
 
@@ -64,12 +62,9 @@ export async function forwardToUpstream(
     response = await fetch(targetUrl, {
       method: c.req.method,
       headers,
-      body: streamToProxy,
+      body: body.byteLength > 0 ? body : null,
     });
   } catch (error) {
-    if (streamToProxy) {
-      await streamToProxy.cancel().catch(() => undefined);
-    }
     throw new UpstreamFetchError(
       { validated, targetUrl, streamToCapture, requestStart, requestSent },
       error,
