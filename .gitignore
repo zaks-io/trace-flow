@@ -52,3 +52,7 @@ bun-debug.log
 
 # Turborepo
 .turbo
+
+# Stray copies dropped by the skills installer; canonical copies live in .agents/skills/
+/agent/
+/skills/ziw-*

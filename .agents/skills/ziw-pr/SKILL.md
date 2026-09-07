@@ -2,7 +2,6 @@
 name: ziw-pr
 description: Use when opening, refreshing, or shipping the current branch as a pull request with local checks, judgment-based author QA, Conventional Commits, PR creation, and issue tracking.
 argument-hint: "[issue-id|branch|pr-url]"
-disable-model-invocation: true
 ---
 
 # Create PR
@@ -119,7 +118,8 @@ high-risk changes or when the user asks.
 
 Do not post hosted-review commands or run a provider CLI until the provider,
 auto-review mode, trigger policy, and current hosted review state are resolved.
-If a hosted review is enabled, pending, or complete for the current PR head, wait
+If a hosted review is enabled, pending, or complete for the current
+review-relevant diff, wait
 instead of requesting another. Never use CodeRabbit CLI for an existing PR, and
 do not apply CodeRabbit commands to Cursor Bugbot. Use `@coderabbitai ignore` in
 the PR description only when CodeRabbit policy allows skipping optional
@@ -230,6 +230,7 @@ Evidence: head <sha>; base <sha>; merge-base <sha>; hosted checks <state>
 PR state: <draft|ready-for-review>
 Scope: <matches issue|split needed|untracked, with reason>
 Issue:  <issue, handoff status, created, or skipped>
+Next:   <owner and exact next action>
 ```
 
 ## Guardrails

@@ -7,7 +7,7 @@
 // Input may be the direct output of tick-snapshot.mjs or an envelope:
 //   {
 //     "snapshot": { ...tick-snapshot output... },
-//     "config": { "activePrPreviewCap": 3 },
+//     "config": { "workerConcurrencyCap": 3 },
 //     "state": {
 //       "startableTickets": [{ "id": "ZAK-1", "footprint": ["src/foo.ts"] }],
 //       "dispatches": [],
@@ -18,9 +18,9 @@
 //     }
 //   }
 
-import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 
+import { loadPlannerInput } from "./planner-input.mjs";
 import { reconcileActiveDelivery } from "./active-dispatches.mjs";
 import { extractLinearIssues, linearDagStart } from "./linear-dag-start.mjs";
 import {
@@ -35,40 +35,14 @@ import {
 } from "./workflow-contract.mjs";
 
 const startedAt = performance.now();
-const args = process.argv.slice(2);
-const debug = args.includes("--debug");
-const pretty = args.includes("--pretty");
-const usage =
-  "Usage: node tick-plan.mjs <snapshot-or-envelope.json> [--config config.json] [--state state.json]";
-
-const fail = (message) => {
-  console.error(`tick-plan: ${message}`);
+let inputs;
+try {
+  inputs = loadPlannerInput(process.argv.slice(2));
+} catch (error) {
+  console.error(`tick-plan: ${error.message}`);
   process.exit(1);
-};
-
-const argValue = (flag) => {
-  const index = args.indexOf(flag);
-  return index >= 0 ? args[index + 1] : undefined;
-};
-
-const positional = args.filter(
-  (arg, index) =>
-    !arg.startsWith("--") && args[index - 1] !== "--config" && args[index - 1] !== "--state",
-);
-
-if (positional.length !== 1) {
-  fail(`expected exactly one input\n${usage}`);
 }
-
-const readJson = (source, label) => {
-  if (!source) return {};
-  try {
-    const text = source === "-" ? readFileSync(0, "utf8") : readFileSync(source, "utf8");
-    return text.trim() ? JSON.parse(text) : {};
-  } catch (error) {
-    fail(`cannot read ${label}: ${error.message}`);
-  }
-};
+const { snapshot, config, state, debug, pretty } = inputs;
 
 const normalize = (value) =>
   String(value ?? "")
@@ -142,16 +116,14 @@ const evidenceForPr = (state, pr) => {
       ? {
           hasReviewEvidence: true,
           independentReviewCount: currentApprovals.length,
+          reviewEvidenceCurrent: true,
           reviewedHeadSha: pr.headSha,
           reviewVerdict: "Ready to Merge",
         }
       : {};
   if (currentApprovals.length > 0) return { ...explicit, ...githubEvidence };
 
-  const currentFingerprint =
-    pr.reviewDiffFingerprint ??
-    pr.reviewRelevantDiffFingerprint ??
-    state.reviewDiffByPr?.[pr.number];
+  const currentFingerprint = reviewDiffFingerprintForPr(state, pr);
   const reviewedFingerprint =
     explicit.reviewedDiffFingerprint ?? explicit.reviewRelevantDiffFingerprint;
   if (currentFingerprint && normalize(currentFingerprint) === normalize(reviewedFingerprint)) {
@@ -159,6 +131,8 @@ const evidenceForPr = (state, pr) => {
       ...explicit,
       hasReviewEvidence: true,
       independentReviewCount: Math.max(Number(explicit.independentReviewCount) || 0, 1),
+      reviewDiffFingerprint: currentFingerprint,
+      reviewedDiffFingerprint: reviewedFingerprint,
       reviewedHeadSha: pr.headSha,
       reviewVerdict: explicit.reviewVerdict ?? "Ready to Merge",
     };
@@ -166,22 +140,41 @@ const evidenceForPr = (state, pr) => {
   return explicit;
 };
 
+const reviewDiffFingerprintForPr = (state, pr) =>
+  pr.reviewDiffFingerprint ??
+  pr.reviewRelevantDiffFingerprint ??
+  state.reviewDiffByPr?.[pr.number] ??
+  state.reviewDiffByPr?.[String(pr.number ?? "")];
+
 const hostedReviewForPr = (state, pr) => {
   const byPr = state.hostedReviewByPr ?? {};
   const keys = [pr.number, String(pr.number ?? ""), pr.id, pr.url, pr.headSha, pr.headRefName]
     .map((key) => String(key ?? "").trim())
     .filter(Boolean);
-  return Object.assign({}, ...keys.map((key) => byPr[key] ?? {}));
+  const hostedReview = Object.assign({}, ...keys.map((key) => byPr[key] ?? {}));
+  const requiredAliases = [
+    hostedReview.required,
+    hostedReview.hostedReviewRequired,
+    hostedReview.codeRabbitRequired,
+  ].filter((value) => value != null);
+  const required =
+    requiredAliases.length === 0 ? undefined : requiredAliases.some((value) => value === true);
+  return {
+    ...hostedReview,
+    ...(required == null ? {} : { required, hostedReviewRequired: required }),
+  };
 };
 
 const humanMergeDecisionForPr = (state, config, pr) => {
   const evidence = evidenceForPr(state, pr);
   const hostedReview = hostedReviewForPr(state, pr);
+  const reviewDiffFingerprint = reviewDiffFingerprintForPr(state, pr);
   return {
     pr: pr.number ?? pr.id ?? pr.url,
     headSha: pr.headSha,
     ...humanMergePrLabelDecision(
       {
+        ...pr,
         prState: pr.state,
         prLabels: pr.labels,
         isDraft: pr.isDraft,
@@ -191,6 +184,7 @@ const humanMergeDecisionForPr = (state, config, pr) => {
         reviewDecision: pr.reviewDecision,
         ...hostedReview,
         ...evidence,
+        ...(reviewDiffFingerprint ? { reviewDiffFingerprint } : {}),
       },
       config,
     ),
@@ -199,6 +193,7 @@ const humanMergeDecisionForPr = (state, config, pr) => {
 
 const hostedReviewDecisionForPr = (state, config, pr) => {
   const hostedReview = hostedReviewForPr(state, pr);
+  const reviewDiffFingerprint = reviewDiffFingerprintForPr(state, pr);
   if (!hostedReview.required) return null;
   return {
     pr: pr.number ?? pr.id ?? pr.url,
@@ -209,6 +204,7 @@ const hostedReviewDecisionForPr = (state, config, pr) => {
         prState: pr.isDraft ? "draft" : pr.state,
         currentPrHeadSha: pr.headSha,
         ...hostedReview,
+        ...(reviewDiffFingerprint ? { reviewDiffFingerprint } : {}),
       },
       config,
     ),
@@ -220,6 +216,15 @@ const targetForPr = (pr) => `pr:${pr.number ?? pr.id ?? pr.url}`;
 const reviewRequestForPr = (state, pr) => {
   const byPr = state.reviewRequestsByPr ?? state.reviewRequestByPr ?? {};
   const request = byPr[pr.number] ?? byPr[String(pr.number ?? "")] ?? byPr[pr.id] ?? {};
+  const currentFingerprint = normalize(reviewDiffFingerprintForPr(state, pr));
+  const requestedFingerprint = normalize(
+    request.reviewDiffFingerprint ??
+      request.reviewRelevantDiffFingerprint ??
+      request.reviewedDiffFingerprint,
+  );
+  if (currentFingerprint && requestedFingerprint) {
+    return currentFingerprint === requestedFingerprint ? request : null;
+  }
   return normalize(request.headSha ?? request.reviewHeadSha) === normalize(pr.headSha)
     ? request
     : null;
@@ -301,6 +306,7 @@ const prDisposition = (state, config, pr) => {
 
   const decision = mergeEligibilityDecision(
     {
+      ...pr,
       prState: pr.state,
       isDraft: pr.isDraft,
       currentPrHeadSha: pr.headSha,
@@ -309,6 +315,9 @@ const prDisposition = (state, config, pr) => {
       reviewDecision: pr.reviewDecision,
       ...hostedReview,
       ...evidence,
+      ...(reviewDiffFingerprintForPr(state, pr)
+        ? { reviewDiffFingerprint: reviewDiffFingerprintForPr(state, pr) }
+        : {}),
     },
     config,
   );
@@ -341,7 +350,9 @@ const prDisposition = (state, config, pr) => {
           kind: "request-hosted-review",
           owner: "orchestrator",
           reason: "HOSTED_REVIEW_REQUIRED",
-          idempotencyKey: `hosted-review:${pr.number ?? pr.id}:${pr.headSha}`,
+          idempotencyKey: `hosted-review:${pr.number ?? pr.id}:${
+            reviewDiffFingerprintForPr(state, pr) ?? pr.headSha
+          }`,
         },
       };
     }
@@ -390,7 +401,9 @@ const prDisposition = (state, config, pr) => {
         kind: "request-review",
         owner: "review-worker",
         reason: "REVIEW_REQUIRED",
-        idempotencyKey: `review:${pr.number ?? pr.id}:${pr.headSha}`,
+        idempotencyKey: `review:${pr.number ?? pr.id}:${
+          pr.reviewDiffFingerprint ?? pr.reviewRelevantDiffFingerprint ?? pr.headSha
+        }`,
       },
     };
   }
@@ -402,24 +415,6 @@ const prDisposition = (state, config, pr) => {
   }
   return { bucket: "holds", value: { target, reason: "MERGE_HELD" } };
 };
-
-const envelope = readJson(positional[0], "input");
-const snapshot =
-  envelope.snapshot ??
-  (envelope.prs || envelope.baseline || envelope.footprint || envelope.linear ? envelope : {});
-const config = {
-  ...(envelope.config ?? {}),
-  ...readJson(argValue("--config"), "--config"),
-};
-const state = {
-  ...(envelope.queue ?? {}),
-  ...(envelope.state ?? {}),
-  ...readJson(argValue("--state"), "--state"),
-};
-
-if (!snapshot.repo && !state.repo) {
-  fail("snapshot is missing repo identity; refusing to plan from empty or partial evidence");
-}
 
 const initialPullRequests = mergePrLists(snapshot.prs, state.pullRequests);
 const delivery = reconcileActiveDelivery({
@@ -488,6 +483,12 @@ const readyStatePromotions = toArray(state.tickets ?? snapshot.linear?.issues).m
 
 const reviewEvidence = toArray(state.reviewEvidenceChecks).map((evidence) => ({
   target: evidence.pr ?? evidence.ticket ?? evidence.currentPrHeadSha,
+  actionTarget:
+    evidence.pr != null
+      ? `pr:${evidence.pr}`
+      : evidence.ticket != null
+        ? `ticket:${evidence.ticket}`
+        : null,
   ...reviewEvidenceDecision(evidence),
 }));
 
@@ -567,7 +568,23 @@ for (const promotion of readyStatePromotions) {
   });
 }
 
-const actions = [...dispatchActions, ...prActions];
+const labelActions = [
+  ...humanMergeLabels.map((decision) => ({
+    ...decision,
+    target: `pr:${decision.pr}`,
+  })),
+  ...reviewEvidence.map((decision) => ({ ...decision, target: decision.actionTarget })),
+]
+  .filter((decision) => decision.target && /^(APPLY|CLEAR)_/.test(decision.action))
+  .map((decision) => ({
+    target: decision.target,
+    kind: decision.action.toLowerCase().replaceAll("_", "-"),
+    owner: "orchestrator",
+    reason: decision.reason,
+    ...(decision.label ? { label: decision.label } : {}),
+    ...(decision.headSha ? { headSha: decision.headSha } : {}),
+  }));
+const actions = [...dispatchActions, ...labelActions, ...prActions];
 
 if (!linearQueried) warnings.push({ reason: "TRACKER_STATE_MISSING" });
 const wakeState =
