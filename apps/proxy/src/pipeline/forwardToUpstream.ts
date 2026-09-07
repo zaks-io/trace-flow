@@ -1,7 +1,8 @@
 import type { Context } from 'hono';
-import { getCurrentTimestamp } from '@trace-flow/utils';
+import { getCurrentTimestamp, readBodyWithLimit } from '@trace-flow/utils';
 import type { ProxyEnv } from '../context';
 import type { ValidatedRequest } from './validateRequest';
+import { MAX_REQUEST_SIZE } from './validateRequest';
 
 /**
  * Output of the forward stage. Composes the validated request by inclusion —
@@ -28,11 +29,8 @@ export class UpstreamFetchError extends Error {
 }
 
 /**
- * Tee the request body, forward to the resolved provider, capture timestamps.
- *
- * tee() is mandatory — Workers streams are read-once and both consumers (proxy
- * fetch + capture pipeline) need their own reader. If only one drains, the
- * other backpressures the worker indefinitely.
+ * Read the request through the hard byte limit, then give forwarding and capture independent bodies.
+ * Buffering is bounded to 10 MB and guarantees an oversized chunked request never continues upstream.
  *
  * Strips proxy-internal headers (`X-Trace-Flow-Api-Key`,
  * `X-Trace-Flow-Omit-Body`) and W3C trace context — those are for us, not
@@ -47,7 +45,8 @@ export async function forwardToUpstream(
   const query = new URL(c.req.url).search;
   const targetUrl = validated.route.targetUrl + query;
 
-  const [streamToProxy, streamToCapture] = c.req.raw.body?.tee() ?? [null, null];
+  const body = await readBodyWithLimit(c.req.raw.body, MAX_REQUEST_SIZE);
+  const streamToCapture = body.byteLength > 0 ? new Blob([body]).stream() : null;
 
   const headers = new Headers(c.req.raw.headers);
   headers.delete('X-Trace-Flow-Api-Key');
@@ -56,6 +55,7 @@ export async function forwardToUpstream(
   headers.delete('tracestate');
   headers.delete('baggage');
   headers.delete('host');
+  headers.delete('content-length');
 
   const requestSent = getCurrentTimestamp();
 
@@ -64,12 +64,9 @@ export async function forwardToUpstream(
     response = await fetch(targetUrl, {
       method: c.req.method,
       headers,
-      body: streamToProxy,
+      body: body.byteLength > 0 ? body : null,
     });
   } catch (error) {
-    if (streamToProxy) {
-      await streamToProxy.cancel().catch(() => undefined);
-    }
     throw new UpstreamFetchError(
       { validated, targetUrl, streamToCapture, requestStart, requestSent },
       error,

@@ -54,19 +54,21 @@ async function validCredEntries(
 function makeEnv(over: EnvOverrides = {}): {
   env: AgentIngestEnv;
   queueSend: ReturnType<typeof vi.fn>;
+  rateLimit: ReturnType<typeof vi.fn>;
 } {
   const queueSend = over.queueSend ?? vi.fn(async () => {});
+  const rateLimit = vi.fn(async () => ({ success: over.limitSuccess ?? true }));
   const env = {
     COLLECTOR_CREDS: makeKv(over.creds ?? {}),
     // The handler enqueues via sendBatch (one call per <=100-message group). Tests assert on it.
     AGENT_QUEUE: { sendBatch: queueSend } as unknown as Queue<AgentIngestQueueMessage>,
     AGENT_INGEST_LIMITER: {
-      limit: async () => ({ success: over.limitSuccess ?? true }),
+      limit: rateLimit,
     } as unknown as RateLimit,
     CONVEX_SITE_URL: CONVEX,
     AGENT_INGEST_SHARED_SECRET: 'shared-secret',
   } satisfies AgentIngestEnv;
-  return { env, queueSend };
+  return { env, queueSend, rateLimit };
 }
 
 /**
@@ -145,6 +147,15 @@ async function gzip(text: string): Promise<Uint8Array> {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
+function chunkedBody(...chunkSizes: number[]): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      for (const size of chunkSizes) controller.enqueue(new Uint8Array(size));
+      controller.close();
+    },
+  });
+}
+
 const authHeaders = { 'X-Trace-Flow-Collector-Secret': SECRET, 'Content-Type': 'application/json' };
 
 describe('POST /v1/ingest', () => {
@@ -199,6 +210,25 @@ describe('POST /v1/ingest', () => {
     const huge = `{"x":"${'a'.repeat(10 * 1024 * 1024 + 16)}"}`;
     const res = await post(env, huge, authHeaders);
     expect(res.status).toBe(413);
+  });
+
+  it('413s a chunked body as soon as its streamed bytes exceed the limit', async () => {
+    const { env } = makeEnv({ creds: await validCredEntries() });
+    const res = await post(env, chunkedBody(6 * 1024 * 1024, 6 * 1024 * 1024), authHeaders);
+
+    expect(res.status).toBe(413);
+  });
+
+  it('rate limits immediately after auth, before reading or parsing the body', async () => {
+    const { env, rateLimit } = makeEnv({
+      creds: await validCredEntries(),
+      limitSuccess: false,
+    });
+    const res = await post(env, 'not json', authHeaders);
+
+    expect(res.status).toBe(429);
+    expect(rateLimit).toHaveBeenCalledOnce();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it('400s malformed JSON', async () => {

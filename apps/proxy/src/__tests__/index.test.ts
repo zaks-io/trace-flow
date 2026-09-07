@@ -23,10 +23,8 @@ interface UpstreamMatcher {
  * `globalThis.fetch` and replies only to the matched upstream; any other
  * request throws, preserving `fetchMock.disableNetConnect()` semantics.
  *
- * The proxy `tee()`s the request body and forwards one half here. A real
- * upstream drains that stream — so must this mock, otherwise the tee
- * back-pressures and the capture side fails with "Can't read from request
- * stream after response has been sent."
+ * A real upstream consumes the forwarded body, so the mock does too. This also
+ * verifies that forwarding preserves the request bytes.
  */
 function mockUpstream(
   matcher: UpstreamMatcher,
@@ -200,6 +198,29 @@ describe('Proxy Worker Integration', () => {
   });
 
   describe('Proxy Requests', () => {
+    it('rejects an oversized chunked request before calling the provider', async () => {
+      await setupValidApiKey('chunked-oversize-key');
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(6 * 1024 * 1024));
+          controller.enqueue(new Uint8Array(6 * 1024 * 1024));
+          controller.close();
+        },
+      });
+
+      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Trace-Flow-Api-Key': 'chunked-oversize-key',
+        },
+        body,
+      });
+
+      expect(res.status).toBe(413);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
     it('should proxy successful non-streaming request to OpenAI', async () => {
       await setupValidApiKey('test-key');
 
@@ -541,7 +562,7 @@ describe('Proxy Worker Integration', () => {
       expect(headers.get('Custom-Header')).toBe('custom-value');
     });
 
-    it('should capture request body via tee()', async () => {
+    it('should capture the bounded request body', async () => {
       await setupValidApiKey('test-key');
 
       const largeBody = { test: 'data', large: 'x'.repeat(1000) };
@@ -704,6 +725,28 @@ describe('Proxy Worker Integration', () => {
   });
 
   describe('OTLP Rejection Feedback', () => {
+    it('rejects an oversized chunked export while reading the request stream', async () => {
+      await setupValidApiKey('otlp-chunked-oversize-key');
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(6 * 1024 * 1024));
+          controller.enqueue(new Uint8Array(6 * 1024 * 1024));
+          controller.close();
+        },
+      });
+
+      const res = await SELF.fetch('http://localhost/v1/traces', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Trace-Flow-Api-Key': 'otlp-chunked-oversize-key',
+        },
+        body,
+      });
+
+      expect(res.status).toBe(413);
+    });
+
     it('should return rejectedSpans when usage is denied', async () => {
       const key = 'otlp-exhausted-key';
       const orgId = 'org-otlp-exhausted';

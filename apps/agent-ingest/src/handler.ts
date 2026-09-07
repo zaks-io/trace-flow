@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import { axiomConfigFromEnv, createWorkerLogger } from '@trace-flow/logging';
 import { currentSentryTraceContext } from '@trace-flow/utils/sentry-tracing';
+import { BodySizeLimitError, readBodyWithLimit } from '@trace-flow/utils';
 import type {
   AgentIngestEnvelope,
   AgentIngestQueueFacts,
@@ -84,6 +85,12 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
     if (!auth.ok) return c.json({ error: 'unauthorized', reason: auth.reason }, 401);
     const { credential } = auth;
 
+    const { success } = await c.env.AGENT_INGEST_LIMITER.limit({ key: credential.orgId });
+    if (!success) {
+      logger.warn('agent_ingest.rate_limited', { org_id: credential.orgId });
+      return c.json({ error: 'rate_limited' }, 429);
+    }
+
     // Cheap pre-check: reject on the declared Content-Length before buffering the body.
     const declaredLength = Number(c.req.header('content-length'));
     if (Number.isFinite(declaredLength) && declaredLength > MAX_INGEST_BYTES) {
@@ -91,10 +98,15 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
       return c.json({ error: 'payload_too_large' }, 413);
     }
 
-    const buf = await c.req.arrayBuffer();
-    if (buf.byteLength > MAX_INGEST_BYTES) {
-      logger.warn('agent_ingest.payload_too_large', { bytes: buf.byteLength });
-      return c.json({ error: 'payload_too_large' }, 413);
+    let buf: ArrayBuffer;
+    try {
+      buf = await readBodyWithLimit(c.req.raw.body, MAX_INGEST_BYTES);
+    } catch (err) {
+      if (err instanceof BodySizeLimitError) {
+        logger.warn('agent_ingest.payload_too_large', { bytes: err.receivedBytes });
+        return c.json({ error: 'payload_too_large' }, 413);
+      }
+      throw err;
     }
 
     // The Collector gzips the envelope and sends `Content-Encoding: gzip`; Workers does not
@@ -147,12 +159,6 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
         },
         426,
       );
-    }
-
-    const { success } = await c.env.AGENT_INGEST_LIMITER.limit({ key: credential.orgId });
-    if (!success) {
-      logger.warn('agent_ingest.rate_limited', { org_id: credential.orgId });
-      return c.json({ error: 'rate_limited' }, 429);
     }
 
     if (isEmpty(facts)) return c.json({ accepted: true, sessions: 0 }, 202);
