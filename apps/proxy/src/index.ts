@@ -5,8 +5,8 @@
  * The response streams immediately, but its terminal byte and EOF wait for the
  * durable R2 delivery envelope. Queue publication continues in `waitUntil()`.
  *
- * `tee()` is required because Workers streams are read-once and both consumers
- * (proxy fetch + capture) need their own reader.
+ * Request bodies pass through a streaming byte limit before forwarding. The
+ * bounded buffer then supplies independent provider and capture bodies.
  */
 import * as Sentry from '@sentry/cloudflare';
 import { OpenAPIHono } from '@hono/zod-openapi';

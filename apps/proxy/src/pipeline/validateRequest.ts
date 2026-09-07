@@ -7,6 +7,8 @@ import {
   parseTraceparent,
   parseBaggage,
   deriveOperationName,
+  BodySizeLimitError,
+  readBodyWithLimit,
 } from '@trace-flow/utils';
 import { PROVIDERS, resolveRoute } from '@trace-flow/llm-providers';
 import { validateApiKey, isAuthError } from '../auth';
@@ -41,6 +43,7 @@ export interface ValidatedRequest {
   operationName: string | undefined;
   apiKey: string;
   omitBody: boolean;
+  requestBody: ArrayBuffer;
 }
 
 export async function validateRequest(c: Context<{ Bindings: ProxyEnv }>): Promise<ValidateResult> {
@@ -143,6 +146,28 @@ export async function validateRequest(c: Context<{ Bindings: ProxyEnv }>): Promi
     };
   }
 
+  let requestBody: ArrayBuffer;
+  try {
+    requestBody = await readBodyWithLimit(c.req.raw.body, MAX_REQUEST_SIZE);
+  } catch (err) {
+    if (!(err instanceof BodySizeLimitError)) throw err;
+    orgLogger.warn('proxy.request_rejected', {
+      reason: 'too_large',
+      receivedBytes: err.receivedBytes,
+    });
+    await orgLogger.flush();
+    return {
+      kind: 'reject',
+      response: c.json(
+        {
+          error: 'Request too large',
+          message: `Request body exceeds ${MAX_REQUEST_SIZE / (1024 * 1024)}MB limit`,
+        },
+        413,
+      ),
+    };
+  }
+
   // Evaluate the recording policy only after the request is known to be well-formed. The usage
   // check increments the org's consumed units, so running it ahead of the size/route guards would
   // burn units on requests that are then rejected 413/404 and never recorded.
@@ -197,6 +222,7 @@ export async function validateRequest(c: Context<{ Bindings: ProxyEnv }>): Promi
       operationName,
       apiKey,
       omitBody,
+      requestBody,
     },
   };
 }

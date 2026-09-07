@@ -170,10 +170,13 @@ function validateAttributes(
   return undefined;
 }
 
-function isIntegerNano(value: unknown): boolean {
-  if (typeof value === 'number') return Number.isInteger(value);
-  if (typeof value === 'string') return /^-?\d+$/.test(value);
-  return false;
+const UINT64_MAX = (1n << 64n) - 1n;
+
+function normalizedUint64(value: unknown): string | undefined {
+  const normalized =
+    typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : value;
+  if (typeof normalized !== 'string' || !/^\d{1,20}$/.test(normalized)) return undefined;
+  return BigInt(normalized) <= UINT64_MAX ? normalized : undefined;
 }
 
 function validateSpan(span: unknown, spanIndex: number): ValidationResult | undefined {
@@ -193,9 +196,11 @@ function validateSpan(span: unknown, spanIndex: number): ValidationResult | unde
   }
 
   for (const field of ['startTimeUnixNano', 'endTimeUnixNano'] as const) {
-    if (!isIntegerNano(span[field])) {
-      return invalid(`Span ${spanIndex}: ${field} must be an integer nanosecond value`);
+    const normalized = normalizedUint64(span[field]);
+    if (normalized === undefined) {
+      return invalid(`Span ${spanIndex}: ${field} must be a uint64 nanosecond value`);
     }
+    span[field] = normalized;
   }
 
   const attributeError = validateAttributes(span.attributes, `Span ${spanIndex}: attributes`);
@@ -232,8 +237,12 @@ function validateSpan(span: unknown, spanIndex: number): ValidationResult | unde
         true,
       );
       if (nameError) return nameError;
-      if (event.timeUnixNano !== undefined && !isIntegerNano(event.timeUnixNano)) {
-        return invalid(`Span ${spanIndex}: event ${eventIndex} time must be an integer`);
+      if (event.timeUnixNano !== undefined) {
+        const normalized = normalizedUint64(event.timeUnixNano);
+        if (normalized === undefined) {
+          return invalid(`Span ${spanIndex}: event ${eventIndex} time must be a uint64 value`);
+        }
+        event.timeUnixNano = normalized;
       }
       const eventAttributeError = validateAttributes(
         event.attributes,
@@ -355,6 +364,8 @@ export function validateOTLPRequest(request: unknown): ValidationResult {
             span.parentSpanId,
             span.traceState,
             span.name,
+            span.startTimeUnixNano,
+            span.endTimeUnixNano,
             span.status,
           ]) +
           jsonByteLength(span.attributes ?? []) +

@@ -11,6 +11,7 @@ export * from './redaction';
 export * from './security-headers';
 export * from './collector-auth';
 export * from './trace-delivery';
+export * from './bounded-body';
 
 // Backward compat — djb2Hash was previously exported as hashString
 export { djb2Hash as hashString } from './crypto';
