@@ -29,7 +29,7 @@ Other scripts, bindings, and environment values belong in `package.json` and eac
   `TRACE_FLOW_CONVEX_SITE_URL` to cloud-dev endpoints before CLI or desktop testing.
   See [SETUP.md](SETUP.md) and [endpoint reference](CONTEXT.md#concrete-endpoints-canonical--stop-rediscovering-these).
 - Never deploy production manually. Production changes require explicit approval;
-  GitHub Actions deploys on merge to `main`. PR previews are automatic.
+  GitHub Actions deploys on merge to `main`. The repository owner manually dispatches PR previews.
 - Agent Conversation Analytics is not production-ready until its
   [roadmap gates](docs/guides/agent-conversation-analytics/ROADMAP.md) are complete.
   `apps/archive-api` is implemented but undeployed, with no production environment.

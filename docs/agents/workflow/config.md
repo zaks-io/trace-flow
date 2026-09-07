@@ -88,8 +88,8 @@ workflow logic lives in the centrally managed org skills pinned by
   hosted `Tinybird Schema Check` also runs local Tinybird build/tests and cloud
   `./scripts/deploy-agent-tinybird.sh --check`
 - Generated artifacts: none tracked as workflow handoff artifacts
-- Preview checks: PR preview via `.github/workflows/preview.yml`; deploys Convex
-  Preview and Cloudflare Worker previews, then comments preview URLs on the PR
+- Preview checks: owner-dispatched PR preview via `.github/workflows/preview.yml`; deploys
+  Convex Preview and Cloudflare Worker previews, then comments preview URLs on the PR
 - Production deploy path: `.github/workflows/deploy.yml` on push to `main`.
   Convex deploys first and exports `.convex.cloud` and `.convex.site` URLs;
   Web/Analyst Sandbox consume `.cloud`; Proxy/Agent Ingest/MCP consume `.site`;
@@ -438,7 +438,7 @@ workflow logic lives in the centrally managed org skills pinned by
   agent-consumer, Convex, Tinybird Local
 - Development backing services: Convex dev, Tinybird, Cloudflare dev resources
   when explicitly configured
-- Preview: PR-scoped via `.github/workflows/preview.yml`
+- Preview: PR-scoped and owner-dispatched via `.github/workflows/preview.yml`
 - Preview provider cap: 3 active preview/delivery slots unless provider limits
   are stricter
 - Preview cleanup policy: close verified duplicate/terminal PRs or terminate
@@ -449,8 +449,7 @@ workflow logic lives in the centrally managed org skills pinned by
 - Production forbidden without approval: manual deploy, `convex deploy`,
   `wrangler deploy`, `bun run deploy:dev` when it mutates hosted resources,
   Cloudflare/Tinybird/Convex secret or environment mutations
-- Hosted checks allowed without approval: read-only GitHub/Linear queries,
-  normal CI, PR preview deploys triggered by opening/updating PRs
+- Hosted checks allowed without approval: read-only GitHub/Linear queries and normal CI
 - Hosted checks requiring approval: production deploy, manual workflow dispatch,
   Cloudflare/Tinybird/Convex mutations, production smoke that writes data
 - Credential rules: never put secrets, signed URLs, private logs, customer data,

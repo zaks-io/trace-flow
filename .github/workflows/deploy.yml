@@ -131,6 +131,11 @@ jobs:
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
 
+      - name: Sync Groq GPT-OSS 120B cached-input pricing
+        run: bunx convex run billing/modelPricing:syncGroqGptOss120bDefaultInternal --prod
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
   deploy-web:
     name: Deploy Web Worker
     runs-on: blacksmith-4vcpu-ubuntu-2404
