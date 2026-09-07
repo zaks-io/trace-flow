@@ -75,12 +75,12 @@ impl std::str::FromStr for ArchivePolicy {
 /// Map an Archive API denial reason onto the local policy action.
 pub fn policy_from_denial_reason(reason: &str) -> Option<ArchivePolicy> {
     match reason {
-        "credential_revoked" | "enrollment_invalid" | "deleting" | "expired" | "revoked" => {
+        "credential_revoked" | "enrollment_invalid" | "deleting" | "revoked" => {
             Some(ArchivePolicy::Revoked)
         }
-        "frozen" => Some(ArchivePolicy::Frozen),
+        "frozen" | "expired" => Some(ArchivePolicy::Frozen),
         "not_pro" => Some(ArchivePolicy::Grace),
-        "not_enrolled" => Some(ArchivePolicy::Inactive),
+        "server_disabled" | "not_activated" | "not_enrolled" => Some(ArchivePolicy::Inactive),
         _ => None,
     }
 }
@@ -190,11 +190,36 @@ mod tests {
             policy_from_denial_reason("not_pro"),
             Some(ArchivePolicy::Grace)
         );
+        assert_eq!(
+            policy_from_denial_reason("expired"),
+            Some(ArchivePolicy::Frozen)
+        );
         for policy in [ArchivePolicy::Frozen, ArchivePolicy::Grace] {
             assert!(policy.retains());
             assert!(!policy.uploads());
             assert!(!policy.captures());
             assert!(!policy.purges());
+        }
+    }
+
+    #[test]
+    fn inactive_server_states_are_valid_policy_responses() {
+        for reason in ["server_disabled", "not_activated", "not_enrolled"] {
+            assert_eq!(
+                policy_from_denial_reason(reason),
+                Some(ArchivePolicy::Inactive)
+            );
+            assert_eq!(
+                ArchivePolicyResponse {
+                    enrolled: false,
+                    authorized_sources: Vec::new(),
+                    reason: Some(reason.to_string()),
+                }
+                .confirmed()
+                .unwrap()
+                .policy,
+                ArchivePolicy::Inactive
+            );
         }
     }
 

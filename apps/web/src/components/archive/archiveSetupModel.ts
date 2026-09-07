@@ -12,7 +12,7 @@ export interface ArchiveSourceChoice {
 
 export interface ArchiveConsentDraft {
   selected: Record<ArchiveSource, boolean>;
-  historyChoices: Record<ArchiveSource, ArchiveHistoryChoice>;
+  historyChoices: Record<ArchiveSource, ArchiveHistoryChoice | null>;
 }
 
 export interface EnrollmentAttempt {
@@ -23,15 +23,28 @@ export interface EnrollmentAttempt {
 export function defaultArchiveConsentDraft(): ArchiveConsentDraft {
   return {
     selected: { claude: true, codex: true },
-    historyChoices: { claude: 'all_history', codex: 'all_history' },
+    historyChoices: { claude: null, codex: null },
   };
 }
 
+export function selectedSourceMissingHistoryChoice(
+  draft: ArchiveConsentDraft,
+): ArchiveSource | null {
+  return (
+    ARCHIVE_SOURCES.find(
+      (source) => draft.selected[source] && draft.historyChoices[source] === null,
+    ) ?? null
+  );
+}
+
 export function buildAuthorizedSources(draft: ArchiveConsentDraft): ArchiveSourceChoice[] {
-  return ARCHIVE_SOURCES.filter((source) => draft.selected[source]).map((source) => ({
-    source,
-    historyChoice: draft.historyChoices[source],
-  }));
+  const missing = selectedSourceMissingHistoryChoice(draft);
+  if (missing) throw new Error(`History choice is required for ${missing}`);
+  return ARCHIVE_SOURCES.filter((source) => draft.selected[source]).map((source) => {
+    const historyChoice = draft.historyChoices[source];
+    if (!historyChoice) throw new Error(`History choice is required for ${source}`);
+    return { source, historyChoice };
+  });
 }
 
 export function enrollmentAttemptFor(

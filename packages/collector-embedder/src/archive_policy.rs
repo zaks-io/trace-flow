@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use collector_archive_sync::{
     policy_from_denial_reason, ArchiveClient, ArchiveClientConfig, ArchiveClientError,
-    ArchiveEnrollmentRecord, ArchivePolicyResponse, ConfirmedArchivePolicy,
+    ArchiveEnrollmentRecord, ArchivePolicy, ArchivePolicyResponse, ConfirmedArchivePolicy,
 };
 
 use crate::connection::Paths;
@@ -26,6 +26,12 @@ fn persist_policy_result(
     org_id: &str,
     result: std::result::Result<ArchivePolicyResponse, ArchiveClientError>,
 ) -> Result<()> {
+    let path = paths.archive_enrollment_file(org_id);
+    let previous = ArchiveEnrollmentRecord::load_record(&path)
+        .context("load prior archive enrollment policy")?;
+    let previous_policy = previous
+        .policy()
+        .context("load prior archive enrollment policy")?;
     let confirmed = match result {
         Ok(response) => response
             .confirmed()
@@ -35,29 +41,35 @@ fn persist_policy_result(
                 policy,
                 authorized_sources: Vec::new(),
             },
+            None if previous_policy == ArchivePolicy::Inactive && policy_is_unavailable(&error) => {
+                return Ok(())
+            }
             None => return Err(anyhow!("archive policy refresh failed: {}", error.class())),
         },
     };
 
-    let path = paths.archive_enrollment_file(org_id);
-    let previous = if confirmed.policy.retains() && confirmed.authorized_sources.is_empty() {
-        Some(
-            ArchiveEnrollmentRecord::load_record(&path)
-                .context("load prior archive enrollment policy")?,
-        )
-    } else {
-        None
-    };
-    ArchiveEnrollmentRecord::from_confirmed(confirmed, previous.as_ref())
+    ArchiveEnrollmentRecord::from_confirmed(confirmed, Some(&previous))
         .save_record(&path)
         .context("save archive enrollment policy")
+}
+
+fn policy_is_unavailable(error: &ArchiveClientError) -> bool {
+    matches!(
+        error,
+        ArchiveClientError::Transport(_)
+            | ArchiveClientError::Unavailable { .. }
+            | ArchiveClientError::UploadRejected { .. }
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use collector_archive::ArchiveSource;
-    use collector_archive_sync::{ArchiveAuthorizedSource, ArchiveHistoryChoice, ArchivePolicy};
+    use collector_archive_sync::{
+        ArchiveAuthorizedSource, ArchiveHistoryChoice, ArchiveKeyStore, ArchiveSpool,
+        MemoryKeyStore, PendingArchiveRequest,
+    };
     use tempfile::TempDir;
 
     #[test]
@@ -182,10 +194,84 @@ mod tests {
     }
 
     #[test]
+    fn unavailable_policy_is_nonfatal_before_enrollment() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+
+        for error in [
+            ArchiveClientError::Unavailable {
+                reason: "policy_unavailable".to_string(),
+            },
+            ArchiveClientError::UploadRejected {
+                reason: "not_found".to_string(),
+            },
+            ArchiveClientError::Transport(anyhow!("offline")),
+        ] {
+            persist_policy_result(&paths, "org_1", Err(error)).unwrap();
+        }
+        assert!(!paths.archive_enrollment_file("org_1").exists());
+    }
+
+    #[test]
+    fn expired_credential_preserves_pending_data_key_and_source_metadata() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        let path = paths.archive_enrollment_file("org_1");
+        ArchiveEnrollmentRecord {
+            status: ArchivePolicy::Enrolled.as_str().to_string(),
+            authorized_sources: vec![ArchiveAuthorizedSource {
+                source: ArchiveSource::Claude,
+                history_choice: ArchiveHistoryChoice::AllHistory,
+                authorized_at: 1_770_000_000_001,
+            }],
+        }
+        .save_record(&path)
+        .unwrap();
+
+        let keys = MemoryKeyStore::new();
+        let spool_dir = paths.archive_spool_dir("org_1");
+        let spool = ArchiveSpool::open(&spool_dir, "org_1", &keys).unwrap();
+        let pending = PendingArchiveRequest {
+            source: ArchiveSource::Claude,
+            source_session_id: "claude-session-001".to_string(),
+            source_transcript_part_id: PendingArchiveRequest::default_part(ArchiveSource::Claude),
+            expected_record_count: 1,
+            expected_appended_records: 1,
+            body: b"pending archive data".to_vec(),
+        };
+        spool.persist_pending(&pending).unwrap();
+
+        persist_policy_result(
+            &paths,
+            "org_1",
+            Err(ArchiveClientError::Unauthorized {
+                reason: "expired".to_string(),
+            }),
+        )
+        .unwrap();
+
+        let record = ArchiveEnrollmentRecord::load_record(&path).unwrap();
+        assert_eq!(record.policy().unwrap(), ArchivePolicy::Frozen);
+        assert_eq!(
+            record.authorized_sources[0].authorized_at,
+            1_770_000_000_001
+        );
+        assert!(keys.load("org_1").unwrap().is_some());
+        assert!(spool
+            .pending(ArchiveSource::Claude, "claude-session-001")
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
     fn policy_errors_and_disk_state_never_contain_the_credential() {
         let dir = TempDir::new().unwrap();
         let paths = Paths::at(dir.path().to_path_buf());
         paths.ensure().unwrap();
+        let path = paths.archive_enrollment_file("org_1");
+        ArchiveEnrollmentRecord::save(&path, ArchivePolicy::Enrolled).unwrap();
         let credential = "tfc_must_not_persist";
         let error = persist_policy_result(
             &paths,
@@ -195,6 +281,6 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(!error.contains(credential));
-        assert!(!paths.archive_enrollment_file("org_1").exists());
+        assert!(!std::fs::read_to_string(path).unwrap().contains(credential));
     }
 }

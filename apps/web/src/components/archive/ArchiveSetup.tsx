@@ -13,6 +13,7 @@ import {
   defaultArchiveConsentDraft,
   enrollmentAttemptFor,
   isCollectorActivelyEnrolled,
+  selectedSourceMissingHistoryChoice,
   type ArchiveConsentDraft,
   type ArchiveSource,
   type EnrollmentAttempt,
@@ -63,7 +64,13 @@ export function ArchiveSetup({ preloadedStatus, preloadedCollectors }: ArchiveSe
 
   const handleEnroll = async (collectorCredentialId: Id<'collectorCredentials'>) => {
     const key = String(collectorCredentialId);
-    const authorizedSources = buildAuthorizedSources(draftFor(key));
+    const draft = draftFor(key);
+    const missingHistoryChoice = selectedSourceMissingHistoryChoice(draft);
+    if (missingHistoryChoice) {
+      setError(`Choose conversation history for ${SOURCE_LABELS[missingHistoryChoice]}`);
+      return;
+    }
+    const authorizedSources = buildAuthorizedSources(draft);
     if (authorizedSources.length === 0) {
       setError('Select at least one source');
       return;
@@ -84,6 +91,7 @@ export function ArchiveSetup({ preloadedStatus, preloadedCollectors }: ArchiveSe
         authorizedSources,
         idempotencyKey: attempt.idempotencyKey,
       });
+      attempts.current.delete(key);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Collector enrollment failed');
     } finally {

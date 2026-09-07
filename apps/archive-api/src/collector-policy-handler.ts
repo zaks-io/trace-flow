@@ -18,43 +18,47 @@ export async function handleCollectorPolicy(
     context: { component: 'http', operation: 'collector_policy' },
   });
 
-  if (hasForeignCredentialClass(c.req.header('Authorization'), c.req.header('Cookie'))) {
-    logger.warn('archive_api.auth_rejected', { reason: 'invalid_credential_class' });
-    return c.json({ error: 'unauthorized', reason: 'invalid_credential_class' }, 401);
-  }
-
-  const auth = await authenticateCollectorCredential(
-    c.env.COLLECTOR_CREDS,
-    c.req.header(COLLECTOR_SECRET_HEADER),
-    logger,
-    'archive_api',
-  );
-  if (!auth.ok) return c.json({ error: 'unauthorized', reason: auth.reason }, 401);
-
   try {
-    assertIdentifier(auth.credential.orgId, 'invalid_auth_identity');
-    assertIdentifier(auth.credential.userId, 'invalid_auth_identity');
-    assertIdentifier(auth.credential.collectorId, 'invalid_auth_identity');
-    assertIdentifier(auth.credential.collectorCredentialId, 'invalid_auth_identity');
-  } catch (error) {
-    if (!(error instanceof ArchiveContractError)) throw error;
-    logger.error('archive_api.auth_cred_corrupt', undefined, { reason: 'invalid_identity' });
-    return c.json({ error: 'unauthorized', reason: 'invalid' }, 401);
-  }
+    if (hasForeignCredentialClass(c.req.header('Authorization'), c.req.header('Cookie'))) {
+      logger.warn('archive_api.auth_rejected', { reason: 'invalid_credential_class' });
+      return c.json({ error: 'unauthorized', reason: 'invalid_credential_class' }, 401);
+    }
 
-  try {
-    const policy = await fetchCollectorArchivePolicy(
-      c.env,
-      {
-        hashedSecret: auth.credential.collectorCredentialId,
-        orgId: auth.credential.orgId,
-        userId: auth.credential.userId,
-        collectorId: auth.credential.collectorId,
-      },
+    const auth = await authenticateCollectorCredential(
+      c.env.COLLECTOR_CREDS,
+      c.req.header(COLLECTOR_SECRET_HEADER),
       logger,
+      'archive_api',
     );
-    return c.json(policy);
-  } catch {
-    return c.json({ error: 'archive_unavailable', reason: 'policy_unavailable' }, 503);
+    if (!auth.ok) return c.json({ error: 'unauthorized', reason: auth.reason }, 401);
+
+    try {
+      assertIdentifier(auth.credential.orgId, 'invalid_auth_identity');
+      assertIdentifier(auth.credential.userId, 'invalid_auth_identity');
+      assertIdentifier(auth.credential.collectorId, 'invalid_auth_identity');
+      assertIdentifier(auth.credential.collectorCredentialId, 'invalid_auth_identity');
+    } catch (error) {
+      if (!(error instanceof ArchiveContractError)) throw error;
+      logger.error('archive_api.auth_cred_corrupt', undefined, { reason: 'invalid_identity' });
+      return c.json({ error: 'unauthorized', reason: 'invalid' }, 401);
+    }
+
+    try {
+      const policy = await fetchCollectorArchivePolicy(
+        c.env,
+        {
+          hashedSecret: auth.credential.collectorCredentialId,
+          orgId: auth.credential.orgId,
+          userId: auth.credential.userId,
+          collectorId: auth.credential.collectorId,
+        },
+        logger,
+      );
+      return c.json(policy);
+    } catch {
+      return c.json({ error: 'archive_unavailable', reason: 'policy_unavailable' }, 503);
+    }
+  } finally {
+    c.executionCtx.waitUntil(logger.flush());
   }
 }

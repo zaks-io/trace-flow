@@ -20,6 +20,7 @@ use tokio_util::sync::CancellationToken;
 
 const CLAUDE: &[u8] = include_bytes!("../../collector-archive/tests/fixtures/claude.jsonl");
 const CODEX: &[u8] = include_bytes!("../../collector-archive/tests/fixtures/codex.jsonl");
+const ALL_ARCHIVE_SOURCES: &[ArchiveSource] = &[ArchiveSource::Claude, ArchiveSource::Codex];
 
 struct ScriptedUploader {
     calls: Cell<u32>,
@@ -388,6 +389,7 @@ async fn exact_body_retry_posts_the_persisted_bytes() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -416,6 +418,7 @@ async fn acknowledgement_mismatch_does_not_advance() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -448,6 +451,7 @@ async fn session_error_does_not_block_other_sessions() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -482,6 +486,7 @@ async fn cursor_snapshots_are_not_required_for_jsonl_uploads() {
         &keys,
         &[claude],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -490,6 +495,35 @@ async fn cursor_snapshots_are_not_required_for_jsonl_uploads() {
         uploader.sources.borrow().as_slice(),
         &[ArchiveSource::Claude]
     );
+}
+
+#[tokio::test]
+async fn unauthorized_source_is_neither_captured_nor_uploaded() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let codex = pending_from_bytes(ArchiveSource::Codex, CODEX, 11);
+    spool.persist_pending(&codex).unwrap();
+    let uploader = ScriptedUploader::new([]);
+
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[snapshot(ArchiveSource::Codex, CODEX, 11)],
+        ArchivePolicy::Enrolled,
+        &[ArchiveSource::Claude],
+        None,
+    )
+    .await;
+
+    assert_eq!(uploader.calls.get(), 0);
+    assert_eq!(report.captured, 0);
+    assert_eq!(report.uploaded, 0);
+    assert!(spool
+        .pending(ArchiveSource::Codex, &codex.source_session_id)
+        .unwrap()
+        .is_some());
 }
 
 #[tokio::test]
@@ -517,12 +551,53 @@ async fn terminal_revocation_purges_spool_key_and_progress() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
     assert!(report.purged);
     assert!(keys.load("org_1").unwrap().is_none());
     assert!(!dir.path().join("pending").exists());
+}
+
+#[tokio::test]
+async fn expired_credential_retains_pending_spool_key_and_progress() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    spool.persist_pending(&pending).unwrap();
+    let scan = scan_claude_jsonl(&pending.source_session_id, CLAUDE, 10, None).unwrap();
+    spool
+        .persist_progress(
+            ArchiveSource::Claude,
+            &pending.source_session_id,
+            &scan.checkpoint,
+        )
+        .unwrap();
+    let uploader = ScriptedUploader::new([Err(ArchiveClientError::Unauthorized {
+        reason: "expired".to_string(),
+    })]);
+
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
+        None,
+    )
+    .await;
+
+    assert!(report.frozen);
+    assert!(!report.purged);
+    assert!(keys.load("org_1").unwrap().is_some());
+    assert!(spool
+        .pending(ArchiveSource::Claude, &pending.source_session_id)
+        .unwrap()
+        .is_some());
+    assert!(progress_disk_path(dir.path(), &pending).exists());
 }
 
 #[tokio::test]
@@ -539,6 +614,7 @@ async fn local_revoked_policy_purges_without_uploading() {
         &keys,
         &[snapshot(ArchiveSource::Claude, CLAUDE, 10)],
         ArchivePolicy::Revoked,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -563,6 +639,7 @@ async fn server_frozen_denial_does_not_purge_or_advance() {
         &keys,
         &[snapshot(ArchiveSource::Claude, CLAUDE, 10)],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -594,6 +671,7 @@ async fn live_frozen_during_capture_stops_later_sessions() {
         &keys,
         &[claude, codex],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -627,6 +705,7 @@ async fn grace_and_frozen_retain_without_uploading() {
             &keys,
             &[snapshot(ArchiveSource::Claude, CLAUDE, 10)],
             policy,
+            ALL_ARCHIVE_SOURCES,
             None,
         )
         .await;
@@ -826,6 +905,7 @@ async fn oversized_session_splits_at_byte_limit() {
         &keys,
         &[snapshot(ArchiveSource::Claude, &bytes, 10)],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -881,6 +961,7 @@ async fn bounded_upload_failure_keeps_later_records_after_source_disappears() {
         &keys,
         &[snapshot(ArchiveSource::Claude, &bytes, 10)],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -924,6 +1005,7 @@ async fn bounded_upload_failure_keeps_later_records_after_source_disappears() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -993,6 +1075,7 @@ async fn existing_pending_does_not_strand_later_observed_bytes() {
         &keys,
         &[snapshot(ArchiveSource::Claude, &bytes, 11)],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -1028,6 +1111,7 @@ async fn existing_pending_does_not_strand_later_observed_bytes() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -1069,6 +1153,7 @@ async fn oversized_session_splits_at_observation_count() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -1115,6 +1200,7 @@ async fn acknowledgement_at_exact_cap_clears_pending() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -1191,6 +1277,7 @@ async fn corrupt_claude_pending_does_not_block_codex() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -1254,6 +1341,7 @@ async fn claude_parent_and_subagent_same_session_upload_independently() {
         &keys,
         &snapshots,
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -1339,6 +1427,7 @@ async fn missing_or_empty_agent_id_subagent_does_not_collide_with_parent_across_
             &keys,
             &[child.clone(), parent.clone()],
             ArchivePolicy::Enrolled,
+            ALL_ARCHIVE_SOURCES,
             None,
         )
         .await;
@@ -1375,6 +1464,7 @@ async fn missing_or_empty_agent_id_subagent_does_not_collide_with_parent_across_
             &keys,
             &[child, parent_append],
             ArchivePolicy::Enrolled,
+            ALL_ARCHIVE_SOURCES,
             None,
         )
         .await;
@@ -1606,6 +1696,7 @@ async fn session_aggregate_duplicate_parent_rescan_advances() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -1638,6 +1729,7 @@ async fn failing_keyring_delete_does_not_claim_purge() {
         &keys,
         &[snapshot(ArchiveSource::Claude, CLAUDE, 10)],
         ArchivePolicy::Revoked,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -1664,6 +1756,7 @@ async fn failing_keyring_delete_does_not_claim_purge() {
         &live_keys,
         &[],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -1692,6 +1785,7 @@ async fn failing_keyring_delete_does_not_claim_purge() {
         &stop_keys,
         &[later],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -1724,6 +1818,7 @@ async fn enrollment_invalid_failed_delete_retries_cleanup_after_relaunch() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -1747,8 +1842,16 @@ async fn enrollment_invalid_failed_delete_retries_cleanup_after_relaunch() {
     let unavailable = ScriptedUploader::new([Err(ArchiveClientError::Unavailable {
         reason: "archive unavailable".to_string(),
     })]);
-    let relaunch_report =
-        run_archive_cycle(&unavailable, &mut relaunched, &keys, &[later], policy, None).await;
+    let relaunch_report = run_archive_cycle(
+        &unavailable,
+        &mut relaunched,
+        &keys,
+        &[later],
+        policy,
+        ALL_ARCHIVE_SOURCES,
+        None,
+    )
+    .await;
     assert_eq!(unavailable.calls.get(), 0);
     assert_eq!(relaunch_report.captured, 0);
     assert!(!relaunch_report.purged);
@@ -1792,6 +1895,7 @@ async fn failing_policy_replace_blocks_all_sources_and_retries_purge() {
         &keys,
         &[later],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;
@@ -1821,6 +1925,7 @@ async fn failing_policy_replace_blocks_all_sources_and_retries_purge() {
         &keys,
         &[relaunch_later],
         ArchivePolicy::Enrolled,
+        ALL_ARCHIVE_SOURCES,
         None,
     )
     .await;

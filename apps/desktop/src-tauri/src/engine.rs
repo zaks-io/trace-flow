@@ -573,9 +573,14 @@ mod archive_engine_tests {
     use tempfile::TempDir;
 
     fn enrollment(paths: &Paths, org_id: &str, status: &str) {
+        let authorized_sources = if status == "enrolled" {
+            r#"[{"source":"claude","historyChoice":"all_history","authorizedAt":1770000000001}]"#
+        } else {
+            "[]"
+        };
         std::fs::write(
             paths.archive_enrollment_file(org_id),
-            format!(r#"{{"status":"{status}","authorizedSources":[]}}"#),
+            format!(r#"{{"status":"{status}","authorizedSources":{authorized_sources}}}"#),
         )
         .unwrap();
     }
@@ -912,6 +917,36 @@ mod archive_engine_tests {
         );
         assert!(!marker.contains("tfc_secret"));
         assert!(keys.load("org_1").unwrap().is_some());
+    }
+
+    #[test]
+    fn unavailable_policy_is_nonfatal_before_archive_enrollment() {
+        let home = TempDir::new().unwrap();
+        let state = TempDir::new().unwrap();
+        let outcome = run_cycle_blocking(
+            "org_1".to_string(),
+            "tfc_secret".to_string(),
+            "http://127.0.0.1:1".to_string(),
+            home.path().to_path_buf(),
+            Window::Incremental,
+            1_779_840_000_000,
+            CycleIsolation {
+                state_dir: Some(state.path().to_path_buf()),
+                archive: Some((
+                    "http://127.0.0.1:1".to_string(),
+                    Arc::new(MemoryKeyStore::new()),
+                )),
+            },
+        );
+
+        assert!(outcome.archive_setup_error.is_none());
+        assert!(matches!(
+            sync_status_from_outcome(&outcome),
+            SyncStatus::Idle
+        ));
+        assert!(!Paths::at(state.path().to_path_buf())
+            .archive_enrollment_file("org_1")
+            .exists());
     }
 
     #[test]

@@ -5,14 +5,20 @@ import {
   defaultArchiveConsentDraft,
   enrollmentAttemptFor,
   isCollectorActivelyEnrolled,
+  selectedSourceMissingHistoryChoice,
 } from './archiveSetupModel';
 
 const collectorCredentialId = 'collector-credential-1' as Id<'collectorCredentials'>;
 
 describe('archive setup model', () => {
-  it('serializes each selected source with its explicit history choice', () => {
+  it('requires and serializes an explicit history choice for each selected source', () => {
     const draft = defaultArchiveConsentDraft();
+    expect(selectedSourceMissingHistoryChoice(draft)).toBe('claude');
+    expect(() => buildAuthorizedSources(draft)).toThrow('History choice is required for claude');
+
+    draft.historyChoices.claude = 'all_history';
     draft.historyChoices.codex = 'new_only';
+    expect(selectedSourceMissingHistoryChoice(draft)).toBeNull();
 
     expect(buildAuthorizedSources(draft)).toEqual([
       { source: 'claude', historyChoice: 'all_history' },
