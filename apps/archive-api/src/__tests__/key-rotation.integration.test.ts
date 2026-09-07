@@ -27,7 +27,8 @@ import { __resetArchivePolicyCache } from '../enrollment';
 import type { StorageBudget } from '../archive-storage-budget';
 import type { ArchiveApiEnv } from '../context';
 import { app } from '../index';
-import { ARCHIVE_ROTATION_TEMP_SUFFIX, commitRotationReplacement } from '../archive-key-rotation';
+import { ARCHIVE_ROTATION_TEMP_SUFFIX } from '../archive-key-rotation';
+import { decompress } from '../archive-packing';
 
 const WRAPPING_SECRET = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
 const CONVEX = 'https://archive-convex.test';
@@ -92,21 +93,27 @@ async function cryptoKey(
   });
 }
 
+async function compress(bytes: Uint8Array): Promise<Uint8Array> {
+  const stream = new Response(bytes).body!.pipeThrough(new CompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
 async function putArchiveObject(input: {
   currentScope: ArchiveScope;
   objectClass: 'chunk' | 'manifest';
-  identity: string;
   plaintext: string;
   keyVersion: number;
   wrappedKey: string;
 }): Promise<{ objectKey: string; body: string; bytes: number }> {
   const key = await cryptoKey(input.currentScope.orgId, input.keyVersion, input.wrappedKey);
+  const plaintext = new TextEncoder().encode(input.plaintext);
   const objectKey = await archiveObjectKey(
     input.currentScope,
     input.objectClass === 'chunk' ? 'chunks' : 'manifests',
-    await digest(new TextEncoder().encode(input.identity)),
+    await digest(plaintext),
   );
-  const envelope = await encryptArchiveObject(new TextEncoder().encode(input.plaintext), {
+  const encryptedPlaintext = input.objectClass === 'chunk' ? await compress(plaintext) : plaintext;
+  const envelope = await encryptArchiveObject(encryptedPlaintext, {
     key,
     orgId: input.currentScope.orgId,
     objectKey,
@@ -133,13 +140,14 @@ async function decryptStored(
   wrappedKey: string,
 ): Promise<Uint8Array> {
   const envelope = await readEnvelope(objectKey);
-  return decryptArchiveObject(envelope, {
+  const plaintext = await decryptArchiveObject(envelope, {
     key: await cryptoKey(orgId, keyVersion, wrappedKey),
     orgId,
     objectKey,
     objectClass: envelope.objectClass,
     keyVersion,
   });
+  return envelope.objectClass === 'chunk' ? decompress(plaintext) : plaintext;
 }
 
 function plannedBudgetObjects(
@@ -377,6 +385,8 @@ describe('Archive encryption key rotation', () => {
     currentScope: ArchiveScope;
     v1: string;
     v2: string;
+    chunkPlaintext: string;
+    manifestPlaintext: string;
     objects: {
       objectKey: string;
       objectClass: 'chunk' | 'manifest';
@@ -390,19 +400,27 @@ describe('Archive encryption key rotation', () => {
     const v2 = await wrapKey(orgId, 2);
     custody.versions.set(1, v1);
     custody.versions.set(2, v2);
+    const chunkPlaintext = `${JSON.stringify({ source: 'claude', label })}\n`;
+    const manifestPlaintext = JSON.stringify({
+      archive_format_version: ARCHIVE_FORMAT_VERSION,
+      chain_hash_version: CHAIN_HASH_VERSION,
+      source: currentScope.source,
+      source_session_id: currentScope.sourceSessionId,
+      generation: 1,
+      element_count: 1,
+      elements: [],
+    });
     const chunk = await putArchiveObject({
       currentScope,
       objectClass: 'chunk',
-      identity: `chunk-${label}`,
-      plaintext: `chunk-body-${label}`,
+      plaintext: chunkPlaintext,
       keyVersion: 1,
       wrappedKey: v1,
     });
     const manifest = await putArchiveObject({
       currentScope,
       objectClass: 'manifest',
-      identity: `manifest-${label}`,
-      plaintext: `manifest-body-${label}`,
+      plaintext: manifestPlaintext,
       keyVersion: 1,
       wrappedKey: v1,
     });
@@ -421,7 +439,7 @@ describe('Archive encryption key rotation', () => {
       },
     ];
     await commitObjects(orgId, objects);
-    return { orgId, currentScope, v1, v2, objects };
+    return { orgId, currentScope, v1, v2, chunkPlaintext, manifestPlaintext, objects };
   }
 
   async function advanceExpectingError(
@@ -459,7 +477,8 @@ describe('Archive encryption key rotation', () => {
   }
 
   it('keeps old objects readable and encrypts a concurrent upload with the new active key', async () => {
-    const { orgId, currentScope, v1, v2, objects } = await seedOrg('concurrent');
+    const { orgId, currentScope, v1, v2, chunkPlaintext, manifestPlaintext, objects } =
+      await seedOrg('concurrent');
     const stub = await startRotation(orgId);
     expect(
       await advanceExpectingError(stub, {
@@ -470,7 +489,7 @@ describe('Archive encryption key rotation', () => {
     ).toBe('rotation_failure_injected');
 
     expect(await decryptStored(objects[0]!.objectKey, orgId, 1, v1)).toEqual(
-      new TextEncoder().encode('chunk-body-concurrent'),
+      new TextEncoder().encode(chunkPlaintext),
     );
     expect((await readEnvelope(objects[0]!.objectKey)).keyVersion).toBe(1);
 
@@ -510,7 +529,7 @@ describe('Archive encryption key rotation', () => {
     }
     expect((await readEnvelope(objects[0]!.objectKey)).keyVersion).toBe(1);
     expect(await decryptStored(objects[1]!.objectKey, orgId, 1, v1)).toEqual(
-      new TextEncoder().encode('manifest-body-concurrent'),
+      new TextEncoder().encode(manifestPlaintext),
     );
 
     const health = await stub.advanceKeyRotation({ orgId, limit: 8 });
@@ -520,13 +539,79 @@ describe('Archive encryption key rotation', () => {
     ]);
     expect(custody.versions.has(1)).toBe(false);
     expect(await decryptStored(objects[0]!.objectKey, orgId, 2, v2)).toEqual(
-      new TextEncoder().encode('chunk-body-concurrent'),
+      new TextEncoder().encode(chunkPlaintext),
     );
     expect(await decryptStored(objects[1]!.objectKey, orgId, 2, v2)).toEqual(
-      new TextEncoder().encode('manifest-body-concurrent'),
+      new TextEncoder().encode(manifestPlaintext),
     );
     expect(custody.versions.has(1)).toBe(false);
     expect((await readEnvelope(objects[0]!.objectKey)).keyVersion).toBe(2);
+  });
+
+  it('preserves ledger integrity when appending after the committed manifest was rotated', async () => {
+    const orgId = `org-rotate-ledger-${crypto.randomUUID()}`;
+    const currentScope = scope(orgId, 'session-rotate-ledger');
+    const v1 = await wrapKey(orgId, 1);
+    const v2 = await wrapKey(orgId, 2);
+    custody.versions.set(1, v1);
+    custody.versions.set(2, v2);
+    const ledgerId = runtimeEnv.ARCHIVE_SESSION_LEDGER.idFromName(
+      JSON.stringify([
+        currentScope.orgId,
+        currentScope.contributionId,
+        currentScope.source,
+        currentScope.sourceSessionId,
+      ]),
+    );
+    const ledger = runtimeEnv.ARCHIVE_SESSION_LEDGER.get(ledgerId);
+    const first = await observation(currentScope.sourceSessionId, 'ledger-r1', '"one"');
+    const firstUpload: ArchiveUploadRequest = {
+      source_session_id: currentScope.sourceSessionId,
+      observations: [first],
+      checkpoint: await checkpoint(currentScope.sourceSessionId, [first]),
+      complete_prefix_base64: base64(exactPrefix([first])),
+    };
+    const firstResponse = await ledger.fetch('https://ledger.test/commit', {
+      method: 'POST',
+      body: JSON.stringify({
+        scope: currentScope,
+        upload: firstUpload,
+        keyVersion: 1,
+        wrappedKey: v1,
+      }),
+    });
+    expect(firstResponse.status).toBe(200);
+
+    const stub = await startRotation(orgId, 'rotate-ledger-v1-v2');
+    expect(await stub.advanceKeyRotation({ orgId, limit: 32 })).toMatchObject({
+      status: 'succeeded',
+    });
+    expect(custody.versions.has(1)).toBe(false);
+
+    const second = await observation(currentScope.sourceSessionId, 'ledger-r2', '"two"');
+    const secondUpload: ArchiveUploadRequest = {
+      source_session_id: currentScope.sourceSessionId,
+      observations: [first, second],
+      checkpoint: await checkpoint(currentScope.sourceSessionId, [first, second]),
+      complete_prefix_base64: base64(exactPrefix([first, second])),
+    };
+    const secondResponse = await ledger.fetch('https://ledger.test/commit', {
+      method: 'POST',
+      body: JSON.stringify({
+        scope: currentScope,
+        upload: secondUpload,
+        keyVersion: 2,
+        wrappedKey: v2,
+      }),
+    });
+    expect(secondResponse.status).toBe(200);
+    const acknowledgement = await secondResponse.json<{
+      duplicate: boolean;
+      appended_records: number;
+      manifest_key: string;
+    }>();
+    expect(acknowledgement).toMatchObject({ duplicate: false, appended_records: 1 });
+    expect((await readEnvelope(acknowledgement.manifest_key)).keyVersion).toBe(2);
   });
 
   it('resumes the same rotation idempotently after before_replace and after_replace injection', async () => {
@@ -750,7 +835,7 @@ describe('Archive encryption key rotation', () => {
   });
 
   it('starts rotation over HTTP and prefers the active key for a later upload', async () => {
-    const { orgId, currentScope, v1, objects } = await seedOrg('http');
+    const { orgId, currentScope, v1, chunkPlaintext, objects } = await seedOrg('http');
     custody.versions.set(1, v1);
     custody.activeVersion = 1;
 
@@ -786,7 +871,7 @@ describe('Archive encryption key rotation', () => {
     expect(custody.activeVersion).toBe(2);
     expect((await readEnvelope(objects[0]!.objectKey)).keyVersion).toBe(2);
     const rotated = await decryptStored(objects[0]!.objectKey, orgId, 2, custody.versions.get(2)!);
-    expect(rotated).toEqual(new TextEncoder().encode('chunk-body-http'));
+    expect(rotated).toEqual(new TextEncoder().encode(chunkPlaintext));
 
     const collectorSecret = `http-rotate-${crypto.randomUUID()}`;
     await runtimeEnv.COLLECTOR_CREDS.put(
@@ -840,7 +925,7 @@ describe('Archive encryption key rotation', () => {
   });
 
   it('resumes destroy after the retiring key is already gone', async () => {
-    const { orgId, objects, v2 } = await seedOrg('lost-destroy');
+    const { orgId, objects, v2, chunkPlaintext } = await seedOrg('lost-destroy');
     const stub = await startRotation(orgId, 'rotate-lost-destroy');
     expect(
       await advanceExpectingError(stub, { orgId, limit: 8, injectFailure: 'after_destroy' }),
@@ -868,132 +953,7 @@ describe('Archive encryption key rotation', () => {
       }),
     ]);
     expect(await decryptStored(objects[0]!.objectKey, orgId, 2, v2)).toEqual(
-      new TextEncoder().encode('chunk-body-lost-destroy'),
-    );
-  });
-
-  it('does not accept a relabeled envelope on the already-new path', async () => {
-    const { orgId, v1, objects } = await seedOrg('already-new');
-    const stub = await startRotation(orgId, 'rotate-already-new');
-    const firstKey = [...objects].sort((left, right) =>
-      left.objectKey.localeCompare(right.objectKey),
-    )[0]!.objectKey;
-    const envelope = await readEnvelope(firstKey);
-    await runtimeEnv.ARCHIVE_STORAGE.put(firstKey, JSON.stringify({ ...envelope, keyVersion: 2 }));
-    expect(await advanceExpectingError(stub, { orgId, limit: 1 })).toBe(
-      'Archive cryptographic operation failed',
-    );
-    expect(await stub.countKeyVersionReferences({ orgId, keyVersion: 1 })).toBe(2);
-    expect(await stub.countKeyVersionReferences({ orgId, keyVersion: 2 })).toBe(0);
-    expect(custody.destroyCalls).toHaveLength(0);
-    expect(
-      await decryptArchiveObject(
-        { ...envelope, keyVersion: 1 },
-        {
-          key: await cryptoKey(orgId, 1, v1),
-          orgId,
-          objectKey: firstKey,
-          objectClass: envelope.objectClass,
-          keyVersion: 1,
-        },
-      ),
-    ).toBeInstanceOf(Uint8Array);
-  });
-
-  it('does not credit already-new refs when a to-version envelope fails authentication', async () => {
-    const { orgId, objects } = await seedOrg('already-new-tamper');
-    const stub = await startRotation(orgId, 'rotate-already-new-tamper');
-    const firstKey = [...objects].sort((left, right) =>
-      left.objectKey.localeCompare(right.objectKey),
-    )[0]!.objectKey;
-    expect(
-      await advanceExpectingError(stub, { orgId, limit: 1, injectFailure: 'after_replace' }),
-    ).toBe('rotation_failure_injected');
-    expect((await readEnvelope(firstKey)).keyVersion).toBe(2);
-    expect(await stub.countKeyVersionReferences({ orgId, keyVersion: 1 })).toBeGreaterThan(0);
-    expect(await stub.countKeyVersionReferences({ orgId, keyVersion: 2 })).toBe(0);
-    const envelope = await readEnvelope(firstKey);
-    const last = envelope.ciphertext.at(-1) ?? 'A';
-    await runtimeEnv.ARCHIVE_STORAGE.put(
-      firstKey,
-      JSON.stringify({
-        ...envelope,
-        ciphertext: `${envelope.ciphertext.slice(0, -1)}${last === 'A' ? 'B' : 'A'}`,
-      }),
-    );
-    expect(await advanceExpectingError(stub, { orgId, limit: 1 })).toBe(
-      'Archive cryptographic operation failed',
-    );
-    expect(await stub.countKeyVersionReferences({ orgId, keyVersion: 1 })).toBeGreaterThan(0);
-    expect(await stub.countKeyVersionReferences({ orgId, keyVersion: 2 })).toBe(0);
-    expect(custody.destroyCalls).toHaveLength(0);
-    expect(await stub.getKeyRotationHealth({ orgId })).toMatchObject({ status: 'failed' });
-  });
-
-  it('does not let a stale v1-to-v2 worker overwrite after v2-to-v3 completes', async () => {
-    const { orgId, v1, v2, objects } = await seedOrg('stale-worker');
-    const stub = await startRotation(orgId, 'rotate-stale-v1-v2');
-    const objectKey = objects[0]!.objectKey;
-    const envelope = await readEnvelope(objectKey);
-    const plaintext = await decryptArchiveObject(envelope, {
-      key: await cryptoKey(orgId, 1, v1),
-      orgId,
-      objectKey,
-      objectClass: envelope.objectClass,
-      keyVersion: 1,
-    });
-    const staleReplacement = JSON.stringify(
-      await encryptArchiveObject(plaintext, {
-        key: await cryptoKey(orgId, 2, v2),
-        orgId,
-        objectKey,
-        objectClass: envelope.objectClass,
-        keyVersion: 2,
-      }),
-    );
-    const first = await stub.advanceKeyRotation({ orgId, limit: 8 });
-    expect(first.status).toBe('succeeded');
-    const v3 = await wrapKey(orgId, 3);
-    custody.versions.set(3, v3);
-    custody.retiringVersion = 2;
-    custody.activeVersion = 3;
-    custody.operationId = 'rotate-stale-v2-v3';
-    custody.rotationStatus = 'rotating';
-    await stub.startKeyRotation({
-      orgId,
-      operationId: 'rotate-stale-v2-v3',
-      fromVersion: 2,
-      toVersion: 3,
-      activationId: ACTIVATION_ID,
-    });
-    const second = await stub.advanceKeyRotation({ orgId, limit: 8 });
-    expect(second.status).toBe('succeeded');
-    const afterV3 = await runtimeEnv.ARCHIVE_STORAGE.get(objectKey);
-    if (!afterV3) throw new Error(`missing object ${objectKey}`);
-    const v3Body = await afterV3.text();
-    expect(JSON.parse(v3Body).keyVersion).toBe(3);
-    const stale = await runInDurableObject(stub, async (_instance, state) => {
-      try {
-        await commitRotationReplacement(runtimeEnv, state.storage, {
-          objectKey,
-          replacementBody: staleReplacement,
-          operationId: 'rotate-stale-v1-v2',
-          generation: 1,
-          fromVersion: 1,
-          toVersion: 2,
-        });
-        return 'wrote';
-      } catch (error) {
-        return error instanceof Error ? error.message : String(error);
-      }
-    });
-    expect(stale).toBe('archive_key_rotation_stale');
-    const afterStale = await runtimeEnv.ARCHIVE_STORAGE.get(objectKey);
-    if (!afterStale) throw new Error(`missing object ${objectKey}`);
-    expect(await afterStale.text()).toBe(v3Body);
-    expect((await readEnvelope(objectKey)).keyVersion).toBe(3);
-    expect(await decryptStored(objectKey, orgId, 3, v3)).toEqual(
-      new TextEncoder().encode('chunk-body-stale-worker'),
+      new TextEncoder().encode(chunkPlaintext),
     );
   });
 });

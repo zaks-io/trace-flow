@@ -1,11 +1,6 @@
 import {
   createArchiveEncryptionKeyVersion,
-  decryptArchiveObject,
-  encryptArchiveObject,
-  parseArchiveWrappedKeyVersion,
   serializeArchiveWrappedKeyVersion,
-  unwrapArchiveEncryptionKey,
-  type ArchiveObjectEnvelope,
 } from '@trace-flow/utils';
 import type { Logger } from '@trace-flow/logging';
 import type { ArchiveApiEnv } from './context';
@@ -21,216 +16,21 @@ import {
 import { appendArchiveAuditEvent } from './audit';
 import {
   ARCHIVE_ROTATION_PAGE_LIMIT,
-  assertRotationReplaceAllowed,
+  assertCurrentRotation,
   countKeyVersionReferences,
   listCommittedObjectsForRotation,
   readRotationState,
-  recordRotatedObject,
   rotationHealth,
-  rotationTempObjectKey,
   writeRotationState,
   type ArchiveKeyRotationFailureInjection,
   type ArchiveKeyRotationHealth,
   type ArchiveKeyRotationState,
+  type ArchiveKeyRotationFence,
 } from './archive-key-rotation-state';
+import { reencryptArchiveObject } from './archive-key-reencryption';
 
 export { ARCHIVE_ROTATION_TEMP_SUFFIX } from './archive-key-rotation-state';
-
-function objectClassFromBudget(
-  value: 'agent_archive_chunk' | 'agent_archive_manifest',
-): 'chunk' | 'manifest' {
-  return value === 'agent_archive_chunk' ? 'chunk' : 'manifest';
-}
-
-function parseEnvelope(body: string): ArchiveObjectEnvelope {
-  const parsed: unknown = JSON.parse(body);
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new ArchiveContractError('archive_object_envelope_invalid');
-  }
-  const record = parsed as Record<string, unknown>;
-  if (
-    (record.objectClass !== 'chunk' && record.objectClass !== 'manifest') ||
-    typeof record.objectKey !== 'string' ||
-    typeof record.orgId !== 'string' ||
-    typeof record.keyVersion !== 'number'
-  ) {
-    throw new ArchiveContractError('archive_object_envelope_invalid');
-  }
-  return parsed as ArchiveObjectEnvelope;
-}
-
-async function unwrapVersion(
-  env: Pick<ArchiveApiEnv, 'ARCHIVE_KEY_WRAPPING_SECRET'>,
-  orgId: string,
-  keyVersion: number,
-  wrappedKey: string,
-): Promise<CryptoKey> {
-  return unwrapArchiveEncryptionKey(
-    parseArchiveWrappedKeyVersion(wrappedKey, { orgId, keyVersion }),
-    {
-      orgId,
-      keyVersion,
-      wrappingSecretBase64: env.ARCHIVE_KEY_WRAPPING_SECRET,
-    },
-  );
-}
-
-async function readObjectBody(bucket: R2Bucket, objectKey: string): Promise<string | null> {
-  const object = await bucket.get(objectKey);
-  return object ? await object.text() : null;
-}
-
-async function putEncryptedObject(
-  bucket: R2Bucket,
-  objectKey: string,
-  body: string,
-): Promise<void> {
-  await bucket.put(objectKey, body, {
-    httpMetadata: { contentType: 'application/json' },
-  });
-}
-
-async function reencryptArchiveObject(
-  env: Pick<ArchiveApiEnv, 'ARCHIVE_STORAGE' | 'ARCHIVE_KEY_WRAPPING_SECRET'>,
-  storage: DurableObjectStorage,
-  input: {
-    orgId: string;
-    objectKey: string;
-    objectClass: 'agent_archive_chunk' | 'agent_archive_manifest';
-    operationId: string;
-    generation: number;
-    fromVersion: number;
-    toVersion: number;
-    fromWrappedKey: string;
-    toWrappedKey: string;
-    injectFailure?: ArchiveKeyRotationFailureInjection;
-  },
-): Promise<'rotated' | 'already'> {
-  const expectedClass = objectClassFromBudget(input.objectClass);
-  const canonical = await readObjectBody(env.ARCHIVE_STORAGE, input.objectKey);
-  if (canonical === null) throw new ArchiveContractError('rotation_object_missing');
-  const envelope = parseEnvelope(canonical);
-  if (envelope.objectKey !== input.objectKey || envelope.orgId !== input.orgId) {
-    throw new ArchiveContractError('archive_object_envelope_invalid');
-  }
-  if (envelope.objectClass !== expectedClass) {
-    throw new ArchiveContractError('archive_object_envelope_invalid');
-  }
-
-  const toKey = await unwrapVersion(env, input.orgId, input.toVersion, input.toWrappedKey);
-  if (envelope.keyVersion === input.toVersion) {
-    await decryptArchiveObject(envelope, {
-      key: toKey,
-      orgId: input.orgId,
-      objectKey: input.objectKey,
-      objectClass: expectedClass,
-      keyVersion: input.toVersion,
-    });
-    recordRotatedObject(
-      storage,
-      input.objectKey,
-      input.toVersion,
-      new TextEncoder().encode(canonical).byteLength,
-    );
-    await env.ARCHIVE_STORAGE.delete(rotationTempObjectKey(input.objectKey));
-    return 'already';
-  }
-  if (envelope.keyVersion !== input.fromVersion) {
-    throw new ArchiveContractError('archive_key_version_mismatch');
-  }
-
-  const fromKey = await unwrapVersion(env, input.orgId, input.fromVersion, input.fromWrappedKey);
-  const plaintext = await decryptArchiveObject(envelope, {
-    key: fromKey,
-    orgId: input.orgId,
-    objectKey: input.objectKey,
-    objectClass: expectedClass,
-    keyVersion: input.fromVersion,
-  });
-
-  let replacementBody: string;
-  try {
-    const replacement = await encryptArchiveObject(plaintext, {
-      key: toKey,
-      orgId: input.orgId,
-      objectKey: input.objectKey,
-      objectClass: expectedClass,
-      keyVersion: input.toVersion,
-    });
-    replacementBody = JSON.stringify(replacement);
-  } finally {
-    plaintext.fill(0);
-  }
-
-  const tempKey = rotationTempObjectKey(input.objectKey);
-  await putEncryptedObject(env.ARCHIVE_STORAGE, tempKey, replacementBody);
-  const tempBody = await readObjectBody(env.ARCHIVE_STORAGE, tempKey);
-  if (tempBody !== replacementBody) {
-    throw new ArchiveContractError('r2_object_verification_failed');
-  }
-  await decryptArchiveObject(parseEnvelope(replacementBody), {
-    key: toKey,
-    orgId: input.orgId,
-    objectKey: input.objectKey,
-    objectClass: expectedClass,
-    keyVersion: input.toVersion,
-  });
-  if (input.injectFailure === 'before_replace') {
-    throw new ArchiveContractError('rotation_failure_injected');
-  }
-  await commitRotationReplacement(env, storage, {
-    objectKey: input.objectKey,
-    replacementBody,
-    operationId: input.operationId,
-    generation: input.generation,
-    fromVersion: input.fromVersion,
-    toVersion: input.toVersion,
-  });
-  const replaced = await readObjectBody(env.ARCHIVE_STORAGE, input.objectKey);
-  if (replaced !== replacementBody) {
-    throw new ArchiveContractError('r2_object_verification_failed');
-  }
-  await decryptArchiveObject(parseEnvelope(replaced), {
-    key: toKey,
-    orgId: input.orgId,
-    objectKey: input.objectKey,
-    objectClass: expectedClass,
-    keyVersion: input.toVersion,
-  });
-  if (input.injectFailure === 'after_replace') {
-    throw new ArchiveContractError('rotation_failure_injected');
-  }
-
-  await env.ARCHIVE_STORAGE.delete(tempKey);
-  recordRotatedObject(
-    storage,
-    input.objectKey,
-    input.toVersion,
-    new TextEncoder().encode(replacementBody).byteLength,
-  );
-  return 'rotated';
-}
-
-export async function commitRotationReplacement(
-  env: Pick<ArchiveApiEnv, 'ARCHIVE_STORAGE'>,
-  storage: DurableObjectStorage,
-  input: {
-    objectKey: string;
-    replacementBody: string;
-    operationId: string;
-    generation: number;
-    fromVersion: number;
-    toVersion: number;
-  },
-): Promise<void> {
-  assertRotationReplaceAllowed(storage, {
-    operationId: input.operationId,
-    generation: input.generation,
-    fromVersion: input.fromVersion,
-    toVersion: input.toVersion,
-  });
-  await putEncryptedObject(env.ARCHIVE_STORAGE, input.objectKey, input.replacementBody);
-}
+export { commitRotationReplacement } from './archive-key-reencryption';
 
 export function startStoredRotation(
   storage: DurableObjectStorage,
@@ -287,13 +87,18 @@ async function completeDestroyingRotation(
   logger: Logger,
   orgId: string,
   state: ArchiveKeyRotationState,
+  fence: ArchiveKeyRotationFence,
   injectFailure?: ArchiveKeyRotationFailureInjection,
 ): Promise<ArchiveKeyRotationHealth> {
+  const persist = (): void => {
+    assertCurrentRotation(storage, fence);
+    writeRotationState(storage, state);
+  };
   state.remainingReferences = countKeyVersionReferences(storage, state.fromVersion);
   if (state.remainingReferences > 0) {
     state.status = 'reencrypting';
     state.updatedAt = Date.now();
-    writeRotationState(storage, state);
+    persist();
     return rotationHealth(orgId, state);
   }
   await destroyRetiringArchiveKey(
@@ -313,7 +118,7 @@ async function completeDestroyingRotation(
   state.remainingReferences = 0;
   state.lastErrorClass = undefined;
   state.updatedAt = Date.now();
-  writeRotationState(storage, state);
+  persist();
   try {
     await publishRotationAudit(env, logger, orgId, state, 'success');
   } catch (error) {
@@ -337,11 +142,21 @@ export async function advanceStoredRotation(
   if (state.status === 'succeeded') {
     return rotationHealth(input.orgId, state);
   }
+  const fence: ArchiveKeyRotationFence = {
+    operationId: state.operationId,
+    generation: state.generation,
+    fromVersion: state.fromVersion,
+    toVersion: state.toVersion,
+  };
+  const persist = (): void => {
+    assertCurrentRotation(storage, fence);
+    writeRotationState(storage, state!);
+  };
   if (state.status === 'failed') {
     const resumeStatus =
       countKeyVersionReferences(storage, state.fromVersion) === 0 ? 'destroying' : 'reencrypting';
     state = { ...state, status: resumeStatus, lastErrorClass: undefined, updatedAt: Date.now() };
-    writeRotationState(storage, state);
+    persist();
   }
 
   try {
@@ -352,6 +167,7 @@ export async function advanceStoredRotation(
         logger,
         input.orgId,
         state,
+        fence,
         input.injectFailure,
       );
     }
@@ -389,13 +205,13 @@ export async function advanceStoredRotation(
       state.cursor = object.objectKey;
       state.remainingReferences = countKeyVersionReferences(storage, state.fromVersion);
       state.updatedAt = Date.now();
-      writeRotationState(storage, state);
+      persist();
     }
 
     if (page.length === limit) {
       state.status = 'reencrypting';
       state.updatedAt = Date.now();
-      writeRotationState(storage, state);
+      persist();
       return rotationHealth(input.orgId, state);
     }
 
@@ -404,20 +220,21 @@ export async function advanceStoredRotation(
       state.status = 'reencrypting';
       state.cursor = undefined;
       state.updatedAt = Date.now();
-      writeRotationState(storage, state);
+      persist();
       return rotationHealth(input.orgId, state);
     }
 
     state.status = 'destroying';
     state.cursor = undefined;
     state.updatedAt = Date.now();
-    writeRotationState(storage, state);
+    persist();
     return await completeDestroyingRotation(
       storage,
       env,
       logger,
       input.orgId,
       state,
+      fence,
       input.injectFailure,
     );
   } catch (error) {
@@ -429,11 +246,11 @@ export async function advanceStoredRotation(
     state.updatedAt = Date.now();
     if (errorClass === 'rotation_failure_injected') {
       if (state.status !== 'destroying') state.status = 'reencrypting';
-      writeRotationState(storage, state);
+      persist();
       throw error;
     }
     state.status = 'failed';
-    writeRotationState(storage, state);
+    persist();
     await markArchiveKeyRotationFailed(
       env,
       { orgId: input.orgId, operationId: state.operationId },

@@ -164,9 +164,8 @@ export async function verifyEncryptedPlannedObject(
 export async function verifyCommittedManifestObject(
   bucket: R2Bucket,
   objectKey: string,
-  key: CryptoKey,
+  resolveKey: (keyVersion: number) => Promise<CryptoKey>,
   scope: ArchiveScope,
-  keyVersion: number,
   expected: { generation: number; elementCount: number; chainHead: string },
 ): Promise<void> {
   const object = await bucket.get(objectKey);
@@ -174,12 +173,16 @@ export async function verifyCommittedManifestObject(
   const serialized = await object.text();
 
   try {
-    const plaintext = await decryptArchiveObject(JSON.parse(serialized) as ArchiveObjectEnvelope, {
-      key,
+    const envelope = JSON.parse(serialized) as ArchiveObjectEnvelope;
+    if (!Number.isSafeInteger(envelope.keyVersion) || envelope.keyVersion < 1) {
+      throw new Error('manifest_key_version_invalid');
+    }
+    const plaintext = await decryptArchiveObject(envelope, {
+      key: await resolveKey(envelope.keyVersion),
       orgId: scope.orgId,
       objectKey,
       objectClass: 'manifest',
-      keyVersion,
+      keyVersion: envelope.keyVersion,
     });
     const digest = digestString(new Uint8Array(await crypto.subtle.digest('SHA-256', plaintext)));
     if ((await archiveObjectKey(scope, 'manifests', digest)) !== objectKey) {

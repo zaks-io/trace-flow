@@ -41,6 +41,13 @@ export interface ArchiveKeyRotationHealth {
   remainingReferences?: number;
 }
 
+export interface ArchiveKeyRotationFence {
+  operationId: string;
+  generation: number;
+  fromVersion: number;
+  toVersion: number;
+}
+
 export function isRotationTempObjectKey(objectKey: string): boolean {
   return objectKey.endsWith(ARCHIVE_ROTATION_TEMP_SUFFIX);
 }
@@ -184,25 +191,32 @@ export function rotationHealth(
 
 export function assertRotationReplaceAllowed(
   storage: DurableObjectStorage,
-  expected: {
-    operationId: string;
-    generation: number;
-    fromVersion: number;
-    toVersion: number;
-  },
+  expected: ArchiveKeyRotationFence,
 ): void {
+  const current = assertCurrentRotation(storage, expected);
+  if (
+    current.status === 'succeeded' ||
+    current.status === 'failed' ||
+    current.status === 'destroying'
+  ) {
+    throw new ArchiveContractError('archive_key_rotation_stale');
+  }
+}
+
+export function assertCurrentRotation(
+  storage: DurableObjectStorage,
+  expected: ArchiveKeyRotationFence,
+): ArchiveKeyRotationState {
   const current = readRotationState(storage);
   if (
     current?.operationId !== expected.operationId ||
     current?.generation !== expected.generation ||
     current?.fromVersion !== expected.fromVersion ||
-    current?.toVersion !== expected.toVersion ||
-    current?.status === 'succeeded' ||
-    current?.status === 'failed' ||
-    current?.status === 'destroying'
+    current?.toVersion !== expected.toVersion
   ) {
     throw new ArchiveContractError('archive_key_rotation_stale');
   }
+  return current;
 }
 
 export function assertWritableKeyVersion(

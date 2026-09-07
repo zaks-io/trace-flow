@@ -93,17 +93,17 @@ async function commitArchiveSessionEnvelope(
     throw new ArchiveContractError('archive_key_version_mismatch');
   }
   if (state.manifestKey) {
-    const committedKeyVersion = state.keyVersion ?? envelope.keyVersion;
-    const committedMaterial =
-      committedKeyVersion === envelope.keyVersion
-        ? { keyVersion: envelope.keyVersion, wrappedKey: envelope.wrappedKey }
-        : await getCommittedManifestKeyMaterial(env, envelope.scope.orgId, committedKeyVersion);
     await verifyCommittedManifestObject(
       env.ARCHIVE_STORAGE,
       state.manifestKey,
-      await unwrapKey(env, { ...envelope, ...committedMaterial }),
+      async (keyVersion) => {
+        const material =
+          keyVersion === envelope.keyVersion
+            ? { keyVersion: envelope.keyVersion, wrappedKey: envelope.wrappedKey }
+            : await getCommittedManifestKeyMaterial(env, envelope.scope.orgId, keyVersion);
+        return unwrapKey(env, { ...envelope, ...material });
+      },
       envelope.scope,
-      committedMaterial.keyVersion,
       state,
     );
   } else if (state.generation > 0) {

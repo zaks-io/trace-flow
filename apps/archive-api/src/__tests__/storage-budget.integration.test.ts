@@ -658,7 +658,7 @@ describe('StorageBudget Durable Object', () => {
         releaseFirst();
         await expect(manual).resolves.toEqual({ complete: true, generation: 1 });
         await alarm;
-        expect(calls).toBe(2);
+        expect(calls).toBe(1);
         const reconciliation = [
           ...state.storage.sql.exec<{ active_generation: number | null }>(
             'SELECT active_generation FROM storage_budget_reconciliation WHERE id = 1',
