@@ -14,3 +14,7 @@ target/
 
 # Tauri-generated schemas (gitignored, not hand-edited)
 apps/desktop/src-tauri/gen/
+
+# Stray copies dropped by the skills installer (gitignored, never validated)
+agent/
+skills/ziw-*/
