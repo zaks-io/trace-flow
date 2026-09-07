@@ -69,11 +69,39 @@ function validateAnyValue(
   }
 
   const anyValue = value as OTLPAnyValue;
-  for (const key of ['stringValue', 'intValue', 'bytesValue'] as const) {
+  for (const key of ['stringValue', 'bytesValue'] as const) {
     if (anyValue[key] !== undefined) {
       const error = validateBoundedString(anyValue[key], `${label}.${key}`, MAX_VALUE_BYTES);
       if (error) return error;
     }
+  }
+  if (anyValue.intValue !== undefined) {
+    let normalized: string;
+    if (typeof anyValue.intValue === 'number') {
+      if (!Number.isSafeInteger(anyValue.intValue)) {
+        return invalid(`${label}.intValue must be a safe integer or decimal string`);
+      }
+      normalized = String(anyValue.intValue);
+    } else if (typeof anyValue.intValue === 'string') {
+      normalized = anyValue.intValue;
+    } else {
+      return invalid(`${label}.intValue must be a safe integer or decimal string`);
+    }
+
+    const sizeError = validateBoundedString(normalized, `${label}.intValue`, MAX_VALUE_BYTES);
+    if (sizeError) return sizeError;
+    if (!/^-?\d+$/.test(normalized)) {
+      return invalid(`${label}.intValue must be an integer`);
+    }
+    const negative = normalized.startsWith('-');
+    const digits = negative ? normalized.slice(1) : normalized;
+    const magnitude = digits.replace(/^0+/, '') || '0';
+    if (magnitude.length > 19) return invalid(`${label}.intValue is outside the int64 range`);
+    const parsed = BigInt(`${negative ? '-' : ''}${magnitude}`);
+    if (parsed < -(1n << 63n) || parsed > (1n << 63n) - 1n) {
+      return invalid(`${label}.intValue is outside the int64 range`);
+    }
+    anyValue.intValue = normalized;
   }
   if (anyValue.boolValue !== undefined && typeof anyValue.boolValue !== 'boolean') {
     return invalid(`${label}.boolValue must be a boolean`);

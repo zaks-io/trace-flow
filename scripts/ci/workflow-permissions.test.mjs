@@ -135,8 +135,9 @@ describe('preview credential boundary', () => {
     expect(preview.on.workflow_dispatch.inputs.pull_request_number.type).toBe('number');
 
     const ownerGate = new Function('github', `return (${preview.jobs.prepare.if});`);
-    expect(ownerGate({ actor: 'isuttell' })).toBe(true);
-    expect(ownerGate({ actor: 'maintainer' })).toBe(false);
+    expect(ownerGate({ actor: 'isuttell', triggering_actor: 'isuttell' })).toBe(true);
+    expect(ownerGate({ actor: 'isuttell', triggering_actor: 'maintainer' })).toBe(false);
+    expect(ownerGate({ actor: 'maintainer', triggering_actor: 'isuttell' })).toBe(false);
   });
 
   test('resolves an open same-repository PR to its immutable head', async () => {

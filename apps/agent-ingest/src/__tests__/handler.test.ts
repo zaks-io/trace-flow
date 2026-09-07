@@ -392,6 +392,32 @@ describe('POST /v1/ingest', () => {
     expect(queueSend).toHaveBeenCalledTimes(1);
   });
 
+  it('timestamps queued facts after the ownership claim completes', async () => {
+    let now = 1_700_000_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    claimResponder = (_req, body) => {
+      now += 1_000;
+      const parsed = JSON.parse(body) as { sessionPks: string[] };
+      return new Response(
+        JSON.stringify({
+          results: parsed.sessionPks.map((sessionPk) => ({
+            sessionPk,
+            status: 'claimed',
+            ownerUserId: 'user-1',
+          })),
+        }),
+      );
+    };
+
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+
+    expect(res.status).toBe(202);
+    const sentGroup = queueSend.mock.calls[0]![0] as { body: AgentIngestQueueMessage }[];
+    expect(sentGroup[0]!.body.enqueued_at).toBe(1_700_000_001_000);
+  });
+
   it('ignores legacy raw-upload fields without storing or forwarding them', async () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
     interceptPolicy(200, POLICY);

@@ -21,7 +21,7 @@ permissions:
 jobs:
   prepare:
     name: Authorize Preview
-    if: github.actor == 'isuttell'
+    if: github.actor == 'isuttell' && github.triggering_actor == 'isuttell'
     runs-on: ubuntu-latest
     permissions:
       contents: read

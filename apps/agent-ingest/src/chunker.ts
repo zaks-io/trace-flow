@@ -56,7 +56,7 @@ export function assertFactsFitQueueMessages(
   const baseSize = byteLength({ ...base, facts: emptyFacts() });
   for (const category of CATEGORIES) {
     for (const fact of facts[category] ?? []) {
-      const messageBytes = baseSize + byteLength(fact) + 1;
+      const messageBytes = baseSize + byteLength(fact);
       if (messageBytes > maxBytes) {
         throw new QueueFactTooLargeError(category, messageBytes, maxBytes);
       }
@@ -93,8 +93,10 @@ export function chunkFacts(
 
   for (const category of CATEGORIES) {
     for (const fact of facts[category] ?? []) {
-      const factSize = byteLength(fact) + 1; // +1 for the array-element comma
+      const factBytes = byteLength(fact);
+      let factSize = factBytes + ((current[category]?.length ?? 0) > 0 ? 1 : 0);
       if (currentCount > 0 && currentSize + factSize > maxBytes) flush();
+      factSize = factBytes + ((current[category]?.length ?? 0) > 0 ? 1 : 0);
       (current[category] as unknown[]).push(fact);
       currentSize += factSize;
       currentCount += 1;

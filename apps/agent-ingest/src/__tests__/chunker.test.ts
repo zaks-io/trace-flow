@@ -111,6 +111,17 @@ describe('chunkFacts', () => {
     expect(() => chunkFacts(base, f)).toThrow(QueueFactTooLargeError);
   });
 
+  it('accepts a message whose serialized size exactly equals the cap', () => {
+    const f = emptyQueueFacts();
+    f.messages = [messageQueueFact(0)];
+    const exactSize = size({ ...base, facts: f });
+
+    const out = chunkFacts(base, f, exactSize);
+
+    expect(out).toHaveLength(1);
+    expect(size(out[0]!)).toBe(exactSize);
+  });
+
   it('packs facts drawn from more than one array into a single message', () => {
     const f = emptyQueueFacts();
     f.messages = [messageQueueFact(0)];

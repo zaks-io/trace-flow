@@ -224,7 +224,7 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
       return c.json({ accepted: true, sessions: 0, skipped_conflict: conflicted.size }, 202);
     }
 
-    const messages = chunkFacts(base, owned);
+    const messages = chunkFacts({ ...base, enqueued_at: Date.now() }, owned);
 
     // Enqueue with sendBatch, not N parallel send()s. A multi-session envelope can chunk into hundreds
     // of queue messages; firing that many individual send() subrequests bursts past Cloudflare's
