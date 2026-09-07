@@ -2521,6 +2521,18 @@ export declare const internal: {
           updatedAt: number;
         }>
       >;
+      repairGroqGptOss120bDefaultInternal: FunctionReference<
+        "mutation",
+        "internal",
+        {},
+        { preservedOverride: boolean; updated: boolean }
+      >;
+      syncGroqGptOss120bDefaultInternal: FunctionReference<
+        "action",
+        "internal",
+        {},
+        { preservedOverride: boolean; updated: boolean }
+      >;
       upsertInternal: FunctionReference<
         "mutation",
         "internal",
