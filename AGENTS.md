@@ -32,7 +32,8 @@ Other scripts, bindings, and environment values belong in `package.json` and eac
   GitHub Actions deploys on merge to `main`. The repository owner manually dispatches PR previews.
 - Agent Conversation Analytics is not production-ready until its
   [roadmap gates](docs/guides/agent-conversation-analytics/ROADMAP.md) are complete.
-  `apps/archive-api` is implemented but undeployed, with no production environment.
+  `apps/archive-api` has Cloud-Dev, preview, and production deployment wiring, but production capture
+  stays disabled until TRA-228 completes its enablement and verification.
 
 ## Rules that prevent regressions
 

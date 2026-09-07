@@ -457,6 +457,87 @@ jobs:
           command: deploy --env production --var CONVEX_URL:${{ needs.deploy-convex.outputs.convex_url }}
           packageManager: bun
 
+  # Archive API is deployed on merge while Convex keeps production writes disabled.
+  # TRA-228 owns enabling and verifying production capture.
+  deploy-archive-api:
+    name: Deploy Archive API Worker
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [ci, deploy-convex]
+    environment: Production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Assert required Archive API secrets
+        run: |
+          test -n "$ARCHIVE_API_SHARED_SECRET"
+          test -n "$ARCHIVE_KEY_WRAPPING_SECRET"
+        env:
+          ARCHIVE_API_SHARED_SECRET: ${{ secrets.ARCHIVE_API_SHARED_SECRET }}
+          ARCHIVE_KEY_WRAPPING_SECRET: ${{ secrets.ARCHIVE_KEY_WRAPPING_SECRET }}
+
+      - name: Ensure US archive bucket
+        working-directory: apps/archive-api
+        run: |
+          if ! bunx wrangler r2 bucket info trace-flow-agent-archive-prod \
+            --jurisdiction us --json >/dev/null 2>&1; then
+            bunx wrangler r2 bucket create trace-flow-agent-archive-prod --jurisdiction us
+          fi
+          bunx wrangler r2 bucket info trace-flow-agent-archive-prod \
+            --jurisdiction us --json |
+            jq -e '.name == "trace-flow-agent-archive-prod"'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Validate production resource bindings
+        working-directory: apps/archive-api
+        run: |
+          bun run --cwd ../.. archive:resources:check
+          bunx wrangler deploy --env production --dry-run
+
+      - name: Configure Archive API authorization
+        run: |
+          printf '%s' "$ARCHIVE_API_SHARED_SECRET" |
+            bunx convex env set --prod ARCHIVE_API_SHARED_SECRET
+        env:
+          ARCHIVE_API_SHARED_SECRET: ${{ secrets.ARCHIVE_API_SHARED_SECRET }}
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
+      - name: Deploy Archive API Worker
+        working-directory: apps/archive-api
+        run: |
+          secrets_directory=$(mktemp -d)
+          trap 'rm -rf "$secrets_directory"' EXIT
+          umask 077
+          secrets_file="$secrets_directory/archive-api.env"
+          {
+            printf 'ARCHIVE_API_SHARED_SECRET=%s\n' "$ARCHIVE_API_SHARED_SECRET"
+            printf 'ARCHIVE_KEY_WRAPPING_SECRET=%s\n' "$ARCHIVE_KEY_WRAPPING_SECRET"
+          } > "$secrets_file"
+          bunx wrangler deploy --env production \
+            --secrets-file "$secrets_file" \
+            --var CONVEX_SITE_URL:"$CONVEX_SITE_URL"
+        env:
+          ARCHIVE_API_SHARED_SECRET: ${{ secrets.ARCHIVE_API_SHARED_SECRET }}
+          ARCHIVE_KEY_WRAPPING_SECRET: ${{ secrets.ARCHIVE_KEY_WRAPPING_SECRET }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CONVEX_SITE_URL: ${{ needs.deploy-convex.outputs.convex_site_url }}
+
   deploy-status:
     name: Deployment Status
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -472,6 +553,7 @@ jobs:
       - deploy-agent-ingest
       - deploy-agent-consumer
       - deploy-analyst-sandbox
+      - deploy-archive-api
     steps:
       - name: Check deployment statuses
         run: |
@@ -502,4 +584,4 @@ jobs:
         uses: linear/linear-release-action@c0cb8354a362c24c6d3e0948f37fd66d07588e3f # v0.14.5
         with:
           access_key: ${{ secrets.LINEAR_ACCESS_KEY }}
-          include_paths: apps/web/**,apps/proxy/**,apps/proxy-consumer/**,apps/api/**,apps/pipes-api/**,apps/mcp/**,apps/agent-ingest/**,apps/agent-consumer/**,apps/analyst-sandbox/**,packages/convex/**,packages/emails/**,packages/mcp-core/**,packages/types/**,packages/utils/**,packages/tinybird-client/**,packages/otel-conventions/**,packages/spans/**,packages/llm-providers/**,packages/pricing/**,packages/logging/**,datasources/**,pipes/**,scripts/assert-agent-prod-resources.sh,scripts/deploy-agent-tinybird.sh,scripts/ci/export-convex-outputs.sh,.github/workflows/deploy.yml,package.json,bun.lock,turbo.json
+          include_paths: apps/web/**,apps/proxy/**,apps/proxy-consumer/**,apps/api/**,apps/pipes-api/**,apps/mcp/**,apps/agent-ingest/**,apps/archive-api/**,apps/agent-consumer/**,apps/analyst-sandbox/**,packages/convex/**,packages/emails/**,packages/mcp-core/**,packages/types/**,packages/utils/**,packages/tinybird-client/**,packages/otel-conventions/**,packages/spans/**,packages/llm-providers/**,packages/pricing/**,packages/logging/**,datasources/**,pipes/**,scripts/assert-agent-prod-resources.sh,scripts/deploy-agent-tinybird.sh,scripts/ci/export-convex-outputs.sh,.github/workflows/deploy.yml,package.json,bun.lock,turbo.json

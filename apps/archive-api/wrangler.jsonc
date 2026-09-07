@@ -1,6 +1,6 @@
 {
-  // Conversation Archive data-plane Worker. The development binding is used by
-  // Worker-runtime contract tests; production resources remain a separate ticket.
+  // Conversation Archive data-plane Worker. Environment blocks repeat every
+  // non-inheritable binding so a deploy cannot silently fall back to dev storage.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "trace-flow-archive-api-dev",
   "main": "src/index.ts",
@@ -20,16 +20,16 @@
     },
   },
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
+  "secrets": {
+    "required": ["ARCHIVE_API_SHARED_SECRET", "ARCHIVE_KEY_WRAPPING_SECRET"],
+  },
   "vars": {
     "SENTRY_ENVIRONMENT": "development",
     "ARCHIVE_KEY_VERSION": "1",
-    // Server availability stays disabled in Convex (`CONVERSATION_ARCHIVE_ENABLED`).
     // Do not bind proxy Body Object, Tinybird, or agent-queue secrets here.
   },
   // CONVEX_SITE_URL is injected by deploy workflows from the Convex deployment output.
-  // Secrets (set via `wrangler secret` / CI, never committed): ARCHIVE_API_SHARED_SECRET,
-  // ARCHIVE_KEY_WRAPPING_SECRET, SENTRY_DSN.
-  // This slice does not ship a production env or deploy script.
+  // SENTRY_DSN is optional and remains a Worker secret when configured.
   // Same Collector Credential namespace Agent Ingest uses. Archive API never binds
   // the proxy storage bucket, BODY_ENCRYPTION_ROOT_KEY, or Tinybird credentials.
   "kv_namespaces": [{ "binding": "COLLECTOR_CREDS", "id": "f945ee3d71954ffabd364e3db385d3ab" }],
@@ -50,4 +50,58 @@
     { "tag": "v1", "new_sqlite_classes": ["ArchiveSessionLedger"] },
     { "tag": "v2", "new_sqlite_classes": ["StorageBudget"] },
   ],
+  "env": {
+    "preview": {
+      "name": "trace-flow-archive-api-preview",
+      "version_metadata": { "binding": "CF_VERSION_METADATA" },
+      "vars": {
+        "SENTRY_ENVIRONMENT": "preview",
+        "ARCHIVE_KEY_VERSION": "1",
+      },
+      "secrets": {
+        "required": ["ARCHIVE_API_SHARED_SECRET", "ARCHIVE_KEY_WRAPPING_SECRET"],
+      },
+      "kv_namespaces": [{ "binding": "COLLECTOR_CREDS", "id": "f945ee3d71954ffabd364e3db385d3ab" }],
+      "r2_buckets": [
+        {
+          "binding": "ARCHIVE_STORAGE",
+          "bucket_name": "trace-flow-agent-archive-dev",
+          "jurisdiction": "us",
+        },
+      ],
+      "durable_objects": {
+        "bindings": [
+          { "name": "ARCHIVE_SESSION_LEDGER", "class_name": "ArchiveSessionLedger" },
+          { "name": "STORAGE_BUDGET", "class_name": "StorageBudget" },
+        ],
+      },
+    },
+    "production": {
+      "name": "trace-flow-archive-api",
+      "version_metadata": { "binding": "CF_VERSION_METADATA" },
+      "workers_dev": false,
+      "routes": [{ "pattern": "archive.trace-flow.dev/*", "zone_name": "trace-flow.dev" }],
+      "vars": {
+        "SENTRY_ENVIRONMENT": "production",
+        "ARCHIVE_KEY_VERSION": "1",
+      },
+      "secrets": {
+        "required": ["ARCHIVE_API_SHARED_SECRET", "ARCHIVE_KEY_WRAPPING_SECRET"],
+      },
+      "kv_namespaces": [{ "binding": "COLLECTOR_CREDS", "id": "67241ef9190a4f9d9ac520a347bd44b9" }],
+      "r2_buckets": [
+        {
+          "binding": "ARCHIVE_STORAGE",
+          "bucket_name": "trace-flow-agent-archive-prod",
+          "jurisdiction": "us",
+        },
+      ],
+      "durable_objects": {
+        "bindings": [
+          { "name": "ARCHIVE_SESSION_LEDGER", "class_name": "ArchiveSessionLedger" },
+          { "name": "STORAGE_BUDGET", "class_name": "StorageBudget" },
+        ],
+      },
+    },
+  },
 }

@@ -8,6 +8,9 @@ The agent Workers have a production environment (TRA-110): `[env.production]` bl
 workers to prod queue/DLQ/KV, and the Production workflow deploys them with `--env production` behind a
 config guard. The default (flat) config is still the dev path used by `bun run dev:all`.
 
+Archive API has separate Cloud-Dev, preview, and production Worker environments. The merge workflow
+deploys production wiring while Convex keeps production archive writes disabled until TRA-228.
+
 Do not ask a user, agent, or collector to submit data with a Tinybird token, Tinybird admin token,
 Wrangler command, Convex dev seed, or local KV seed. Those are implementation/debug tools, not product
 ingestion. The client only ever holds a Collector Credential.
@@ -26,6 +29,39 @@ collector CLI / desktop
 
 Only the Collector Credential is present on the client. Tinybird credentials exist only as Worker
 secrets.
+
+Conversation Archive uses the same Collector Credential on a separate data plane:
+
+```text
+Claude / Codex collector capture
+  -> POST /v1/archive/uploads with X-Trace-Flow-Collector-Secret
+  -> Archive API Worker
+  -> per-session ledger and storage-budget Durable Objects
+  -> encrypted chunks and manifests in the US archive R2 bucket
+  -> durable acknowledgement after storage verification and budget commit
+```
+
+### Cloud-Dev Archive smoke
+
+The smoke is restricted in code to the canonical Cloud-Dev Convex deployment and Archive API origin.
+It mints a Collector Credential through the authenticated control plane, uploads synthetic Claude and
+Codex records, verifies a source-policy denial, cross-org isolation, exact retry idempotency, durable
+byte accounting, and control-plane audit events. It never prints the credential, wrapping secret,
+payload, signed URL, or object keys.
+
+Load the stable Cloud-Dev wrapping secret without putting it in shell history, then run:
+
+```sh
+read -rs ARCHIVE_KEY_WRAPPING_SECRET
+export ARCHIVE_KEY_WRAPPING_SECRET
+TRACE_FLOW_ARCHIVE_SMOKE_DEPLOYMENT=hardy-iguana-812 \
+TRACE_FLOW_ARCHIVE_SMOKE_URL=https://trace-flow-archive-api-dev.isaac-a46.workers.dev \
+bun run dev:smoke:archive
+unset ARCHIVE_KEY_WRAPPING_SECRET
+```
+
+The harness revokes its credentials and removes the foreign-org isolation fixture. It retains the
+primary synthetic org and encrypted objects because archive deletion and lifecycle are separate work.
 
 ## Required Production Resources
 

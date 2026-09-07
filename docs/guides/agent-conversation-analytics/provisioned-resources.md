@@ -79,6 +79,76 @@ Agent datasources + pipes deploy to `trace_flow_prod` (`a0263248-b28b-49de-804f-
 prod without that variable. The consumer holds a `DATASOURCE:APPEND` token for that workspace as a
 Worker secret. No client or smoke test ever receives a Tinybird token.
 
+## Conversation Archive resources (TRA-227)
+
+Archive API reuses the Collector Credential KV for authentication and has its own US-jurisdiction R2
+bucket and Durable Object namespaces. It never binds the proxy Body Object, Tinybird credentials, or
+the agent ingest queue.
+
+| Environment | Worker                           | Collector Credential KV | R2 bucket                       | Route / origin                                                 |
+| ----------- | -------------------------------- | ----------------------- | ------------------------------- | -------------------------------------------------------------- |
+| Cloud-Dev   | `trace-flow-archive-api-dev`     | dev ID above            | `trace-flow-agent-archive-dev`  | `https://trace-flow-archive-api-dev.isaac-a46.workers.dev`     |
+| Preview     | `trace-flow-archive-api-preview` | dev ID above            | `trace-flow-agent-archive-dev`  | `https://trace-flow-archive-api-preview.isaac-a46.workers.dev` |
+| Production  | `trace-flow-archive-api`         | production ID above     | `trace-flow-agent-archive-prod` | `archive.trace-flow.dev`                                       |
+
+Both buckets use the `us` jurisdiction. Preview shares the Cloud-Dev bucket and KV but uses a distinct
+Worker and Durable Object namespace. Production deployment is the normal merge workflow: it checks the
+resolved Wrangler config, creates the exact production bucket when absent, and deploys only after Convex.
+
+Cloud-Dev uses Convex deployment `hardy-iguana-812` and site
+`https://hardy-iguana-812.convex.site`. Do not substitute the production deployment
+`laudable-bison-427`. Before the first Cloud-Dev deploy, store stable values for
+`ARCHIVE_API_SHARED_SECRET` and `ARCHIVE_KEY_WRAPPING_SECRET` in the team secret manager. In one shell,
+load those values without echoing them, then provision the shared control-plane secret and Worker:
+
+```sh
+read -rs ARCHIVE_API_SHARED_SECRET
+read -rs ARCHIVE_KEY_WRAPPING_SECRET
+export ARCHIVE_API_SHARED_SECRET ARCHIVE_KEY_WRAPPING_SECRET
+umask 077
+secret_directory=$(mktemp -d)
+secrets_file="$secret_directory/archive.env"
+trap 'rm -rf "$secret_directory"' EXIT
+bunx convex env set --deployment hardy-iguana-812 ARCHIVE_API_SHARED_SECRET \
+  <<< "$ARCHIVE_API_SHARED_SECRET"
+bunx convex env set --deployment hardy-iguana-812 CONVERSATION_ARCHIVE_ENABLED true
+bunx convex env set --deployment hardy-iguana-812 TRACE_FLOW_ARCHIVE_INTEGRATION_TEST_ENABLED true
+( cd apps/archive-api && \
+  wrangler r2 bucket create trace-flow-agent-archive-dev --jurisdiction us )
+( cd apps/archive-api && \
+  printf 'ARCHIVE_API_SHARED_SECRET=%s\nARCHIVE_KEY_WRAPPING_SECRET=%s\n' \
+    "$ARCHIVE_API_SHARED_SECRET" "$ARCHIVE_KEY_WRAPPING_SECRET" > "$secrets_file" && \
+  wrangler deploy --env="" --secrets-file "$secrets_file" \
+    --var CONVEX_SITE_URL:https://hardy-iguana-812.convex.site )
+unset ARCHIVE_API_SHARED_SECRET ARCHIVE_KEY_WRAPPING_SECRET
+```
+
+If the bucket already exists, skip its create command after verifying it appears in
+`wrangler r2 bucket list --jurisdiction us`.
+
+The Preview and Production GitHub environments each require these stable secrets:
+
+- `ARCHIVE_API_SHARED_SECRET`, also written to the matching Convex deployment by the workflow
+- `ARCHIVE_KEY_WRAPPING_SECRET`, retained unchanged so existing encrypted archive objects remain readable
+
+Create the Production values once without putting them in shell history, then verify names only:
+
+```sh
+set -euo pipefail
+umask 077
+secret_directory=$(mktemp -d)
+trap 'rm -rf "$secret_directory"' EXIT
+openssl rand -base64 32 > "$secret_directory/shared"
+openssl rand -base64 32 > "$secret_directory/wrapping"
+gh secret set ARCHIVE_API_SHARED_SECRET --env Production < "$secret_directory/shared"
+gh secret set ARCHIVE_KEY_WRAPPING_SECRET --env Production < "$secret_directory/wrapping"
+gh secret list --env Production --json name \
+  --jq '[.[].name] | map(select(startswith("ARCHIVE_"))) | sort | .[]'
+```
+
+Do not rotate either value through this setup procedure. Rotation and key destruction have their own
+operational workflow.
+
 ## Teardown
 
 See the [ops runbook](./runbook.md#teardown) for dev teardown. The dev resources at the top of this
