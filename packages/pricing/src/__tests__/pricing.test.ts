@@ -191,6 +191,61 @@ describe('pricing', () => {
       expect(result.reasoningCostMicrodollars).toBe(15000);
     });
 
+    it('should count OpenRouter reasoning once when completion tokens include it', () => {
+      const pricing: ModelPricing = {
+        ...basePricing,
+        source: 'openrouter',
+      };
+      const tokens: LLMTokenUsage = {
+        promptTokens: 0,
+        completionTokens: 1000,
+        reasoningTokens: 200,
+      };
+
+      const result = calculateCost(tokens, pricing, 'openrouter');
+
+      expect(result.outputCostMicrodollars).toBe(12000);
+      expect(result.reasoningCostMicrodollars).toBe(3000);
+      expect(result.totalCostMicrodollars).toBe(15000);
+    });
+
+    it('should use an explicit OpenRouter reasoning rate for the reasoning subset', () => {
+      const pricing: ModelPricing = {
+        ...basePricing,
+        reasoningCostPerMillion: 20_000_000,
+        source: 'manual',
+      };
+      const tokens: LLMTokenUsage = {
+        promptTokens: 0,
+        completionTokens: 1000,
+        reasoningTokens: 200,
+      };
+
+      const result = calculateCost(tokens, pricing, 'openrouter');
+
+      expect(result.outputCostMicrodollars).toBe(12000);
+      expect(result.reasoningCostMicrodollars).toBe(4000);
+      expect(result.totalCostMicrodollars).toBe(16000);
+    });
+
+    it('should not infer token semantics from OpenRouter catalog provenance', () => {
+      const pricing: ModelPricing = {
+        ...basePricing,
+        source: 'openrouter',
+      };
+      const tokens: LLMTokenUsage = {
+        promptTokens: 0,
+        completionTokens: 1000,
+        reasoningTokens: 200,
+      };
+
+      const result = calculateCost(tokens, pricing, 'google');
+
+      expect(result.outputCostMicrodollars).toBe(15000);
+      expect(result.reasoningCostMicrodollars).toBe(3000);
+      expect(result.totalCostMicrodollars).toBe(18000);
+    });
+
     it('should return zero for all costs when tokens are zero', () => {
       const tokens: LLMTokenUsage = {
         promptTokens: 0,

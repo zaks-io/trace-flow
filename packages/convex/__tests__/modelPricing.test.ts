@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { internal } from '../_generated/api';
 import { convertModelsDevModel } from '../billing/modelPricing';
+import { initConvexTest } from './convexTest.setup';
 
 /**
  * Pure-conversion guards for the models.dev import. Fixtures mirror the real api.json shape (dollars
@@ -100,6 +102,112 @@ describe('convertModelsDevModel', () => {
     expect(converted).toMatchObject({
       promptCostPerMillion: 250_000,
       completionCostPerMillion: 1_500_000,
+    });
+  });
+});
+
+describe('default pricing sync', () => {
+  beforeEach(() => {
+    vi.stubEnv('CLOUDFLARE_ACCOUNT_ID', 'test-account');
+    vi.stubEnv('CLOUDFLARE_API_TOKEN', 'test-token');
+    vi.stubEnv('CLOUDFLARE_PRICING_KV_NAMESPACE_ID', 'test-namespace');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('') }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('repairs and serializes the Groq GPT-OSS 120B cached-input discount', async () => {
+    const t = initConvexTest();
+    await t.run((ctx) =>
+      ctx.db.insert('modelPricing', {
+        provider: 'groq',
+        model: 'openai/gpt-oss-120b',
+        promptCostPerMillion: 150_000,
+        completionCostPerMillion: 600_000,
+        source: 'default',
+        updatedAt: 123,
+      }),
+    );
+
+    await expect(
+      t.action(internal.billing.modelPricing.syncGroqGptOss120bDefaultInternal, {}),
+    ).resolves.toEqual({ updated: true, preservedOverride: false });
+    await expect(
+      t.action(internal.billing.modelPricing.syncGroqGptOss120bDefaultInternal, {}),
+    ).resolves.toEqual({ updated: false, preservedOverride: false });
+
+    const stored = await t.run((ctx) =>
+      ctx.db
+        .query('modelPricing')
+        .withIndex('by_provider_model', (q) =>
+          q.eq('provider', 'groq').eq('model', 'openai/gpt-oss-120b'),
+        )
+        .collect(),
+    );
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({
+      promptCostPerMillion: 150_000,
+      cacheReadCostPerMillion: 75_000,
+      source: 'default',
+    });
+
+    const body = vi.mocked(fetch).mock.calls[0]?.[1]?.body;
+    expect(typeof body).toBe('string');
+    expect(JSON.parse(body as string)).toMatchObject({
+      promptCostPerMillion: 150_000,
+      cacheReadCostPerMillion: 75_000,
+      source: 'default',
+    });
+  });
+
+  it('preserves an explicit override while refreshing its KV serialization', async () => {
+    const t = initConvexTest();
+    await t.run((ctx) =>
+      ctx.db.insert('modelPricing', {
+        provider: 'groq',
+        model: 'openai/gpt-oss-120b',
+        promptCostPerMillion: 140_000,
+        completionCostPerMillion: 550_000,
+        cacheReadCostPerMillion: 60_000,
+        source: 'manual',
+        updatedAt: 123,
+      }),
+    );
+
+    await expect(
+      t.mutation(internal.billing.modelPricing.repairGroqGptOss120bDefaultInternal, {}),
+    ).resolves.toEqual({ updated: false, preservedOverride: true });
+    await expect(
+      t.action(internal.billing.modelPricing.syncGroqGptOss120bDefaultInternal, {}),
+    ).resolves.toEqual({ updated: false, preservedOverride: true });
+
+    const stored = await t.run((ctx) =>
+      ctx.db
+        .query('modelPricing')
+        .withIndex('by_provider_model', (q) =>
+          q.eq('provider', 'groq').eq('model', 'openai/gpt-oss-120b'),
+        )
+        .unique(),
+    );
+    expect(stored).toMatchObject({
+      promptCostPerMillion: 140_000,
+      completionCostPerMillion: 550_000,
+      cacheReadCostPerMillion: 60_000,
+      source: 'manual',
+    });
+
+    const body = vi.mocked(fetch).mock.calls[0]?.[1]?.body;
+    expect(typeof body).toBe('string');
+    expect(JSON.parse(body as string)).toMatchObject({
+      promptCostPerMillion: 140_000,
+      cacheReadCostPerMillion: 60_000,
+      source: 'manual',
     });
   });
 });

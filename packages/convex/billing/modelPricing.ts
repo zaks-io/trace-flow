@@ -360,6 +360,75 @@ export const syncDefaults = action({
   },
 });
 
+const GROQ_GPT_OSS_120B = {
+  provider: 'groq',
+  model: 'openai/gpt-oss-120b',
+} as const;
+
+export const repairGroqGptOss120bDefaultInternal = internalMutation({
+  args: {},
+  returns: v.object({ updated: v.boolean(), preservedOverride: v.boolean() }),
+  handler: async (ctx) => {
+    const { provider, model } = GROQ_GPT_OSS_120B;
+    const pricing = DEFAULT_PRICING.find(
+      (candidate) => candidate.provider === provider && candidate.model === model,
+    );
+    if (!pricing) {
+      throw new Error(`Missing default pricing for ${provider}/${model}`);
+    }
+
+    const existing = await ctx.db
+      .query('modelPricing')
+      .withIndex('by_provider_model', (q) => q.eq('provider', provider).eq('model', model))
+      .first();
+    const preservedOverride = existing !== null && existing.source !== 'default';
+    const matchesDefault =
+      existing?.source === 'default' &&
+      existing.promptCostPerMillion === pricing.promptCostPerMillion &&
+      existing.completionCostPerMillion === pricing.completionCostPerMillion &&
+      existing.cacheReadCostPerMillion === pricing.cacheReadCostPerMillion &&
+      existing.cacheWriteCostPerMillion === pricing.cacheWriteCostPerMillion &&
+      existing.cacheWrite1hCostPerMillion === pricing.cacheWrite1hCostPerMillion &&
+      existing.reasoningCostPerMillion === undefined &&
+      existing.contextTier === undefined;
+    const updated = !preservedOverride && !matchesDefault;
+
+    if (updated) {
+      await writeModelPricing(ctx, {
+        provider,
+        model,
+        promptCostPerMillion: pricing.promptCostPerMillion,
+        completionCostPerMillion: pricing.completionCostPerMillion,
+        cacheReadCostPerMillion: pricing.cacheReadCostPerMillion,
+        cacheWriteCostPerMillion: pricing.cacheWriteCostPerMillion,
+        cacheWrite1hCostPerMillion: pricing.cacheWrite1hCostPerMillion,
+        source: 'default',
+      });
+    }
+
+    return { updated, preservedOverride };
+  },
+});
+
+/**
+ * Deploy-time repair for the built-in Groq GPT-OSS 120B cached-input rate. Existing non-default
+ * rows are explicit operator overrides, so the repair preserves them and only refreshes their KV
+ * serialization.
+ */
+export const syncGroqGptOss120bDefaultInternal = internalAction({
+  args: {},
+  returns: v.object({ updated: v.boolean(), preservedOverride: v.boolean() }),
+  handler: async (ctx) => {
+    const { provider, model } = GROQ_GPT_OSS_120B;
+    const result = await ctx.runMutation(
+      internal.billing.modelPricing.repairGroqGptOss120bDefaultInternal,
+      {},
+    );
+    await ctx.runAction(internal.billing.pricingSync.syncToKV, { provider, model });
+    return result;
+  },
+});
+
 // --- models.dev import -------------------------------------------------------------------------
 //
 // models.dev is the upstream catalog (https://models.dev/api.json). Top-level keys are provider IDs;

@@ -147,7 +147,10 @@ function buildRoot(
   if (data.tokens) {
     Object.assign(attributes, tokenAttributes(data.tokens));
     if (pricing) {
-      Object.assign(attributes, costAttributes(calculateCost(data.tokens, pricing)));
+      Object.assign(
+        attributes,
+        costAttributes(calculateCost(data.tokens, pricing, data.request.provider)),
+      );
     }
     Object.assign(attributes, upstreamCostAttribute(data.tokens.upstreamCost));
   }
