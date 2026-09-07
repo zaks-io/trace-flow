@@ -70,16 +70,16 @@ export function formatProcessFailure(
 export function captureCommand(
   command: string,
   args: string[],
-  options: { cwd: string; env?: NodeJS.ProcessEnv },
+  options: { cwd: string; env?: NodeJS.ProcessEnv; captureStdout?: boolean },
 ): Promise<CommandResult> {
   return new Promise((resolveResult) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env ?? process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', options.captureStdout === false ? 'ignore' : 'pipe', 'pipe'],
     });
     let stdout = '';
-    child.stdout.on('data', (chunk: Buffer) => {
+    child.stdout?.on('data', (chunk: Buffer) => {
       stdout += chunk.toString();
     });
     let stderr = '';

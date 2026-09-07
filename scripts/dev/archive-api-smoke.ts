@@ -146,7 +146,10 @@ async function runWrangler(
   sensitiveValues: string[] = [],
 ): Promise<void> {
   const cli = process.platform === 'win32' ? 'bunx.cmd' : 'bunx';
-  const result = await captureCommand(cli, ['wrangler', ...args], { cwd: archiveApiRoot });
+  const result = await captureCommand(cli, ['wrangler', ...args], {
+    cwd: archiveApiRoot,
+    captureStdout: expectedOutcome !== 'missing',
+  });
   if (expectedOutcome === 'success' && result.exitCode === 0) return;
   if (
     expectedOutcome === 'missing' &&
