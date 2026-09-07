@@ -18,7 +18,7 @@ const ESTIMATED_FIXED_BYTES_PER_TRACE = 2_048;
  * Keeping the projected envelope at or below the request cap prevents shared resource attributes
  * from expanding a small OTLP export into an isolate-sized allocation.
  */
-export const MAX_TRANSFORMED_TRACE_BYTES = 10 * 1_024 * 1_024;
+const MAX_TRANSFORMED_TRACE_BYTES = 10 * 1_024 * 1_024;
 
 export interface ValidationResult {
   valid: boolean;
