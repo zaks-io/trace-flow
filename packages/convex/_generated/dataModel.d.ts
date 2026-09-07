@@ -405,6 +405,8 @@ export type DataModel = {
       contributionId?: Id<"archiveContributions">;
       enrollmentId?: Id<"archiveEnrollments">;
       manifestRootHash?: string;
+      manifestRootCount?: number;
+      manifestRootSetHash?: string;
       occurredAt: number;
       operationId: string;
       orgId: Id<"organizations">;
@@ -434,6 +436,8 @@ export type DataModel = {
       | "contributionId"
       | "enrollmentId"
       | "manifestRootHash"
+      | "manifestRootCount"
+      | "manifestRootSetHash"
       | "occurredAt"
       | "operationId"
       | "orgId"

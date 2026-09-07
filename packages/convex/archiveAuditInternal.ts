@@ -65,6 +65,8 @@ export const appendSemanticEvent = internalMutation({
     targetId: v.optional(v.string()),
     relevantCount: v.optional(v.number()),
     manifestRootHash: v.optional(v.string()),
+    manifestRootCount: v.optional(v.number()),
+    manifestRootSetHash: v.optional(v.string()),
     source: v.optional(archiveSupportedSourceValidator),
     sourceSessionId: v.optional(v.string()),
   },
@@ -90,6 +92,8 @@ export const appendSemanticEvent = internalMutation({
       sourceSessionId: args.sourceSessionId,
       relevantCount: args.relevantCount,
       manifestRootHash: args.manifestRootHash,
+      manifestRootCount: args.manifestRootCount,
+      manifestRootSetHash: args.manifestRootSetHash,
     });
   },
 });
@@ -120,6 +124,8 @@ export const listEventsForOrg = internalQuery({
       sourceSessionId: row.sourceSessionId,
       relevantCount: row.relevantCount,
       manifestRootHash: row.manifestRootHash,
+      manifestRootCount: row.manifestRootCount,
+      manifestRootSetHash: row.manifestRootSetHash,
     }));
   },
 });

@@ -1,6 +1,7 @@
 import type { ArchiveApiEnv } from './context';
 import { ArchiveContractError } from './archive-contract';
 import { isRotationTempObjectKey } from './archive-key-rotation-state';
+import { keyVersionFromR2Metadata } from './archive-r2';
 import { archiveOrganizationPrefix } from './archive-storage-key';
 import {
   budgetState,
@@ -33,6 +34,14 @@ interface InventoryObject {
   objectKey: string;
   objectClass: StorageBudgetObjectClass;
   bytes: number;
+  keyVersion: number;
+}
+
+function assertKnownKeyVersion(keyVersion: number | null): number {
+  if (!Number.isSafeInteger(keyVersion) || keyVersion === null || keyVersion < 1) {
+    throw new ArchiveContractError('archive_key_version_unknown');
+  }
+  return keyVersion;
 }
 
 export function ensureReconciliationSchema(storage: DurableObjectStorage): void {
@@ -56,6 +65,7 @@ export function ensureReconciliationSchema(storage: DurableObjectStorage): void 
       object_key TEXT NOT NULL,
       object_class TEXT NOT NULL,
       bytes INTEGER NOT NULL,
+      key_version INTEGER NOT NULL,
       PRIMARY KEY (generation, object_key)
     );
   `);
@@ -91,6 +101,24 @@ export function ensureReconciliationSchema(storage: DurableObjectStorage): void 
     storage.sql.exec(
       'ALTER TABLE storage_budget_reconciliation ADD COLUMN finalization_cursor TEXT',
     );
+  }
+  const objectColumns = new Set(
+    [
+      ...storage.sql.exec<{ name: string }>(
+        'PRAGMA table_info(storage_budget_reconciliation_objects)',
+      ),
+    ].map((column) => column.name),
+  );
+  if (!objectColumns.has('key_version')) {
+    storage.transactionSync(() => {
+      storage.sql.exec(
+        'ALTER TABLE storage_budget_reconciliation_objects ADD COLUMN key_version INTEGER',
+      );
+      storage.sql.exec('DELETE FROM storage_budget_reconciliation_objects');
+      storage.sql.exec(
+        'UPDATE storage_budget_reconciliation SET active_generation = NULL, cursor = NULL, finalizing = 0, finalization_phase = NULL, finalization_cursor = NULL, error = NULL WHERE id = 1',
+      );
+    });
   }
 }
 
@@ -143,7 +171,8 @@ function writeReconciliationState(storage: DurableObjectStorage, value: Reconcil
   );
 }
 
-function inventoryObject(key: string, size: number, prefix: string): InventoryObject | null {
+function inventoryObject(object: R2Object, prefix: string): InventoryObject | null {
+  const { key, size } = object;
   if (isRotationTempObjectKey(key)) return null;
   const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const match = new RegExp(
@@ -156,6 +185,7 @@ function inventoryObject(key: string, size: number, prefix: string): InventoryOb
     objectKey: key,
     objectClass: match[1] === 'chunks' ? 'agent_archive_chunk' : 'agent_archive_manifest',
     bytes: size,
+    keyVersion: keyVersionFromR2Metadata(object.customMetadata),
   };
 }
 
@@ -174,6 +204,7 @@ function assertInventoryMetadata(
         bytes: number;
         expires_at: string | null;
         status: 'reserved' | 'committed';
+        key_version: number | null;
       }
     | undefined,
   object: InventoryObject,
@@ -182,7 +213,8 @@ function assertInventoryMetadata(
     row &&
     (row.object_class !== object.objectClass ||
       row.bytes !== object.bytes ||
-      row.expires_at !== null)
+      row.expires_at !== null ||
+      (row.key_version !== null && row.key_version !== object.keyVersion))
   ) {
     throw new ArchiveContractError('storage_object_metadata_mismatch');
   }
@@ -195,25 +227,28 @@ function applyInventoryObject(storage: DurableObjectStorage, object: InventoryOb
       bytes: number;
       expires_at: string | null;
       status: 'reserved' | 'committed';
+      key_version: number | null;
     }>(
-      'SELECT object_class, bytes, expires_at, status FROM storage_budget_objects WHERE object_key = ?',
+      'SELECT object_class, bytes, expires_at, status, key_version FROM storage_budget_objects WHERE object_key = ?',
       object.objectKey,
     ),
   ][0];
   assertInventoryMetadata(row, object);
-  if (row?.status === 'reserved') {
+  if (row && (row.status === 'reserved' || row.key_version === null)) {
     storage.sql.exec(
-      "UPDATE storage_budget_objects SET status = 'committed' WHERE object_key = ?",
+      "UPDATE storage_budget_objects SET status = 'committed', key_version = ? WHERE object_key = ?",
+      object.keyVersion,
       object.objectKey,
     );
     return true;
   }
   if (row) return false;
   storage.sql.exec(
-    "INSERT INTO storage_budget_objects (object_key, object_class, bytes, expires_at, status, key_version) VALUES (?, ?, ?, NULL, 'committed', NULL)",
+    "INSERT INTO storage_budget_objects (object_key, object_class, bytes, expires_at, status, key_version) VALUES (?, ?, ?, NULL, 'committed', ?)",
     object.objectKey,
     object.objectClass,
     object.bytes,
+    object.keyVersion,
   );
   return true;
 }
@@ -303,8 +338,9 @@ function reconcileFinalizationPage(
           object_key: string;
           object_class: StorageBudgetObjectClass;
           bytes: number;
+          key_version: number | null;
         }>(
-          'SELECT object_key, object_class, bytes FROM storage_budget_reconciliation_objects WHERE generation = ? AND object_key > ? ORDER BY object_key LIMIT ?',
+          'SELECT object_key, object_class, bytes, key_version FROM storage_budget_reconciliation_objects WHERE generation = ? AND object_key > ? ORDER BY object_key LIMIT ?',
           generation,
           reconciliation.finalizationCursor ?? '',
           limit,
@@ -313,6 +349,7 @@ function reconcileFinalizationPage(
         objectKey: row.object_key,
         objectClass: row.object_class,
         bytes: row.bytes,
+        keyVersion: assertKnownKeyVersion(row.key_version),
       }));
       let changed = false;
       for (const object of rows) changed = applyInventoryObject(storage, object) || changed;
@@ -482,11 +519,13 @@ export async function reconcileBudgetInventoryPage(
   }
   let listed: R2Objects;
   try {
-    listed = await env.ARCHIVE_STORAGE.list({
+    const options = {
       prefix,
+      include: ['customMetadata'] as 'customMetadata'[],
       ...(reconciliation.cursor === undefined ? {} : { cursor: reconciliation.cursor }),
       limit,
-    });
+    };
+    listed = await env.ARCHIVE_STORAGE.list(options);
   } catch (error) {
     recordReconciliationFailure(storage, input.orgId, error, 'inventory_list_failed');
     throw new ArchiveContractError('storage_budget_inventory_failed');
@@ -496,7 +535,7 @@ export async function reconcileBudgetInventoryPage(
   let inventoryError: Error | undefined;
   for (const object of listed.objects) {
     try {
-      const inventoried = inventoryObject(object.key, object.size, prefix);
+      const inventoried = inventoryObject(object, prefix);
       if (inventoried) inventory.push(inventoried);
     } catch (error) {
       inventoryError ??=
@@ -515,51 +554,16 @@ export async function reconcileBudgetInventoryPage(
         current.mutationVersion !== reconciliation.startedMutationVersion;
       for (const object of inventory) {
         storage.sql.exec(
-          'INSERT INTO storage_budget_reconciliation_objects (generation, object_key, object_class, bytes) VALUES (?, ?, ?, ?) ON CONFLICT(generation, object_key) DO UPDATE SET object_class = excluded.object_class, bytes = excluded.bytes',
+          'INSERT INTO storage_budget_reconciliation_objects (generation, object_key, object_class, bytes, key_version) VALUES (?, ?, ?, ?, ?) ON CONFLICT(generation, object_key) DO UPDATE SET object_class = excluded.object_class, bytes = excluded.bytes, key_version = excluded.key_version',
           generation,
           object.objectKey,
           object.objectClass,
           object.bytes,
+          object.keyVersion,
         );
       }
       let changed = false;
-      for (const object of inventory) {
-        const row = [
-          ...storage.sql.exec<{
-            object_class: StorageBudgetObjectClass;
-            bytes: number;
-            expires_at: string | null;
-            status: 'reserved' | 'committed';
-          }>(
-            'SELECT object_class, bytes, expires_at, status FROM storage_budget_objects WHERE object_key = ?',
-            object.objectKey,
-          ),
-        ][0];
-        if (row) {
-          if (
-            row.object_class !== object.objectClass ||
-            row.bytes !== object.bytes ||
-            row.expires_at !== null
-          ) {
-            throw new ArchiveContractError('storage_object_metadata_mismatch');
-          }
-          if (row.status === 'reserved') {
-            storage.sql.exec(
-              "UPDATE storage_budget_objects SET status = 'committed' WHERE object_key = ?",
-              object.objectKey,
-            );
-            changed = true;
-          }
-        } else {
-          storage.sql.exec(
-            "INSERT INTO storage_budget_objects (object_key, object_class, bytes, expires_at, status, key_version) VALUES (?, ?, ?, NULL, 'committed', NULL)",
-            object.objectKey,
-            object.objectClass,
-            object.bytes,
-          );
-          changed = true;
-        }
-      }
+      for (const object of inventory) changed = applyInventoryObject(storage, object) || changed;
       const totals = budgetTotals(storage);
       storage.sql.exec(
         'UPDATE storage_budget_state SET reserved_bytes = ?, committed_bytes = ?, mutation_version = mutation_version + ? WHERE id = 1',

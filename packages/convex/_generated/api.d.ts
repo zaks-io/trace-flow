@@ -778,6 +778,8 @@ export declare const api: {
         contributionId?: Id<"archiveContributions">;
         enrollmentId?: Id<"archiveEnrollments">;
         manifestRootHash?: string;
+        manifestRootCount?: number;
+        manifestRootSetHash?: string;
         occurredAt: number;
         operationId: string;
         orgId: Id<"organizations">;
@@ -2041,6 +2043,8 @@ export declare const internal: {
             };
         expectedOrgId?: Id<"organizations">;
         manifestRootHash?: string;
+        manifestRootCount?: number;
+        manifestRootSetHash?: string;
         operationId: string;
         outcome: "success" | "failure";
         relevantCount?: number;
@@ -2082,6 +2086,8 @@ export declare const internal: {
         contributionId?: Id<"archiveContributions">;
         enrollmentId?: Id<"archiveEnrollments">;
         manifestRootHash?: string;
+        manifestRootCount?: number;
+        manifestRootSetHash?: string;
         occurredAt: number;
         operationId: string;
         orgId: Id<"organizations">;
@@ -2307,6 +2313,7 @@ export declare const internal: {
       "internal",
       { orgId: Id<"organizations"> },
       {
+        activationId?: Id<"archiveActivations">;
         keyVersion: number;
         orgId: Id<"organizations">;
         retiringKeyVersion?: number;

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Logger } from '@trace-flow/logging';
 import {
   createExecutionContext,
   env as workerEnv,
@@ -6,12 +7,9 @@ import {
   waitOnExecutionContext,
 } from 'cloudflare:test';
 import {
-  createArchiveEncryptionKeyVersion,
   decryptArchiveObject,
   encryptArchiveObject,
-  serializeArchiveWrappedKeyVersion,
   sha256Hex,
-  unwrapArchiveEncryptionKey,
   type ArchiveObjectEnvelope,
 } from '@trace-flow/utils';
 import {
@@ -20,20 +18,21 @@ import {
   type ArchiveScope,
   type ArchiveUploadRequest,
 } from '../archive-contract';
-import { archiveObjectKey } from '../archive-storage-key';
+import { archiveObjectKey, archiveOrganizationPrefix } from '../archive-storage-key';
 import { prefixChainHash } from '../archive-prefix-validation';
 import { payloadBytes } from '../archive-contract';
 import { __resetArchivePolicyCache } from '../enrollment';
 import type { StorageBudget } from '../archive-storage-budget';
 import type { ArchiveApiEnv } from '../context';
 import { app } from '../index';
-import { ARCHIVE_ROTATION_TEMP_SUFFIX } from '../archive-key-rotation';
+import { ARCHIVE_ROTATION_TEMP_SUFFIX, mintAndActivateNextKey } from '../archive-key-rotation';
+import { recordRotationManifestRoot } from '../archive-key-rotation-audit';
 import { decompress } from '../archive-packing';
+import { archiveKeyVersionMetadata } from '../archive-r2';
+import { ACTIVATION_ID, FakeArchiveCustody, installCustody } from './key-rotation-custody-fixture';
+import { base64, compress, cryptoKey, digest, wrapKey } from './key-rotation-crypto-fixture';
 
-const WRAPPING_SECRET = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
-const CONVEX = 'https://archive-convex.test';
 const SHARED = 'archive-status-test-secret';
-const ACTIVATION_ID = 'k57axc8sefsfp6k28nx6c481js806pwv';
 
 const runtimeEnv = workerEnv as unknown as ArchiveApiEnv;
 
@@ -49,53 +48,6 @@ function scope(orgId: string, session: string): ArchiveScope {
     source: 'claude',
     sourceSessionId: session,
   };
-}
-
-async function digest(bytes: Uint8Array): Promise<string> {
-  return `sha256:${Array.from(
-    new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
-    (byte) => byte.toString(16).padStart(2, '0'),
-  ).join('')}`;
-}
-
-function base64(bytes: Uint8Array): string {
-  let binary = '';
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-    const end = Math.min(offset + 0x8000, bytes.length);
-    const chars = new Array<string>(end - offset);
-    for (let index = offset; index < end; index++) {
-      chars[index - offset] = String.fromCharCode(bytes[index]!);
-    }
-    binary += chars.join('');
-  }
-  return btoa(binary);
-}
-
-async function wrapKey(orgId: string, keyVersion: number): Promise<string> {
-  return serializeArchiveWrappedKeyVersion(
-    await createArchiveEncryptionKeyVersion({
-      orgId,
-      keyVersion,
-      wrappingSecretBase64: WRAPPING_SECRET,
-    }),
-  );
-}
-
-async function cryptoKey(
-  orgId: string,
-  keyVersion: number,
-  wrappedKey: string,
-): Promise<CryptoKey> {
-  return unwrapArchiveEncryptionKey(JSON.parse(wrappedKey), {
-    orgId,
-    keyVersion,
-    wrappingSecretBase64: WRAPPING_SECRET,
-  });
-}
-
-async function compress(bytes: Uint8Array): Promise<Uint8Array> {
-  const stream = new Response(bytes).body!.pipeThrough(new CompressionStream('gzip'));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
 async function putArchiveObject(input: {
@@ -123,6 +75,7 @@ async function putArchiveObject(input: {
   const body = JSON.stringify(envelope);
   await runtimeEnv.ARCHIVE_STORAGE.put(objectKey, body, {
     httpMetadata: { contentType: 'application/json' },
+    customMetadata: archiveKeyVersionMetadata(input.keyVersion),
   });
   return { objectKey, body, bytes: new TextEncoder().encode(body).byteLength };
 }
@@ -184,126 +137,6 @@ async function commitObjects(
   const reserved = await stub.reserveStorage({ orgId, objects: planned });
   expect(reserved.accepted).toBe(true);
   await stub.commitStorage({ orgId, objects: planned });
-}
-
-class FakeArchiveCustody {
-  readonly versions = new Map<number, string>();
-  activeVersion = 1;
-  retiringVersion?: number;
-  operationId?: string;
-  rotationStatus?: 'rotating' | 'succeeded' | 'failed';
-  readonly destroyCalls: {
-    keyVersion: number;
-    liveReferenceCount: number;
-    operationId: string;
-  }[] = [];
-  readonly keyFetches: number[] = [];
-  readonly auditBodies: Record<string, unknown>[] = [];
-
-  handle(pathname: string, body: Record<string, unknown>): Response {
-    if (pathname === '/archive-api/status') {
-      return Response.json({ revision: body.revision ?? 1, replay: false });
-    }
-    if (pathname === '/archive-api/key/active') {
-      const wrappedKey = this.versions.get(this.activeVersion);
-      if (!wrappedKey) {
-        return new Response(JSON.stringify({ error: 'Archive key unavailable' }), { status: 404 });
-      }
-      return Response.json({
-        keyVersion: this.activeVersion,
-        wrappedKey,
-        retiringKeyVersion: this.retiringVersion,
-        rotationOperationId: this.operationId,
-        rotationStatus: this.rotationStatus,
-      });
-    }
-    if (pathname === '/archive-api/key/activate') {
-      const keyVersion = body.keyVersion as number;
-      const wrappedKey = body.wrappedKey as string;
-      const operationId = body.operationId as string;
-      if (this.operationId === operationId && this.activeVersion === keyVersion) {
-        return Response.json({
-          fromVersion: this.retiringVersion ?? keyVersion,
-          toVersion: keyVersion,
-          replay: true,
-          operationId,
-          activationId: ACTIVATION_ID,
-        });
-      }
-      this.versions.set(keyVersion, wrappedKey);
-      this.retiringVersion = this.activeVersion;
-      this.activeVersion = keyVersion;
-      this.operationId = operationId;
-      this.rotationStatus = 'rotating';
-      return Response.json({
-        fromVersion: this.retiringVersion,
-        toVersion: keyVersion,
-        replay: false,
-        operationId,
-        activationId: ACTIVATION_ID,
-      });
-    }
-    if (pathname === '/archive-api/key/destroy-retiring') {
-      const liveReferenceCount = body.liveReferenceCount as number;
-      const keyVersion = body.keyVersion as number;
-      const operationId = body.operationId as string;
-      this.destroyCalls.push({ keyVersion, liveReferenceCount, operationId });
-      if (liveReferenceCount !== 0) {
-        return Response.json(
-          { error: 'Archive key still has live object references' },
-          { status: 409 },
-        );
-      }
-      if (this.activeVersion === keyVersion) {
-        return Response.json({ error: 'Active archive key cannot be destroyed' }, { status: 409 });
-      }
-      this.versions.delete(keyVersion);
-      this.retiringVersion = undefined;
-      this.rotationStatus = 'succeeded';
-      return Response.json({ destroyed: true });
-    }
-    if (pathname === '/archive-api/key/rotation-failed') {
-      if (this.operationId === body.operationId) this.rotationStatus = 'failed';
-      return Response.json({ recorded: true });
-    }
-    if (pathname === '/archive-api/key') {
-      const keyVersion = body.keyVersion as number;
-      this.keyFetches.push(keyVersion);
-      const wrappedKey = this.versions.get(keyVersion);
-      if (!wrappedKey) {
-        return new Response(JSON.stringify({ error: 'Archive key unavailable' }), { status: 404 });
-      }
-      return Response.json({ keyVersion, wrappedKey });
-    }
-    if (pathname === '/archive-api/audit-events') {
-      this.auditBodies.push(body);
-      return Response.json({ eventId: `audit-${this.auditBodies.length}`, created: true });
-    }
-    if (pathname === '/archive-api/authorize-write') {
-      return Response.json({
-        allowed: true,
-        enrollmentId: 'enrollment-rotation',
-        contributionId: body.contributionId ?? 'contribution-rotation',
-        orgId: body.orgId,
-        userId: body.userId,
-        collectorId: 'collector-rotation',
-        collectorCredentialId: 'cred-rotation',
-      });
-    }
-    throw new Error(`unexpected convex path ${pathname}`);
-  }
-}
-
-function installCustody(custody: FakeArchiveCustody) {
-  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-    const request = new Request(input, init);
-    const url = new URL(request.url);
-    if (url.origin !== CONVEX) {
-      throw new Error(`unexpected fetch: ${request.method} ${request.url}`);
-    }
-    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-    return custody.handle(url.pathname, body);
-  });
 }
 
 async function observation(
@@ -762,6 +595,209 @@ describe('Archive encryption key rotation', () => {
     expect(custody.activeVersion).toBe(2);
     expect(custody.versions.has(3)).toBe(false);
     expect(custody.versions.has(1)).toBe(false);
+  });
+
+  it('rejects an unreserved v1 upload delayed until after v1-to-v2 and v2-to-v3 complete', async () => {
+    const { orgId, v1 } = await seedOrg('delayed-two-rotations');
+    const delayedScope = scope(orgId, 'session-delayed-v1');
+    const record = await observation(delayedScope.sourceSessionId, 'delayed-v1', '"delayed"');
+    const delayedUpload: ArchiveUploadRequest = {
+      source_session_id: delayedScope.sourceSessionId,
+      observations: [record],
+      checkpoint: await checkpoint(delayedScope.sourceSessionId, [record]),
+      complete_prefix_base64: base64(exactPrefix([record])),
+    };
+    const delayedRequest = new Request('https://ledger.test/commit', {
+      method: 'POST',
+      body: JSON.stringify({
+        scope: delayedScope,
+        upload: delayedUpload,
+        keyVersion: 1,
+        wrappedKey: v1,
+      }),
+    });
+
+    const stub = await startRotation(orgId, 'rotate-delayed-1-2');
+    await expect(stub.advanceKeyRotation({ orgId, limit: 32 })).resolves.toMatchObject({
+      status: 'succeeded',
+    });
+    const v3 = await wrapKey(orgId, 3);
+    custody.versions.set(3, v3);
+    custody.retiringVersion = 2;
+    custody.activeVersion = 3;
+    custody.operationId = 'rotate-delayed-2-3';
+    custody.rotationStatus = 'rotating';
+    await stub.startKeyRotation({
+      orgId,
+      operationId: 'rotate-delayed-2-3',
+      fromVersion: 2,
+      toVersion: 3,
+      activationId: ACTIVATION_ID,
+    });
+    await expect(stub.advanceKeyRotation({ orgId, limit: 32 })).resolves.toMatchObject({
+      status: 'succeeded',
+    });
+
+    const before = await runtimeEnv.ARCHIVE_STORAGE.list({
+      prefix: await archiveOrganizationPrefix(orgId),
+    });
+    const ledgerId = runtimeEnv.ARCHIVE_SESSION_LEDGER.idFromName(
+      JSON.stringify([
+        delayedScope.orgId,
+        delayedScope.contributionId,
+        delayedScope.source,
+        delayedScope.sourceSessionId,
+      ]),
+    );
+    const ledger = runtimeEnv.ARCHIVE_SESSION_LEDGER.get(ledgerId);
+    const response = await ledger.fetch(delayedRequest);
+    expect(response.ok).toBe(false);
+    expect(
+      await runInDurableObject(ledger, (_instance, state) => [
+        ...state.storage.sql.exec('SELECT sequence FROM ledger_elements'),
+      ]),
+    ).toEqual([]);
+    const after = await runtimeEnv.ARCHIVE_STORAGE.list({
+      prefix: await archiveOrganizationPrefix(orgId),
+    });
+    expect(after.objects.map((object) => object.key)).toEqual(
+      before.objects.map((object) => object.key),
+    );
+  });
+
+  it('keeps the activation binding when a lost start response is replayed', async () => {
+    const { orgId } = await seedOrg('lost-start-response');
+    const operationId = 'rotate-lost-start-response';
+    const logger = { error: vi.fn() } as unknown as Logger;
+    await expect(
+      mintAndActivateNextKey(runtimeEnv, orgId, logger, operationId),
+    ).resolves.toMatchObject({
+      replay: false,
+      activationId: ACTIVATION_ID,
+      operationId,
+    });
+
+    const executionContext = createExecutionContext();
+    const replay = await app.fetch(
+      new Request('https://archive.test/v1/archive/key-rotations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${SHARED}`,
+        },
+        body: JSON.stringify({ orgId, operationId }),
+      }),
+      runtimeEnv,
+      executionContext,
+    );
+    await waitOnExecutionContext(executionContext);
+
+    expect(replay.status).toBe(200);
+    expect(custody.versions.has(3)).toBe(false);
+    expect(custody.auditBodies).toContainEqual(
+      expect.objectContaining({
+        binding: { kind: 'activation', activationId: ACTIVATION_ID },
+        operationId: `${operationId}:success`,
+      }),
+    );
+  });
+
+  it('retries a durable success audit without destroying twice or changing terminal state', async () => {
+    const { orgId } = await seedOrg('audit-retry');
+    custody.auditFailuresRemaining = 1;
+    const stub = await startRotation(orgId, 'rotate-audit-retry');
+    await expect(stub.advanceKeyRotation({ orgId, limit: 32 })).resolves.toMatchObject({
+      status: 'succeeded',
+    });
+    expect(custody.auditBodies).toHaveLength(1);
+    expect(custody.destroyCalls).toHaveLength(1);
+    expect(
+      await runInDurableObject(stub, (_instance, state) => [
+        ...state.storage.sql.exec('SELECT operation_id FROM archive_key_rotation_audit_outbox'),
+      ]),
+    ).toHaveLength(1);
+
+    await expect(stub.advanceKeyRotation({ orgId, limit: 32 })).resolves.toMatchObject({
+      status: 'succeeded',
+    });
+    expect(custody.auditBodies).toHaveLength(2);
+    expect(custody.destroyCalls).toHaveLength(1);
+    expect(
+      await runInDurableObject(stub, (_instance, state) => [
+        ...state.storage.sql.exec('SELECT operation_id FROM archive_key_rotation_audit_outbox'),
+      ]),
+    ).toHaveLength(0);
+    await stub.advanceKeyRotation({ orgId, limit: 32 });
+    expect(custody.auditBodies).toHaveLength(2);
+  });
+
+  it('retries a durable failure audit without resuming the failed rotation', async () => {
+    const { orgId, objects } = await seedOrg('failed-audit-retry');
+    const stub = await startRotation(orgId, 'rotate-failed-audit-retry');
+    const firstKey = [...objects].sort((left, right) =>
+      left.objectKey.localeCompare(right.objectKey),
+    )[0]!.objectKey;
+    const envelope = await readEnvelope(firstKey);
+    const last = envelope.ciphertext.at(-1) ?? 'A';
+    await runtimeEnv.ARCHIVE_STORAGE.put(
+      firstKey,
+      JSON.stringify({
+        ...envelope,
+        ciphertext: `${envelope.ciphertext.slice(0, -1)}${last === 'A' ? 'B' : 'A'}`,
+      }),
+      { customMetadata: archiveKeyVersionMetadata(1) },
+    );
+    custody.auditFailuresRemaining = 1;
+
+    await expect(advanceExpectingError(stub, { orgId, limit: 1 })).resolves.not.toBe(
+      'advance_succeeded',
+    );
+    expect(await stub.getKeyRotationHealth({ orgId })).toMatchObject({ status: 'failed' });
+    expect(custody.auditBodies).toHaveLength(1);
+    const keyFetchCount = custody.keyFetches.length;
+
+    await expect(stub.advanceKeyRotation({ orgId, limit: 1 })).resolves.toMatchObject({
+      status: 'failed',
+    });
+    expect(custody.auditBodies).toHaveLength(2);
+    expect(custody.keyFetches).toHaveLength(keyFetchCount);
+    expect(
+      await runInDurableObject(stub, (_instance, state) => [
+        ...state.storage.sql.exec('SELECT operation_id FROM archive_key_rotation_audit_outbox'),
+      ]),
+    ).toEqual([]);
+  });
+
+  it('retains every manifest root and publishes a bounded complete-set reference', async () => {
+    const { orgId } = await seedOrg('manifest-root-set');
+    const stub = await startRotation(orgId, 'rotate-root-set');
+    await runInDurableObject(stub, (_instance, state) => {
+      for (let index = 0; index < 40; index += 1) {
+        recordRotationManifestRoot(
+          state.storage,
+          'rotate-root-set',
+          `archive/manifests/${index.toString(16).padStart(64, '0')}`,
+        );
+      }
+    });
+    await expect(stub.advanceKeyRotation({ orgId, limit: 32 })).resolves.toMatchObject({
+      status: 'succeeded',
+    });
+    expect(custody.auditBodies.at(-1)).toMatchObject({
+      action: 'key_rotation',
+      outcome: 'success',
+      manifestRootCount: 41,
+      manifestRootSetHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(custody.auditBodies.at(-1)).not.toHaveProperty('manifestRootHash');
+    expect(
+      await runInDurableObject(stub, (_instance, state) => [
+        ...state.storage.sql.exec(
+          'SELECT root_hash FROM archive_key_rotation_manifest_roots WHERE operation_id = ?',
+          'rotate-root-set',
+        ),
+      ]),
+    ).toHaveLength(41);
   });
 
   it('does not double-count rotation temp objects in live storage bytes', async () => {

@@ -7,6 +7,7 @@ import type { ArchiveWrappedKey } from './enrollment';
 const POLICY_TIMEOUT_MS = 5000;
 
 export interface ArchiveActiveKey extends ArchiveWrappedKey {
+  activationId?: string;
   retiringKeyVersion?: number;
   rotationOperationId?: string;
   rotationStatus?: 'rotating' | 'succeeded' | 'failed';
@@ -17,7 +18,7 @@ export interface ArchiveKeyActivation {
   fromVersion: number;
   toVersion: number;
   replay: boolean;
-  activationId?: string;
+  activationId: string;
   operationId: string;
 }
 
@@ -102,6 +103,7 @@ export async function getActiveArchiveWrappedKey(
       ...(typeof payload.retiringKeyVersion === 'number'
         ? { retiringKeyVersion: payload.retiringKeyVersion }
         : {}),
+      ...(typeof payload.activationId === 'string' ? { activationId: payload.activationId } : {}),
       ...(typeof payload.rotationOperationId === 'string'
         ? { rotationOperationId: payload.rotationOperationId }
         : {}),
@@ -133,6 +135,7 @@ export async function activateArchiveKeyVersion(
     typeof payload.fromVersion !== 'number' ||
     typeof payload.toVersion !== 'number' ||
     typeof payload.replay !== 'boolean' ||
+    typeof payload.activationId !== 'string' ||
     typeof payload.operationId !== 'string'
   ) {
     logger.error('archive_api.key_activate_failed', undefined, { status });
@@ -143,8 +146,8 @@ export async function activateArchiveKeyVersion(
     fromVersion: payload.fromVersion,
     toVersion: payload.toVersion,
     replay: payload.replay,
+    activationId: payload.activationId,
     operationId: payload.operationId,
-    ...(typeof payload.activationId === 'string' ? { activationId: payload.activationId } : {}),
   };
 }
 

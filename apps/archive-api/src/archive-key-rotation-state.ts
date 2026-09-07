@@ -27,7 +27,6 @@ export interface ArchiveKeyRotationState {
   remainingReferences: number;
   activationId?: string;
   lastErrorClass?: string;
-  manifestRootHashes: string[];
   updatedAt: number;
 }
 
@@ -74,6 +73,26 @@ export function ensureRotationSchema(storage: DurableObjectStorage): void {
       manifest_root_hashes TEXT NOT NULL DEFAULT '[]',
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS archive_key_retirement (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      retired_through_version INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS archive_key_rotation_manifest_roots (
+      operation_id TEXT NOT NULL,
+      root_hash TEXT NOT NULL,
+      PRIMARY KEY (operation_id, root_hash)
+    );
+    CREATE TABLE IF NOT EXISTS archive_key_rotation_audit_outbox (
+      operation_id TEXT NOT NULL,
+      outcome TEXT NOT NULL CHECK (outcome IN ('success', 'failure')),
+      activation_id TEXT NOT NULL,
+      to_version INTEGER NOT NULL,
+      relevant_count INTEGER NOT NULL,
+      manifest_root_count INTEGER NOT NULL,
+      manifest_root_set_hash TEXT,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (operation_id, outcome)
+    );
   `);
   const columns = new Set(
     [...storage.sql.exec<{ name: string }>('PRAGMA table_info(archive_key_rotation)')].map(
@@ -83,6 +102,37 @@ export function ensureRotationSchema(storage: DurableObjectStorage): void {
   if (!columns.has('generation')) {
     storage.sql.exec(
       'ALTER TABLE archive_key_rotation ADD COLUMN generation INTEGER NOT NULL DEFAULT 1',
+    );
+  }
+  migrateLegacyManifestRoots(storage);
+  storage.sql.exec(
+    `INSERT INTO archive_key_retirement (id, retired_through_version)
+     SELECT 1, from_version FROM archive_key_rotation
+     WHERE id = 1 AND status IN ('destroying', 'succeeded')
+     ON CONFLICT(id) DO UPDATE SET retired_through_version = MAX(retired_through_version, excluded.retired_through_version)`,
+  );
+}
+
+function migrateLegacyManifestRoots(storage: DurableObjectStorage): void {
+  const row = [
+    ...storage.sql.exec<{ operation_id: string; manifest_root_hashes: string }>(
+      'SELECT operation_id, manifest_root_hashes FROM archive_key_rotation WHERE id = 1',
+    ),
+  ][0];
+  if (!row) return;
+  let roots: unknown;
+  try {
+    roots = JSON.parse(row.manifest_root_hashes);
+  } catch {
+    return;
+  }
+  if (!Array.isArray(roots)) return;
+  for (const root of roots) {
+    if (typeof root !== 'string' || !/^[a-f0-9]{64}$/.test(root)) continue;
+    storage.sql.exec(
+      'INSERT OR IGNORE INTO archive_key_rotation_manifest_roots (operation_id, root_hash) VALUES (?, ?)',
+      row.operation_id,
+      root,
     );
   }
 }
@@ -100,25 +150,10 @@ export function readRotationState(storage: DurableObjectStorage): ArchiveKeyRota
       remaining_references: number;
       activation_id: string | null;
       last_error_class: string | null;
-      manifest_root_hashes: string;
       updated_at: number;
     }>('SELECT * FROM archive_key_rotation WHERE id = 1'),
   ][0];
   if (!row) return null;
-  let manifestRootHashes: string[] = [];
-  try {
-    const parsed: unknown = JSON.parse(row.manifest_root_hashes);
-    if (
-      Array.isArray(parsed) &&
-      parsed.every(
-        (value): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value),
-      )
-    ) {
-      manifestRootHashes = parsed;
-    }
-  } catch {
-    manifestRootHashes = [];
-  }
   return {
     operationId: row.operation_id,
     fromVersion: row.from_version,
@@ -130,7 +165,6 @@ export function readRotationState(storage: DurableObjectStorage): ArchiveKeyRota
     remainingReferences: row.remaining_references,
     activationId: row.activation_id ?? undefined,
     lastErrorClass: row.last_error_class ?? undefined,
-    manifestRootHashes,
     updatedAt: row.updated_at,
   };
 }
@@ -143,7 +177,7 @@ export function writeRotationState(
     `INSERT INTO archive_key_rotation (
       id, operation_id, from_version, to_version, status, generation, cursor, reencrypted_count,
       remaining_references, activation_id, last_error_class, manifest_root_hashes, updated_at
-    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?)
     ON CONFLICT(id) DO UPDATE SET
       operation_id = excluded.operation_id,
       from_version = excluded.from_version,
@@ -167,9 +201,15 @@ export function writeRotationState(
     value.remainingReferences,
     value.activationId ?? null,
     value.lastErrorClass ?? null,
-    JSON.stringify(value.manifestRootHashes.slice(0, 32)),
     value.updatedAt,
   );
+  if (value.status === 'destroying' || value.status === 'succeeded') {
+    storage.sql.exec(
+      `INSERT INTO archive_key_retirement (id, retired_through_version) VALUES (1, ?)
+       ON CONFLICT(id) DO UPDATE SET retired_through_version = MAX(retired_through_version, excluded.retired_through_version)`,
+      value.fromVersion,
+    );
+  }
 }
 
 export function rotationHealth(
@@ -224,12 +264,23 @@ export function assertWritableKeyVersion(
   keyVersion: number | undefined,
 ): void {
   if (keyVersion === undefined) return;
-  const state = readRotationState(storage);
-  if (!state) return;
-  if (state.status !== 'destroying' && state.status !== 'succeeded') return;
-  if (keyVersion === state.fromVersion) {
+  const retirement = [
+    ...storage.sql.exec<{ retired_through_version: number }>(
+      'SELECT retired_through_version FROM archive_key_retirement WHERE id = 1',
+    ),
+  ][0];
+  if (retirement && keyVersion <= retirement.retired_through_version) {
     throw new ArchiveContractError('archive_key_version_retired');
   }
+}
+
+function assertNoUnknownKeyVersions(storage: DurableObjectStorage): void {
+  const unknown = [
+    ...storage.sql.exec<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM storage_budget_objects WHERE status IN ('reserved', 'committed') AND key_version IS NULL",
+    ),
+  ][0]?.count;
+  if (unknown) throw new ArchiveContractError('archive_key_version_unknown');
 }
 
 export function countKeyVersionReferences(
@@ -239,11 +290,12 @@ export function countKeyVersionReferences(
   if (!Number.isSafeInteger(keyVersion) || keyVersion < 1) {
     throw new ArchiveContractError('invalid_archive_key_version');
   }
+  assertNoUnknownKeyVersions(storage);
   const row = [
     ...storage.sql.exec<{ count: number }>(
       `SELECT COUNT(*) AS count FROM storage_budget_objects
        WHERE status IN ('reserved', 'committed')
-         AND (key_version = ? OR key_version IS NULL)`,
+         AND key_version = ?`,
       keyVersion,
     ),
   ][0];
@@ -260,6 +312,7 @@ export function listCommittedObjectsForRotation(
   objectClass: 'agent_archive_chunk' | 'agent_archive_manifest';
   bytes: number;
 }[] {
+  assertNoUnknownKeyVersions(storage);
   return [
     ...storage.sql.exec<{
       object_key: string;
@@ -268,7 +321,7 @@ export function listCommittedObjectsForRotation(
     }>(
       `SELECT object_key, object_class, bytes FROM storage_budget_objects
        WHERE status = 'committed'
-         AND (key_version = ? OR key_version IS NULL)
+         AND key_version = ?
          AND object_key > ?
        ORDER BY object_key
        LIMIT ?`,

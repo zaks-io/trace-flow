@@ -35,6 +35,74 @@ function base64Bytes(length: number): string {
 }
 
 describe('archive key metadata internal boundary', () => {
+  it('adopts the latest legacy key row when custody is missing', async () => {
+    const { t, orgA } = await seedOrganizations();
+    const wrappingSecretBase64 = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
+    const wrappedKeys = await Promise.all(
+      [1, 2, 3].map(async (keyVersion) =>
+        serializeArchiveWrappedKeyVersion(
+          await createArchiveEncryptionKeyVersion({
+            orgId: orgA,
+            keyVersion,
+            wrappingSecretBase64,
+          }),
+        ),
+      ),
+    );
+    const activationId = await t.run(async (ctx) => {
+      const organization = await ctx.db.get(orgA);
+      if (!organization) throw new Error('Organization not found');
+      await ctx.db.insert('archiveEncryptionKeyVersions', {
+        orgId: orgA,
+        keyVersion: 1,
+        wrappedKey: wrappedKeys[0]!,
+        createdAt: 1,
+      });
+      await ctx.db.insert('archiveEncryptionKeyVersions', {
+        orgId: orgA,
+        keyVersion: 2,
+        wrappedKey: wrappedKeys[1]!,
+        createdAt: 2,
+      });
+      return await ctx.db.insert('archiveActivations', {
+        orgId: orgA,
+        activatedByUserId: organization.ownerId,
+        activatedAt: 1,
+        capBytes: 100,
+        status: 'active',
+      });
+    });
+
+    await expect(
+      t.query(internal.archiveKeysInternal.getActiveVersion, { orgId: orgA }),
+    ).resolves.toEqual({
+      orgId: orgA,
+      keyVersion: 2,
+      wrappedKey: wrappedKeys[1],
+      activationId,
+    });
+    const activated = await t.mutation(internal.archiveKeysInternal.activateVersion, {
+      orgId: orgA,
+      keyVersion: 3,
+      wrappedKey: wrappedKeys[2]!,
+      operationId: 'rotate:legacy:2:3',
+    });
+    expect(activated).toMatchObject({
+      fromVersion: 2,
+      toVersion: 3,
+      replay: false,
+      activationId,
+    });
+    await expect(
+      t.query(internal.archiveKeysInternal.getCustody, { orgId: orgA }),
+    ).resolves.toMatchObject({
+      activeKeyVersion: 3,
+      retiringKeyVersion: 2,
+      rotationOperationId: 'rotate:legacy:2:3',
+      rotationStatus: 'rotating',
+    });
+  });
+
   it('stores opaque wrapped versions per Organization and supports idempotent replay', async () => {
     const { t, orgA, orgB } = await seedOrganizations();
     await expect(

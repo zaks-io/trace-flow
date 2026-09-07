@@ -658,6 +658,8 @@ export default defineSchema({
     sourceSessionId: v.optional(v.string()),
     relevantCount: v.optional(v.number()),
     manifestRootHash: v.optional(v.string()),
+    manifestRootCount: v.optional(v.number()),
+    manifestRootSetHash: v.optional(v.string()),
   })
     .index('by_org_id', ['orgId'])
     .index('by_org_occurred_at', ['orgId', 'occurredAt'])

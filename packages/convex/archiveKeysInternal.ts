@@ -25,6 +25,7 @@ const archiveActiveKeyValidator = v.object({
   orgId: v.id('organizations'),
   keyVersion: v.number(),
   wrappedKey: v.string(),
+  activationId: v.optional(v.id('archiveActivations')),
   retiringKeyVersion: v.optional(v.number()),
   rotationOperationId: v.optional(v.string()),
   rotationStatus: v.optional(
@@ -96,16 +97,28 @@ async function getCustodyRow(
     .first();
 }
 
-async function ensureCustodyForStoredVersion(
+async function getLatestKeyRecord(
+  ctx: QueryCtx | MutationCtx,
+  orgId: Id<'organizations'>,
+): Promise<Doc<'archiveEncryptionKeyVersions'> | null> {
+  return await ctx.db
+    .query('archiveEncryptionKeyVersions')
+    .withIndex('by_org_version', (q) => q.eq('orgId', orgId))
+    .order('desc')
+    .first();
+}
+
+async function ensureCustodyForStoredKeys(
   ctx: MutationCtx,
   orgId: Id<'organizations'>,
-  keyVersion: number,
 ): Promise<void> {
   const existing = await getCustodyRow(ctx, orgId);
   if (existing) return;
+  const latest = await getLatestKeyRecord(ctx, orgId);
+  if (!latest) throw new Error('Archive key custody is not initialized');
   await ctx.db.insert('archiveEncryptionCustody', {
     orgId,
-    activeKeyVersion: keyVersion,
+    activeKeyVersion: latest.keyVersion,
     updatedAt: Date.now(),
   });
 }
@@ -145,7 +158,7 @@ export const storeVersion = internalMutation({
     parseArchiveWrappedKeyVersion(args.wrappedKey, args);
     await assertLiveOrganization(ctx, args.orgId);
     const id = await upsertStoredVersion(ctx, args);
-    await ensureCustodyForStoredVersion(ctx, args.orgId, args.keyVersion);
+    await ensureCustodyForStoredKeys(ctx, args.orgId);
     return id;
   },
 });
@@ -197,20 +210,23 @@ export const getActiveVersion = internalQuery({
   returns: v.union(archiveActiveKeyValidator, v.null()),
   handler: async (ctx, args) => {
     const custody = await getCustodyRow(ctx, args.orgId);
-    if (!custody) return null;
-    const record = await getKeyRecord(ctx, args.orgId, custody.activeKeyVersion);
+    const record = custody
+      ? await getKeyRecord(ctx, args.orgId, custody.activeKeyVersion)
+      : await getLatestKeyRecord(ctx, args.orgId);
     if (!record) return null;
+    const activation = await getArchiveActivation(ctx, args.orgId);
     return {
       orgId: record.orgId,
       keyVersion: record.keyVersion,
       wrappedKey: record.wrappedKey,
-      ...(custody.retiringKeyVersion === undefined
+      ...(activation ? { activationId: activation._id } : {}),
+      ...(custody?.retiringKeyVersion === undefined
         ? {}
         : { retiringKeyVersion: custody.retiringKeyVersion }),
-      ...(custody.rotationOperationId === undefined
+      ...(custody?.rotationOperationId === undefined
         ? {}
         : { rotationOperationId: custody.rotationOperationId }),
-      ...(custody.rotationStatus === undefined ? {} : { rotationStatus: custody.rotationStatus }),
+      ...(custody?.rotationStatus === undefined ? {} : { rotationStatus: custody.rotationStatus }),
     };
   },
 });
@@ -230,9 +246,16 @@ export const activateVersion = internalMutation({
     await assertLiveOrganization(ctx, args.orgId);
 
     const activation = await getArchiveActivation(ctx, args.orgId);
-    const existingCustody = await getCustodyRow(ctx, args.orgId);
+    let existingCustody = await getCustodyRow(ctx, args.orgId);
     if (!existingCustody) {
-      throw new Error('Archive key custody is not initialized');
+      const latest = await getLatestKeyRecord(ctx, args.orgId);
+      if (!latest) throw new Error('Archive key custody is not initialized');
+      const custodyId = await ctx.db.insert('archiveEncryptionCustody', {
+        orgId: args.orgId,
+        activeKeyVersion: latest.keyVersion,
+        updatedAt: Date.now(),
+      });
+      existingCustody = (await ctx.db.get(custodyId))!;
     }
     const currentActive = existingCustody.activeKeyVersion;
     if (

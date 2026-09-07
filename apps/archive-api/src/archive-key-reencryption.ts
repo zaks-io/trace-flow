@@ -20,6 +20,7 @@ import {
   type ArchiveKeyRotationFailureInjection,
   type ArchiveKeyRotationFence,
 } from './archive-key-rotation-state';
+import { archiveKeyVersionMetadata } from './archive-r2';
 
 type BudgetObjectClass = 'agent_archive_chunk' | 'agent_archive_manifest';
 type ArchiveObjectClass = 'chunk' | 'manifest';
@@ -195,6 +196,7 @@ export async function commitRotationReplacement(
   const result = await env.ARCHIVE_STORAGE.put(input.objectKey, input.replacementBody, {
     onlyIf: { etagMatches: input.expectedEtag },
     httpMetadata: { contentType: 'application/json' },
+    customMetadata: archiveKeyVersionMetadata(input.toVersion),
   });
   if (result === null) throw new ArchiveContractError('archive_key_rotation_conflict');
 }
@@ -271,6 +273,7 @@ export async function reencryptArchiveObject(
   const tempKey = rotationTempObjectKey(input.objectKey);
   await env.ARCHIVE_STORAGE.put(tempKey, replacementBody, {
     httpMetadata: { contentType: 'application/json' },
+    customMetadata: archiveKeyVersionMetadata(input.toVersion),
   });
   const temp = await readStoredObject(env.ARCHIVE_STORAGE, tempKey);
   if (temp?.body !== replacementBody) {

@@ -94,6 +94,8 @@ export const ARCHIVE_AUDIT_ALLOWED_INPUT_KEYS = [
   'targetId',
   'relevantCount',
   'manifestRootHash',
+  'manifestRootCount',
+  'manifestRootSetHash',
   'source',
   'sourceSessionId',
 ] as const;
@@ -115,6 +117,8 @@ export interface ArchiveAuditEventRecord {
   sourceSessionId?: string;
   relevantCount?: number;
   manifestRootHash?: string;
+  manifestRootCount?: number;
+  manifestRootSetHash?: string;
 }
 
 export function isArchiveAuditAction(value: unknown): value is ArchiveAuditAction {
@@ -244,6 +248,8 @@ export function serializeArchiveApiAuditInput(input: Record<string, unknown>): {
   targetId?: string;
   relevantCount?: number;
   manifestRootHash?: string;
+  manifestRootCount?: number;
+  manifestRootSetHash?: string;
   source?: 'claude' | 'codex';
   sourceSessionId?: string;
 } {
@@ -307,6 +313,20 @@ export function serializeArchiveApiAuditInput(input: Record<string, unknown>): {
     }
     serialized.manifestRootHash = validateManifestRootHash(input.manifestRootHash);
   }
+  if (input.manifestRootCount !== undefined || input.manifestRootSetHash !== undefined) {
+    if (
+      typeof input.manifestRootCount !== 'number' ||
+      input.manifestRootCount < 1 ||
+      !Number.isSafeInteger(input.manifestRootCount)
+    ) {
+      throw new Error('Manifest root count must be a positive integer');
+    }
+    if (typeof input.manifestRootSetHash !== 'string') {
+      throw new Error('Manifest root set hash must be a 64-character lowercase hex digest');
+    }
+    serialized.manifestRootCount = input.manifestRootCount;
+    serialized.manifestRootSetHash = validateManifestRootHash(input.manifestRootSetHash);
+  }
   if (input.source !== undefined) {
     if (input.source !== 'claude' && input.source !== 'codex') {
       throw new Error('Unknown archive audit source');
@@ -365,6 +385,8 @@ export async function appendArchiveAuditEvent(
     sourceSessionId?: string;
     relevantCount?: number;
     manifestRootHash?: string;
+    manifestRootCount?: number;
+    manifestRootSetHash?: string;
     now?: number;
   },
 ): Promise<{ eventId: Id<'archiveAuditEvents'>; created: boolean }> {
@@ -407,6 +429,8 @@ export async function appendArchiveAuditEvent(
     sourceSessionId: event.sourceSessionId,
     relevantCount: event.relevantCount,
     manifestRootHash: event.manifestRootHash,
+    manifestRootCount: event.manifestRootCount,
+    manifestRootSetHash: event.manifestRootSetHash,
   });
   return { eventId, created: true };
 }

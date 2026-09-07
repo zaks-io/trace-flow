@@ -108,6 +108,7 @@ export function registerArchiveKeyRoutes(app: HonoWithConvex<ActionCtx>): void {
       return c.json({
         keyVersion: version.keyVersion,
         wrappedKey: version.wrappedKey,
+        activationId: version.activationId,
         retiringKeyVersion: version.retiringKeyVersion,
         rotationOperationId: version.rotationOperationId,
         rotationStatus: version.rotationStatus,

@@ -26,6 +26,7 @@ import {
 } from './archive-storage-budget-reconciliation';
 import { isArchiveStatusRevisionConflict, publishArchiveStatus } from './archive-status';
 import { advanceStoredRotation, startStoredRotation } from './archive-key-rotation';
+import { hasPendingRotationAudit } from './archive-key-rotation-audit';
 import {
   ARCHIVE_ROTATION_RETRY_MS,
   countKeyVersionReferences,
@@ -123,7 +124,7 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     operationId: string;
     fromVersion: number;
     toVersion: number;
-    activationId?: string;
+    activationId: string;
   }): Promise<ArchiveKeyRotationHealth> {
     return this.enqueueExclusive(() => {
       budgetState(this.ctx.storage, input.orgId);
@@ -236,7 +237,10 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
 
   private async runAlarmMaintenance(): Promise<void> {
     const rotation = readRotationState(this.ctx.storage);
-    if (rotation && rotation.status !== 'succeeded' && rotation.status !== 'failed') {
+    if (
+      (rotation && rotation.status !== 'succeeded' && rotation.status !== 'failed') ||
+      hasPendingRotationAudit(this.ctx.storage)
+    ) {
       try {
         await this.runKeyRotationAdvance({ orgId: this.orgId() });
       } catch (error) {
@@ -296,9 +300,13 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     const rotation = readRotationState(this.ctx.storage);
     const rotationActive =
       rotation !== null && rotation.status !== 'succeeded' && rotation.status !== 'failed';
+    const rotationAuditPending = hasPendingRotationAudit(this.ctx.storage);
     const now = Date.now();
     const scheduledAt =
-      reconciliation.activeGeneration !== undefined || outbox || rotationActive
+      reconciliation.activeGeneration !== undefined ||
+      outbox ||
+      rotationActive ||
+      rotationAuditPending
         ? now + STATUS_RETRY_MS
         : reconciliation.lastCompletedAt === undefined
           ? now + STATUS_RETRY_MS

@@ -15,6 +15,7 @@ import type { StorageBudget } from '../archive-storage-budget';
 import type { ArchiveApiEnv } from '../context';
 import { ARCHIVE_ROTATION_TEMP_SUFFIX, commitRotationReplacement } from '../archive-key-rotation';
 import { decompress } from '../archive-packing';
+import { archiveKeyVersionMetadata } from '../archive-r2';
 
 const WRAPPING_SECRET = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
 const CONVEX = 'https://archive-convex.test';
@@ -95,6 +96,7 @@ async function putArchiveObject(input: {
   const body = JSON.stringify(envelope);
   await runtimeEnv.ARCHIVE_STORAGE.put(objectKey, body, {
     httpMetadata: { contentType: 'application/json' },
+    customMetadata: archiveKeyVersionMetadata(input.keyVersion),
   });
   return { objectKey, body, bytes: new TextEncoder().encode(body).byteLength };
 }

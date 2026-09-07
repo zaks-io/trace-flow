@@ -138,6 +138,8 @@ export function registerArchiveAuditRoutes(app: HonoWithConvex<ActionCtx>): void
         targetId: serialized.targetId,
         relevantCount: serialized.relevantCount,
         manifestRootHash: serialized.manifestRootHash,
+        manifestRootCount: serialized.manifestRootCount,
+        manifestRootSetHash: serialized.manifestRootSetHash,
         source: serialized.source,
         sourceSessionId: serialized.sourceSessionId,
       });

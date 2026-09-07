@@ -13,6 +13,37 @@ export interface ArchiveR2Object {
   key: string;
   body: string;
   objectClass: 'chunk' | 'manifest';
+  keyVersion?: number;
+}
+
+const ARCHIVE_KEY_VERSION_METADATA = 'archive-key-version';
+
+export function archiveKeyVersionMetadata(keyVersion: number): Record<string, string> {
+  if (!Number.isSafeInteger(keyVersion) || keyVersion < 1) {
+    throw new ArchiveContractError('invalid_archive_key_version');
+  }
+  return { [ARCHIVE_KEY_VERSION_METADATA]: String(keyVersion) };
+}
+
+export function keyVersionFromR2Metadata(metadata: Record<string, string> | undefined): number {
+  const raw = metadata?.[ARCHIVE_KEY_VERSION_METADATA];
+  const keyVersion = raw === undefined ? Number.NaN : Number(raw);
+  if (!Number.isSafeInteger(keyVersion) || keyVersion < 1 || String(keyVersion) !== raw) {
+    throw new ArchiveContractError('archive_key_version_unknown');
+  }
+  return keyVersion;
+}
+
+function keyVersionFromBody(body: string): number {
+  try {
+    const parsed = JSON.parse(body) as { keyVersion?: unknown };
+    if (!Number.isSafeInteger(parsed.keyVersion) || (parsed.keyVersion as number) < 1) {
+      throw new Error('invalid');
+    }
+    return parsed.keyVersion as number;
+  } catch {
+    throw new ArchiveContractError('archive_object_envelope_invalid');
+  }
 }
 
 export class ArchiveR2BatchWriteError extends Error {
@@ -89,8 +120,10 @@ export async function verifyOrPutImmutableObject(
     return;
   }
   try {
+    const keyVersion = object.keyVersion ?? keyVersionFromBody(object.body);
     await bucket.put(object.key, object.body, {
       httpMetadata: { contentType: 'application/json' },
+      customMetadata: archiveKeyVersionMetadata(keyVersion),
     });
   } catch (error) {
     throw markWriteAttempt(error, true);
