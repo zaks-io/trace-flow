@@ -105,7 +105,7 @@ Set secrets through the owning platform only. Do not commit them.
 | `proxy-consumer`  | `TINYBIRD_TOKEN`, `SENTRY_DSN`, `AXIOM_TOKEN`                                     |
 | `pipes-api`       | `SENTRY_DSN`, `AXIOM_TOKEN`                                                       |
 | `api`             | `SENTRY_DSN`, `AXIOM_TOKEN`, `BODY_ENCRYPTION_ROOT_KEY`, `BODY_ACCESS_JWT_SECRET` |
-| `web`             | Auth0, Sentry, LaunchDarkly, and app URL values supplied during build/deploy      |
+| `web`             | Auth0, Sentry, and app URL values supplied during build/deploy                    |
 | `mcp`             | Convex JWKS/read-side runtime values for MCP access                               |
 | `agent-ingest`    | `AGENT_INGEST_SHARED_SECRET`, `SENTRY_DSN`                                        |
 | `agent-consumer`  | `TINYBIRD_TOKEN`, `SENTRY_DSN`                                                    |
@@ -122,6 +122,7 @@ subscriptions, and Tinybird JWT signing. Required environment values include:
 
 - Auth0 config
 - Stripe config
+- `SPLITCH_API_KEY` for the matching Splitch Environment
 - Tinybird admin/workspace config. Convex is the only holder of `TINYBIRD_ADMIN_TOKEN` for user Pipe Token minting.
 - Cloudflare account/API config for KV sync
 - `CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID` for Collector Credential KV sync
@@ -132,6 +133,39 @@ subscriptions, and Tinybird JWT signing. Required environment values include:
 
 Use `convex dev` for local/dev control-plane work. Do not run `convex deploy` or production secret
 changes without explicit approval.
+
+### Splitch feature flags
+
+The `trace-flow` Splitch App owns `pro-subscription-enabled`, with `off=false` as
+its default and `on=true` as its alternative. Keep the flag disabled until Pro
+subscriptions are explicitly enabled. Cloud-Dev and previews use the Splitch
+`dev` Environment; production uses `prod`.
+
+The official [`@splitch/convex` component](https://splitch.dev/docs/sdk/convex)
+syncs configuration into Convex and evaluates the flag locally. The billing UI
+subscribes to an authenticated Convex query; checkout enforces the same decision
+on the server. No browser Splitch credential is needed.
+
+Before deploying the component, set `SPLITCH_API_KEY` in the target Convex
+deployment to a key from the matching Splitch Environment with
+the `data-plane:evaluate` scope. Configure the same variable
+in Convex's preview deployment defaults before creating a PR preview. Keep the
+key in the platform's secret configuration, never in frontend build variables.
+
+After a Cloud-Dev deployment, run the internal installation action:
+
+```bash
+bunx convex run integrations/splitch:install --deployment hardy-iguana-812
+```
+
+Run it again after component upgrades. The action is idempotent. Preview and
+production workflows run it after deploying Convex and fail if installation
+fails. Verify the intended flag with `splitch flags verify` using explicit
+`--app trace-flow --env dev` or `--env prod` scope.
+
+Before the first production merge, provision the production `SPLITCH_API_KEY`
+with explicit production approval. The migration does not enable Pro or start
+an experiment.
 
 ## Production Deployment
 

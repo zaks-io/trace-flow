@@ -31,7 +31,7 @@ export default function PrivacyPage() {
           Privacy Policy
         </h1>
         <p className="font-mono text-[11px] text-muted-foreground/50">
-          Effective September 4, 2026
+          Effective September 6, 2026
         </p>
       </header>
 
@@ -99,8 +99,9 @@ export default function PrivacyPage() {
               <dt className="text-sm font-medium text-foreground">Website telemetry</dt>
               <dd className="mt-1 text-[13px]">
                 The website sends performance traces, errors, and sampled session replays to Sentry.
-                Replay configuration masks text and form inputs and blocks media. LaunchDarkly may
-                receive account identity and subscription attributes when feature flags are enabled.
+                Replay configuration masks text and form inputs and blocks media. Feature flags are
+                configured in Splitch and evaluated within our Convex backend. Account identity and
+                subscription attributes used for these decisions stay in Convex.
               </dd>
             </div>
           </dl>
@@ -130,7 +131,6 @@ export default function PrivacyPage() {
                 ['Convex Cloud', 'Application backend and metadata'],
                 ['Auth0', 'Authentication'],
                 ['Sentry', 'Performance monitoring, error tracking, and masked session replay'],
-                ['LaunchDarkly', 'Feature flags and product rollout targeting'],
               ] as const
             ).map(([name, desc]) => (
               <div key={name} className="flex items-baseline gap-2">
@@ -196,8 +196,8 @@ export default function PrivacyPage() {
           <p>
             The Service uses session cookies for authentication through Auth0. We do not use
             advertising trackers or sell behavioral data. Sentry collects performance telemetry and
-            sampled, masked session replays. When feature flags are enabled, LaunchDarkly may
-            receive account identity attributes needed to evaluate and audit product rollouts.
+            sampled, masked session replays. Feature flag decisions are evaluated within our Convex
+            backend using configuration synced from Splitch.
           </p>
         </Section>
 
@@ -231,11 +231,6 @@ export default function PrivacyPage() {
                   'Sentry',
                   'Performance monitoring, error tracking, and masked session replay',
                   'https://sentry.io/privacy/',
-                ],
-                [
-                  'LaunchDarkly',
-                  'Feature flags and rollout targeting',
-                  'https://launchdarkly.com/policies/privacy/',
                 ],
               ] as const
             ).map(([name, desc, url]) => (

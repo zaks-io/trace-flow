@@ -662,9 +662,7 @@ export declare const api: {
         idempotencyKey: string;
         invalidatedAt?: number;
         invalidationReason?:
-          | "user_unenrolled"
-          | "owner_revoked"
-          | "member_removed";
+          "user_unenrolled" | "owner_revoked" | "member_removed";
         localError?: string;
         localObservedAt?: number;
         orgId: Id<"organizations">;
@@ -1526,6 +1524,9 @@ export declare const api: {
         }
       >;
     };
+    splitch: {
+      proSubscriptionEnabled: FunctionReference<"query", "public", {}, boolean>;
+    };
     tinybird: {
       generateWebReadToken: FunctionReference<
         "action",
@@ -1581,9 +1582,6 @@ export declare const api: {
  * ```
  */
 export declare const internal: {
-  waitlist: {
-    getAdminEmails: FunctionReference<"query", "internal", {}, Array<string>>;
-  };
   admin: {
     admin: {
       beginOrgDeletion: FunctionReference<
@@ -2130,11 +2128,7 @@ export declare const internal: {
         collectorCredentialId: Id<"collectorCredentials">;
         lastDurableAcknowledgedAt?: number;
         lifecycle?:
-          | "not_enabled"
-          | "active"
-          | "blocked"
-          | "frozen"
-          | "deleting";
+          "not_enabled" | "active" | "blocked" | "frozen" | "deleting";
         revision: number;
         storedBytes?: number;
       },
@@ -2146,11 +2140,7 @@ export declare const internal: {
       {
         lastDurableAcknowledgedAt?: number;
         lifecycle?:
-          | "not_enabled"
-          | "active"
-          | "blocked"
-          | "frozen"
-          | "deleting";
+          "not_enabled" | "active" | "blocked" | "frozen" | "deleting";
         orgId: Id<"organizations">;
         revision: number;
         storedBytes: number;
@@ -3182,6 +3172,31 @@ export declare const internal: {
         null
       >;
     };
+    splitch: {
+      install: FunctionReference<
+        "action",
+        "internal",
+        {},
+        {
+          appId: string;
+          environmentId: string;
+          environmentVersion: number;
+          installationId: string;
+          status: "active" | "revoked";
+        }
+      >;
+      proSubscriptionEnabledInternal: FunctionReference<
+        "query",
+        "internal",
+        {
+          email?: string;
+          name?: string;
+          tier?: "hobby" | "pro";
+          tokenIdentifier: string;
+        },
+        boolean
+      >;
+    };
     tinybird: {
       deleteOrgTraces: FunctionReference<
         "action",
@@ -3355,10 +3370,13 @@ export declare const internal: {
       >;
     };
   };
+  waitlist: {
+    getAdminEmails: FunctionReference<"query", "internal", {}, Array<string>>;
+  };
 };
 
 export declare const components: {
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
-  launchdarkly: import("@convex-dev/launchdarkly/_generated/component.js").ComponentApi<"launchdarkly">;
+  splitch: import("@splitch/convex/_generated/component.js").ComponentApi<"splitch">;
   agent: import("@convex-dev/agent/_generated/component.js").ComponentApi<"agent">;
 };

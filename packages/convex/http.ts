@@ -2,9 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { HttpRouterWithHono } from 'convex-helpers/server/hono';
 import type { HonoWithConvex } from 'convex-helpers/server/hono';
-import { registerRoutes as registerLaunchDarklyRoutes } from '@convex-dev/launchdarkly';
 import type { ActionCtx } from './_generated/server';
-import { components } from './_generated/api';
 import * as oauthModule from './mcp/oauth';
 import * as tokensModule from './mcp/tokens';
 import type { HttpDeps } from './httpRoutes/deps';
@@ -61,8 +59,5 @@ export function createApp(
 
 // Production export (unchanged behavior)
 const httpRouter = new HttpRouterWithHono(createApp());
-
-// LaunchDarkly webhook (component pushes flag updates here).
-registerLaunchDarklyRoutes(components.launchdarkly, httpRouter);
 
 export default httpRouter;

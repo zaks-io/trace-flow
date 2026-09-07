@@ -7,10 +7,6 @@ const PROD_CONNECT_SRC = [
   'https://auth0.zaks.io',
   'https://*.ingest.sentry.io',
   'https://*.ingest.us.sentry.io',
-  'https://*.launchdarkly.com',
-  'https://clientstream.launchdarkly.com',
-  'https://events.launchdarkly.com',
-  'https://app.launchdarkly.com',
 ];
 
 const DEV_CONNECT_SRC = ['http://localhost:*', 'ws://localhost:*', 'http://127.0.0.1:*'];

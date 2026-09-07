@@ -94,6 +94,8 @@ jobs:
 
   deploy-convex:
     name: Deploy Convex
+    permissions:
+      contents: read
     runs-on: blacksmith-4vcpu-ubuntu-2404
     # Readers must understand analytics identifiers before Convex issues scoped tokens for them.
     needs: [ci, deploy-tinybird-schema]
@@ -121,6 +123,11 @@ jobs:
           bunx convex deploy \
             --cmd 'bash scripts/ci/export-convex-outputs.sh' \
             --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
+      - name: Install Splitch configuration sync
+        run: bunx convex run integrations/splitch:install --prod
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
 
@@ -157,7 +164,6 @@ jobs:
           NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
           NEXT_PUBLIC_SENTRY_ENVIRONMENT: prod
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_SIDE_ID: ${{ vars.NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_SIDE_ID }}
           AUTH0_SECRET: ${{ secrets.AUTH0_SECRET }}
           AUTH0_CLIENT_SECRET: ${{ secrets.AUTH0_CLIENT_SECRET }}
           BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}

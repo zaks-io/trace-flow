@@ -19,7 +19,7 @@
     "@cloudflare/sandbox": "0.12.1",
     "@trace-flow/convex": "workspace:*",
     "@trace-flow/pricing": "workspace:*",
-    "convex": "1.38.0"
+    "convex": "1.44.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260702.1",
