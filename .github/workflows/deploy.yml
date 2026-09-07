@@ -94,6 +94,8 @@ jobs:
 
   deploy-convex:
     name: Deploy Convex
+    permissions:
+      contents: read
     runs-on: blacksmith-4vcpu-ubuntu-2404
     # Readers must understand analytics identifiers before Convex issues scoped tokens for them.
     needs: [ci, deploy-tinybird-schema]
