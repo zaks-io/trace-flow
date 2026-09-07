@@ -49,19 +49,27 @@ Codex records, verifies a source-policy denial, cross-org isolation, exact retry
 byte accounting, and control-plane audit events. It never prints the credential, wrapping secret,
 payload, signed URL, or object keys.
 
-Load the stable Cloud-Dev wrapping secret without putting it in shell history, then run:
+The maintainer macOS Keychain stores the stable Cloud-Dev values under service
+`com.trace-flow.archive-api.cloud-dev`, with one account per binding name. Load the wrapping secret
+without putting it in shell history, then run:
 
 ```sh
-read -rs ARCHIVE_KEY_WRAPPING_SECRET
-export ARCHIVE_KEY_WRAPPING_SECRET
+export ARCHIVE_KEY_WRAPPING_SECRET="$(
+  security find-generic-password \
+    -s com.trace-flow.archive-api.cloud-dev \
+    -a ARCHIVE_KEY_WRAPPING_SECRET \
+    -w
+)"
 TRACE_FLOW_ARCHIVE_SMOKE_DEPLOYMENT=hardy-iguana-812 \
 TRACE_FLOW_ARCHIVE_SMOKE_URL=https://trace-flow-archive-api-dev.isaac-a46.workers.dev \
 bun run dev:smoke:archive
 unset ARCHIVE_KEY_WRAPPING_SECRET
 ```
 
-The harness revokes its credentials and removes the foreign-org isolation fixture. It retains the
-primary synthetic org and encrypted objects because archive deletion and lifecycle are separate work.
+The harness revokes its minted credential, deletes its exact encrypted R2 objects and wrapped key,
+and removes both synthetic Organizations. Cleanup failures fail the smoke instead of leaving a green
+result. Wrangler must be authenticated for the Cloud-Dev account so the harness can delete and verify
+the exact object keys returned by the Archive API.
 
 ## Required Production Resources
 

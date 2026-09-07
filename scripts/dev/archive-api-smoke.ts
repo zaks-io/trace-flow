@@ -18,8 +18,10 @@ import { checkpointChainHash, recordChainHash } from '../../apps/archive-api/src
 import { prefixChainHash } from '../../apps/archive-api/src/archive-prefix-validation';
 
 const repoRoot = resolve(import.meta.dirname, '../..');
+const archiveApiRoot = resolve(repoRoot, 'apps/archive-api');
 const expectedDeployment = 'hardy-iguana-812';
 const expectedArchiveUrl = 'https://trace-flow-archive-api-dev.isaac-a46.workers.dev';
+const expectedArchiveBucket = 'trace-flow-agent-archive-dev';
 
 interface SeedResult {
   orgId: string;
@@ -82,6 +84,7 @@ function runConvex<T>(
   functionName: string,
   args: Record<string, unknown>,
   tokenIdentifier?: string,
+  allowEmptyOutput = false,
 ): Promise<T> {
   const cli = process.platform === 'win32' ? 'bunx.cmd' : 'bunx';
   const cliArgs = [
@@ -119,6 +122,14 @@ function runConvex<T>(
         );
         return;
       }
+      if (stdout.trim().length === 0) {
+        if (allowEmptyOutput) {
+          resolveResult(null as T);
+          return;
+        }
+        reject(new Error(`${functionName} returned no output`));
+        return;
+      }
       try {
         resolveResult(JSON.parse(stdout) as T);
       } catch {
@@ -126,6 +137,74 @@ function runConvex<T>(
       }
     });
   });
+}
+
+function runWrangler(
+  args: string[],
+  expectedOutcome: 'success' | 'missing' = 'success',
+): Promise<void> {
+  const cli = process.platform === 'win32' ? 'bunx.cmd' : 'bunx';
+  return new Promise((resolveResult, reject) => {
+    const child = spawn(cli, ['wrangler', ...args], {
+      cwd: archiveApiRoot,
+      env: process.env,
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', () => reject(new Error('Unable to start Wrangler')));
+    child.on('close', (code) => {
+      if (expectedOutcome === 'success' && code === 0) {
+        resolveResult();
+        return;
+      }
+      if (expectedOutcome === 'missing' && code !== 0 && stderr.includes('does not exist')) {
+        resolveResult();
+        return;
+      }
+      reject(new Error('Wrangler archive cleanup failed'));
+    });
+  });
+}
+
+function assertArchiveObjectKey(key: string): void {
+  assert.match(
+    key,
+    /^archive\/[a-f0-9]{64}\/contributions\/[a-f0-9]{64}\/sessions\/(?:claude|codex)\/[a-f0-9]{64}\/(?:chunks|manifests)\/[a-f0-9]{64}$/u,
+  );
+}
+
+async function deleteArchiveObjects(keys: Set<string>): Promise<void> {
+  if (keys.size === 0) return;
+  await runWrangler([
+    'r2',
+    'bucket',
+    'info',
+    expectedArchiveBucket,
+    '--jurisdiction',
+    'us',
+    '--json',
+  ]);
+  for (const key of keys) {
+    assertArchiveObjectKey(key);
+    const objectPath = `${expectedArchiveBucket}/${key}`;
+    await runWrangler([
+      'r2',
+      'object',
+      'delete',
+      objectPath,
+      '--remote',
+      '--jurisdiction',
+      'us',
+      '--force',
+    ]);
+    await runWrangler(
+      ['r2', 'object', 'get', objectPath, '--remote', '--jurisdiction', 'us', '--pipe'],
+      'missing',
+    );
+  }
 }
 
 async function expectConvexFailure(
@@ -217,6 +296,26 @@ async function sendUpload(
   });
 }
 
+async function waitForCredentialRevocation(archiveUrl: string, credential: string): Promise<void> {
+  // The Worker reads KV on every request, but a delete can take 60 seconds or more
+  // to replace a value cached in another Cloudflare location.
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    const response = await fetch(`${archiveUrl}/v1/archive/uploads`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Trace-Flow-Collector-Secret': credential,
+        'X-Trace-Flow-Archive-Source': 'claude',
+      },
+      body: '{}',
+    });
+    if (response.status === 401) return;
+    await sleep(1_000);
+  }
+  throw new Error('Collector Credential remained active after revocation');
+}
+
 async function sleep(milliseconds: number): Promise<void> {
   await new Promise<void>((resolveSleep) => setTimeout(resolveSleep, milliseconds));
 }
@@ -285,20 +384,28 @@ async function main(): Promise<void> {
   assert.equal(health.status, 200);
   assert.deepEqual(await responseJson(health), { status: 'ok' });
 
-  const primary = await runConvex<SeedResult>(
-    deployment,
-    'archiveIntegrationSeed:seedConcurrentEnrollment',
-    {},
-  );
-  const foreign = await runConvex<SeedResult>(
-    deployment,
-    'archiveIntegrationSeed:seedConcurrentEnrollment',
-    {},
-  );
+  let primary: SeedResult | undefined;
+  let foreign: SeedResult | undefined;
   let minted: MintResult | undefined;
   let enrollment: EnrollmentResult | undefined;
+  let keyStored = false;
+  const archiveObjectKeys = new Set<string>();
+  let smokeEvidence: Record<string, unknown> | undefined;
+  let smokeFailed = false;
+  let smokeFailure: unknown;
+  const cleanupFailures: string[] = [];
 
   try {
+    primary = await runConvex<SeedResult>(
+      deployment,
+      'archiveIntegrationSeed:seedConcurrentEnrollment',
+      {},
+    );
+    foreign = await runConvex<SeedResult>(
+      deployment,
+      'archiveIntegrationSeed:seedConcurrentEnrollment',
+      {},
+    );
     await runConvex(deployment, 'api.archive.activate', {}, primary.tokenIdentifier);
     await expectConvexFailure(
       runConvex(
@@ -347,6 +454,7 @@ async function main(): Promise<void> {
       keyVersion: 1,
       wrappedKey: serializeArchiveWrappedKeyVersion(wrappedKey),
     });
+    keyStored = true;
 
     const baseline = await runConvex<ArchiveStatus>(
       deployment,
@@ -375,6 +483,8 @@ async function main(): Promise<void> {
       claudeSession,
       claudeFixture.expectedChainHead,
     );
+    archiveObjectKeys.add(claudeAck.manifest_key);
+    claudeAck.chunk_keys.forEach((key) => archiveObjectKeys.add(key));
 
     const retryResponse = await sendUpload(
       archiveUrl,
@@ -404,6 +514,8 @@ async function main(): Promise<void> {
     assert.equal(codexResponse.status, 200);
     const codexAck = (await responseJson(codexResponse)) as ArchiveAcknowledgement;
     assertDurableAcknowledgement(codexAck, 'codex', codexSession, codexFixture.expectedChainHead);
+    archiveObjectKeys.add(codexAck.manifest_key);
+    codexAck.chunk_keys.forEach((key) => archiveObjectKeys.add(key));
 
     const durableStatus = await waitForDurableStatus(
       deployment,
@@ -428,41 +540,97 @@ async function main(): Promise<void> {
     assert.ok(audit.some((event) => event.action === 'activation' && event.outcome === 'success'));
     assert.ok(audit.some((event) => event.action === 'enrollment' && event.outcome === 'success'));
 
-    console.log(
-      JSON.stringify({
-        status: 'ok',
-        sources: ['claude', 'codex'],
-        persistedObjects: claudeAck.chunk_keys.length + codexAck.chunk_keys.length + 2,
-        storedBytesIncreased: (durableStatus.storedBytes ?? 0) > (baseline.storedBytes ?? 0),
-        idempotentRetry: true,
-        sourcePolicyFailure: true,
-        crossOrganizationFailure: true,
-        auditEventsVerified: true,
-      }),
-    );
+    smokeEvidence = {
+      status: 'ok',
+      sources: ['claude', 'codex'],
+      persistedObjects: archiveObjectKeys.size,
+      storedBytesIncreased: (durableStatus.storedBytes ?? 0) > (baseline.storedBytes ?? 0),
+      idempotentRetry: true,
+      sourcePolicyFailure: true,
+      crossOrganizationFailure: true,
+      auditEventsVerified: true,
+    };
+  } catch (error) {
+    smokeFailed = true;
+    smokeFailure = error;
   } finally {
-    if (enrollment) {
-      await runConvex(
-        deployment,
-        'api.archive.unenroll',
-        { enrollmentId: enrollment.enrollmentId },
-        primary.tokenIdentifier,
-      ).catch(() => undefined);
+    const cleanup = async (label: string, operation: () => Promise<unknown>): Promise<void> => {
+      try {
+        await operation();
+      } catch {
+        cleanupFailures.push(label);
+      }
+    };
+
+    if (primary && minted) {
+      await cleanup('minted Collector Credential revocation', () =>
+        runConvex(
+          deployment,
+          'api.collectorCredentials.revoke',
+          { id: minted!.id },
+          primary!.tokenIdentifier,
+          true,
+        ),
+      );
+      await cleanup('minted Collector Credential KV deletion', () =>
+        waitForCredentialRevocation(archiveUrl, minted!.secret),
+      );
     }
-    for (const credentialId of [minted?.id, primary.collectorCredentialId]) {
-      if (!credentialId) continue;
-      await runConvex(
-        deployment,
-        'api.collectorCredentials.revoke',
-        { id: credentialId },
-        primary.tokenIdentifier,
-      ).catch(() => undefined);
+    if (primary && enrollment) {
+      await cleanup('archive unenrollment', () =>
+        runConvex(
+          deployment,
+          'api.archive.unenroll',
+          { enrollmentId: enrollment!.enrollmentId },
+          primary!.tokenIdentifier,
+          true,
+        ),
+      );
     }
-    await runConvex(deployment, 'archiveIntegrationSeed:cleanupConcurrentEnrollment', {
-      orgId: foreign.orgId,
-    }).catch(() => undefined);
+    await cleanup('R2 object deletion', () => deleteArchiveObjects(archiveObjectKeys));
+    if (primary && keyStored) {
+      await cleanup('archive encryption key deletion', async () => {
+        const destroyed = await runConvex<boolean>(
+          deployment,
+          'archiveKeysInternal:destroyVersion',
+          { orgId: primary!.orgId, keyVersion: 1 },
+        );
+        assert.equal(destroyed, true);
+      });
+    }
+    if (foreign) {
+      await cleanup('foreign organization deletion', () =>
+        runConvex(
+          deployment,
+          'archiveIntegrationSeed:cleanupConcurrentEnrollment',
+          { orgId: foreign!.orgId },
+          undefined,
+          true,
+        ),
+      );
+    }
+    if (primary) {
+      await cleanup('primary organization deletion', () =>
+        runConvex(
+          deployment,
+          'archiveIntegrationSeed:cleanupConcurrentEnrollment',
+          { orgId: primary!.orgId },
+          undefined,
+          true,
+        ),
+      );
+    }
     if (minted) minted.secret = '';
   }
+
+  if (cleanupFailures.length > 0) {
+    throw new Error(`Archive smoke cleanup failed: ${cleanupFailures.join(', ')}`, {
+      cause: smokeFailure,
+    });
+  }
+  if (smokeFailed) throw smokeFailure;
+  assert.ok(smokeEvidence);
+  console.log(JSON.stringify({ ...smokeEvidence, cleanupVerified: true }));
 }
 
 await main();

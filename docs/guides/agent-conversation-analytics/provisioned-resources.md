@@ -101,6 +101,10 @@ Cloud-Dev uses Convex deployment `hardy-iguana-812` and site
 `ARCHIVE_API_SHARED_SECRET` and `ARCHIVE_KEY_WRAPPING_SECRET` in the team secret manager. In one shell,
 load those values without echoing them, then provision the shared control-plane secret and Worker:
 
+The maintainer macOS Keychain mirrors those Cloud-Dev values under service
+`com.trace-flow.archive-api.cloud-dev`, using each binding name as its Keychain account. Do not replace
+the wrapping secret while the development bucket contains objects.
+
 ```sh
 read -rs ARCHIVE_API_SHARED_SECRET
 read -rs ARCHIVE_KEY_WRAPPING_SECRET
