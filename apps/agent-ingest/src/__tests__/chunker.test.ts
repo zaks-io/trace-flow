@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentIngestQueueFacts, AgentIngestQueueMessage } from '@trace-flow/types';
-import { CATEGORIES, MAX_QUEUE_MESSAGE_BYTES, chunkFacts } from '../chunker';
+import {
+  CATEGORIES,
+  MAX_QUEUE_MESSAGE_BYTES,
+  QueueFactTooLargeError,
+  chunkFacts,
+} from '../chunker';
 
 const base: Omit<AgentIngestQueueMessage, 'facts'> = {
   type: 'agent',
@@ -96,6 +101,14 @@ describe('chunkFacts', () => {
     }
     const total = out.reduce((n, m) => n + m.facts.messages.length, 0);
     expect(total).toBe(2000);
+  });
+
+  it('rejects a fact that cannot fit in one queue message', () => {
+    const f = emptyQueueFacts();
+    f.messages = [messageQueueFact(0)];
+    f.messages[0]!.model = 'x'.repeat(MAX_QUEUE_MESSAGE_BYTES);
+
+    expect(() => chunkFacts(base, f)).toThrow(QueueFactTooLargeError);
   });
 
   it('packs facts drawn from more than one array into a single message', () => {

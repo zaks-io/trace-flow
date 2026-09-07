@@ -1,11 +1,15 @@
 name: Preview
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pull_request_number:
+        description: Same-repository pull request to deploy
+        required: true
+        type: number
 
 concurrency:
-  group: preview-${{ github.event.pull_request.number }}
+  group: preview-${{ inputs.pull_request_number }}
   cancel-in-progress: true
 
 env:
@@ -13,30 +17,62 @@ env:
 
 permissions:
   contents: read
-  issues: write
-  pull-requests: write
 
 jobs:
+  prepare:
+    name: Authorize Preview
+    if: github.actor == 'isuttell'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      head_ref: ${{ steps.resolve.outputs.head_ref }}
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+    steps:
+      - name: Resolve reviewed pull request
+        id: resolve
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PR_NUMBER: ${{ inputs.pull_request_number }}
+        with:
+          script: |
+            const pull_number = Number(process.env.PR_NUMBER);
+            const { data: pull } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number,
+            });
+            const expectedRepository = `${context.repo.owner}/${context.repo.repo}`;
+            if (pull.state !== 'open') {
+              core.setFailed(`Pull request ${pull_number} is not open`);
+              return;
+            }
+            if (pull.head.repo?.full_name !== expectedRepository) {
+              core.setFailed('Preview deployments accept same-repository pull requests only');
+              return;
+            }
+            core.setOutput('head_ref', pull.head.ref);
+            core.setOutput('head_sha', pull.head.sha);
+
   deploy-convex:
     name: Deploy Convex Preview
-    # Forks and Dependabot do not receive infrastructure secrets.
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.user.login != 'dependabot[bot]' &&
-      github.actor != 'dependabot[bot]'
+    needs: [prepare]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     environment: Preview
     outputs:
       convex_url: ${{ steps.deploy.outputs.convex_url }}
       convex_site_url: ${{ steps.deploy.outputs.convex_site_url }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 2
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.head_sha }}
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
 
@@ -51,22 +87,24 @@ jobs:
             --cmd 'bash scripts/ci/export-convex-outputs.sh' \
             --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL
         env:
-          BRANCH_NAME: ${{ github.head_ref }}
+          BRANCH_NAME: ${{ needs.prepare.outputs.head_ref }}
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
 
   preview:
     name: Deploy Preview
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [deploy-convex]
+    needs: [prepare, deploy-convex]
     environment: Preview
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 2
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.head_sha }}
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
 
@@ -152,7 +190,7 @@ jobs:
           AUTH0_CLIENT_SECRET: ${{ secrets.AUTH0_CLIENT_SECRET }}
           BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}
           APP_BASE_URL: https://trace-flow-web-preview.isaac-a46.workers.dev
-          NEXT_PUBLIC_DEPLOY_ID: ${{ github.sha }}
+          NEXT_PUBLIC_DEPLOY_ID: ${{ needs.prepare.outputs.head_sha }}
 
       # Deploy web to Workers preview
       - name: Deploy Web Preview
@@ -161,15 +199,22 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      # Post/update comment with preview URLs
+  comment:
+    name: Comment Preview URLs
+    needs: [prepare, preview]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
       - name: Comment PR
         continue-on-error: true
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
             const marker = '<!-- trace-flow-preview-comment -->';
             const body = `${marker}
-            ## 🚀 Preview Deployed
+            ## Preview Deployed
 
             | Service | URL |
             |---------|-----|
@@ -184,13 +229,13 @@ jobs:
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number
+              issue_number: Number(process.env.PR_NUMBER)
             });
 
             const botComment = comments.find(comment =>
               comment.user?.type === 'Bot' &&
               comment.user?.login === 'github-actions[bot]' &&
-              (comment.body?.includes(marker) || comment.body?.includes('🚀 Preview Deployed'))
+              (comment.body?.includes(marker) || comment.body?.includes('Preview Deployed'))
             );
 
             try {
@@ -207,9 +252,11 @@ jobs:
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: context.issue.number,
+                issue_number: Number(process.env.PR_NUMBER),
                 body
               });
             } catch (error) {
               core.warning(`Unable to write preview comment: ${error.message}`);
             }
+        env:
+          PR_NUMBER: ${{ inputs.pull_request_number }}

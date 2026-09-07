@@ -300,6 +300,28 @@ describe('POST /v1/ingest', () => {
     expect(queueSend).not.toHaveBeenCalled();
   });
 
+  it('413s a fact that cannot fit in a queue message before claiming its session', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    const oversized = envelope({
+      facts: facts({
+        pull_request_links: [
+          {
+            ...facts().pull_request_links[0]!,
+            url: `https://example.test/${'x'.repeat(130_000)}`,
+          },
+        ],
+      }),
+    });
+
+    const res = await post(env, JSON.stringify(oversized), authHeaders);
+
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ error: 'payload_too_large' });
+    expect(claimResponder).toBeNull();
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
   it('drops every conflicted session and 202s a no-op', async () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
     interceptPolicy(200, POLICY);

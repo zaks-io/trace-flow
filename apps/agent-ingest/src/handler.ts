@@ -11,7 +11,7 @@ import { authenticateCollector } from './auth';
 import { checkCompatibility, getCompatibilityPolicy } from './policy';
 import { assembleQueueFacts } from './ids';
 import { ConvexUnreachableError, claimSessions } from './ownership';
-import { chunkFacts } from './chunker';
+import { assertFactsFitQueueMessages, chunkFacts, QueueFactTooLargeError } from './chunker';
 import {
   MAX_COMMAND_EXCERPT,
   MAX_ERROR_EXCERPT,
@@ -161,6 +161,39 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
 
     const { queueFacts, sessionPks } = await assembleQueueFacts(facts, batch.source);
 
+    const base: Omit<AgentIngestQueueMessage, 'facts'> = {
+      type: 'agent',
+      source: batch.source,
+      parser_version: batch.parser_version,
+      desktop_version: batch.desktop_version,
+      collector_batch_id: batch.collector_batch_id,
+      tenancy: {
+        org_id: credential.orgId,
+        user_id: credential.userId,
+        collector_id: credential.collectorId,
+        collector_credential_id: credential.collectorCredentialId,
+      },
+      enqueued_at: Date.now(),
+      // Carried on every chunk so the consumer's work joins this ingest request's trace. `chunkFacts`
+      // sizes each message from `base`, so the extra bytes stay inside the per-message byte budget.
+      sentry_trace_context: currentSentryTraceContext(),
+    };
+
+    // Validate queue fit before claiming ownership so an impossible write cannot create a claim.
+    try {
+      assertFactsFitQueueMessages(base, queueFacts);
+    } catch (err) {
+      if (err instanceof QueueFactTooLargeError) {
+        logger.warn('agent_ingest.fact_too_large', {
+          category: err.category,
+          bytes: err.factBytes,
+          max_bytes: err.maxBytes,
+        });
+        return c.json({ error: 'payload_too_large' }, 413);
+      }
+      throw err;
+    }
+
     let claims;
     try {
       claims = await claimSessions(
@@ -191,23 +224,6 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
       return c.json({ accepted: true, sessions: 0, skipped_conflict: conflicted.size }, 202);
     }
 
-    const base: Omit<AgentIngestQueueMessage, 'facts'> = {
-      type: 'agent',
-      source: batch.source,
-      parser_version: batch.parser_version,
-      desktop_version: batch.desktop_version,
-      collector_batch_id: batch.collector_batch_id,
-      tenancy: {
-        org_id: credential.orgId,
-        user_id: credential.userId,
-        collector_id: credential.collectorId,
-        collector_credential_id: credential.collectorCredentialId,
-      },
-      enqueued_at: Date.now(),
-      // Carried on every chunk so the consumer's work joins this ingest request's trace. `chunkFacts`
-      // sizes each message from `base`, so the extra bytes stay inside the per-message byte budget.
-      sentry_trace_context: currentSentryTraceContext(),
-    };
     const messages = chunkFacts(base, owned);
 
     // Enqueue with sendBatch, not N parallel send()s. A multi-session envelope can chunk into hundreds
