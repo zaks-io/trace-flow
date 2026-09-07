@@ -1,8 +1,7 @@
 import type { Context } from 'hono';
-import { getCurrentTimestamp, readBodyWithLimit } from '@trace-flow/utils';
+import { getCurrentTimestamp } from '@trace-flow/utils';
 import type { ProxyEnv } from '../context';
 import type { ValidatedRequest } from './validateRequest';
-import { MAX_REQUEST_SIZE } from './validateRequest';
 
 /**
  * Output of the forward stage. Composes the validated request by inclusion —
@@ -29,8 +28,7 @@ export class UpstreamFetchError extends Error {
 }
 
 /**
- * Read the request through the hard byte limit, then give forwarding and capture independent bodies.
- * Buffering is bounded to 10 MB and guarantees an oversized chunked request never continues upstream.
+ * Give forwarding and capture independent views of the request body validated by the prior stage.
  *
  * Strips proxy-internal headers (`X-Trace-Flow-Api-Key`,
  * `X-Trace-Flow-Omit-Body`) and W3C trace context — those are for us, not
@@ -45,7 +43,7 @@ export async function forwardToUpstream(
   const query = new URL(c.req.url).search;
   const targetUrl = validated.route.targetUrl + query;
 
-  const body = await readBodyWithLimit(c.req.raw.body, MAX_REQUEST_SIZE);
+  const body = validated.requestBody;
   const streamToCapture = body.byteLength > 0 ? new Blob([body]).stream() : null;
 
   const headers = new Headers(c.req.raw.headers);

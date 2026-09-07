@@ -11,7 +11,7 @@
 import * as Sentry from '@sentry/cloudflare';
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
-import { applySecurityHeaders, BodySizeLimitError } from '@trace-flow/utils';
+import { applySecurityHeaders } from '@trace-flow/utils';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import type { ProxyEnv } from './context';
 import { handleOTLPTraces } from './otlp';
@@ -73,20 +73,6 @@ app.all('*', async (c) => {
   try {
     forwarded = await forwardToUpstream(c, validated);
   } catch (err) {
-    if (err instanceof BodySizeLimitError) {
-      logger.warn('proxy.request_rejected', {
-        reason: 'too_large',
-        receivedBytes: err.receivedBytes,
-      });
-      await logger.flush();
-      return c.json(
-        {
-          error: 'Request too large',
-          message: `Request body exceeds ${err.maxBytes / (1024 * 1024)}MB limit`,
-        },
-        413,
-      );
-    }
     logger.error('proxy.upstream_fetch_failed', err);
     if (err instanceof UpstreamFetchError && decision.record) {
       try {

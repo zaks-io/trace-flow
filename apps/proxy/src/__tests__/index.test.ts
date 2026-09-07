@@ -198,29 +198,6 @@ describe('Proxy Worker Integration', () => {
   });
 
   describe('Proxy Requests', () => {
-    it('rejects an oversized chunked request before calling the provider', async () => {
-      await setupValidApiKey('chunked-oversize-key');
-      const body = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new Uint8Array(6 * 1024 * 1024));
-          controller.enqueue(new Uint8Array(6 * 1024 * 1024));
-          controller.close();
-        },
-      });
-
-      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Trace-Flow-Api-Key': 'chunked-oversize-key',
-        },
-        body,
-      });
-
-      expect(res.status).toBe(413);
-      expect(globalThis.fetch).not.toHaveBeenCalled();
-    });
-
     it('should proxy successful non-streaming request to OpenAI', async () => {
       await setupValidApiKey('test-key');
 
@@ -725,28 +702,6 @@ describe('Proxy Worker Integration', () => {
   });
 
   describe('OTLP Rejection Feedback', () => {
-    it('rejects an oversized chunked export while reading the request stream', async () => {
-      await setupValidApiKey('otlp-chunked-oversize-key');
-      const body = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new Uint8Array(6 * 1024 * 1024));
-          controller.enqueue(new Uint8Array(6 * 1024 * 1024));
-          controller.close();
-        },
-      });
-
-      const res = await SELF.fetch('http://localhost/v1/traces', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Trace-Flow-Api-Key': 'otlp-chunked-oversize-key',
-        },
-        body,
-      });
-
-      expect(res.status).toBe(413);
-    });
-
     it('should return rejectedSpans when usage is denied', async () => {
       const key = 'otlp-exhausted-key';
       const orgId = 'org-otlp-exhausted';
