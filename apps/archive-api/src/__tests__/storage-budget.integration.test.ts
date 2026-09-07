@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createWorkerLogger } from '@trace-flow/logging';
 import { runInDurableObject } from 'cloudflare:test';
 import {
   ARCHIVE_STORAGE_CAP_BYTES,
@@ -8,9 +9,23 @@ import {
 import { archiveKeyVersionMetadata, verifyOrPutImmutableObject } from '../archive-r2';
 import { verifyObjectsAndReleaseDefinitivelyUnwritten } from '../archive-ledger-intent-recovery';
 import { archiveObjectKey, archiveOrganizationPrefix } from '../archive-storage-key';
+import type { ArchiveApiEnv } from '../context';
 import { reconcileBudgetInventoryPage } from '../archive-storage-budget-reconciliation';
 import { rebaseStatusAfterConflict, reserveBudgetStorage } from '../archive-storage-budget-ledger';
 import { budget, inventoryKeys, runtimeEnv, scope } from './storage-budget-fixture';
+
+const reconciliationLogger = createWorkerLogger({
+  service: 'archive-api-test',
+  request: new Request('https://archive.test/storage-reconciliation'),
+  emitToConsole: false,
+});
+const reconciliationEnv = runtimeEnv as unknown as Pick<
+  ArchiveApiEnv,
+  | 'ARCHIVE_STORAGE'
+  | 'CONVEX_SITE_URL'
+  | 'ARCHIVE_API_SHARED_SECRET'
+  | 'ARCHIVE_KEY_WRAPPING_SECRET'
+>;
 
 function object(
   objectKey: string,
@@ -584,7 +599,10 @@ describe('StorageBudget Durable Object', () => {
 
     await expect(
       runInDurableObject(stub, (_instance, state) =>
-        reconcileBudgetInventoryPage(state.storage, runtimeEnv, { orgId, forceStart: false }),
+        reconcileBudgetInventoryPage(state.storage, reconciliationEnv, reconciliationLogger, {
+          orgId,
+          forceStart: false,
+        }),
       ),
     ).resolves.toMatchObject({ complete: true });
   });
@@ -859,7 +877,11 @@ describe('StorageBudget Durable Object', () => {
                 throw new Error('inventory_connection_lost');
               },
             } as unknown as R2Bucket,
+            CONVEX_SITE_URL: reconciliationEnv.CONVEX_SITE_URL,
+            ARCHIVE_API_SHARED_SECRET: reconciliationEnv.ARCHIVE_API_SHARED_SECRET,
+            ARCHIVE_KEY_WRAPPING_SECRET: reconciliationEnv.ARCHIVE_KEY_WRAPPING_SECRET,
           },
+          reconciliationLogger,
           { orgId },
         );
         return null;

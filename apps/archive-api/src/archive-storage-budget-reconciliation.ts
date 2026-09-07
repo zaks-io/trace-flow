@@ -1,7 +1,11 @@
-import type { ArchiveApiEnv } from './context';
+import type { Logger } from '@trace-flow/logging';
 import { ArchiveContractError } from './archive-contract';
+import {
+  recoverLegacyArchiveKeyVersion,
+  type LegacyKeyProvenanceEnv,
+} from './archive-legacy-key-provenance';
 import { isRotationTempObjectKey } from './archive-key-rotation-state';
-import { keyVersionFromR2Metadata } from './archive-r2';
+import { optionalKeyVersionFromR2Metadata } from './archive-r2';
 import { archiveOrganizationPrefix } from './archive-storage-key';
 import {
   budgetState,
@@ -171,7 +175,14 @@ function writeReconciliationState(storage: DurableObjectStorage, value: Reconcil
   );
 }
 
-function inventoryObject(object: R2Object, prefix: string): InventoryObject | null {
+async function inventoryObject(
+  object: R2Object,
+  prefix: string,
+  orgId: string,
+  env: LegacyKeyProvenanceEnv,
+  logger: Logger,
+  keys: Map<number, Promise<CryptoKey>>,
+): Promise<InventoryObject | null> {
   const { key, size } = object;
   if (isRotationTempObjectKey(key)) return null;
   const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -181,11 +192,15 @@ function inventoryObject(object: R2Object, prefix: string): InventoryObject | nu
   if (!match || !Number.isSafeInteger(size) || size < 0) {
     throw new ArchiveContractError('storage_budget_unknown_object_path');
   }
+  const objectClass = match[1] === 'chunks' ? 'chunk' : 'manifest';
+  const metadataKeyVersion = optionalKeyVersionFromR2Metadata(object.customMetadata);
   return {
     objectKey: key,
-    objectClass: match[1] === 'chunks' ? 'agent_archive_chunk' : 'agent_archive_manifest',
+    objectClass: objectClass === 'chunk' ? 'agent_archive_chunk' : 'agent_archive_manifest',
     bytes: size,
-    keyVersion: keyVersionFromR2Metadata(object.customMetadata),
+    keyVersion:
+      metadataKeyVersion ??
+      (await recoverLegacyArchiveKeyVersion(object, objectClass, orgId, env, logger, keys)),
   };
 }
 
@@ -495,7 +510,8 @@ export function startBudgetReconciliation(
 
 export async function reconcileBudgetInventoryPage(
   storage: DurableObjectStorage,
-  env: Pick<ArchiveApiEnv, 'ARCHIVE_STORAGE'>,
+  env: LegacyKeyProvenanceEnv,
+  logger: Logger,
   input: { orgId: string; limit?: number; forceStart?: boolean },
 ): Promise<{ complete: boolean; generation: number; cursor?: string }> {
   startBudgetReconciliation(storage, input.orgId, input.forceStart ?? true);
@@ -532,10 +548,11 @@ export async function reconcileBudgetInventoryPage(
   }
 
   const inventory: InventoryObject[] = [];
+  const keys = new Map<number, Promise<CryptoKey>>();
   let inventoryError: Error | undefined;
   for (const object of listed.objects) {
     try {
-      const inventoried = inventoryObject(object, prefix);
+      const inventoried = await inventoryObject(object, prefix, input.orgId, env, logger, keys);
       if (inventoried) inventory.push(inventoried);
     } catch (error) {
       inventoryError ??=

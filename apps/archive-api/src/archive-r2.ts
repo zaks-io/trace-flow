@@ -25,9 +25,12 @@ export function archiveKeyVersionMetadata(keyVersion: number): Record<string, st
   return { [ARCHIVE_KEY_VERSION_METADATA]: String(keyVersion) };
 }
 
-export function keyVersionFromR2Metadata(metadata: Record<string, string> | undefined): number {
+export function optionalKeyVersionFromR2Metadata(
+  metadata: Record<string, string> | undefined,
+): number | null {
   const raw = metadata?.[ARCHIVE_KEY_VERSION_METADATA];
-  const keyVersion = raw === undefined ? Number.NaN : Number(raw);
+  if (raw === undefined) return null;
+  const keyVersion = Number(raw);
   if (!Number.isSafeInteger(keyVersion) || keyVersion < 1 || String(keyVersion) !== raw) {
     throw new ArchiveContractError('archive_key_version_unknown');
   }

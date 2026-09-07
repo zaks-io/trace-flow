@@ -30,7 +30,7 @@ interface StoredObject {
   etag: string;
 }
 
-const MAX_ENCRYPTED_OBJECT_BYTES = Math.ceil((MAX_MANIFEST_BYTES * 4) / 3) + 16_384;
+export const MAX_ENCRYPTED_ARCHIVE_OBJECT_BYTES = Math.ceil((MAX_MANIFEST_BYTES * 4) / 3) + 16_384;
 
 function objectClassFromBudget(value: BudgetObjectClass): ArchiveObjectClass {
   return value === 'agent_archive_chunk' ? 'chunk' : 'manifest';
@@ -75,7 +75,7 @@ async function unwrapVersion(
 async function readStoredObject(bucket: R2Bucket, objectKey: string): Promise<StoredObject | null> {
   const object = await bucket.get(objectKey);
   if (!object) return null;
-  if (object.size > MAX_ENCRYPTED_OBJECT_BYTES) {
+  if (object.size > MAX_ENCRYPTED_ARCHIVE_OBJECT_BYTES) {
     throw new ArchiveContractError('archive_object_exceeds_rotation_limit');
   }
   return { body: await object.text(), etag: object.etag };

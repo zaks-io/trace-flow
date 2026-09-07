@@ -340,8 +340,14 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     },
     forceStart: boolean,
   ): Promise<{ complete: boolean; generation: number; cursor?: string }> {
+    const logger = createWorkerLogger({
+      service: 'archive-api',
+      request: new Request('https://archive-session-ledger/storage-reconciliation'),
+      axiom: axiomConfigFromEnv(this.env),
+      context: { component: 'storage-budget', operation: 'reconcile' },
+    });
     try {
-      const result = await reconcileBudgetInventoryPage(this.ctx.storage, this.env, {
+      const result = await reconcileBudgetInventoryPage(this.ctx.storage, this.env, logger, {
         ...input,
         forceStart,
       });
@@ -350,6 +356,8 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     } catch (error) {
       await this.scheduleAlarmIfNeeded();
       throw error;
+    } finally {
+      this.ctx.waitUntil(logger.flush());
     }
   }
 }
