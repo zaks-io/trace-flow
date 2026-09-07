@@ -23,7 +23,7 @@ async function putInventoryObject(key: string, body: string, keyVersion: number)
 }
 
 describe('StorageBudget key provenance reconciliation', () => {
-  it('enforces the durable retired-key boundary at reserve and commit after later rotations', async () => {
+  it('rejects new retired-key references and absent commit transitions after later rotations', async () => {
     const orgId = `budget-retired-boundary-${crypto.randomUUID()}`;
     const stub = budget(orgId);
     await stub.getStorageBudget({ orgId });
@@ -70,7 +70,7 @@ describe('StorageBudget key provenance reconciliation', () => {
       ];
     });
 
-    expect(errors).toEqual(['archive_key_version_retired', 'archive_key_version_retired']);
+    expect(errors).toEqual(['archive_key_version_retired', 'storage_reservation_missing']);
   });
 
   it('reconciles the exact encrypted key version from R2 metadata', async () => {

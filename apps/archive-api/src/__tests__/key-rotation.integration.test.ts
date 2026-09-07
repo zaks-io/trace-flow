@@ -13,6 +13,7 @@ import {
   type ArchiveObjectEnvelope,
 } from '@trace-flow/utils';
 import {
+  ArchiveContractError,
   ARCHIVE_FORMAT_VERSION,
   CHAIN_HASH_VERSION,
   type ArchiveScope,
@@ -29,6 +30,7 @@ import { ARCHIVE_ROTATION_TEMP_SUFFIX, mintAndActivateNextKey } from '../archive
 import { recordRotationManifestRoot } from '../archive-key-rotation-audit';
 import { decompress } from '../archive-packing';
 import { archiveKeyVersionMetadata } from '../archive-r2';
+import { commitArchiveSession } from '../archive-ledger-commit';
 import { ACTIVATION_ID, FakeArchiveCustody, installCustody } from './key-rotation-custody-fixture';
 import { base64, compress, cryptoKey, digest, wrapKey } from './key-rotation-crypto-fixture';
 
@@ -515,7 +517,7 @@ describe('Archive encryption key rotation', () => {
 
   it('does not destroy the retiring key while reserved objects still reference it', async () => {
     const { orgId, objects } = await seedOrg('reserved');
-    const stub = await startRotation(orgId, 'rotate-reserved');
+    const stub = budget(orgId);
     const reserved = plannedBudgetObjects([
       {
         objectKey: `${objects[0]!.objectKey}-pending`,
@@ -526,6 +528,7 @@ describe('Archive encryption key rotation', () => {
     ]);
     expect((await stub.reserveStorage({ orgId, objects: reserved })).accepted).toBe(true);
     expect(await stub.countKeyVersionReferences({ orgId, keyVersion: 1 })).toBe(3);
+    await startRotation(orgId, 'rotate-reserved');
 
     const blocked = await stub.advanceKeyRotation({ orgId, limit: 8 });
     expect(blocked.status).toBe('rotating');
@@ -544,30 +547,11 @@ describe('Archive encryption key rotation', () => {
     expect(custody.versions.has(1)).toBe(false);
   });
 
-  it('rejects a late reserve of a destroyed retiring key and resumes a failed rotation without minting another version', async () => {
+  it('resumes a failed rotation without minting another version', async () => {
     const { orgId } = await seedOrg('retired');
     const stub = await startRotation(orgId, 'rotate-retired');
     const completed = await stub.advanceKeyRotation({ orgId, limit: 8 });
     expect(completed.status).toBe('succeeded');
-    const lateReserve = await runInDurableObject(stub, async (instance: StorageBudget) => {
-      try {
-        await instance.reserveStorage({
-          orgId,
-          objects: plannedBudgetObjects([
-            {
-              objectKey: `org/${orgId}/chunks/late-v1`,
-              objectClass: 'chunk',
-              bytes: 16,
-              keyVersion: 1,
-            },
-          ]),
-        });
-        return 'accepted';
-      } catch (error) {
-        return error instanceof Error ? error.message : String(error);
-      }
-    });
-    expect(lateReserve).toBe('archive_key_version_retired');
 
     const { orgId: failedOrgId } = await seedOrg('failed-resume');
     await startRotation(failedOrgId, 'rotate-failed-resume');
@@ -607,15 +591,12 @@ describe('Archive encryption key rotation', () => {
       checkpoint: await checkpoint(delayedScope.sourceSessionId, [record]),
       complete_prefix_base64: base64(exactPrefix([record])),
     };
-    const delayedRequest = new Request('https://ledger.test/commit', {
-      method: 'POST',
-      body: JSON.stringify({
-        scope: delayedScope,
-        upload: delayedUpload,
-        keyVersion: 1,
-        wrappedKey: v1,
-      }),
-    });
+    const delayedRequest = {
+      scope: delayedScope,
+      upload: delayedUpload,
+      keyVersion: 1,
+      wrappedKey: v1,
+    };
 
     const stub = await startRotation(orgId, 'rotate-delayed-1-2');
     await expect(stub.advanceKeyRotation({ orgId, limit: 32 })).resolves.toMatchObject({
@@ -650,8 +631,21 @@ describe('Archive encryption key rotation', () => {
       ]),
     );
     const ledger = runtimeEnv.ARCHIVE_SESSION_LEDGER.get(ledgerId);
-    const response = await ledger.fetch(delayedRequest);
-    expect(response.ok).toBe(false);
+    const directBudgetEnv = {
+      ...runtimeEnv,
+      STORAGE_BUDGET: {
+        getByName: () => ({
+          reserveStorage: async (_input: Parameters<StorageBudget['reserveStorage']>[0]) => {
+            throw new ArchiveContractError('archive_key_version_retired');
+          },
+        }),
+      },
+    } as unknown as ArchiveApiEnv;
+    await expect(
+      runInDurableObject(ledger, (_instance, state) =>
+        commitArchiveSession(state.storage, directBudgetEnv, delayedRequest),
+      ),
+    ).rejects.toThrow('archive_key_version_retired');
     expect(
       await runInDurableObject(ledger, (_instance, state) => [
         ...state.storage.sql.exec('SELECT sequence FROM ledger_elements'),

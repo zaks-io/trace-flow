@@ -12,9 +12,12 @@ import {
   type PendingIntent,
   markIntentReady,
   markIntentWriteAuthorized,
-  commitIntent,
-  discardPendingIntent,
 } from './archive-ledger-intent';
+import {
+  commitIntentAndEnqueueBudgetCommit,
+  discardIntentAndRelease,
+  drainPendingBudgetCommits,
+} from './archive-ledger-release-outbox';
 import type { ArchiveR2Object } from './archive-r2';
 import {
   ArchiveR2BatchWriteError,
@@ -66,14 +69,7 @@ export async function resolveIntentKeyMaterialOrDiscardUnwritten(
     }
     const unwritten = await definitelyUnwrittenObjects(env.ARCHIVE_STORAGE, pending.objects);
     if (unwritten.length !== pending.objects.length) throw error;
-    discardPendingIntent(storage, pending.intentHash, 'proven_unwritten');
-    const budget = env.STORAGE_BUDGET.getByName(envelope.scope.orgId);
-    await budget.releaseStorage({
-      orgId: envelope.scope.orgId,
-      objects: pending.objects.map((object) =>
-        storageBudgetObject(object, pending.commit?.keyVersion),
-      ),
-    });
+    await discardIntentAndRelease(storage, env, pending, 'proven_unwritten');
     return null;
   }
 }
@@ -151,7 +147,7 @@ export async function recoverPendingIntent(
     objects: pending.objects.map((object) => storageBudgetObject(object, keyMaterial.keyVersion)),
   });
   if (!reservation.accepted) {
-    await discardDefinitelyUnwrittenIntent(storage, budget, envelope.scope.orgId, pending);
+    await discardDefinitelyUnwrittenIntent(storage, env, pending);
     throw new ArchiveContractError('storage_cap_exceeded');
   }
   if (pending.status !== 'write_authorized') {
@@ -165,38 +161,21 @@ export async function recoverPendingIntent(
         orgId: envelope.scope.orgId,
         objects: unwritten.map((object) => storageBudgetObject(object, keyMaterial.keyVersion)),
       }),
-    () => discardPendingIntent(storage, pending.intentHash, 'proven_unwritten'),
+    async () => {
+      await discardIntentAndRelease(storage, env, pending, 'proven_unwritten');
+    },
   );
-  await budget.commitStorage({
-    orgId: envelope.scope.orgId,
-    objects: pending.objects.map((object) => storageBudgetObject(object, keyMaterial.keyVersion)),
-  });
-  commitIntent(storage, pending.intentHash, pending.commit, pending.acknowledgement);
-  await budget.recordArchiveAcknowledgement({
-    orgId: envelope.scope.orgId,
-    acknowledgedAt: Date.now(),
-  });
+  commitIntentAndEnqueueBudgetCommit(storage, pending);
+  await drainPendingBudgetCommits(storage, env);
 }
 
 export async function discardDefinitelyUnwrittenIntent(
   storage: DurableObjectStorage,
-  budget: {
-    releaseStorage(input: {
-      orgId: string;
-      objects: ReturnType<typeof storageBudgetObject>[];
-    }): Promise<unknown>;
-  },
-  orgId: string,
+  env: ArchiveApiEnv,
   pending: PendingIntent,
 ): Promise<void> {
   if (pending.status === 'write_authorized') return;
-  discardPendingIntent(storage, pending.intentHash, 'unreserved_only');
-  await budget.releaseStorage({
-    orgId,
-    objects: pending.objects.map((object) =>
-      storageBudgetObject(object, pending.commit?.keyVersion),
-    ),
-  });
+  await discardIntentAndRelease(storage, env, pending, 'unreserved_only');
 }
 
 export function pendingExpectedObjects(
@@ -265,7 +244,7 @@ export async function unwrapKey(
   );
 }
 
-async function verifyObjects(bucket: R2Bucket, objects: ArchiveR2Object[]): Promise<void> {
+export async function verifyObjects(bucket: R2Bucket, objects: ArchiveR2Object[]): Promise<void> {
   for (const [index, object] of objects.entries()) {
     try {
       await verifyOrPutImmutableObject(bucket, object);
@@ -297,7 +276,7 @@ export async function verifyObjectsAndReleaseDefinitivelyUnwritten(
   bucket: R2Bucket,
   objects: ArchiveR2Object[],
   release: (objects: ArchiveR2Object[]) => Promise<unknown>,
-  discardIfWhollyUnwritten: () => void,
+  discardIfWhollyUnwritten: () => void | Promise<void>,
 ): Promise<void> {
   try {
     await verifyObjects(bucket, objects);
@@ -306,7 +285,7 @@ export async function verifyObjectsAndReleaseDefinitivelyUnwritten(
       const unwritten = await definitelyUnwrittenObjects(bucket, error.definitelyUnwritten);
       if (unwritten.length > 0) {
         try {
-          if (unwritten.length === objects.length) discardIfWhollyUnwritten();
+          if (unwritten.length === objects.length) await discardIfWhollyUnwritten();
           await release(unwritten);
         } catch {
           // An ambiguous release must leave the reservation for recovery.

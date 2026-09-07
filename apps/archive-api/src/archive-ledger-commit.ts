@@ -24,8 +24,6 @@ import {
 } from './archive-ledger-state';
 import { readLedgerScan, readLedgerSnapshot } from './archive-ledger-storage';
 import {
-  commitIntent,
-  discardPendingIntent,
   readIntent,
   readPendingIntent,
   markIntentReady,
@@ -36,6 +34,12 @@ import {
   pendingIntentStateHash,
   type PendingIntent,
 } from './archive-ledger-intent';
+import {
+  commitIntentAndEnqueueBudgetCommit,
+  discardIntentAndRelease,
+  drainPendingBudgetCommits,
+  drainPendingReleases,
+} from './archive-ledger-release-outbox';
 import { reconcileArchiveUpload } from './archive-ledger-reconciliation';
 import { buildAcknowledgement, intentDigest, parseCommitEnvelope } from './archive-ledger-support';
 import { getArchiveWrappedKeyVersion } from './archive-key-client';
@@ -60,6 +64,8 @@ export async function commitArchiveSession(
   env: ArchiveApiEnv,
   value: unknown,
 ): Promise<ArchiveAcknowledgement> {
+  await drainPendingReleases(storage, env);
+  await drainPendingBudgetCommits(storage, env);
   const envelope = parseCommitEnvelope(value);
   const existingFailure = readSessionIntegrity(storage, envelope.scope);
   if (existingFailure) throw new ArchiveSessionIntegrityError(existingFailure, false);
@@ -296,7 +302,7 @@ async function commitArchiveSessionEnvelope(
       ),
     });
     if (!reservation.accepted) {
-      await discardDefinitelyUnwrittenIntent(storage, budget, envelope.scope.orgId, priorIntent);
+      await discardDefinitelyUnwrittenIntent(storage, env, priorIntent);
       throw new ArchiveContractError('storage_cap_exceeded');
     }
     if (priorIntent.status !== 'write_authorized') {
@@ -312,19 +318,16 @@ async function commitArchiveSessionEnvelope(
             storageBudgetObject(object, writeKeyMaterial.keyVersion),
           ),
         }),
-      () => discardPendingIntent(storage, intentHash, 'proven_unwritten'),
+      async () => {
+        const pending = readPendingIntent(storage);
+        if (pending?.intentHash !== intentHash) {
+          throw new ArchiveContractError('pending_intent_corrupt');
+        }
+        await discardIntentAndRelease(storage, env, pending, 'proven_unwritten');
+      },
     );
-    await budget.commitStorage({
-      orgId: envelope.scope.orgId,
-      objects: priorIntent.objects.map((object) =>
-        storageBudgetObject(object, writeKeyMaterial.keyVersion),
-      ),
-    });
-    commitIntent(storage, intentHash, priorIntent.commit, priorIntent.acknowledgement);
-    await budget.recordArchiveAcknowledgement({
-      orgId: envelope.scope.orgId,
-      acknowledgedAt: Date.now(),
-    });
+    commitIntentAndEnqueueBudgetCommit(storage, priorIntent);
+    await drainPendingBudgetCommits(storage, env);
     return priorIntent.acknowledgement;
   }
   const intent: PendingIntent = {
@@ -345,7 +348,7 @@ async function commitArchiveSessionEnvelope(
     objects: objects.map((object) => storageBudgetObject(object, writeKeyMaterial.keyVersion)),
   });
   if (!reservation.accepted) {
-    await discardDefinitelyUnwrittenIntent(storage, budget, envelope.scope.orgId, intent);
+    await discardDefinitelyUnwrittenIntent(storage, env, intent);
     throw new ArchiveContractError('storage_cap_exceeded');
   }
   markIntentWriteAuthorized(storage, intentHash);
@@ -359,17 +362,16 @@ async function commitArchiveSessionEnvelope(
           storageBudgetObject(object, writeKeyMaterial.keyVersion),
         ),
       }),
-    () => discardPendingIntent(storage, intentHash, 'proven_unwritten'),
+    async () => {
+      const pending = readPendingIntent(storage);
+      if (pending?.intentHash !== intentHash) {
+        throw new ArchiveContractError('pending_intent_corrupt');
+      }
+      await discardIntentAndRelease(storage, env, pending, 'proven_unwritten');
+    },
   );
-  await budget.commitStorage({
-    orgId: envelope.scope.orgId,
-    objects: objects.map((object) => storageBudgetObject(object, writeKeyMaterial.keyVersion)),
-  });
-  commitIntent(storage, intentHash, commit, acknowledgement);
-  await budget.recordArchiveAcknowledgement({
-    orgId: envelope.scope.orgId,
-    acknowledgedAt: Date.now(),
-  });
+  commitIntentAndEnqueueBudgetCommit(storage, { ...intent, status: 'write_authorized' });
+  await drainPendingBudgetCommits(storage, env);
   return acknowledgement;
 }
 

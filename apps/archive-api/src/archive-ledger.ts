@@ -9,6 +9,12 @@ import {
   ArchiveSessionIntegrityError,
   ensureSessionIntegrityTable,
 } from './archive-session-integrity';
+import {
+  armLedgerRecovery,
+  resumeLedgerRecovery,
+  scheduleLedgerRecovery,
+} from './archive-ledger-recovery';
+import { ensurePendingReleaseSchema } from './archive-ledger-release-outbox';
 
 export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
   private commitQueue: Promise<void> = Promise.resolve();
@@ -48,6 +54,7 @@ export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
     this.ctx.storage.sql.exec(
       'CREATE TABLE IF NOT EXISTS pending_intent_parts (intent_hash TEXT NOT NULL, object_index INTEGER NOT NULL, part_index INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (intent_hash, object_index, part_index))',
     );
+    ensurePendingReleaseSchema(this.ctx.storage);
     ensureSessionIntegrityTable(this.ctx.storage);
   }
 
@@ -66,11 +73,14 @@ export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
           ? (body as Record<string, unknown>).upload
           : undefined;
       assertIncomingObservationCount(upload);
+      await armLedgerRecovery(this.ctx.storage);
       const turn = this.commitQueue.then(() =>
-        commitArchiveSession(this.ctx.storage, this.env, body).then(
-          (acknowledgement) => ({ acknowledgement }),
-          (error: unknown) => ({ error }),
-        ),
+        commitArchiveSession(this.ctx.storage, this.env, body)
+          .then(
+            (acknowledgement) => ({ acknowledgement }),
+            (error: unknown) => ({ error }),
+          )
+          .finally(() => scheduleLedgerRecovery(this.ctx.storage)),
       );
       this.commitQueue = turn.then(() => undefined);
       const result = await turn;
@@ -100,5 +110,32 @@ export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
       }
       return Response.json({ error: errorClass }, { status: statusFor(errorClass) });
     }
+  }
+
+  async alarm(): Promise<void> {
+    const turn = this.commitQueue.then(async () => {
+      let retry = true;
+      try {
+        await resumeLedgerRecovery(this.ctx.storage, this.env);
+      } catch (error) {
+        if (
+          error instanceof ArchiveContractError &&
+          error.errorClass === 'storage_object_metadata_mismatch'
+        ) {
+          retry = false;
+        }
+        console.error(
+          JSON.stringify({
+            event: 'archive_ledger.recovery_failed',
+            errorClass: error instanceof Error ? error.name : 'unknown_error',
+          }),
+        );
+      } finally {
+        if (retry) await scheduleLedgerRecovery(this.ctx.storage);
+        else await this.ctx.storage.deleteAlarm();
+      }
+    });
+    this.commitQueue = turn.then(() => undefined);
+    await turn;
   }
 }

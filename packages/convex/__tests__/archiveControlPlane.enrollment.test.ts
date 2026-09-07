@@ -174,6 +174,86 @@ describe('archive control plane enrollment', () => {
     }
   });
 
+  it('cleans rotated key custody only for the exact seeded organization', async () => {
+    process.env.TRACE_FLOW_ARCHIVE_INTEGRATION_TEST_ENABLED = 'true';
+    try {
+      const world = await seedWorld();
+      const primary = await world.t.mutation(
+        internal.archiveIntegrationSeed.seedConcurrentEnrollment,
+        {},
+      );
+      const foreign = await world.t.mutation(
+        internal.archiveIntegrationSeed.seedConcurrentEnrollment,
+        {},
+      );
+      await world.t.run(async (ctx) => {
+        for (const keyVersion of [1, 2, 3]) {
+          await ctx.db.insert('archiveEncryptionKeyVersions', {
+            orgId: primary.orgId,
+            keyVersion,
+            wrappedKey: `primary-wrapped-key-${keyVersion}`,
+            createdAt: Date.now(),
+          });
+        }
+        await ctx.db.insert('archiveEncryptionCustody', {
+          orgId: primary.orgId,
+          activeKeyVersion: 3,
+          rotationStatus: 'succeeded',
+          updatedAt: Date.now(),
+        });
+        await ctx.db.insert('archiveEncryptionKeyVersions', {
+          orgId: foreign.orgId,
+          keyVersion: 2,
+          wrappedKey: 'foreign-wrapped-key-2',
+          createdAt: Date.now(),
+        });
+        await ctx.db.insert('archiveEncryptionCustody', {
+          orgId: foreign.orgId,
+          activeKeyVersion: 2,
+          rotationStatus: 'succeeded',
+          updatedAt: Date.now(),
+        });
+      });
+
+      await world.t.mutation(internal.archiveIntegrationSeed.cleanupConcurrentEnrollment, {
+        orgId: primary.orgId,
+      });
+
+      const remaining = await world.t.run(async (ctx) => ({
+        primaryOrg: await ctx.db.get(primary.orgId),
+        primaryCustody: await ctx.db
+          .query('archiveEncryptionCustody')
+          .withIndex('by_org_id', (q) => q.eq('orgId', primary.orgId))
+          .collect(),
+        primaryKeys: await ctx.db
+          .query('archiveEncryptionKeyVersions')
+          .withIndex('by_org_id', (q) => q.eq('orgId', primary.orgId))
+          .collect(),
+        foreignOrg: await ctx.db.get(foreign.orgId),
+        foreignCustody: await ctx.db
+          .query('archiveEncryptionCustody')
+          .withIndex('by_org_id', (q) => q.eq('orgId', foreign.orgId))
+          .collect(),
+        foreignKeys: await ctx.db
+          .query('archiveEncryptionKeyVersions')
+          .withIndex('by_org_id', (q) => q.eq('orgId', foreign.orgId))
+          .collect(),
+      }));
+      expect(remaining.primaryOrg).toBeNull();
+      expect(remaining.primaryCustody).toHaveLength(0);
+      expect(remaining.primaryKeys).toHaveLength(0);
+      expect(remaining.foreignOrg).not.toBeNull();
+      expect(remaining.foreignCustody).toHaveLength(1);
+      expect(remaining.foreignKeys).toHaveLength(1);
+
+      await world.t.mutation(internal.archiveIntegrationSeed.cleanupConcurrentEnrollment, {
+        orgId: foreign.orgId,
+      });
+    } finally {
+      delete process.env.TRACE_FLOW_ARCHIVE_INTEGRATION_TEST_ENABLED;
+    }
+  });
+
   it('does not treat convex-test Promise.all as OCC concurrent first enrollment', async () => {
     enableArchive();
     const world = await seedWorld();

@@ -249,9 +249,9 @@ function applyInventoryObject(storage: DurableObjectStorage, object: InventoryOb
     ),
   ][0];
   assertInventoryMetadata(row, object);
-  if (row && (row.status === 'reserved' || row.key_version === null)) {
+  if (row?.key_version === null) {
     storage.sql.exec(
-      "UPDATE storage_budget_objects SET status = 'committed', key_version = ? WHERE object_key = ?",
+      'UPDATE storage_budget_objects SET key_version = ? WHERE object_key = ?',
       object.keyVersion,
       object.objectKey,
     );

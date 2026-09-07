@@ -442,7 +442,6 @@ export async function reserveBudgetStorage(
     const additions: StorageBudgetObject[] = [];
     const existingObjects: StorageBudgetObject[] = [];
     for (const object of objects) {
-      assertWritableKeyVersion(storage, object.keyVersion);
       const existing = [
         ...storage.sql.exec<{
           object_class: StorageBudgetObjectClass;
@@ -453,9 +452,13 @@ export async function reserveBudgetStorage(
           object.objectKey,
         ),
       ][0];
-      if (existing) assertExistingObject(existing, object);
-      else if (existingInR2.get(object.objectKey)) existingObjects.push(object);
-      else additions.push(object);
+      if (existing) {
+        assertExistingObject(existing, object);
+      } else {
+        assertWritableKeyVersion(storage, object.keyVersion);
+        if (existingInR2.get(object.objectKey)) existingObjects.push(object);
+        else additions.push(object);
+      }
     }
     const additionalBytes = additions.reduce((sum, object) => sum + object.bytes, 0);
     const existingBytes = existingObjects.reduce((sum, object) => sum + object.bytes, 0);
@@ -512,18 +515,35 @@ export function commitBudgetStorage(
     budgetState(storage, input.orgId);
     const rows = new Map<string, { bytes: number; status: 'reserved' | 'committed' }>();
     for (const object of objects) {
-      assertWritableKeyVersion(storage, object.keyVersion);
       const row = [
         ...storage.sql.exec<{
           object_class: StorageBudgetObjectClass;
           bytes: number;
           expires_at: string | null;
           status: 'reserved' | 'committed';
+          key_version: number | null;
         }>('SELECT * FROM storage_budget_objects WHERE object_key = ?', object.objectKey),
       ][0];
       if (!row) throw new ArchiveContractError('storage_reservation_missing');
-      assertExistingObject(row, object);
-      rows.set(object.objectKey, row);
+      if (
+        row.status === 'committed' &&
+        typeof object.keyVersion === 'number' &&
+        typeof row.key_version === 'number' &&
+        row.key_version > object.keyVersion
+      ) {
+        if (row.object_class !== object.objectClass || row.expires_at !== object.expiresAt) {
+          throw new ArchiveContractError('storage_object_metadata_mismatch');
+        }
+      } else {
+        assertExistingObject(row, object);
+        if (row.key_version !== (object.keyVersion ?? null)) {
+          throw new ArchiveContractError('storage_object_metadata_mismatch');
+        }
+      }
+      rows.set(object.objectKey, {
+        bytes: row.bytes,
+        status: row.status,
+      });
     }
     let committedBytes = 0;
     for (const [objectKey, row] of rows) {

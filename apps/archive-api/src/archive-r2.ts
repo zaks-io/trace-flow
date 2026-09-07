@@ -125,6 +125,7 @@ export async function verifyOrPutImmutableObject(
   try {
     const keyVersion = object.keyVersion ?? keyVersionFromBody(object.body);
     await bucket.put(object.key, object.body, {
+      onlyIf: new Headers({ 'If-None-Match': '*' }),
       httpMetadata: { contentType: 'application/json' },
       customMetadata: archiveKeyVersionMetadata(keyVersion),
     });
