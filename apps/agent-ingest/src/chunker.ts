@@ -65,10 +65,10 @@ export function assertFactsFitQueueMessages(
 }
 
 /**
- * Greedily packs the five fact arrays into one or more queue messages, each under
+ * Greedily packs the fact arrays into one or more queue messages, each under
  * {@link MAX_QUEUE_MESSAGE_BYTES}. Facts are independent at rest (the consumer dedups on the
  * deterministic `*_pk`s), so a session may straddle messages without affecting correctness. A
- * A single oversized fact is rejected instead of producing a queue message Cloudflare will refuse.
+ * single oversized fact is rejected instead of producing a queue message Cloudflare will refuse.
  */
 export function chunkFacts(
   base: Omit<AgentIngestQueueMessage, 'facts'>,
