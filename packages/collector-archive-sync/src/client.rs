@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::ack::ArchiveAcknowledgement;
 use crate::error::ArchiveClientError;
+use crate::policy::ArchivePolicyResponse;
 
 const COLLECTOR_SECRET_HEADER: &str = "X-Trace-Flow-Collector-Secret";
 const ARCHIVE_SOURCE_HEADER: &str = "X-Trace-Flow-Archive-Source";
@@ -56,6 +57,26 @@ impl ArchiveClient {
 
     pub fn with_reqwest_client(client: Client, config: ArchiveClientConfig) -> Self {
         Self { client, config }
+    }
+
+    pub async fn fetch_policy(&self) -> Result<ArchivePolicyResponse, ArchiveClientError> {
+        let url = format!(
+            "{}/v1/archive/policy",
+            self.config.archive_url.trim_end_matches('/')
+        );
+        let response = self
+            .client
+            .get(&url)
+            .header(COLLECTOR_SECRET_HEADER, self.config.credential.as_str())
+            .send()
+            .await
+            .map_err(|err| ArchiveClientError::Transport(anyhow!("http send failed: {err}")))?;
+        let status = response.status().as_u16();
+        let body = response
+            .text()
+            .await
+            .map_err(|_| ArchiveClientError::InvalidPolicy)?;
+        classify_policy_response(status, &body)
     }
 }
 
@@ -151,6 +172,33 @@ fn classify_response(
     }
 }
 
+fn classify_policy_response(
+    status: u16,
+    body: &str,
+) -> Result<ArchivePolicyResponse, ArchiveClientError> {
+    if (200..300).contains(&status) {
+        return serde_json::from_str(body).map_err(|_| ArchiveClientError::InvalidPolicy);
+    }
+    let parsed: ErrorBody = serde_json::from_str(body).unwrap_or(ErrorBody {
+        error: None,
+        reason: None,
+    });
+    match status {
+        401 => Err(ArchiveClientError::Unauthorized {
+            reason: parsed.reason.unwrap_or_default(),
+        }),
+        403 => Err(ArchiveClientError::Forbidden {
+            reason: parsed.reason.unwrap_or_default(),
+        }),
+        503 => Err(ArchiveClientError::Unavailable {
+            reason: parsed.reason.or(parsed.error).unwrap_or_default(),
+        }),
+        _ => Err(ArchiveClientError::UploadRejected {
+            reason: parsed.reason.or(parsed.error).unwrap_or_default(),
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,6 +222,29 @@ mod tests {
         assert!(matches!(
             err,
             Err(ArchiveClientError::InvalidAcknowledgement)
+        ));
+    }
+
+    #[test]
+    fn policy_response_preserves_history_choice_and_authorized_at() {
+        let policy = classify_policy_response(
+            200,
+            r#"{"enrolled":true,"authorizedSources":[{"source":"claude","historyChoice":"all_history","authorizedAt":1770000000001}],"reason":null}"#,
+        )
+        .unwrap();
+        let confirmed = policy.confirmed().unwrap();
+        assert_eq!(confirmed.policy, crate::policy::ArchivePolicy::Enrolled);
+        assert_eq!(
+            confirmed.authorized_sources[0].authorized_at,
+            1_770_000_000_001
+        );
+    }
+
+    #[test]
+    fn malformed_policy_response_fails_loud() {
+        assert!(matches!(
+            classify_policy_response(200, r#"{"enrolled":true}"#),
+            Err(ArchiveClientError::InvalidPolicy)
         ));
     }
 }

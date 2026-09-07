@@ -29,9 +29,9 @@ use anyhow::{Context, Result};
 use collector_api_client::{CollectorApiClient, CollectorApiClientConfig};
 use collector_archive::ArchiveSource;
 use collector_archive_sync::{
-    archive_source_session_id, finish_terminal_cleanup, policy_from_denial_reason,
-    run_archive_cycle, transcript_part_for, ArchiveClient, ArchiveClientConfig, ArchiveCycleReport,
-    ArchiveEnrollmentRecord, ArchiveSnapshot, OsKeyStore,
+    archive_source_session_id, finish_terminal_cleanup, run_archive_cycle, transcript_part_for,
+    ArchiveClient, ArchiveClientConfig, ArchiveCycleReport, ArchiveEnrollmentRecord,
+    ArchiveSnapshot, OsKeyStore,
 };
 
 pub use collector_archive_sync::{
@@ -307,13 +307,9 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
 
     apply_archive_policy_after_cycle(cfg.archive.as_ref(), cfg.org_id, archive.as_mut(), &reports);
 
-    let archive_incomplete = archive
-        .as_ref()
-        .is_some_and(|report| report.failed > 0 && !report.purged);
     let complete = reports
         .iter()
-        .all(|(_, report)| report.failed == 0 && !report.aborted_early)
-        && !archive_incomplete;
+        .all(|(_, report)| report.failed == 0 && !report.aborted_early);
     if complete {
         // The pass started at `now_ms`; anything modified after that is caught by the next pass's
         // grace window. A pass with failures keeps the old watermark so the failed files stay in scope.
@@ -394,8 +390,10 @@ fn apply_archive_policy_after_cycle(
     // retention. Those states only retain for frozen/expired/grace denials, not for
     // credential_revoked / enrollment_invalid / deleting / revoked.
     let fact_revoked = reports.iter().any(|(_, report)| {
-        ingest_denial_reason(&report.first_error).and_then(policy_from_denial_reason)
-            == Some(ArchivePolicy::Revoked)
+        matches!(
+            ingest_denial_reason(&report.first_error),
+            Some("credential_revoked" | "enrollment_invalid" | "deleting" | "revoked")
+        )
     });
     let archive_halted = archive.as_ref().is_some_and(|report| report.halted);
     if archive_purged || fact_revoked || archive_halted {

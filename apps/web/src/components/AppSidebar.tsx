@@ -20,6 +20,7 @@ import {
   Layers,
   Bot,
   MessageSquare,
+  Archive,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -53,6 +54,7 @@ const navItems: NavItem[] = [
 
 const settingsItems: NavItem[] = [
   { title: 'Billing', href: '/app/settings/billing', icon: CreditCard },
+  { title: 'Archive', href: '/app/settings/archive', icon: Archive },
   { title: 'API Keys', href: '/app/api-keys', icon: Key },
   { title: 'Alerts', href: '/app/alerts', icon: Bell },
 ];
