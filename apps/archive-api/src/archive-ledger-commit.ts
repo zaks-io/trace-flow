@@ -25,6 +25,7 @@ import {
 import { readLedgerScan, readLedgerSnapshot } from './archive-ledger-storage';
 import {
   commitIntent,
+  discardPendingIntent,
   readIntent,
   readPendingIntent,
   markIntentReady,
@@ -43,7 +44,7 @@ import {
   discardDefinitelyUnwrittenIntent,
   pendingExpectedObjects,
   recoverPendingIntent,
-  resolveIntentKeyMaterial,
+  resolveIntentKeyMaterialOrDiscardUnwritten,
   unwrapKey,
   verifyObjectsAndReleaseDefinitivelyUnwritten,
   verifyPendingIntentBodies,
@@ -111,7 +112,7 @@ async function commitArchiveSessionEnvelope(
   }
 
   const intentHash = await intentDigest({ scope: envelope.scope, upload });
-  const priorIntent = readIntent(storage, intentHash);
+  let priorIntent = readIntent(storage, intentHash);
   const budget = env.STORAGE_BUDGET.getByName(envelope.scope.orgId);
   if (priorIntent?.status === 'committed') {
     await budget.recordArchiveAcknowledgement({
@@ -148,9 +149,17 @@ async function commitArchiveSessionEnvelope(
     const { payload: _payload, ...metadata } = element;
     return metadata;
   });
-  const writeKeyMaterial = priorIntent
-    ? await resolveIntentKeyMaterial(env, envelope, priorIntent)
-    : { keyVersion: envelope.keyVersion, wrappedKey: envelope.wrappedKey };
+  let writeKeyMaterial = { keyVersion: envelope.keyVersion, wrappedKey: envelope.wrappedKey };
+  if (priorIntent) {
+    const recoveredKeyMaterial = await resolveIntentKeyMaterialOrDiscardUnwritten(
+      storage,
+      env,
+      envelope,
+      priorIntent,
+    );
+    if (recoveredKeyMaterial) writeKeyMaterial = recoveredKeyMaterial;
+    else priorIntent = null;
+  }
   const nextState: LedgerSnapshot = {
     ...state,
     scope: envelope.scope,
@@ -303,6 +312,7 @@ async function commitArchiveSessionEnvelope(
             storageBudgetObject(object, writeKeyMaterial.keyVersion),
           ),
         }),
+      () => discardPendingIntent(storage, intentHash, 'proven_unwritten'),
     );
     await budget.commitStorage({
       orgId: envelope.scope.orgId,
@@ -339,11 +349,17 @@ async function commitArchiveSessionEnvelope(
     throw new ArchiveContractError('storage_cap_exceeded');
   }
   markIntentWriteAuthorized(storage, intentHash);
-  await verifyObjectsAndReleaseDefinitivelyUnwritten(env.ARCHIVE_STORAGE, objects, (unwritten) =>
-    budget.releaseStorage({
-      orgId: envelope.scope.orgId,
-      objects: unwritten.map((object) => storageBudgetObject(object, writeKeyMaterial.keyVersion)),
-    }),
+  await verifyObjectsAndReleaseDefinitivelyUnwritten(
+    env.ARCHIVE_STORAGE,
+    objects,
+    (unwritten) =>
+      budget.releaseStorage({
+        orgId: envelope.scope.orgId,
+        objects: unwritten.map((object) =>
+          storageBudgetObject(object, writeKeyMaterial.keyVersion),
+        ),
+      }),
+    () => discardPendingIntent(storage, intentHash, 'proven_unwritten'),
   );
   await budget.commitStorage({
     orgId: envelope.scope.orgId,

@@ -315,6 +315,7 @@ describe('StorageBudget Durable Object', () => {
             orgId,
             objects: unwritten.map((item) => object(item.key, item.body.length)),
           }),
+        () => {},
       ),
     ).rejects.toThrow('read_before_put_failed');
     expect(putCalls).toBe(0);
@@ -346,11 +347,15 @@ describe('StorageBudget Durable Object', () => {
       keyVersion: 1,
     }));
     await expect(
-      verifyObjectsAndReleaseDefinitivelyUnwritten(partialBucket, planned, (unwritten) =>
-        stub.releaseStorage({
-          orgId,
-          objects: unwritten.map((item) => object(item.key, item.body.length)),
-        }),
+      verifyObjectsAndReleaseDefinitivelyUnwritten(
+        partialBucket,
+        planned,
+        (unwritten) =>
+          stub.releaseStorage({
+            orgId,
+            objects: unwritten.map((item) => object(item.key, item.body.length)),
+          }),
+        () => {},
       ),
     ).rejects.toThrow('partial_put_ambiguous');
     expect(await runtimeEnv.ARCHIVE_STORAGE.head(attempted[0]!.objectKey)).not.toBeNull();

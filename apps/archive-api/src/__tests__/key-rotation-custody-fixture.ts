@@ -18,6 +18,7 @@ export class FakeArchiveCustody {
   readonly keyFetches: number[] = [];
   readonly auditBodies: Record<string, unknown>[] = [];
   auditFailuresRemaining = 0;
+  destroyFailuresRemaining = 0;
 
   handle(pathname: string, body: Record<string, unknown>): Response {
     if (pathname === '/archive-api/status') {
@@ -74,6 +75,10 @@ export class FakeArchiveCustody {
           { status: 409 },
         );
       }
+      if (this.destroyFailuresRemaining > 0) {
+        this.destroyFailuresRemaining -= 1;
+        return Response.json({ error: 'Archive key destroy unavailable' }, { status: 503 });
+      }
       if (this.activeVersion === keyVersion) {
         return Response.json({ error: 'Active archive key cannot be destroyed' }, { status: 409 });
       }
@@ -83,7 +88,9 @@ export class FakeArchiveCustody {
       return Response.json({ destroyed: true });
     }
     if (pathname === '/archive-api/key/rotation-failed') {
-      if (this.operationId === body.operationId) this.rotationStatus = 'failed';
+      if (this.operationId === body.operationId && this.rotationStatus !== 'succeeded') {
+        this.rotationStatus = 'failed';
+      }
       return Response.json({ recorded: true });
     }
     if (pathname === '/archive-api/key') {

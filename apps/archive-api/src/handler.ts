@@ -11,8 +11,9 @@ import {
   getArchiveWrappedKey,
   isArchiveSupportedSource,
 } from './enrollment';
-import { getActiveArchiveWrappedKey } from './archive-key-client';
+import { getActiveArchiveWrappedKey, markArchiveKeyRotationFailed } from './archive-key-client';
 import { mintAndActivateNextKey } from './archive-key-rotation';
+import type { ArchiveKeyRotationHealth } from './archive-key-rotation-state';
 import {
   ARCHIVE_EXPORT_GRANT_HEADER,
   authenticateArchiveExportGrant,
@@ -469,14 +470,28 @@ export async function handleRotateKey(c: Context<{ Bindings: ArchiveApiEnv }>): 
       typeof body.operationId === 'string' ? body.operationId : undefined,
     );
     const budget = c.env.STORAGE_BUDGET.getByName(body.orgId);
-    await budget.startKeyRotation({
-      orgId: body.orgId,
-      operationId: activation.operationId,
-      fromVersion: activation.fromVersion,
-      toVersion: activation.toVersion,
-      activationId: activation.activationId,
-    });
-    const health = await budget.advanceKeyRotation({ orgId: body.orgId });
+    let health: ArchiveKeyRotationHealth;
+    try {
+      await budget.startKeyRotation({
+        orgId: body.orgId,
+        operationId: activation.operationId,
+        fromVersion: activation.fromVersion,
+        toVersion: activation.toVersion,
+        activationId: activation.activationId,
+      });
+      health = await budget.advanceKeyRotation({ orgId: body.orgId });
+    } catch (error) {
+      try {
+        await markArchiveKeyRotationFailed(
+          c.env,
+          { orgId: body.orgId, operationId: activation.operationId },
+          logger,
+        );
+      } catch (compensationError) {
+        logger.error('archive_api.key_rotation_start_compensation_failed', compensationError);
+      }
+      throw error;
+    }
     logger.info('archive_api.key_rotation_started', {
       replay: activation.replay,
       status: health.status,

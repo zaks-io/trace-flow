@@ -26,7 +26,7 @@ import {
 import { assertPlannedChain } from './archive-chain';
 import type { LedgerSnapshot } from './archive-ledger-state';
 
-export async function resolveIntentKeyMaterial(
+async function resolveIntentKeyMaterial(
   env: ArchiveApiEnv,
   envelope: { scope: ArchiveScope; keyVersion: number; wrappedKey: string },
   pending: PendingIntent,
@@ -52,6 +52,32 @@ export async function resolveIntentKeyMaterial(
   }
 }
 
+export async function resolveIntentKeyMaterialOrDiscardUnwritten(
+  storage: DurableObjectStorage,
+  env: ArchiveApiEnv,
+  envelope: { scope: ArchiveScope; keyVersion: number; wrappedKey: string },
+  pending: PendingIntent,
+): Promise<{ keyVersion: number; wrappedKey: string } | null> {
+  try {
+    return await resolveIntentKeyMaterial(env, envelope, pending);
+  } catch (error) {
+    if (!(error instanceof ArchiveContractError) || error.errorClass !== 'key_unavailable') {
+      throw error;
+    }
+    const unwritten = await definitelyUnwrittenObjects(env.ARCHIVE_STORAGE, pending.objects);
+    if (unwritten.length !== pending.objects.length) throw error;
+    discardPendingIntent(storage, pending.intentHash, 'proven_unwritten');
+    const budget = env.STORAGE_BUDGET.getByName(envelope.scope.orgId);
+    await budget.releaseStorage({
+      orgId: envelope.scope.orgId,
+      objects: pending.objects.map((object) =>
+        storageBudgetObject(object, pending.commit?.keyVersion),
+      ),
+    });
+    return null;
+  }
+}
+
 export async function recoverPendingIntent(
   storage: DurableObjectStorage,
   env: ArchiveApiEnv,
@@ -62,7 +88,13 @@ export async function recoverPendingIntent(
   if (!pending.commit) {
     throw new ArchiveContractError('pending_intent_corrupt');
   }
-  const keyMaterial = await resolveIntentKeyMaterial(env, envelope, pending);
+  const keyMaterial = await resolveIntentKeyMaterialOrDiscardUnwritten(
+    storage,
+    env,
+    envelope,
+    pending,
+  );
+  if (!keyMaterial) return;
   const archiveKey = await unwrapKey(env, { ...envelope, ...keyMaterial });
   const expectedObjects = await assertPendingIntentAuthenticated({
     ...pending,
@@ -133,6 +165,7 @@ export async function recoverPendingIntent(
         orgId: envelope.scope.orgId,
         objects: unwritten.map((object) => storageBudgetObject(object, keyMaterial.keyVersion)),
       }),
+    () => discardPendingIntent(storage, pending.intentHash, 'proven_unwritten'),
   );
   await budget.commitStorage({
     orgId: envelope.scope.orgId,
@@ -157,13 +190,13 @@ export async function discardDefinitelyUnwrittenIntent(
   pending: PendingIntent,
 ): Promise<void> {
   if (pending.status === 'write_authorized') return;
+  discardPendingIntent(storage, pending.intentHash, 'unreserved_only');
   await budget.releaseStorage({
     orgId,
     objects: pending.objects.map((object) =>
       storageBudgetObject(object, pending.commit?.keyVersion),
     ),
   });
-  discardPendingIntent(storage, pending.intentHash);
 }
 
 export function pendingExpectedObjects(
@@ -264,6 +297,7 @@ export async function verifyObjectsAndReleaseDefinitivelyUnwritten(
   bucket: R2Bucket,
   objects: ArchiveR2Object[],
   release: (objects: ArchiveR2Object[]) => Promise<unknown>,
+  discardIfWhollyUnwritten: () => void,
 ): Promise<void> {
   try {
     await verifyObjects(bucket, objects);
@@ -272,6 +306,7 @@ export async function verifyObjectsAndReleaseDefinitivelyUnwritten(
       const unwritten = await definitelyUnwrittenObjects(bucket, error.definitelyUnwritten);
       if (unwritten.length > 0) {
         try {
+          if (unwritten.length === objects.length) discardIfWhollyUnwritten();
           await release(unwritten);
         } catch {
           // An ambiguous release must leave the reservation for recovery.

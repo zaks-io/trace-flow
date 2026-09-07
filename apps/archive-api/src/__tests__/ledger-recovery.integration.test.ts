@@ -194,7 +194,7 @@ describe('Archive Session Ledger', () => {
       if (!pending) throw new Error('pending intent missing');
       markIntentReady(state.storage, pending.intentHash);
       markIntentWriteAuthorized(state.storage, pending.intentHash);
-      discardPendingIntent(state.storage, pending.intentHash);
+      discardPendingIntent(state.storage, pending.intentHash, 'unreserved_only');
       return readPendingIntent(state.storage);
     });
     expect(authorizedIntent).toMatchObject({ status: 'write_authorized' });

@@ -229,11 +229,19 @@ export function markIntentWriteAuthorized(storage: DurableObjectStorage, intentH
   });
 }
 
-export function discardPendingIntent(storage: DurableObjectStorage, intentHash: string): void {
+export function discardPendingIntent(
+  storage: DurableObjectStorage,
+  intentHash: string,
+  mode: 'unreserved_only' | 'proven_unwritten',
+): void {
+  const statuses =
+    mode === 'proven_unwritten'
+      ? "('building', 'ready', 'write_authorized')"
+      : "('building', 'ready')";
   storage.transactionSync(() => {
     const deletable = [
       ...storage.sql.exec<{ intent_hash: string }>(
-        "SELECT intent_hash FROM pending_intents WHERE intent_hash = ? AND status IN ('building', 'ready')",
+        `SELECT intent_hash FROM pending_intents WHERE intent_hash = ? AND status IN ${statuses}`,
         intentHash,
       ),
     ][0];

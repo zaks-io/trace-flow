@@ -31,6 +31,7 @@ import {
   call,
   newLedger,
   seedPendingCommit,
+  storageBudgetObject,
   readLedgerSnapshot,
   expectIntegrity,
   expectAgentFactSyncAccepted,
@@ -41,7 +42,63 @@ import type {
   StoredRecord,
   ArchiveApiEnv,
   AgentIngestEnv,
+  StorageBudget,
 } from './ledger.integration.fixtures';
+import { ACTIVATION_ID, FakeArchiveCustody, installCustody } from './key-rotation-custody-fixture';
+import { wrapKey } from './key-rotation-crypto-fixture';
+
+async function rotateAwayVersionOne(
+  orgId: string,
+  custody: FakeArchiveCustody,
+): Promise<{ budget: DurableObjectStub<StorageBudget>; wrappedKey: string }> {
+  const wrappedKey = await wrapKey(orgId, 2);
+  custody.versions.set(1, await archiveKey(orgId));
+  custody.versions.set(2, wrappedKey);
+  custody.activeVersion = 2;
+  custody.retiringVersion = 1;
+  custody.operationId = `rotate:${orgId}:1:2`;
+  custody.rotationStatus = 'rotating';
+  const budget = runtimeEnv.STORAGE_BUDGET.getByName(orgId);
+  await budget.startKeyRotation({
+    orgId,
+    operationId: custody.operationId,
+    fromVersion: 1,
+    toVersion: 2,
+    activationId: ACTIVATION_ID,
+  });
+  await expect(budget.advanceKeyRotation({ orgId })).resolves.toMatchObject({
+    status: 'succeeded',
+  });
+  expect(custody.versions.has(1)).toBe(false);
+  return { budget, wrappedKey };
+}
+
+async function leaveReadyIntentWithoutReservation(
+  currentScope: ArchiveScope,
+  upload: ArchiveUploadRequest,
+) {
+  const request = await envelope(currentScope, upload);
+  const stub = newLedger(currentScope);
+  const interruptedEnv = {
+    ...runtimeEnv,
+    STORAGE_BUDGET: {
+      getByName: () => ({
+        reserveStorage: async () => {
+          throw new Error('abort_before_storage_reservation');
+        },
+      }),
+    },
+  } as unknown as ArchiveApiEnv;
+  await expect(
+    runInDurableObject(stub, (_instance, state) =>
+      commitArchiveSession(state.storage, interruptedEnv, request),
+    ),
+  ).rejects.toThrow('abort_before_storage_reservation');
+  await expect(
+    runInDurableObject(stub, (_instance, state) => readPendingIntent(state.storage)),
+  ).resolves.toMatchObject({ status: 'ready' });
+  return { request, stub };
+}
 
 describe('Archive Session Ledger', () => {
   beforeEach(() => {
@@ -486,6 +543,278 @@ describe('Archive Session Ledger', () => {
     const recovered = await call(stub, request);
     expect(recovered.response.status).toBe(200);
     expect(recovered.body).toMatchObject({ generation: 1 });
+  });
+
+  it('discards a wholly unwritten intent before a lost release response', async () => {
+    const currentScope = scope('codex', `release-response-${crypto.randomUUID()}`);
+    const record = await observation(
+      currentScope.source,
+      currentScope.sourceSessionId,
+      partFor(currentScope.source),
+      'release-response-record',
+      '{"release_response":true}',
+    );
+    const upload = {
+      source_session_id: currentScope.sourceSessionId,
+      observations: [record],
+      checkpoint: await checkpoint(
+        currentScope.source,
+        currentScope.sourceSessionId,
+        partFor(currentScope.source),
+        [record],
+      ),
+      complete_prefix_base64: base64(exactPrefix([record])),
+    } satisfies ArchiveUploadRequest;
+    const request = await envelope(currentScope, upload);
+    const stub = newLedger(currentScope);
+    const interruptedEnv = {
+      ...runtimeEnv,
+      ARCHIVE_STORAGE: {
+        get: async () => {
+          throw new Error('r2_read_failed_before_put');
+        },
+        head: async () => null,
+      } as unknown as R2Bucket,
+      STORAGE_BUDGET: {
+        getByName: (orgId: string) => {
+          const delegated = runtimeEnv.STORAGE_BUDGET.getByName(orgId);
+          return {
+            reserveStorage: (input: Parameters<typeof delegated.reserveStorage>[0]) =>
+              delegated.reserveStorage(input),
+            releaseStorage: async (input: Parameters<typeof delegated.releaseStorage>[0]) => {
+              await delegated.releaseStorage(input);
+              throw new Error('release_response_lost');
+            },
+          };
+        },
+      },
+    } as unknown as ArchiveApiEnv;
+
+    await expect(
+      runInDurableObject(stub, (_instance, state) =>
+        commitArchiveSession(state.storage, interruptedEnv, request),
+      ),
+    ).rejects.toThrow('r2_read_failed_before_put');
+    const realBudget = runtimeEnv.STORAGE_BUDGET.getByName(currentScope.orgId);
+    await expect(
+      runInDurableObject(stub, (_instance, state) => readPendingIntent(state.storage)),
+    ).resolves.toBeNull();
+    await expect(
+      realBudget.countKeyVersionReferences({ orgId: currentScope.orgId, keyVersion: KEY_VERSION }),
+    ).resolves.toBe(0);
+
+    const retried = await call(stub, request);
+    expect(retried.response.status).toBe(200);
+    expect(retried.body).toMatchObject({ generation: 1 });
+    expect(
+      await realBudget.countKeyVersionReferences({
+        orgId: currentScope.orgId,
+        keyVersion: KEY_VERSION,
+      }),
+    ).toBeGreaterThan(0);
+  });
+
+  it.each(['identical', 'extended'] as const)(
+    'self-heals an unreserved ready intent after key destruction on an %s retry',
+    async (retryShape) => {
+      const currentScope = scope('codex', `ready-${retryShape}-${crypto.randomUUID()}`);
+      const first = await observation(
+        currentScope.source,
+        currentScope.sourceSessionId,
+        partFor(currentScope.source),
+        'ready-record-0',
+        '{"ready":0}',
+      );
+      const initialUpload = {
+        source_session_id: currentScope.sourceSessionId,
+        observations: [first],
+        checkpoint: await checkpoint(
+          currentScope.source,
+          currentScope.sourceSessionId,
+          partFor(currentScope.source),
+          [first],
+        ),
+        complete_prefix_base64: base64(exactPrefix([first])),
+      } satisfies ArchiveUploadRequest;
+      const { stub } = await leaveReadyIntentWithoutReservation(currentScope, initialUpload);
+      const budget = runtimeEnv.STORAGE_BUDGET.getByName(currentScope.orgId);
+      expect(
+        await budget.countKeyVersionReferences({
+          orgId: currentScope.orgId,
+          keyVersion: KEY_VERSION,
+        }),
+      ).toBe(0);
+
+      const custody = new FakeArchiveCustody();
+      const custodyFetch = installCustody(custody);
+      try {
+        const rotation = await rotateAwayVersionOne(currentScope.orgId, custody);
+        const observations = [first];
+        if (retryShape === 'extended') {
+          observations.push(
+            await observation(
+              currentScope.source,
+              currentScope.sourceSessionId,
+              partFor(currentScope.source),
+              'ready-record-1',
+              '{"ready":1}',
+              1_700_000_000_001,
+            ),
+          );
+        }
+        const retryUpload = {
+          source_session_id: currentScope.sourceSessionId,
+          observations,
+          checkpoint: await checkpoint(
+            currentScope.source,
+            currentScope.sourceSessionId,
+            partFor(currentScope.source),
+            observations,
+          ),
+          complete_prefix_base64: base64(exactPrefix(observations)),
+        } satisfies ArchiveUploadRequest;
+        const retried = await call(stub, {
+          ...(await envelope(currentScope, retryUpload)),
+          keyVersion: 2,
+          wrappedKey: rotation.wrappedKey,
+        });
+        expect(retried.response.status).toBe(200);
+        expect(retried.body).toMatchObject({ generation: 1 });
+        expect(custody.keyFetches).toContain(1);
+        expect(
+          await runInDurableObject(stub, (_instance, state) => readPendingIntent(state.storage)),
+        ).toBeNull();
+      } finally {
+        custodyFetch.mockRestore();
+      }
+    },
+  );
+
+  it.each([
+    { label: 'partially written', ambiguousHead: false },
+    { label: 'ambiguous', ambiguousHead: true },
+  ])('keeps a $label intent pinned to its retiring key', async ({ ambiguousHead }) => {
+    const currentScope = scope('codex', `pinned-${ambiguousHead}-${crypto.randomUUID()}`);
+    const record = await observation(
+      currentScope.source,
+      currentScope.sourceSessionId,
+      partFor(currentScope.source),
+      'pinned-record',
+      '{"pinned":true}',
+    );
+    const upload = {
+      source_session_id: currentScope.sourceSessionId,
+      observations: [record],
+      checkpoint: await checkpoint(
+        currentScope.source,
+        currentScope.sourceSessionId,
+        partFor(currentScope.source),
+        [record],
+      ),
+      complete_prefix_base64: base64(exactPrefix([record])),
+    } satisfies ArchiveUploadRequest;
+    const { request, stub } = await leaveReadyIntentWithoutReservation(currentScope, upload);
+    const realBudget = runtimeEnv.STORAGE_BUDGET.getByName(currentScope.orgId);
+    const ready = await runInDurableObject(stub, (_instance, state) =>
+      readPendingIntent(state.storage),
+    );
+    if (!ready) throw new Error('ready pending intent missing');
+    await runInDurableObject(realBudget, async (instance: StorageBudget, state) => {
+      await instance.reserveStorage({
+        orgId: currentScope.orgId,
+        objects: [storageBudgetObject(ready.objects[0]!, KEY_VERSION)],
+      });
+      await state.storage.deleteAlarm();
+    });
+    let firstObjectKey: string | undefined;
+    const failingBucket = {
+      get: async (key: string) => {
+        firstObjectKey ??= key;
+        if (ambiguousHead) throw new Error('r2_read_failed_before_put');
+        return runtimeEnv.ARCHIVE_STORAGE.get(key);
+      },
+      head: async (key: string) => {
+        const existing = await runtimeEnv.ARCHIVE_STORAGE.head(key);
+        if (ambiguousHead && key === firstObjectKey) throw new Error('r2_head_ambiguous');
+        return existing;
+      },
+      put: async (key: string, body: string, options?: R2PutOptions) => {
+        firstObjectKey ??= key;
+        await runtimeEnv.ARCHIVE_STORAGE.put(key, body, options);
+        throw new Error('partial_put_ambiguous');
+      },
+    } as unknown as R2Bucket;
+    const interruptedEnv = {
+      ...runtimeEnv,
+      ARCHIVE_STORAGE: failingBucket,
+      STORAGE_BUDGET: {
+        getByName: () => ({
+          reserveStorage: async () => ({ accepted: true }),
+          releaseStorage: async () => undefined,
+        }),
+      },
+    } as unknown as ArchiveApiEnv;
+
+    await expect(
+      runInDurableObject(stub, (_instance, state) =>
+        commitArchiveSession(state.storage, interruptedEnv, request),
+      ),
+    ).rejects.toThrow(ambiguousHead ? 'r2_read_failed_before_put' : 'partial_put_ambiguous');
+    const pending = await runInDurableObject(stub, (_instance, state) =>
+      readPendingIntent(state.storage),
+    );
+    expect(pending).toMatchObject({ status: 'write_authorized' });
+    const references = await realBudget.countKeyVersionReferences({
+      orgId: currentScope.orgId,
+      keyVersion: KEY_VERSION,
+    });
+    expect(references).toBe(1);
+
+    const custody = new FakeArchiveCustody();
+    const custodyFetch = installCustody(custody);
+    try {
+      const wrappedKey = await wrapKey(currentScope.orgId, 2);
+      custody.versions.set(1, await archiveKey(currentScope.orgId));
+      custody.versions.set(2, wrappedKey);
+      custody.activeVersion = 2;
+      custody.retiringVersion = 1;
+      custody.operationId = `rotate:${currentScope.orgId}:1:2`;
+      custody.rotationStatus = 'rotating';
+      const advanced = await runInDurableObject(realBudget, async (instance: StorageBudget) => {
+        await instance.startKeyRotation({
+          orgId: currentScope.orgId,
+          operationId: custody.operationId!,
+          fromVersion: 1,
+          toVersion: 2,
+          activationId: ACTIVATION_ID,
+        });
+        return instance.advanceKeyRotation({ orgId: currentScope.orgId });
+      });
+      expect(advanced).toMatchObject({ status: 'rotating', remainingReferences: 1 });
+      expect(
+        await realBudget.countKeyVersionReferences({
+          orgId: currentScope.orgId,
+          keyVersion: KEY_VERSION,
+        }),
+      ).toBeGreaterThan(0);
+      expect(custody.destroyCalls).toEqual([]);
+
+      custody.versions.delete(1);
+      await expect(
+        runInDurableObject(stub, (_instance, state) =>
+          commitArchiveSession(state.storage, interruptedEnv, {
+            ...request,
+            keyVersion: 2,
+            wrappedKey,
+          }),
+        ),
+      ).rejects.toThrow('key_unavailable');
+      expect(
+        await runInDurableObject(stub, (_instance, state) => readPendingIntent(state.storage)),
+      ).toMatchObject({ status: 'write_authorized' });
+    } finally {
+      custodyFetch.mockRestore();
+    }
   });
 
   it('removes a definitely unwritten intent after a relaunched reservation is capped', async () => {

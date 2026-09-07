@@ -126,9 +126,10 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     toVersion: number;
     activationId: string;
   }): Promise<ArchiveKeyRotationHealth> {
-    return this.enqueueExclusive(() => {
+    return this.enqueueExclusive(async () => {
       budgetState(this.ctx.storage, input.orgId);
       const state = startStoredRotation(this.ctx.storage, input);
+      await this.scheduleAlarmIfNeeded();
       return rotationHealth(input.orgId, state);
     });
   }
@@ -157,6 +158,9 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
       const health = await advanceStoredRotation(this.ctx.storage, this.env, logger, input);
       await this.scheduleAlarmIfNeeded();
       return health;
+    } catch (error) {
+      await this.scheduleAlarmIfNeeded();
+      throw error;
     } finally {
       this.ctx.waitUntil(logger.flush());
     }
