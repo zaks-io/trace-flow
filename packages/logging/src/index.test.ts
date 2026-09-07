@@ -1,6 +1,7 @@
 import { formatTraceparent } from '@trace-flow/utils';
 import {
   createLogger,
+  createWorkerLogger,
   recordFromLogger,
   serializeError,
   traceContextFromHeaders,
@@ -27,7 +28,7 @@ describe('serializeError', () => {
 });
 
 describe('trace context headers', () => {
-  it('round-trips trace context with baggage fields', () => {
+  it('drops reserved context baggage while preserving ordinary baggage', () => {
     const headers = traceContextToHeaders({
       traceId: '0123456789abcdef0123456789abcdef',
       parentSpanId: '0123456789abcdef',
@@ -45,13 +46,36 @@ describe('trace context headers', () => {
       parentSpanId: '0123456789abcdef',
       traceState: 'vendor=value',
       traceFlags: 1,
-      requestId: 'req_123',
-      workflowId: 'wf_123',
-      orgId: 'org_123',
-      userId: 'user_123',
-      sessionId: 'session_123',
       baggage: { feature: 'billing' },
     });
+  });
+
+  it('does not promote public request identity baggage into log fields', () => {
+    const messages: string[] = [];
+    const logger = createWorkerLogger({
+      service: 'proxy',
+      request: new Request('https://example.test/v1/traces', {
+        headers: {
+          baggage:
+            'request_id=forged-request,workflow_id=forged-workflow,org_id=forged-org,user_id=forged-user,session_id=forged-session',
+        },
+      }),
+      console: {
+        debug: (value) => messages.push(String(value)),
+        info: (value) => messages.push(String(value)),
+        warn: (value) => messages.push(String(value)),
+        error: (value) => messages.push(String(value)),
+      },
+    });
+
+    logger.info('request.received');
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).not.toContain('forged-request');
+    expect(messages[0]).not.toContain('forged-workflow');
+    expect(messages[0]).not.toContain('forged-org');
+    expect(messages[0]).not.toContain('forged-user');
+    expect(messages[0]).not.toContain('forged-session');
   });
 
   it('parses an existing traceparent header', () => {

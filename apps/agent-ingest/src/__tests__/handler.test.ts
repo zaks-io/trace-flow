@@ -300,6 +300,28 @@ describe('POST /v1/ingest', () => {
     expect(queueSend).not.toHaveBeenCalled();
   });
 
+  it('413s a fact that cannot fit in a queue message before claiming its session', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    const oversized = envelope({
+      facts: facts({
+        pull_request_links: [
+          {
+            ...facts().pull_request_links[0]!,
+            url: `https://example.test/${'x'.repeat(130_000)}`,
+          },
+        ],
+      }),
+    });
+
+    const res = await post(env, JSON.stringify(oversized), authHeaders);
+
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ error: 'payload_too_large' });
+    expect(claimResponder).toBeNull();
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
   it('drops every conflicted session and 202s a no-op', async () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
     interceptPolicy(200, POLICY);
@@ -368,6 +390,32 @@ describe('POST /v1/ingest', () => {
     expect(res.status).toBe(202);
     expect(await res.json()).toMatchObject({ sessions: 1 });
     expect(queueSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('timestamps queued facts after the ownership claim completes', async () => {
+    let now = 1_700_000_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    claimResponder = (_req, body) => {
+      now += 1_000;
+      const parsed = JSON.parse(body) as { sessionPks: string[] };
+      return new Response(
+        JSON.stringify({
+          results: parsed.sessionPks.map((sessionPk) => ({
+            sessionPk,
+            status: 'claimed',
+            ownerUserId: 'user-1',
+          })),
+        }),
+      );
+    };
+
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+
+    expect(res.status).toBe(202);
+    const sentGroup = queueSend.mock.calls[0]![0] as { body: AgentIngestQueueMessage }[];
+    expect(sentGroup[0]!.body.enqueued_at).toBe(1_700_000_001_000);
   });
 
   it('ignores legacy raw-upload fields without storing or forwarding them', async () => {

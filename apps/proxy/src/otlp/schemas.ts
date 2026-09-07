@@ -15,7 +15,10 @@ const OTLPAnyValueSchema = z
   .object({
     stringValue: z.string().optional(),
     boolValue: z.boolean().optional(),
-    intValue: z.string().optional().openapi({ description: 'int64 as string' }),
+    intValue: z
+      .union([z.string(), z.number().int()])
+      .optional()
+      .openapi({ description: 'int64 as a decimal string or safe integer' }),
     doubleValue: z.number().optional(),
     arrayValue: z
       .object({

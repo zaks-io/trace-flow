@@ -10,6 +10,7 @@ import type { TracingDecision } from '../context';
 import { applyTierToTraces, transformOTLPToTraces } from './transform';
 import { decodeOTLPProtobuf, readOTLPBody, OTLPProtoDecodeError } from './decode';
 import type { OTLPExportTraceServiceRequest, OTLPExportTraceServiceResponse } from './types';
+import { validateOTLPRequest } from './validation';
 import {
   buildTraceDeliveryEnvelope,
   enqueueTraceDelivery,
@@ -32,23 +33,14 @@ interface Env {
 const MAX_REQUEST_SIZE = 10 * 1024 * 1024; // 10MB, pre- and post-decompression
 const JSON_CONTENT_TYPE = 'application/json';
 const PROTOBUF_CONTENT_TYPE = 'application/x-protobuf';
-// Bounds on attribute values logged from user payloads: prevents a single malicious
-// span from ballooning our Axiom ingest, and caps the cost of a sampled request.
 const LOG_VALUE_MAX_CHARS = 256;
 const LOG_KEY_MAX_CHARS = 128;
-const LOG_MAX_ATTRS = 20;
-const LOG_MAX_SERVICE_NAMES = 10;
+const LOG_MAX_SCOPE_NAMES = 10;
 const LOG_MAX_SPAN_NAMES = 10;
 const LOG_MAX_ATTR_KEYS = 50;
 // Keys we refuse to include in logs because downstream consumers (and JSON
 // serializers) treat them as object-shape metadata.
 const LOG_FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
-
-interface ValidationResult {
-  valid: boolean;
-  error?: string;
-  rejectedSpans?: number;
-}
 
 interface OTLPRejection {
   logReason: string;
@@ -72,104 +64,6 @@ function otlpRejectionFor(reason: TracingDecision['reason']): OTLPRejection {
   }
 }
 
-function validateOTLPRequest(request: unknown): ValidationResult {
-  if (!request || typeof request !== 'object') {
-    return { valid: false, error: 'Request body must be an object' };
-  }
-
-  const req = request as OTLPExportTraceServiceRequest;
-
-  if (!Array.isArray(req.resourceSpans)) {
-    return { valid: false, error: 'resourceSpans must be an array' };
-  }
-
-  let spanCount = 0;
-
-  for (const resourceSpan of req.resourceSpans) {
-    if (!resourceSpan || typeof resourceSpan !== 'object') {
-      return { valid: false, error: 'Each resourceSpan must be an object' };
-    }
-
-    if (!Array.isArray(resourceSpan.scopeSpans)) {
-      return { valid: false, error: 'scopeSpans must be an array' };
-    }
-
-    for (const scopeSpan of resourceSpan.scopeSpans) {
-      if (!scopeSpan || typeof scopeSpan !== 'object') {
-        return { valid: false, error: 'Each scopeSpan must be an object' };
-      }
-
-      if (!Array.isArray(scopeSpan.spans)) {
-        return { valid: false, error: 'spans must be an array' };
-      }
-
-      for (const span of scopeSpan.spans) {
-        spanCount++;
-        const spanValidation = validateSpan(span, spanCount);
-        if (!spanValidation.valid) {
-          return spanValidation;
-        }
-      }
-    }
-  }
-
-  return { valid: true };
-}
-
-/**
- * OTLP timestamps are integer nanoseconds carried as a decimal string (or, loosely, a JSON
- * number). `transformSpan` feeds them to `BigInt()`, which throws on non-integer numbers
- * (`1.5`), exponent strings (`"1e18"`), and non-numeric strings (`"abc"`). Validate up front so a
- * malformed exporter gets a 400 instead of an uncaught 500 the SDK would retry.
- */
-function isIntegerNano(value: unknown): boolean {
-  if (typeof value === 'number') return Number.isInteger(value);
-  if (typeof value === 'string') return /^-?\d+$/.test(value);
-  return false;
-}
-
-function validateSpan(span: unknown, spanIndex: number): ValidationResult {
-  if (!span || typeof span !== 'object') {
-    return { valid: false, error: `Span ${spanIndex} must be an object` };
-  }
-
-  const s = span as Record<string, unknown>;
-
-  if (!s.traceId || typeof s.traceId !== 'string') {
-    return { valid: false, error: `Span ${spanIndex}: traceId is required and must be a string` };
-  }
-
-  if (!s.spanId || typeof s.spanId !== 'string') {
-    return { valid: false, error: `Span ${spanIndex}: spanId is required and must be a string` };
-  }
-
-  if (!s.name || typeof s.name !== 'string') {
-    return { valid: false, error: `Span ${spanIndex}: name is required and must be a string` };
-  }
-
-  if (!s.startTimeUnixNano) {
-    return { valid: false, error: `Span ${spanIndex}: startTimeUnixNano is required` };
-  }
-  if (!isIntegerNano(s.startTimeUnixNano)) {
-    return {
-      valid: false,
-      error: `Span ${spanIndex}: startTimeUnixNano must be an integer nanosecond value`,
-    };
-  }
-
-  if (!s.endTimeUnixNano) {
-    return { valid: false, error: `Span ${spanIndex}: endTimeUnixNano is required` };
-  }
-  if (!isIntegerNano(s.endTimeUnixNano)) {
-    return {
-      valid: false,
-      error: `Span ${spanIndex}: endTimeUnixNano must be an integer nanosecond value`,
-    };
-  }
-
-  return { valid: true };
-}
-
 type ParsedContentType = 'json' | 'protobuf' | 'unsupported';
 
 function classifyContentType(contentType: string | undefined): ParsedContentType {
@@ -188,16 +82,8 @@ function sanitizeLogKey(key: string): string | null {
   return truncate(key, LOG_KEY_MAX_CHARS);
 }
 
-function sanitizeLogValue(value: unknown): unknown {
-  if (typeof value === 'string') return truncate(value, LOG_VALUE_MAX_CHARS);
-  return value;
-}
-
 /**
- * Emits a bounded snapshot of the ingested payload so we can verify the real
- * data shape from new OTLP clients. Runs only after auth + billing + usage
- * gating to avoid logging for tenants we are already rejecting, and all
- * user-supplied keys/values are length-capped and sanitized.
+ * Emits bounded structural metadata after auth and usage gating. Attribute values never enter logs.
  */
 function logPayloadSample(
   logger: Logger,
@@ -207,24 +93,15 @@ function logPayloadSample(
 ): void {
   const resourceSpanCount = body.resourceSpans.length;
   let spanCount = 0;
-  const serviceNames = new Set<string>();
   const scopeNames = new Set<string>();
   const spanNames: string[] = [];
   const attributeKeys = new Set<string>();
-  let firstSpanAttrs: Record<string, unknown> | undefined;
 
-  outer: for (const rs of body.resourceSpans) {
-    const svc = rs.resource?.attributes?.find((a) => a.key === 'service.name');
-    if (svc && serviceNames.size < LOG_MAX_SERVICE_NAMES) {
-      const v = svc.value;
-      const name =
-        v.stringValue ??
-        v.intValue ??
-        (v.boolValue !== undefined ? String(v.boolValue) : undefined);
-      if (name) serviceNames.add(truncate(name, LOG_VALUE_MAX_CHARS));
-    }
+  for (const rs of body.resourceSpans) {
     for (const ss of rs.scopeSpans) {
-      if (ss.scope?.name) scopeNames.add(truncate(ss.scope.name, LOG_KEY_MAX_CHARS));
+      if (ss.scope?.name && scopeNames.size < LOG_MAX_SCOPE_NAMES) {
+        scopeNames.add(truncate(ss.scope.name, LOG_KEY_MAX_CHARS));
+      }
       for (const span of ss.spans) {
         spanCount++;
         if (spanNames.length < LOG_MAX_SPAN_NAMES) {
@@ -237,23 +114,6 @@ function logPayloadSample(
             if (k) attributeKeys.add(k);
           }
         }
-        if (!firstSpanAttrs && span.attributes && span.attributes.length > 0) {
-          firstSpanAttrs = {};
-          for (const attr of span.attributes.slice(0, LOG_MAX_ATTRS)) {
-            const k = sanitizeLogKey(attr.key);
-            if (!k) continue;
-            const v = attr.value;
-            const raw =
-              v.stringValue ??
-              v.intValue ??
-              v.doubleValue ??
-              v.boolValue ??
-              (v.arrayValue ? '<array>' : v.kvlistValue ? '<kvlist>' : undefined);
-            firstSpanAttrs[k] = sanitizeLogValue(raw);
-          }
-          // Early exit: one span's attributes is enough to verify shape.
-          if (firstSpanAttrs) break outer;
-        }
       }
     }
   }
@@ -263,11 +123,9 @@ function logPayloadSample(
     bytes,
     resourceSpanCount,
     spanCount,
-    serviceNames: [...serviceNames],
     scopeNames: [...scopeNames],
     spanNamesSample: spanNames,
     attributeKeys: [...attributeKeys],
-    firstSpanAttributes: firstSpanAttrs,
   });
 }
 
@@ -398,14 +256,15 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
       error: validation.error,
     });
     c.executionCtx.waitUntil(orgLogger.flush());
+    const status = validation.status ?? 400;
     return c.json(
       {
         error: {
-          code: 400,
+          code: status,
           message: validation.error,
         },
       },
-      400,
+      status,
     );
   }
 

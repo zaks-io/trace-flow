@@ -123,16 +123,13 @@ export interface ConvexLoggerOptions extends Omit<LoggerOptions, 'runtime'> {
 
 const DEFAULT_AXIOM_DATASET = 'cloudflare';
 const DEFAULT_AXIOM_DOMAIN = 'api.axiom.co';
-const KNOWN_BAGGAGE_KEYS = {
-  request_id: 'requestId',
-  workflow_id: 'workflowId',
-  org_id: 'orgId',
-  user_id: 'userId',
-  session_id: 'sessionId',
-} as const;
-
-type BaggageKey = keyof typeof KNOWN_BAGGAGE_KEYS;
-type KnownContextKey = (typeof KNOWN_BAGGAGE_KEYS)[BaggageKey];
+const RESERVED_CONTEXT_BAGGAGE_KEYS = [
+  'request_id',
+  'workflow_id',
+  'org_id',
+  'user_id',
+  'session_id',
+] as const;
 
 function getHeader(
   headers: Headers | Record<string, string | undefined>,
@@ -469,26 +466,13 @@ export function traceContextFromHeaders(
   const traceState = getHeader(headers, 'tracestate') ?? undefined;
   const baggageEntries = parseBaggage(getHeader(headers, 'baggage'));
   const baggage = { ...baggageEntries };
-
-  const knownContext: Partial<Pick<TraceContext, KnownContextKey>> = {};
-
-  for (const [baggageKey, contextKey] of Object.entries(KNOWN_BAGGAGE_KEYS) as [
-    BaggageKey,
-    KnownContextKey,
-  ][]) {
-    const value = baggage[baggageKey];
-    if (value) {
-      knownContext[contextKey] = value;
-      delete baggage[baggageKey];
-    }
-  }
+  for (const baggageKey of RESERVED_CONTEXT_BAGGAGE_KEYS) delete baggage[baggageKey];
 
   return compactRecord({
     traceId: traceparent?.traceId,
     parentSpanId: traceparent?.parentId,
     traceState,
     traceFlags: traceparent?.flags,
-    ...knownContext,
     baggage: Object.keys(baggage).length > 0 ? baggage : undefined,
   });
 }
