@@ -115,7 +115,11 @@ function resolveTierPricing(tokens: LLMTokenUsage, pricing: ModelPricing): Model
   };
 }
 
-export function calculateCost(tokens: LLMTokenUsage, pricing: ModelPricing): CostBreakdown {
+export function calculateCost(
+  tokens: LLMTokenUsage,
+  pricing: ModelPricing,
+  requestProvider?: string,
+): CostBreakdown {
   const effective = resolveTierPricing(tokens, pricing);
 
   const promptTokens = tokens.promptTokens ?? 0;
@@ -133,6 +137,12 @@ export function calculateCost(tokens: LLMTokenUsage, pricing: ModelPricing): Cos
     effective.cacheWriteCostPerMillion ?? effective.promptCostPerMillion;
   const reasoningCostPerMillion =
     effective.reasoningCostPerMillion ?? effective.completionCostPerMillion;
+  // OpenRouter reports reasoning as a subset of completion tokens. This follows the request
+  // provider because pricing source records catalog provenance and may be overridden manually.
+  const nonReasoningCompletionTokens =
+    requestProvider === 'openrouter'
+      ? Math.max(0, completionTokens - reasoningTokens)
+      : completionTokens;
 
   // Calculate costs in microdollars
   // Formula: (tokens * pricePerMillion) / 1_000_000
@@ -140,7 +150,7 @@ export function calculateCost(tokens: LLMTokenUsage, pricing: ModelPricing): Cos
     (uncachedInputTokens * effective.promptCostPerMillion) / 1_000_000,
   );
   const outputCostMicrodollars = Math.round(
-    (completionTokens * effective.completionCostPerMillion) / 1_000_000,
+    (nonReasoningCompletionTokens * effective.completionCostPerMillion) / 1_000_000,
   );
   const cacheReadCostMicrodollars = Math.round(
     (cacheReadTokens * cacheReadCostPerMillion) / 1_000_000,

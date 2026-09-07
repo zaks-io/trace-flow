@@ -210,9 +210,13 @@ describe('buildSpans tools, non-streaming responses, and costs', () => {
       expect(rootSpan.SpanAttributes['gen_ai.cost.cache_creation']).toBe('0.00375');
     });
 
-    it('should add reasoning cost when > 0', () => {
+    it('should count OpenRouter reasoning once in cost attributes', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,
+        request: {
+          ...baseQueueMessage.request,
+          provider: 'openrouter',
+        },
         tokens: {
           promptTokens: 1000,
           completionTokens: 500,
@@ -225,6 +229,9 @@ describe('buildSpans tools, non-streaming responses, and costs', () => {
 
       // 200 * 15M / 1M = 3000 microdollars = $0.003
       expect(rootSpan.SpanAttributes['gen_ai.cost.reasoning']).toBe('0.003');
+      // Output excludes the 200 reasoning tokens already included in OpenRouter's completion total.
+      expect(rootSpan.SpanAttributes['gen_ai.cost.output']).toBe('0.0045');
+      expect(rootSpan.SpanAttributes['gen_ai.cost.total']).toBe('0.0105');
     });
 
     it('should not include cache_read when cost is 0', () => {
