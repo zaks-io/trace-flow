@@ -490,15 +490,7 @@ jobs:
           ARCHIVE_KEY_WRAPPING_SECRET: ${{ secrets.ARCHIVE_KEY_WRAPPING_SECRET }}
 
       - name: Ensure US archive bucket
-        working-directory: apps/archive-api
-        run: |
-          if ! bunx wrangler r2 bucket info trace-flow-agent-archive-prod \
-            --jurisdiction us --json >/dev/null 2>&1; then
-            bunx wrangler r2 bucket create trace-flow-agent-archive-prod --jurisdiction us
-          fi
-          bunx wrangler r2 bucket info trace-flow-agent-archive-prod \
-            --jurisdiction us --json |
-            jq -e '.name == "trace-flow-agent-archive-prod"'
+        run: bun apps/archive-api/config/archive-r2-bucket.ts
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

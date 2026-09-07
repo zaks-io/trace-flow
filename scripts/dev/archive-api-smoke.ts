@@ -1,6 +1,10 @@
-import { spawn } from 'node:child_process';
 import { strict as assert } from 'node:assert';
 import { resolve } from 'node:path';
+import {
+  captureCommand,
+  formatProcessFailure,
+  sensitiveArgumentValues,
+} from './archive-api-process-diagnostics';
 import {
   createArchiveEncryptionKeyVersion,
   serializeArchiveWrappedKeyVersion,
@@ -68,8 +72,9 @@ class ConvexCommandError extends Error {
   constructor(
     functionName: string,
     readonly expectedAuthorizationFailure: boolean,
+    diagnostic: string,
   ) {
-    super(`${functionName} failed`);
+    super(`${functionName} failed\n${diagnostic}`);
   }
 }
 
@@ -79,7 +84,7 @@ function requiredEnvironment(name: string): string {
   return value;
 }
 
-function runConvex<T>(
+async function runConvex<T>(
   deployment: string,
   functionName: string,
   args: Record<string, unknown>,
@@ -100,73 +105,57 @@ function runConvex<T>(
   if (tokenIdentifier) cliArgs.push('--identity', JSON.stringify({ tokenIdentifier }));
   cliArgs.push(functionName, JSON.stringify(args));
 
-  return new Promise((resolveResult, reject) => {
-    const child = spawn(cli, cliArgs, {
-      cwd: repoRoot,
-      env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-    let stderr = '';
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    child.on('error', () => reject(new Error(`Unable to start ${functionName}`)));
-    child.on('close', (code) => {
-      if (code !== 0) {
-        reject(
-          new ConvexCommandError(functionName, stderr.includes('Collector Credential not found')),
-        );
-        return;
-      }
-      if (stdout.trim().length === 0) {
-        if (allowEmptyOutput) {
-          resolveResult(null as T);
-          return;
-        }
-        reject(new Error(`${functionName} returned no output`));
-        return;
-      }
-      try {
-        resolveResult(JSON.parse(stdout) as T);
-      } catch {
-        reject(new Error(`${functionName} returned invalid JSON`));
-      }
-    });
-  });
+  const sensitiveValues = [
+    ...(tokenIdentifier ? [tokenIdentifier] : []),
+    ...sensitiveArgumentValues(args),
+  ];
+  const result = await captureCommand(cli, cliArgs, { cwd: repoRoot });
+  if (result.exitCode !== 0) {
+    throw new ConvexCommandError(
+      functionName,
+      result.stderr.includes('Collector Credential not found'),
+      formatProcessFailure('Convex command', result, sensitiveValues),
+    );
+  }
+  if (result.stdout.trim().length === 0) {
+    if (allowEmptyOutput) return null as T;
+    throw new Error(
+      `${functionName} returned no output\n${formatProcessFailure(
+        'Convex command',
+        result,
+        sensitiveValues,
+      )}`,
+    );
+  }
+  try {
+    return JSON.parse(result.stdout) as T;
+  } catch {
+    throw new Error(
+      `${functionName} returned invalid JSON\n${formatProcessFailure(
+        'Convex command',
+        result,
+        sensitiveValues,
+      )}`,
+    );
+  }
 }
 
-function runWrangler(
+async function runWrangler(
   args: string[],
   expectedOutcome: 'success' | 'missing' = 'success',
+  sensitiveValues: string[] = [],
 ): Promise<void> {
   const cli = process.platform === 'win32' ? 'bunx.cmd' : 'bunx';
-  return new Promise((resolveResult, reject) => {
-    const child = spawn(cli, ['wrangler', ...args], {
-      cwd: archiveApiRoot,
-      env: process.env,
-      stdio: ['ignore', 'ignore', 'pipe'],
-    });
-    let stderr = '';
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    child.on('error', () => reject(new Error('Unable to start Wrangler')));
-    child.on('close', (code) => {
-      if (expectedOutcome === 'success' && code === 0) {
-        resolveResult();
-        return;
-      }
-      if (expectedOutcome === 'missing' && code !== 0 && stderr.includes('does not exist')) {
-        resolveResult();
-        return;
-      }
-      reject(new Error('Wrangler archive cleanup failed'));
-    });
-  });
+  const result = await captureCommand(cli, ['wrangler', ...args], { cwd: archiveApiRoot });
+  if (expectedOutcome === 'success' && result.exitCode === 0) return;
+  if (
+    expectedOutcome === 'missing' &&
+    result.exitCode !== 0 &&
+    result.stderr.includes('does not exist')
+  ) {
+    return;
+  }
+  throw new Error(formatProcessFailure('Wrangler archive cleanup', result, sensitiveValues));
 }
 
 function assertArchiveObjectKey(key: string): void {
@@ -190,19 +179,15 @@ async function deleteArchiveObjects(keys: Set<string>): Promise<void> {
   for (const key of keys) {
     assertArchiveObjectKey(key);
     const objectPath = `${expectedArchiveBucket}/${key}`;
-    await runWrangler([
-      'r2',
-      'object',
-      'delete',
-      objectPath,
-      '--remote',
-      '--jurisdiction',
-      'us',
-      '--force',
-    ]);
+    await runWrangler(
+      ['r2', 'object', 'delete', objectPath, '--remote', '--jurisdiction', 'us', '--force'],
+      'success',
+      [objectPath],
+    );
     await runWrangler(
       ['r2', 'object', 'get', objectPath, '--remote', '--jurisdiction', 'us', '--pipe'],
       'missing',
+      [objectPath],
     );
   }
 }
@@ -222,7 +207,7 @@ async function expectConvexFailure(
     ) {
       return;
     }
-    throw new Error(`${label} failed for an unexpected reason`);
+    throw new Error(`${label} failed for an unexpected reason`, { cause: error });
   }
   throw new Error(`${label} unexpectedly succeeded`);
 }
@@ -272,7 +257,7 @@ async function uploadFixture(source: ArchiveSource, sourceSessionId: string) {
     source_session_id: sourceSessionId,
     observations: [observation],
     checkpoint,
-    complete_prefix_base64: Buffer.from(prefix).toString('base64'),
+    complete_prefix_base64: btoa(String.fromCharCode(...prefix)),
   };
   const recordHead = await recordChainHash(GENESIS_CHAIN_HASH, 0, observation);
   const expectedChainHead = await checkpointChainHash(recordHead, 1, checkpoint);
@@ -557,8 +542,8 @@ async function main(): Promise<void> {
     const cleanup = async (label: string, operation: () => Promise<unknown>): Promise<void> => {
       try {
         await operation();
-      } catch {
-        cleanupFailures.push(label);
+      } catch (error) {
+        cleanupFailures.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
       }
     };
 

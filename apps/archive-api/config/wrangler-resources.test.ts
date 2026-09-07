@@ -90,9 +90,7 @@ function assertArchiveEnvironment(actual: WranglerConfig, environment: Environme
 
   if (environment === 'production') {
     assert.equal(actual.workers_dev, false);
-    assert.deepEqual(actual.routes, [
-      { pattern: 'archive.trace-flow.dev/*', zone_name: 'trace-flow.dev' },
-    ]);
+    assert.deepEqual(actual.routes, [{ pattern: 'archive.trace-flow.dev', custom_domain: true }]);
   }
 }
 
@@ -125,7 +123,7 @@ describe('Archive API Wrangler resources', () => {
     ['Durable Object binding', (config) => void config.durable_objects.bindings.pop()],
     ['Durable Object migration', (config) => void config.migrations?.pop()],
     ['required secret', (config) => void config.secrets?.required.pop()],
-    ['production route', (config) => void config.routes.pop()],
+    ['production custom domain', (config) => void config.routes.pop()],
   ];
 
   for (const [name, mutate] of missingProductionResources) {

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "deploy:dev": "wrangler deploy --env=\"\"",
+    "deploy:dev": "bun ../../scripts/dev/archive-api-deploy.ts",
     "deploy:preview": "wrangler deploy --env preview",
     "type-check": "tsc --noEmit",
     "lint": "eslint src",

@@ -94,41 +94,26 @@ the agent ingest queue.
 Both buckets use the `us` jurisdiction. Preview shares the Cloud-Dev bucket and KV but uses a distinct
 Worker and Durable Object namespace. Production deployment is the normal merge workflow: it checks the
 resolved Wrangler config, creates the exact production bucket when absent, and deploys only after Convex.
+The production Worker declares `archive.trace-flow.dev` as a
+[Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/).
+Cloudflare creates the DNS record and certificate during the first merge-driven deployment. Do not
+provision that DNS record manually.
 
 Cloud-Dev uses Convex deployment `hardy-iguana-812` and site
 `https://hardy-iguana-812.convex.site`. Do not substitute the production deployment
-`laudable-bison-427`. Before the first Cloud-Dev deploy, store stable values for
-`ARCHIVE_API_SHARED_SECRET` and `ARCHIVE_KEY_WRAPPING_SECRET` in the team secret manager. In one shell,
-load those values without echoing them, then provision the shared control-plane secret and Worker:
+`laudable-bison-427`. Store stable values for `ARCHIVE_API_SHARED_SECRET` and
+`ARCHIVE_KEY_WRAPPING_SECRET` in the team secret manager. The maintainer macOS Keychain mirrors those
+values under service `com.trace-flow.archive-api.cloud-dev`, using each binding name as its Keychain
+account. Do not replace the wrapping secret while the development bucket contains objects.
 
-The maintainer macOS Keychain mirrors those Cloud-Dev values under service
-`com.trace-flow.archive-api.cloud-dev`, using each binding name as its Keychain account. Do not replace
-the wrapping secret while the development bucket contains objects.
+The existing root deployment command reads the two values from the environment or that Keychain. It
+checks the exact Convex deployment, current Worker origin, bindings, and health before changing the
+Cloud-Dev Worker. It supplies both secrets and `CONVEX_SITE_URL` on every deployment, then verifies the
+new version:
 
 ```sh
-read -rs ARCHIVE_API_SHARED_SECRET
-read -rs ARCHIVE_KEY_WRAPPING_SECRET
-export ARCHIVE_API_SHARED_SECRET ARCHIVE_KEY_WRAPPING_SECRET
-umask 077
-secret_directory=$(mktemp -d)
-secrets_file="$secret_directory/archive.env"
-trap 'rm -rf "$secret_directory"' EXIT
-bunx convex env set --deployment hardy-iguana-812 ARCHIVE_API_SHARED_SECRET \
-  <<< "$ARCHIVE_API_SHARED_SECRET"
-bunx convex env set --deployment hardy-iguana-812 CONVERSATION_ARCHIVE_ENABLED true
-bunx convex env set --deployment hardy-iguana-812 TRACE_FLOW_ARCHIVE_INTEGRATION_TEST_ENABLED true
-( cd apps/archive-api && \
-  wrangler r2 bucket create trace-flow-agent-archive-dev --jurisdiction us )
-( cd apps/archive-api && \
-  printf 'ARCHIVE_API_SHARED_SECRET=%s\nARCHIVE_KEY_WRAPPING_SECRET=%s\n' \
-    "$ARCHIVE_API_SHARED_SECRET" "$ARCHIVE_KEY_WRAPPING_SECRET" > "$secrets_file" && \
-  wrangler deploy --env="" --secrets-file "$secrets_file" \
-    --var CONVEX_SITE_URL:https://hardy-iguana-812.convex.site )
-unset ARCHIVE_API_SHARED_SECRET ARCHIVE_KEY_WRAPPING_SECRET
+bun run deploy:dev
 ```
-
-If the bucket already exists, skip its create command after verifying it appears in
-`wrangler r2 bucket list --jurisdiction us`.
 
 The Preview and Production GitHub environments each require these stable secrets:
 
