@@ -25,6 +25,23 @@ function requestWithValue(value: unknown): unknown {
   };
 }
 
+function requestWithTimestamps(startTimeUnixNano: unknown, eventTimeUnixNano?: unknown) {
+  const span = {
+    traceId: 'trace-id',
+    spanId: 'span-id',
+    name: 'test',
+    startTimeUnixNano,
+    endTimeUnixNano: '2',
+    ...(eventTimeUnixNano === undefined
+      ? {}
+      : { events: [{ name: 'event', timeUnixNano: eventTimeUnixNano }] }),
+  };
+  return {
+    span,
+    request: { resourceSpans: [{ scopeSpans: [{ spans: [span] }] }] },
+  };
+}
+
 describe('validateOTLPRequest', () => {
   it('accepts and normalizes a numeric ProtoJSON intValue', () => {
     const request = requestWithValue({ intValue: 42 });
@@ -53,5 +70,22 @@ describe('validateOTLPRequest', () => {
       valid: false,
       status: 400,
     });
+  });
+
+  it.each(['-1', '18446744073709551616', '9'.repeat(1_000_000), Number.MAX_SAFE_INTEGER + 1])(
+    'rejects an unsafe span timestamp',
+    (timestamp) => {
+      const { request } = requestWithTimestamps(timestamp);
+
+      expect(validateOTLPRequest(request)).toMatchObject({ valid: false, status: 400 });
+    },
+  );
+
+  it('normalizes safe numeric span and event timestamps', () => {
+    const { request, span } = requestWithTimestamps(1, 2);
+
+    expect(validateOTLPRequest(request)).toEqual({ valid: true });
+    expect(span.startTimeUnixNano).toBe('1');
+    expect(span.events?.[0]!.timeUnixNano).toBe('2');
   });
 });

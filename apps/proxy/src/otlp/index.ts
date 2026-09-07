@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import type { OTLPQueueMessage, QueueMessageUnion } from '@trace-flow/types';
-import { getCurrentTimestamp } from '@trace-flow/utils';
+import { BodySizeLimitError, getCurrentTimestamp, readBodyWithLimit } from '@trace-flow/utils';
 import { currentSentryTraceContext } from '@trace-flow/utils/sentry-tracing';
 import { axiomConfigFromEnv, createWorkerLogger, type Logger } from '@trace-flow/logging';
 import { validateApiKey, isAuthError } from '../auth';
@@ -210,11 +210,19 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
   let decodedBytes = 0;
 
   try {
-    const raw = await c.req.raw.arrayBuffer();
-    // Catches chunked requests that omitted Content-Length; readOTLPBody
-    // enforces the same cap again post-decompression.
-    if (raw.byteLength > MAX_REQUEST_SIZE) {
-      orgLogger.warn('otlp.request_too_large', { actualBytes: raw.byteLength });
+    const raw = await readBodyWithLimit(c.req.raw.body, MAX_REQUEST_SIZE);
+
+    const decompressed = await readOTLPBody(raw, contentEncoding, MAX_REQUEST_SIZE);
+    decodedBytes = decompressed.byteLength;
+
+    if (contentType === 'protobuf') {
+      body = decodeOTLPProtobuf(decompressed);
+    } else {
+      body = JSON.parse(new TextDecoder().decode(decompressed)) as OTLPExportTraceServiceRequest;
+    }
+  } catch (err) {
+    if (err instanceof BodySizeLimitError) {
+      orgLogger.warn('otlp.request_too_large', { actualBytes: err.receivedBytes });
       c.executionCtx.waitUntil(orgLogger.flush());
       return c.json(
         {
@@ -226,16 +234,6 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
         413,
       );
     }
-
-    const decompressed = await readOTLPBody(raw, contentEncoding, MAX_REQUEST_SIZE);
-    decodedBytes = decompressed.byteLength;
-
-    if (contentType === 'protobuf') {
-      body = decodeOTLPProtobuf(decompressed);
-    } else {
-      body = JSON.parse(new TextDecoder().decode(decompressed)) as OTLPExportTraceServiceRequest;
-    }
-  } catch (err) {
     const event =
       contentType === 'protobuf' ? 'otlp.protobuf_decode_failed' : 'otlp.json_parse_failed';
     orgLogger.error(event, err, { contentEncoding });

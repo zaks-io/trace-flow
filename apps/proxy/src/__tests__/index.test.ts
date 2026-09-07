@@ -23,10 +23,8 @@ interface UpstreamMatcher {
  * `globalThis.fetch` and replies only to the matched upstream; any other
  * request throws, preserving `fetchMock.disableNetConnect()` semantics.
  *
- * The proxy `tee()`s the request body and forwards one half here. A real
- * upstream drains that stream — so must this mock, otherwise the tee
- * back-pressures and the capture side fails with "Can't read from request
- * stream after response has been sent."
+ * A real upstream consumes the forwarded body, so the mock does too. This also
+ * verifies that forwarding preserves the request bytes.
  */
 function mockUpstream(
   matcher: UpstreamMatcher,
@@ -541,7 +539,7 @@ describe('Proxy Worker Integration', () => {
       expect(headers.get('Custom-Header')).toBe('custom-value');
     });
 
-    it('should capture request body via tee()', async () => {
+    it('should capture the bounded request body', async () => {
       await setupValidApiKey('test-key');
 
       const largeBody = { test: 'data', large: 'x'.repeat(1000) };
