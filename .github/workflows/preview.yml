@@ -98,7 +98,7 @@ jobs:
           bunx convex env set --preview-name "$BRANCH_NAME" CONVERSATION_ARCHIVE_ENABLED true
         env:
           ARCHIVE_API_SHARED_SECRET: ${{ secrets.ARCHIVE_API_SHARED_SECRET }}
-          BRANCH_NAME: ${{ github.head_ref }}
+          BRANCH_NAME: ${{ needs.prepare.outputs.head_ref }}
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
 
   preview:
