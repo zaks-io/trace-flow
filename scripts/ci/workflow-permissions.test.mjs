@@ -9,11 +9,20 @@ function workflow(name) {
 }
 
 const claude = workflow('claude');
+const preview = workflow('preview');
 const authorize = new Function(
   'github',
   'context',
   'core',
   `return (async () => { ${claude.jobs.authorize.steps[0].with.script} })()`,
+);
+
+const resolvePreview = new Function(
+  'github',
+  'context',
+  'core',
+  'process',
+  `return (async () => { ${preview.jobs.prepare.steps[0].with.script} })()`,
 );
 
 async function checkCaller(permission, actor = 'contributor', eventName = 'issues', pull = {}) {
@@ -120,8 +129,102 @@ describe('automation caller authorization', () => {
   });
 });
 
-describe('credentialed PR checks', () => {
-  const preview = workflow('preview').jobs['deploy-convex'].if;
+describe('preview credential boundary', () => {
+  test('runs only through an owner-dispatched numeric PR input', () => {
+    expect(preview.on.pull_request).toBeUndefined();
+    expect(preview.on.workflow_dispatch.inputs.pull_request_number.type).toBe('number');
+
+    const ownerGate = new Function('github', `return (${preview.jobs.prepare.if});`);
+    expect(ownerGate({ actor: 'isuttell' })).toBe(true);
+    expect(ownerGate({ actor: 'maintainer' })).toBe(false);
+  });
+
+  test('resolves an open same-repository PR to its immutable head', async () => {
+    const outputs = {};
+    const failures = [];
+    await resolvePreview(
+      {
+        rest: {
+          pulls: {
+            get: async ({ owner, repo, pull_number }) => {
+              expect({ owner, repo, pull_number }).toEqual({
+                owner: 'zaks-io',
+                repo: 'trace-flow',
+                pull_number: 123,
+              });
+              return {
+                data: {
+                  state: 'open',
+                  head: {
+                    ref: 'security-fix',
+                    sha: '0123456789abcdef',
+                    repo: { full_name: 'zaks-io/trace-flow' },
+                  },
+                },
+              };
+            },
+          },
+        },
+      },
+      { repo: { owner: 'zaks-io', repo: 'trace-flow' } },
+      {
+        setFailed: (message) => failures.push(message),
+        setOutput: (key, value) => (outputs[key] = value),
+      },
+      { env: { PR_NUMBER: '123' } },
+    );
+
+    expect(failures).toEqual([]);
+    expect(outputs).toEqual({ head_ref: 'security-fix', head_sha: '0123456789abcdef' });
+  });
+
+  test.each([
+    ['closed', 'zaks-io/trace-flow'],
+    ['open', 'contributor/trace-flow'],
+  ])('rejects a PR with state %s from %s', async (state, fullName) => {
+    const outputs = {};
+    const failures = [];
+    await resolvePreview(
+      {
+        rest: {
+          pulls: {
+            get: async () => ({
+              data: {
+                state,
+                head: { ref: 'unsafe', sha: 'badc0de', repo: { full_name: fullName } },
+              },
+            }),
+          },
+        },
+      },
+      { repo: { owner: 'zaks-io', repo: 'trace-flow' } },
+      {
+        setFailed: (message) => failures.push(message),
+        setOutput: (key, value) => (outputs[key] = value),
+      },
+      { env: { PR_NUMBER: '123' } },
+    );
+
+    expect(failures).toHaveLength(1);
+    expect(outputs).toEqual({});
+  });
+
+  test('credentialed jobs use the authorized SHA without checkout credentials', () => {
+    for (const name of ['deploy-convex', 'preview']) {
+      const job = preview.jobs[name];
+      expect(job.needs).toContain('prepare');
+      const checkout = job.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+      expect(checkout.with.ref).toBe('${{ needs.prepare.outputs.head_sha }}');
+      expect(checkout.with['persist-credentials']).toBe(false);
+    }
+
+    expect(
+      preview.jobs.comment.steps.some((step) => step.uses?.startsWith('actions/checkout@')),
+    ).toBe(false);
+  });
+});
+
+describe('credentialed CI checks', () => {
   const cloudCheck = workflow('ci').jobs['tinybird-schema-check'].steps.find(
     (step) => step.name === 'Tinybird deploy --check (trace_flow_prod)',
   ).if;
@@ -138,9 +241,7 @@ describe('credentialed PR checks', () => {
       actor,
       event: { pull_request: { head: { repo: { full_name: repo } }, user: { login: author } } },
     };
-    for (const expression of [preview, cloudCheck]) {
-      expect(new Function('github', `return (${expression});`)(github)).toBe(allowed);
-    }
+    expect(new Function('github', `return (${cloudCheck});`)(github)).toBe(allowed);
   });
 
   test('main push retains the cloud schema check', () => {
