@@ -28,6 +28,7 @@ import {
   type TokenRatioDriftRow,
 } from './types';
 import { SummaryCards } from './SummaryCards';
+import { AgentOverview } from './AgentOverview';
 import { LlmCostDistributionCard } from './LlmCostDistributionCard';
 import { CostTimeseriesChart } from './CostTimeseriesChart';
 import { CostBreakdownChart } from './CostBreakdownChart';
@@ -386,6 +387,8 @@ export function UsageAnalytics({
             requestStats={requestStats}
             forecast={forecast}
           />
+
+          <AgentOverview startTimeNs={startTimeNs} endTimeNs={endTimeNs} />
 
           <LlmCostDistributionCard
             requestStats={requestStats}

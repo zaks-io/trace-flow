@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useAction } from 'convex/react';
 import { api } from '@trace-flow/convex/_generated/api';
 import { fetchTinybirdPipe, tinybirdKeys, type TinybirdResponse } from '@/lib/tinybird';
@@ -13,12 +13,23 @@ interface UseTinybirdQueryOptions<T, TResult> {
   transform?: (response: TinybirdResponse<T>) => TResult;
   staleTime?: number;
   gcTime?: number;
+  /** Keep showing the last result while a new param set loads instead of dropping to empty. */
+  keepPreviousData?: boolean;
 }
 
 export function useTinybirdQuery<T = unknown, TResult = TinybirdResponse<T>>(
   options: UseTinybirdQueryOptions<T, TResult>,
 ) {
-  const { pipe, params, enabled = true, pollInterval, transform, staleTime, gcTime } = options;
+  const {
+    pipe,
+    params,
+    enabled = true,
+    pollInterval,
+    transform,
+    staleTime,
+    gcTime,
+    keepPreviousData: keepPrevious = false,
+  } = options;
 
   const generateWebReadToken = useAction(api.integrations.tinybird.generateWebReadToken);
 
@@ -35,6 +46,7 @@ export function useTinybirdQuery<T = unknown, TResult = TinybirdResponse<T>>(
     retry: false,
     staleTime,
     gcTime,
+    placeholderData: keepPrevious ? keepPreviousData : undefined,
   });
 
   return {
