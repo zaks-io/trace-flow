@@ -68,6 +68,7 @@ pub enum PendingLoad {
 pub(crate) struct PendingLoads {
     pub loads: Vec<PendingLoad>,
     pub retained_excluded: Vec<ArchiveSource>,
+    pub metadata_errors: Vec<&'static str>,
 }
 
 pub struct ArchiveSpool {
@@ -295,6 +296,7 @@ impl ArchiveSpool {
     ) -> ArchiveSyncResult<PendingLoads> {
         let mut pending = Vec::new();
         let mut retained_excluded = Vec::new();
+        let mut metadata_errors = Vec::new();
         for source in [ArchiveSource::Claude, ArchiveSource::Codex] {
             let dir = self.root.join("pending").join(source.as_str());
             let Ok(entries) = fs::read_dir(&dir) else {
@@ -338,14 +340,18 @@ impl ArchiveSpool {
                     continue;
                 }
                 if !permits(source, session) {
-                    retained_excluded.extend(
-                        fs::read_dir(&path)?
-                            .filter_map(Result::ok)
-                            .filter(|entry| {
-                                entry.path().extension().and_then(|ext| ext.to_str()) == Some("bin")
-                            })
-                            .map(|_| source),
-                    );
+                    match fs::read_dir(&path) {
+                        Ok(entries) => retained_excluded.extend(
+                            entries
+                                .filter_map(Result::ok)
+                                .filter(|entry| {
+                                    entry.path().extension().and_then(|ext| ext.to_str())
+                                        == Some("bin")
+                                })
+                                .map(|_| source),
+                        ),
+                        Err(_) => metadata_errors.push(ArchiveSyncError::Corrupt.class()),
+                    }
                     continue;
                 }
                 let session = session.to_string();
@@ -398,7 +404,12 @@ impl ArchiveSpool {
                 }
             }
         }
-        self.collect_remainder_loads(&mut pending, &mut retained_excluded, permits)?;
+        self.collect_remainder_loads(
+            &mut pending,
+            &mut retained_excluded,
+            &mut metadata_errors,
+            permits,
+        )?;
         pending.sort_by(|left, right| {
             let left_key = load_sort_key(left);
             let right_key = load_sort_key(right);
@@ -412,6 +423,7 @@ impl ArchiveSpool {
         Ok(PendingLoads {
             loads: pending,
             retained_excluded,
+            metadata_errors,
         })
     }
 
@@ -918,6 +930,7 @@ impl ArchiveSpool {
         &self,
         pending: &mut Vec<PendingLoad>,
         retained_excluded: &mut Vec<ArchiveSource>,
+        metadata_errors: &mut Vec<&'static str>,
         permits: impl Copy + Fn(ArchiveSource, &str) -> bool,
     ) -> ArchiveSyncResult<()> {
         for source in [ArchiveSource::Claude, ArchiveSource::Codex] {
@@ -963,18 +976,32 @@ impl ArchiveSpool {
                     continue;
                 }
                 if !permits(source, session) {
-                    for part in fs::read_dir(&path)?.filter_map(Result::ok) {
-                        if part.path().is_dir() {
-                            retained_excluded.extend(
-                                fs::read_dir(part.path())?
-                                    .filter_map(Result::ok)
-                                    .filter(|entry| {
-                                        entry.path().extension().and_then(|ext| ext.to_str())
-                                            == Some("bin")
-                                    })
-                                    .map(|_| source),
-                            );
+                    match fs::read_dir(&path) {
+                        Ok(parts) => {
+                            for part in parts.filter_map(Result::ok) {
+                                if !part.path().is_dir() {
+                                    continue;
+                                }
+                                match fs::read_dir(part.path()) {
+                                    Ok(entries) => retained_excluded.extend(
+                                        entries
+                                            .filter_map(Result::ok)
+                                            .filter(|entry| {
+                                                entry
+                                                    .path()
+                                                    .extension()
+                                                    .and_then(|ext| ext.to_str())
+                                                    == Some("bin")
+                                            })
+                                            .map(|_| source),
+                                    ),
+                                    Err(_) => {
+                                        metadata_errors.push(ArchiveSyncError::Corrupt.class())
+                                    }
+                                }
+                            }
                         }
+                        Err(_) => metadata_errors.push(ArchiveSyncError::Corrupt.class()),
                     }
                     continue;
                 }

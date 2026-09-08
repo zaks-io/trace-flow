@@ -92,9 +92,14 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
             crate::spool::PendingLoads {
                 loads: Vec::new(),
                 retained_excluded: Vec::new(),
+                metadata_errors: Vec::new(),
             }
         }
     };
+    for class in &pending.metadata_errors {
+        report.failed += 1;
+        record_error(&mut report, class);
+    }
     let work = ordered_part_work(pending.loads, snapshots, plan, &mut report);
     for part in work {
         if cancel.is_some_and(CancellationToken::is_cancelled) {

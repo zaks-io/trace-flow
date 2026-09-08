@@ -875,6 +875,39 @@ struct AckingUploader {
     session_record_count: Cell<u64>,
 }
 
+#[cfg(unix)]
+struct PermissionRestoringUploader {
+    inner: AckingUploader,
+    path: std::path::PathBuf,
+    permissions: RefCell<Option<std::fs::Permissions>>,
+}
+
+#[cfg(unix)]
+impl PermissionRestoringUploader {
+    fn new(path: std::path::PathBuf, permissions: std::fs::Permissions) -> Self {
+        Self {
+            inner: AckingUploader::new(),
+            path,
+            permissions: RefCell::new(Some(permissions)),
+        }
+    }
+}
+
+#[cfg(unix)]
+impl ArchiveUploader for PermissionRestoringUploader {
+    async fn upload(
+        &self,
+        source: ArchiveSource,
+        body: &[u8],
+        cancel: Option<&CancellationToken>,
+    ) -> Result<ArchiveAcknowledgement, ArchiveClientError> {
+        if let Some(permissions) = self.permissions.borrow_mut().take() {
+            fs::set_permissions(&self.path, permissions).unwrap();
+        }
+        self.inner.upload(source, body, cancel).await
+    }
+}
+
 impl AckingUploader {
     fn new() -> Self {
         Self {
@@ -2071,6 +2104,66 @@ async fn current_new_only_authority_retains_excluded_pending() {
     assert_eq!(report.failed, 0);
     assert!(report.first_error.is_none());
     assert_eq!(report.history[0].retained_excluded_pending, 1);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unreadable_excluded_directory_does_not_block_permitted_pending() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let excluded = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    let permitted = pending_from_bytes(ArchiveSource::Codex, CODEX, 10);
+    spool.persist_pending(&excluded).unwrap();
+    spool.persist_pending(&permitted).unwrap();
+    let excluded_dir = pending_disk_path(dir.path(), &excluded)
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let original_permissions = fs::metadata(&excluded_dir).unwrap().permissions();
+    let mut unreadable = original_permissions.clone();
+    unreadable.set_mode(0o000);
+    fs::set_permissions(&excluded_dir, unreadable).unwrap();
+
+    let plan = ArchiveHistoryPlan::new(vec![
+        state_with_target(
+            ArchiveSource::Claude,
+            ArchiveHistoryChoice::NewOnly,
+            &excluded.source_session_id,
+        ),
+        ArchiveHistoryState::new(
+            ArchiveHistoryGeneration {
+                source: ArchiveSource::Codex,
+                history_choice: ArchiveHistoryChoice::AllHistory,
+                authorized_at: 10,
+            },
+            10,
+            Vec::new(),
+        ),
+    ]);
+    let uploader =
+        PermissionRestoringUploader::new(excluded_dir.clone(), original_permissions.clone());
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        &plan,
+        None,
+    )
+    .await;
+    fs::set_permissions(&excluded_dir, original_permissions).unwrap();
+
+    assert_eq!(report.uploaded, 1, "{report:?}");
+    assert_eq!(report.failed, 1);
+    assert_eq!(report.first_error.as_deref(), Some("archive_spool_corrupt"));
+    let uploaded: serde_json::Value =
+        serde_json::from_slice(&uploader.inner.bodies.borrow()[0]).unwrap();
+    assert_eq!(uploaded["source_session_id"], permitted.source_session_id);
+    assert!(pending_disk_path(dir.path(), &excluded).exists());
 }
 
 #[tokio::test]

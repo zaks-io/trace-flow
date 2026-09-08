@@ -943,6 +943,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn trailing_blank_lines_complete_then_a_real_append_uploads() {
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        let codex_dir = home.path().join(".codex/sessions");
+        std::fs::create_dir_all(&codex_dir).unwrap();
+        let transcript = codex_dir.join("blank-tail.jsonl");
+        let mut bytes = br#"{"type":"session_meta","payload":{"id":"codex-blank","timestamp":"2020-01-01T00:00:00Z"}}
+{"type":"event_msg","payload":{"id":"one"}}
+"#
+        .to_vec();
+        bytes.extend_from_slice(b"\n \t\x0c\r\n");
+        std::fs::write(&transcript, &bytes).unwrap();
+
+        let ingest_url = spawn_http(|_raw| {
+            raw_response(
+                202,
+                "Accepted",
+                r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#,
+            )
+        })
+        .await;
+        let archive_hits = Arc::new(Mutex::new(0u32));
+        let archive_url = spawn_http({
+            let archive_hits = Arc::clone(&archive_hits);
+            move |raw| {
+                *archive_hits.lock().unwrap() += 1;
+                archive_ack(&request_body(&raw))
+            }
+        })
+        .await;
+        let keys = Arc::new(MemoryKeyStore::new());
+        let spool_dir = state.path().join("archive-spool-org_1");
+
+        let first = run_with_servers(
+            home.path(),
+            state.path(),
+            ingest_url.clone(),
+            Some(ArchiveRunConfig {
+                archive_url: archive_url.clone(),
+                spool_dir: spool_dir.clone(),
+                enrollment_path: state.path().join("archive-enrollment-org_1.json"),
+                key_store: keys.clone(),
+                policy: ArchivePolicy::Enrolled,
+                authorized_sources: vec![authorization(ArchiveSource::Codex)],
+            }),
+        )
+        .await;
+        let history = first
+            .archive
+            .as_ref()
+            .unwrap()
+            .history
+            .iter()
+            .find(|history| history.source == ArchiveSource::Codex)
+            .unwrap();
+        assert_eq!(
+            history.initial_import,
+            collector_archive_sync::ArchiveInitialImport::Complete
+        );
+
+        bytes.extend_from_slice(b"{\"type\":\"event_msg\",\"payload\":{\"id\":\"two\"}}\n");
+        std::fs::write(&transcript, bytes).unwrap();
+        let second = run_with_servers(
+            home.path(),
+            state.path(),
+            ingest_url,
+            Some(ArchiveRunConfig {
+                archive_url,
+                spool_dir,
+                enrollment_path: state.path().join("archive-enrollment-org_1.json"),
+                key_store: keys,
+                policy: ArchivePolicy::Enrolled,
+                authorized_sources: vec![authorization(ArchiveSource::Codex)],
+            }),
+        )
+        .await;
+
+        assert_eq!(*archive_hits.lock().unwrap(), 2);
+        assert_eq!(second.archive.as_ref().unwrap().uploaded, 1);
+    }
+
+    #[tokio::test]
     async fn archive_failure_does_not_block_fact_sync() {
         let home = tempfile::TempDir::new().unwrap();
         let state = tempfile::TempDir::new().unwrap();

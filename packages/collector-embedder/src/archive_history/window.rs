@@ -45,39 +45,102 @@ pub fn complete_extent(path: &Path) -> std::io::Result<u64> {
     file.seek(SeekFrom::End(-1))?;
     let mut last = [0u8; 1];
     file.read_exact(&mut last)?;
-    if last[0] == b'\n' {
-        return Ok(len);
+    if last[0] == b'\n' && len > 1 {
+        file.seek(SeekFrom::End(-2))?;
+        file.read_exact(&mut last)?;
+        if last[0] != b'\n' && !is_archive_blank(last[0]) {
+            return Ok(len);
+        }
     }
-    let mut end = len;
     let mut chunk = vec![0u8; 1024 * 1024];
-    loop {
+    let mut cursor = len;
+    while let Some((record_start, content_end, record_end, terminated)) =
+        previous_line(&mut file, cursor, &mut chunk)?
+    {
+        cursor = record_start;
+        if range_is_blank(&mut file, record_start, content_end, &mut chunk)? {
+            continue;
+        }
+        if is_complete_json(path, record_start, content_end)? {
+            return Ok(record_end);
+        }
+        if terminated {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid complete archive history record",
+            ));
+        }
+    }
+    Ok(0)
+}
+
+fn previous_line(
+    file: &mut File,
+    cursor: u64,
+    chunk: &mut [u8],
+) -> std::io::Result<Option<(u64, u64, u64, bool)>> {
+    if cursor == 0 {
+        return Ok(None);
+    }
+    file.seek(SeekFrom::Start(cursor - 1))?;
+    let mut last = [0u8; 1];
+    file.read_exact(&mut last)?;
+    let terminated = last[0] == b'\n';
+    let content_end = if terminated { cursor - 1 } else { cursor };
+    let record_start = previous_newline(file, content_end, chunk)?.map_or(0, |offset| offset + 1);
+    Ok(Some((record_start, content_end, cursor, terminated)))
+}
+
+fn previous_newline(
+    file: &mut File,
+    mut end: u64,
+    chunk: &mut [u8],
+) -> std::io::Result<Option<u64>> {
+    while end > 0 {
         let start = end.saturating_sub(chunk.len() as u64);
         let wanted = (end - start) as usize;
         file.seek(SeekFrom::Start(start))?;
         file.read_exact(&mut chunk[..wanted])?;
         if let Some(index) = chunk[..wanted].iter().rposition(|byte| *byte == b'\n') {
-            let record_start = start + index as u64 + 1;
-            return if is_complete_json(path, record_start)? {
-                Ok(len)
-            } else {
-                Ok(record_start)
-            };
-        }
-        if start == 0 {
-            return if is_complete_json(path, 0)? {
-                Ok(len)
-            } else {
-                Ok(0)
-            };
+            return Ok(Some(start + index as u64));
         }
         end = start;
     }
+    Ok(None)
 }
 
-fn is_complete_json(path: &Path, start: u64) -> std::io::Result<bool> {
+fn range_is_blank(
+    file: &mut File,
+    start: u64,
+    end: u64,
+    chunk: &mut [u8],
+) -> std::io::Result<bool> {
+    file.seek(SeekFrom::Start(start))?;
+    let mut remaining = end - start;
+    while remaining > 0 {
+        let wanted = remaining.min(chunk.len() as u64) as usize;
+        file.read_exact(&mut chunk[..wanted])?;
+        if chunk[..wanted]
+            .iter()
+            .copied()
+            .any(|byte| !is_archive_blank(byte))
+        {
+            return Ok(false);
+        }
+        remaining -= wanted as u64;
+    }
+    Ok(true)
+}
+
+fn is_archive_blank(byte: u8) -> bool {
+    matches!(byte, b'\t' | b'\x0c' | b'\r' | b' ')
+}
+
+fn is_complete_json(path: &Path, start: u64, end: u64) -> std::io::Result<bool> {
     let mut file = File::open(path)?;
     file.seek(SeekFrom::Start(start))?;
-    let mut deserializer = serde_json::Deserializer::from_reader(BufReader::new(file));
+    let reader = BufReader::new(file.take(end - start));
+    let mut deserializer = serde_json::Deserializer::from_reader(reader);
     let result = IgnoredAny::deserialize(&mut deserializer).and_then(|_| deserializer.end());
     match result {
         Ok(()) => Ok(true),
@@ -129,5 +192,22 @@ mod tests {
         fs::write(&path, file).unwrap();
 
         assert_eq!(read_identity_window(&path).unwrap(), first);
+    }
+
+    #[test]
+    fn complete_extent_excludes_trailing_blank_lines() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("blank-tail.jsonl");
+        let record = b"{\"sessionId\":\"session\",\"uuid\":\"one\"}\n";
+        let mut bytes = record.to_vec();
+        bytes.extend_from_slice(b"\n \t\x0c\r\n");
+        fs::write(&path, &bytes).unwrap();
+
+        assert_eq!(complete_extent(&path).unwrap(), record.len() as u64);
+
+        let appended = b"{\"sessionId\":\"session\",\"uuid\":\"two\"}\n";
+        bytes.extend_from_slice(appended);
+        fs::write(&path, &bytes).unwrap();
+        assert_eq!(complete_extent(&path).unwrap(), bytes.len() as u64);
     }
 }
