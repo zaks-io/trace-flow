@@ -98,6 +98,31 @@ export function parseOpenRouterChatCompletionsPath(pathname: string): string | n
   return match?.[1] ?? null;
 }
 
+interface FunctionTool {
+  type: 'function';
+  function: Record<string, unknown> & { name: string };
+}
+
+function isFunctionTool(value: unknown): value is FunctionTool {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.type !== 'function') return false;
+  const definition = candidate.function;
+  if (!definition || typeof definition !== 'object' || Array.isArray(definition)) return false;
+  const functionDefinition = definition as Record<string, unknown>;
+  return (
+    typeof functionDefinition.name === 'string' &&
+    functionDefinition.name.length > 0 &&
+    (functionDefinition.description === undefined ||
+      typeof functionDefinition.description === 'string') &&
+    (functionDefinition.parameters === undefined ||
+      (!!functionDefinition.parameters &&
+        typeof functionDefinition.parameters === 'object' &&
+        !Array.isArray(functionDefinition.parameters))) &&
+    (functionDefinition.strict === undefined || typeof functionDefinition.strict === 'boolean')
+  );
+}
+
 export function parseOpenRouterChatCompletionsRequest(
   value: unknown,
   maxOutputTokens: number,
@@ -108,6 +133,39 @@ export function parseOpenRouterChatCompletionsRequest(
   const payload = value as Record<string, unknown>;
   if (!Array.isArray(payload.messages) || payload.messages.length === 0) {
     return { ok: false, error: 'messages must be a non-empty array' };
+  }
+
+  const tools = payload.tools;
+  if (
+    tools !== undefined &&
+    (!Array.isArray(tools) || tools.some((tool) => !isFunctionTool(tool)))
+  ) {
+    return { ok: false, error: 'Only function tools are supported' };
+  }
+
+  const toolNames = new Set((tools ?? []).filter(isFunctionTool).map((tool) => tool.function.name));
+  const toolChoice = payload.tool_choice;
+  const validStringChoice =
+    toolChoice === undefined ||
+    toolChoice === 'none' ||
+    ((toolChoice === 'auto' || toolChoice === 'required') && toolNames.size > 0);
+  const validFunctionChoice = (() => {
+    if (!toolChoice || typeof toolChoice !== 'object' || Array.isArray(toolChoice)) return false;
+    const candidate = toolChoice as Record<string, unknown>;
+    const definition = candidate.function;
+    if (
+      candidate.type !== 'function' ||
+      !definition ||
+      typeof definition !== 'object' ||
+      Array.isArray(definition)
+    ) {
+      return false;
+    }
+    const name = (definition as Record<string, unknown>).name;
+    return typeof name === 'string' && toolNames.has(name);
+  })();
+  if (!validStringChoice && !validFunctionChoice) {
+    return { ok: false, error: 'Invalid tool choice' };
   }
 
   const requested = payload.max_completion_tokens ?? payload.max_tokens ?? maxOutputTokens;
@@ -132,8 +190,6 @@ export function secureOpenRouterChatCompletionsPayload(
   const payload: Record<string, unknown> = {};
   const safeFields = [
     'messages',
-    'tools',
-    'tool_choice',
     'parallel_tool_calls',
     'stream',
     'stream_options',
@@ -149,6 +205,27 @@ export function secureOpenRouterChatCompletionsPayload(
   ] as const;
   for (const field of safeFields) {
     if (request.payload[field] !== undefined) payload[field] = request.payload[field];
+  }
+  if (Array.isArray(request.payload.tools)) {
+    payload.tools = request.payload.tools.filter(isFunctionTool).map((tool) => {
+      const definition = tool.function as Record<string, unknown>;
+      return {
+        type: 'function',
+        function: Object.fromEntries(
+          ['name', 'description', 'parameters', 'strict']
+            .filter((field) => definition[field] !== undefined)
+            .map((field) => [field, definition[field]]),
+        ),
+      };
+    });
+  }
+  if (typeof request.payload.tool_choice === 'string') {
+    payload.tool_choice = request.payload.tool_choice;
+  } else if (request.payload.tool_choice && typeof request.payload.tool_choice === 'object') {
+    const choice = request.payload.tool_choice as { function?: { name?: unknown } };
+    if (typeof choice.function?.name === 'string') {
+      payload.tool_choice = { type: 'function', function: { name: choice.function.name } };
+    }
   }
 
   return JSON.stringify({

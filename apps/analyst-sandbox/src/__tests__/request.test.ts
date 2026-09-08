@@ -266,6 +266,7 @@ describe('analyst sandbox request boundary', () => {
         extra_body: { paid_feature: true },
         stream: true,
         tools: [{ type: 'function', function: { name: 'query_usage' } }],
+        tool_choice: { type: 'function', function: { name: 'query_usage' } },
       },
       4_096,
     );
@@ -283,6 +284,7 @@ describe('analyst sandbox request boundary', () => {
       usage: { include: true },
       stream: true,
       tools: [{ type: 'function', function: { name: 'query_usage' } }],
+      tool_choice: { type: 'function', function: { name: 'query_usage' } },
     });
     for (const field of [
       'models',
@@ -308,5 +310,43 @@ describe('analyst sandbox request boundary', () => {
         4_096,
       ).ok,
     ).toBe(false);
+  });
+
+  it('rejects OpenRouter server tools and unsupported tool choices before authorization', () => {
+    const messages = [{ role: 'user', content: 'Analyze this.' }];
+    expect(
+      parseOpenRouterChatCompletionsRequest(
+        {
+          messages,
+          tools: [
+            {
+              type: 'openrouter:subagent',
+              parameters: { model: 'attacker/expensive-model', max_completion_tokens: 100_000 },
+            },
+          ],
+        },
+        4_096,
+      ),
+    ).toEqual({ ok: false, error: 'Only function tools are supported' });
+    expect(
+      parseOpenRouterChatCompletionsRequest(
+        {
+          messages,
+          tools: [{ type: 'function', function: { name: 'query_usage' } }],
+          tool_choice: { type: 'openrouter:web_search' },
+        },
+        4_096,
+      ),
+    ).toEqual({ ok: false, error: 'Invalid tool choice' });
+    expect(
+      parseOpenRouterChatCompletionsRequest(
+        {
+          messages,
+          tools: [{ type: 'function', function: { name: 'query_usage' } }],
+          tool_choice: { type: 'function', function: { name: 'missing_tool' } },
+        },
+        4_096,
+      ),
+    ).toEqual({ ok: false, error: 'Invalid tool choice' });
   });
 });
