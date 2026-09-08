@@ -15,7 +15,7 @@ import {
 } from '@trace-flow/pricing';
 import { v } from 'convex/values';
 import { requireAuthenticated } from '../auth/auth';
-import { requireAdmin } from '../auth/users';
+import { requireAdmin, requireEnabledUser } from '../auth/users';
 import { internal } from '../_generated/api';
 import { DEFAULT_PRICING } from './defaultPricing';
 
@@ -133,6 +133,7 @@ export const list = query({
   returns: v.array(modelPricingDoc),
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
+    await requireEnabledUser(ctx);
 
     const { provider } = args;
     if (provider) {
@@ -153,6 +154,7 @@ export const get = query({
   returns: v.union(modelPricingDoc, v.null()),
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
+    await requireEnabledUser(ctx);
 
     return ctx.db
       .query('modelPricing')

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { initializeUser } from '../auth/users';
+import { findOrCreateUser, initializeUser } from '../auth/users';
 import { rateLimiter } from '../rateLimits';
 
 function queryResult(firstValue: unknown) {
@@ -91,6 +91,54 @@ describe('auth.users.initializeUser', () => {
       picture: 'https://example.com/user.png',
     });
     expect(limit).not.toHaveBeenCalled();
+  });
+
+  it('preserves a disabled account and skips login reconciliation', async () => {
+    const existingUser = {
+      _id: 'user_existing',
+      tokenIdentifier: 'https://auth.example/|auth0|user',
+      email: 'user@example.com',
+      name: 'User',
+      picture: 'https://example.com/user.png',
+      enabled: false,
+      orgId: 'org_1',
+    };
+    const ctx = makeCtx(existingUser);
+
+    await expect(handler(ctx, {})).resolves.toEqual({ userId: existingUser._id });
+    expect(ctx.db.patch).not.toHaveBeenCalled();
+    expect(ctx.db.get).not.toHaveBeenCalled();
+  });
+
+  it('rejects a disabled account in the MCP user reconciliation path', async () => {
+    const existingUser = {
+      _id: 'user_existing',
+      tokenIdentifier: 'https://auth.example/|auth0|user',
+      email: 'user@example.com',
+      name: 'User',
+      picture: 'https://example.com/user.png',
+      enabled: false,
+      orgId: 'org_1',
+    };
+    const ctx = makeCtx(existingUser);
+    const findHandler = (
+      findOrCreateUser as unknown as {
+        _handler: (
+          context: unknown,
+          args: { tokenIdentifier: string; email: string; name?: string; picture?: string },
+        ) => Promise<string>;
+      }
+    )._handler;
+
+    await expect(
+      findHandler(ctx, {
+        tokenIdentifier: existingUser.tokenIdentifier,
+        email: existingUser.email,
+        name: existingUser.name,
+        picture: existingUser.picture,
+      }),
+    ).rejects.toThrow('User account is not enabled');
+    expect(ctx.db.patch).not.toHaveBeenCalled();
   });
 
   it('applies creation quota before inserting a new user', async () => {

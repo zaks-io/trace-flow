@@ -33,7 +33,6 @@ export function registerStripeWebhookRoutes(app: HonoWithConvex<ActionCtx>): voi
     } catch (error) {
       logger.error('convex.stripe_webhook_signature_invalid', error, {
         signaturePrefix: signature.slice(0, 20),
-        secretPrefix: stripeWebhookSecret.slice(0, 8),
         bodyLength: rawBody.length,
       });
       await logger.flush();

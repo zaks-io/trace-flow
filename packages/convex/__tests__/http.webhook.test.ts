@@ -111,6 +111,7 @@ describe('POST /stripe/webhook', () => {
     });
 
     it('returns 400 when signature verification fails', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       mockConstructEvent.mockImplementation(() => {
         throw new Error('Signature verification failed');
       });
@@ -126,6 +127,9 @@ describe('POST /stripe/webhook', () => {
       const json = await res.json();
       expect(json.error).toBe('Invalid webhook signature');
       expect(json.details).toContain('Signature verification failed');
+      const logged = JSON.stringify(consoleError.mock.calls);
+      expect(logged).not.toContain('secretPrefix');
+      expect(logged).not.toContain('whsec_te');
     });
 
     it('passes raw body and signature to constructEventAsync', async () => {

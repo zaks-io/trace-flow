@@ -1,7 +1,7 @@
 import { mutation, query } from '../_generated/server';
 import { v } from 'convex/values';
 import { internal } from '../_generated/api';
-import { requireAdmin, requireEnabledUser } from './users';
+import { getCurrentEnabledUser, requireAdmin, requireEnabledUser } from './users';
 
 const INVITE_EXPIRY_DAYS = 7;
 
@@ -124,6 +124,10 @@ export const acceptInvite = mutation({
     if (!identity) {
       throw new Error('Authentication required');
     }
+    if (identity.emailVerified !== true) {
+      throw new Error('A verified email address is required to accept an invite');
+    }
+    await getCurrentEnabledUser(ctx);
     const identityEmail = identity.email ? normalizeEmail(identity.email) : '';
     if (!identityEmail) {
       throw new Error('Authenticated email is required');

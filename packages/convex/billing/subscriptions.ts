@@ -9,7 +9,8 @@ import {
 import type { MutationCtx, ActionCtx } from '../_generated/server';
 import { v } from 'convex/values';
 import { requireAuthenticated } from '../auth/auth';
-import { getCurrentUser, requireEnabledUser } from '../auth/userHelpers';
+import { getCurrentEnabledUser, requireEnabledUser } from '../auth/userHelpers';
+import { requireEnabledActionUser } from '../auth/actionUser';
 import { internal } from '../_generated/api';
 import { TIER_CONFIG, UNITS_PER_ADDON } from '@trace-flow/types';
 import type { Id } from '../_generated/dataModel';
@@ -57,13 +58,8 @@ async function requireOrgOwner(ctx: Parameters<typeof requireEnabledUser>[0]) {
 }
 
 async function requireOrgOwnerAction(ctx: ActionCtx) {
-  await requireAuthenticated(ctx);
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity) throw new Error('Authentication required');
-  const user = await ctx.runQuery(internal.auth.users.getUserByTokenIdentifier, {
-    tokenIdentifier: identity.tokenIdentifier,
-  });
-  if (!user?.orgId) throw new Error('Organization not found');
+  const user = await requireEnabledActionUser(ctx);
+  if (!user.orgId) throw new Error('Organization not found');
   const orgId = user.orgId;
   const org = await ctx.runQuery(internal.auth.organizations.getByIdInternal, { id: orgId });
   if (!org) throw new Error('Organization not found');
@@ -96,7 +92,7 @@ export const getForCurrentUser = query({
   returns: v.union(v.null(), subscriptionValidator),
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
-    const user = await getCurrentUser(ctx);
+    const user = await getCurrentEnabledUser(ctx);
     if (!user?.orgId) return null;
 
     return getSubscriptionByOrgId(ctx, user.orgId);
@@ -107,7 +103,7 @@ export const ensureBillingForCurrentUser = mutation({
   args: {},
   returns: v.null(),
   handler: async (ctx) => {
-    const user = await getCurrentUser(ctx);
+    const user = await getCurrentEnabledUser(ctx);
     if (!user?.orgId) return null;
     await ensureOrgHasSubscription(ctx, user.orgId);
     return null;
@@ -129,7 +125,7 @@ export const getBillingSummaryForCurrentUser = query({
   ),
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
-    const user = await getCurrentUser(ctx);
+    const user = await getCurrentEnabledUser(ctx);
     if (!user?.orgId) return null;
 
     const currentPeriod = await getCurrentBillingPeriod(ctx, user.orgId);

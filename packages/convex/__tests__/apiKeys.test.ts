@@ -2,7 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 
 const authMocks = vi.hoisted(() => ({
   requireAuthenticated: vi.fn(),
-  getCurrentUser: vi.fn(),
+  getCurrentEnabledUser: vi.fn(),
+  requireEnabledUser: vi.fn(),
+  requireEnabledActionUser: vi.fn(),
 }));
 
 vi.mock('../auth/auth', () => ({
@@ -10,11 +12,24 @@ vi.mock('../auth/auth', () => ({
 }));
 
 vi.mock('../auth/users', () => ({
-  getCurrentUser: authMocks.getCurrentUser,
-  requireEnabledUser: vi.fn(),
+  getCurrentEnabledUser: authMocks.getCurrentEnabledUser,
+  requireEnabledUser: authMocks.requireEnabledUser,
 }));
 
-import { listAnalytics } from '../apiKeys';
+vi.mock('../auth/actionUser', () => ({
+  requireEnabledActionUser: authMocks.requireEnabledActionUser,
+}));
+
+import {
+  canAccessApiKey,
+  canManageApiKey,
+  getByKey,
+  listAnalytics,
+  listForUser,
+  remove,
+  syncToKV,
+  update,
+} from '../apiKeys';
 
 // ---------------------------------------------------------------------------
 // apiKeys.ts handler logic tests
@@ -124,7 +139,7 @@ describe('apiKeys.listAnalytics', () => {
       orgId: undefined,
       name: undefined,
     });
-    authMocks.getCurrentUser.mockResolvedValue(makeUser());
+    authMocks.getCurrentEnabledUser.mockResolvedValue(makeUser());
 
     const ctx = {
       db: {
@@ -158,6 +173,139 @@ describe('apiKeys.listAnalytics', () => {
     ]);
     expect(JSON.stringify(result)).not.toContain('org-secret');
     expect(JSON.stringify(result)).not.toContain('user-secret');
+  });
+});
+
+describe('apiKeys resource authorization', () => {
+  it('allows the creating user and members of the key organization', () => {
+    expect(canAccessApiKey(makeUser(), makeApiKey())).toBe(true);
+    expect(
+      canAccessApiKey(
+        makeUser({ _id: 'org_member' }),
+        makeApiKey({ userId: undefined, orgId: 'org_id' }),
+      ),
+    ).toBe(true);
+  });
+
+  it('keeps user-owned key management scoped to the creator', () => {
+    const key = makeApiKey();
+    expect(canManageApiKey(makeUser(), key)).toBe(true);
+    expect(canAccessApiKey(makeUser({ _id: 'org_member' }), key)).toBe(true);
+    expect(canManageApiKey(makeUser({ _id: 'org_member' }), key)).toBe(false);
+  });
+
+  it('allows current org members to manage legacy org-owned keys', () => {
+    expect(canManageApiKey(makeUser(), makeApiKey({ userId: undefined }))).toBe(true);
+  });
+
+  it('does not let a creator retain an organization key after changing organizations', () => {
+    const user = makeUser({ orgId: 'new_org' });
+    const key = makeApiKey({ userId: 'user_id', orgId: 'old_org' });
+    expect(canAccessApiKey(user, key)).toBe(false);
+    expect(canManageApiKey(user, key)).toBe(false);
+  });
+
+  it('denies mismatched and unscoped keys even when userId is absent', () => {
+    expect(
+      canAccessApiKey(
+        makeUser({ _id: 'other_user', orgId: 'other_org' }),
+        makeApiKey({ userId: undefined, orgId: 'org_id' }),
+      ),
+    ).toBe(false);
+    expect(
+      canAccessApiKey(
+        makeUser({ _id: 'other_user', orgId: undefined }),
+        makeApiKey({ userId: undefined, orgId: undefined }),
+      ),
+    ).toBe(false);
+  });
+
+  it('does not reveal a matching foreign key by its secret value', async () => {
+    const foreignKey = makeApiKey({ userId: undefined, orgId: 'foreign_org' });
+    authMocks.getCurrentEnabledUser.mockResolvedValue(
+      makeUser({ _id: 'other_user', orgId: 'other_org' }),
+    );
+    const ctx = makeCtx();
+    ctx.db.query = vi.fn().mockReturnValue({
+      filter: vi.fn().mockReturnThis(),
+      first: vi.fn().mockResolvedValue(foreignKey),
+    });
+
+    const result = await (
+      getByKey as unknown as {
+        _handler: (context: unknown, args: { key: string }) => Promise<unknown>;
+      }
+    )._handler(ctx, { key: foreignKey.key });
+
+    expect(result).toBeNull();
+  });
+
+  it('excludes keys from a former organization in the MCP lookup', async () => {
+    const user = makeUser({ orgId: 'new_org' });
+    const currentOrgKey = makeApiKey({ _id: 'current', userId: undefined, orgId: 'new_org' });
+    const formerOrgKey = makeApiKey({ _id: 'former', userId: user._id, orgId: 'old_org' });
+    const ctx = makeCtx();
+    ctx.db.get = vi.fn().mockResolvedValue(user);
+    ctx.db.query = vi
+      .fn()
+      .mockReturnValueOnce({
+        withIndex: vi.fn().mockReturnValue({ collect: vi.fn().mockResolvedValue([currentOrgKey]) }),
+      })
+      .mockReturnValueOnce({
+        withIndex: vi.fn().mockReturnValue({ collect: vi.fn().mockResolvedValue([formerOrgKey]) }),
+      });
+
+    const result = await (
+      listForUser as unknown as {
+        _handler: (context: unknown, args: { userId: string }) => Promise<unknown[]>;
+      }
+    )._handler(ctx, { userId: user._id });
+
+    expect(result).toEqual([currentOrgKey]);
+  });
+
+  it('rejects cross-tenant update and removal in the public handlers', async () => {
+    const user = makeUser({ orgId: 'attacker_org' });
+    const foreignKey = makeApiKey({ orgId: 'victim_org' });
+    authMocks.requireEnabledUser.mockResolvedValue(user);
+    const ctx = makeCtx();
+    ctx.db.get = vi.fn().mockResolvedValue(foreignKey);
+
+    await expect(
+      (
+        update as unknown as {
+          _handler: (context: unknown, args: { id: string; name: string }) => Promise<unknown>;
+        }
+      )._handler(ctx, { id: foreignKey._id, name: 'stolen' }),
+    ).rejects.toThrow('permission');
+    await expect(
+      (
+        remove as unknown as {
+          _handler: (context: unknown, args: { id: string }) => Promise<unknown>;
+        }
+      )._handler(ctx, { id: foreignKey._id }),
+    ).rejects.toThrow('permission');
+    expect(ctx._dbPatch).not.toHaveBeenCalled();
+    expect(ctx._dbDelete).not.toHaveBeenCalled();
+  });
+
+  it('rejects cross-tenant KV resync before touching Cloudflare', async () => {
+    const foreignKey = makeApiKey({ orgId: 'victim_org' });
+    authMocks.requireEnabledActionUser.mockResolvedValue(makeUser({ orgId: 'attacker_org' }));
+    const ctx = {
+      auth: { getUserIdentity: vi.fn().mockResolvedValue({ tokenIdentifier: 'token|123' }) },
+      runQuery: vi.fn().mockResolvedValue(foreignKey),
+      runAction: vi.fn(),
+    };
+
+    await expect(
+      (
+        syncToKV as unknown as {
+          _handler: (context: unknown, args: { id: string }) => Promise<unknown>;
+        }
+      )._handler(ctx, { id: foreignKey._id }),
+    ).rejects.toThrow('permission');
+    expect(ctx.runAction).not.toHaveBeenCalled();
   });
 });
 
@@ -229,10 +377,10 @@ describe('apiKeys.update handler logic', () => {
 
   it('throws when user does not own the key', () => {
     const user = makeUser({ _id: 'other_user' });
-    const apiKey = makeApiKey({ userId: 'user_id' }); // owned by different user
+    const apiKey = makeApiKey({ userId: 'user_id', orgId: undefined });
 
     expect(() => {
-      if (apiKey.userId && apiKey.userId !== user._id) {
+      if (!canManageApiKey(user, apiKey)) {
         throw new Error('You do not have permission to edit this API key');
       }
     }).toThrow('You do not have permission to edit this API key');
@@ -244,8 +392,7 @@ describe('apiKeys.update handler logic', () => {
     const ctx = makeCtx();
     ctx.db.get = vi.fn().mockResolvedValue(apiKey);
 
-    // ownership check passes
-    if (apiKey.userId && apiKey.userId !== user._id) throw new Error('no permission');
+    if (!canManageApiKey(user, apiKey)) throw new Error('no permission');
     await ctx.db.patch(apiKey._id, { name: 'Updated Name' });
 
     expect(ctx._dbPatch).toHaveBeenCalledWith('key_id', { name: 'Updated Name' });
@@ -257,8 +404,7 @@ describe('apiKeys.update handler logic', () => {
     const ctx = makeCtx();
     ctx.db.get = vi.fn().mockResolvedValue(apiKey);
 
-    // ownership check: apiKey.userId is falsy → skip check
-    if (apiKey.userId && apiKey.userId !== user._id) throw new Error('no permission');
+    if (!canManageApiKey(user, apiKey)) throw new Error('no permission');
     await ctx.db.patch(apiKey._id, { name: 'Org Key Renamed' });
 
     expect(ctx._dbPatch).toHaveBeenCalledWith('key_id', { name: 'Org Key Renamed' });
@@ -282,10 +428,10 @@ describe('apiKeys.remove handler logic', () => {
 
   it('throws when user does not own the key', () => {
     const user = makeUser({ _id: 'other_user' });
-    const apiKey = makeApiKey({ userId: 'user_id' });
+    const apiKey = makeApiKey({ userId: 'user_id', orgId: undefined });
 
     expect(() => {
-      if (apiKey.userId && apiKey.userId !== user._id) {
+      if (!canManageApiKey(user, apiKey)) {
         throw new Error('You do not have permission to delete this API key');
       }
     }).toThrow('You do not have permission to delete this API key');
@@ -297,7 +443,7 @@ describe('apiKeys.remove handler logic', () => {
     const ctx = makeCtx();
     ctx.db.get = vi.fn().mockResolvedValue(apiKey);
 
-    if (apiKey.userId && apiKey.userId !== user._id) throw new Error('no permission');
+    if (!canManageApiKey(user, apiKey)) throw new Error('no permission');
     await ctx.db.delete(apiKey._id);
     await ctx.scheduler.runAfter(0, 'internal.integrations.cloudflare.deleteKeyFromKV' as any, {
       key: apiKey.key,

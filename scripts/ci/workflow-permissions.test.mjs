@@ -223,6 +223,27 @@ describe('preview credential boundary', () => {
       preview.jobs.comment.steps.some((step) => step.uses?.startsWith('actions/checkout@')),
     ).toBe(false);
   });
+
+  test('pins preview archive resources outside PR-controlled configuration', () => {
+    expect(preview.env.PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID).toBe(
+      '422b54e456c7446ea5ba4f9ef9a8c84e',
+    );
+    expect(preview.env.PREVIEW_ARCHIVE_BUCKET).toBe('trace-flow-agent-archive-preview');
+
+    const configure = preview.jobs['deploy-convex'].steps.find(
+      (step) => step.name === 'Configure Archive API authorization',
+    );
+    expect(configure.run).toContain('CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID');
+    expect(configure.run).toContain('$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID');
+
+    for (const jobName of ['deploy-convex', 'preview']) {
+      const steps = preview.jobs[jobName].steps;
+      const verify = steps.find((step) => step.name === 'Verify Preview resource isolation');
+      const installIndex = steps.findIndex((step) => step.name === 'Install dependencies');
+      expect(steps.indexOf(verify)).toBeLessThan(installIndex);
+      expect(verify.run).toContain('$PREVIEW_ARCHIVE_BUCKET');
+    }
+  });
 });
 
 describe('credentialed CI checks', () => {

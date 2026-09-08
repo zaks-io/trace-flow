@@ -343,6 +343,7 @@ describe('convex/http.ts OAuth routes', () => {
       (deps.oauth.getAuth0UserInfo as Mock).mockResolvedValue({
         sub: 'auth0|123',
         email: 'test@example.com',
+        email_verified: true,
         name: 'Test User',
       });
       ctx.runMutation
@@ -435,6 +436,32 @@ describe('convex/http.ts OAuth routes', () => {
       expect(res.status).toBe(400);
       const json = await res.json();
       expect(json.error).toBe('Email is required');
+    });
+
+    it('rejects an unverified Auth0 email before creating an MCP user', async () => {
+      const app = createApp(deps);
+      (deps.oauth.verifyState as Mock).mockResolvedValue({
+        clientState: 'original-state',
+        clientId: 'client-1',
+        redirectUri: 'https://example.com/callback',
+        resource: 'https://mcp.example.com/mcp',
+        codeChallenge: 'challenge123',
+        codeChallengeMethod: 'S256',
+      });
+      (deps.oauth.exchangeAuth0Code as Mock).mockResolvedValue({ access_token: 'token' });
+      (deps.oauth.getAuth0UserInfo as Mock).mockResolvedValue({
+        sub: 'auth0|123',
+        email: 'test@example.com',
+        email_verified: false,
+      });
+
+      const res = await app.request('http://localhost/mcp/callback?code=code&state=state', {}, ctx);
+
+      expect(res.status).toBe(403);
+      await expect(res.json()).resolves.toEqual({
+        error: 'A verified email address is required',
+      });
+      expect(ctx.runMutation).not.toHaveBeenCalled();
     });
   });
 

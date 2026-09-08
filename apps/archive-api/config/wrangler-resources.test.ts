@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { unstable_readConfig } from 'wrangler';
 
 const configPath = fileURLToPath(new URL('../wrangler.jsonc', import.meta.url));
+const agentIngestConfigPath = fileURLToPath(
+  new URL('../../agent-ingest/wrangler.jsonc', import.meta.url),
+);
 const environments = ['development', 'preview', 'production'] as const;
 type Environment = (typeof environments)[number];
 type WranglerConfig = ReturnType<typeof unstable_readConfig>;
@@ -18,8 +21,8 @@ const expected = {
   preview: {
     name: 'trace-flow-archive-api-preview',
     sentryEnvironment: 'preview',
-    credentialNamespace: 'f945ee3d71954ffabd364e3db385d3ab',
-    bucket: 'trace-flow-agent-archive-dev',
+    credentialNamespace: '422b54e456c7446ea5ba4f9ef9a8c84e',
+    bucket: 'trace-flow-agent-archive-preview',
   },
   production: {
     name: 'trace-flow-archive-api',
@@ -108,6 +111,40 @@ describe('Archive API Wrangler resources', () => {
       assertArchiveEnvironment(config, environment);
       assertMigrations(config);
     }
+  });
+
+  test('keeps preview credentials and archive objects out of development and production', () => {
+    const preview = readEnvironment('preview');
+    const development = readEnvironment('development');
+    const production = readEnvironment('production');
+    const previewCredentials = oneBinding(preview.kv_namespaces, 'COLLECTOR_CREDS', 'preview').id;
+    const previewBucket = oneBinding(preview.r2_buckets, 'ARCHIVE_STORAGE', 'preview').bucket_name;
+
+    assert.notEqual(
+      previewCredentials,
+      oneBinding(development.kv_namespaces, 'COLLECTOR_CREDS', 'development').id,
+    );
+    assert.notEqual(
+      previewCredentials,
+      oneBinding(production.kv_namespaces, 'COLLECTOR_CREDS', 'production').id,
+    );
+    assert.notEqual(
+      previewBucket,
+      oneBinding(development.r2_buckets, 'ARCHIVE_STORAGE', 'development').bucket_name,
+    );
+    assert.notEqual(
+      previewBucket,
+      oneBinding(production.r2_buckets, 'ARCHIVE_STORAGE', 'production').bucket_name,
+    );
+
+    const agentIngestPreview = unstable_readConfig(
+      { config: agentIngestConfigPath, env: 'preview' },
+      { hideWarnings: true },
+    );
+    assert.equal(
+      oneBinding(agentIngestPreview.kv_namespaces, 'COLLECTOR_CREDS', 'preview').id,
+      previewCredentials,
+    );
   });
 
   const missingProductionResources: [string, (config: WranglerConfig) => void][] = [

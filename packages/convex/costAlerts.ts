@@ -10,7 +10,7 @@ import { paginationOptsValidator } from 'convex/server';
 import { v, ConvexError } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import { requireAuthenticated } from './auth/auth';
-import { getCurrentUser, requireEnabledUser } from './auth/users';
+import { getCurrentEnabledUser, requireEnabledUser } from './auth/users';
 import { internal } from './_generated/api';
 import {
   apiKeyValidator,
@@ -373,7 +373,7 @@ export const listForCurrentOrg = query({
   returns: costAlertSettingsValidator,
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
-    const user = await getCurrentUser(ctx);
+    const user = await getCurrentEnabledUser(ctx);
     if (!user?.orgId) {
       return {
         rules: [],
@@ -394,7 +394,7 @@ export const listDeliveries = query({
   args: { paginationOpts: paginationOptsValidator },
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
-    const user = await getCurrentUser(ctx);
+    const user = await getCurrentEnabledUser(ctx);
     if (!user?.orgId) {
       return { page: [], isDone: true, continueCursor: '' };
     }

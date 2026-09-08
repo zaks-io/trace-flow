@@ -14,6 +14,8 @@ concurrency:
 
 env:
   TURBO_LOG_VERBOSITY: 1
+  PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: 422b54e456c7446ea5ba4f9ef9a8c84e
+  PREVIEW_ARCHIVE_BUCKET: trace-flow-agent-archive-preview
 
 permissions:
   contents: read
@@ -76,6 +78,12 @@ jobs:
         with:
           node-version: 24
 
+      - name: Verify Preview resource isolation
+        run: |
+          test "$(jq -r '.env.preview.kv_namespaces[] | select(.binding == "COLLECTOR_CREDS") | .id' apps/agent-ingest/wrangler.jsonc)" = "$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID"
+          test "$(jq -r '.env.preview.kv_namespaces[] | select(.binding == "COLLECTOR_CREDS") | .id' apps/archive-api/wrangler.jsonc)" = "$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID"
+          test "$(jq -r '.env.preview.r2_buckets[] | select(.binding == "ARCHIVE_STORAGE") | .bucket_name' apps/archive-api/wrangler.jsonc)" = "$PREVIEW_ARCHIVE_BUCKET"
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
@@ -93,8 +101,16 @@ jobs:
       - name: Configure Archive API authorization
         run: |
           test -n "$ARCHIVE_API_SHARED_SECRET"
+          configured_collector_namespace=$(jq -r '
+            .env.preview.kv_namespaces[] |
+            select(.binding == "COLLECTOR_CREDS") |
+            .id
+          ' apps/agent-ingest/wrangler.jsonc)
+          test "$configured_collector_namespace" = "$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID"
           printf '%s' "$ARCHIVE_API_SHARED_SECRET" |
             bunx convex env set --preview-name "$BRANCH_NAME" ARCHIVE_API_SHARED_SECRET
+          bunx convex env set --preview-name "$BRANCH_NAME" \
+            CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID "$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID"
           bunx convex env set --preview-name "$BRANCH_NAME" CONVERSATION_ARCHIVE_ENABLED true
         env:
           ARCHIVE_API_SHARED_SECRET: ${{ secrets.ARCHIVE_API_SHARED_SECRET }}
@@ -118,6 +134,12 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
+
+      - name: Verify Preview resource isolation
+        run: |
+          test "$(jq -r '.env.preview.kv_namespaces[] | select(.binding == "COLLECTOR_CREDS") | .id' apps/agent-ingest/wrangler.jsonc)" = "$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID"
+          test "$(jq -r '.env.preview.kv_namespaces[] | select(.binding == "COLLECTOR_CREDS") | .id' apps/archive-api/wrangler.jsonc)" = "$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID"
+          test "$(jq -r '.env.preview.r2_buckets[] | select(.binding == "ARCHIVE_STORAGE") | .bucket_name' apps/archive-api/wrangler.jsonc)" = "$PREVIEW_ARCHIVE_BUCKET"
 
       - name: Install dependencies
         run: bun install --frozen-lockfile

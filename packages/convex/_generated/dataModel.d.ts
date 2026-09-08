@@ -172,6 +172,8 @@ export type DataModel = {
       continuationScheduledAt?: number;
       creatorUserId: Id<"users">;
       error?: string;
+      inferenceRequestCount?: number;
+      inferenceReservedOutputTokens?: number;
       lastEventAt?: number;
       maxRuntimeMs: number;
       nextSeq: number;
@@ -209,6 +211,8 @@ export type DataModel = {
       | "continuationScheduledAt"
       | "creatorUserId"
       | "error"
+      | "inferenceRequestCount"
+      | "inferenceReservedOutputTokens"
       | "lastEventAt"
       | "maxRuntimeMs"
       | "nextSeq"

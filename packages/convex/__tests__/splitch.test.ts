@@ -46,6 +46,7 @@ function makeQueryCtx(
     tokenIdentifier: 'auth0|user-123',
     email: 'user@example.com',
     name: 'Test User',
+    enabled: true,
     orgId: 'org-123',
   };
   const subscription = options.tier ? { tier: options.tier } : null;

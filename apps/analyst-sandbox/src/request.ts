@@ -9,6 +9,7 @@ export const MAX_PI_RUNTIME_MS = 120 * 60 * 1000;
 const MIN_PI_RUNTIME_MS = 60_000;
 export const MAX_PI_CONTROL_MESSAGE_CHARS = 8_000;
 export const MAX_PI_TAIL_LINES = 500;
+export const MAX_OPENROUTER_REQUEST_BYTES = 512 * 1024;
 const MAX_PI_TOOL_DEFINITIONS_CHARS = 100_000;
 
 export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
@@ -72,6 +73,11 @@ export interface TraceflowToolRequest {
   arguments: Record<string, unknown>;
 }
 
+export interface OpenRouterChatCompletionsRequest {
+  payload: Record<string, unknown>;
+  requestedOutputTokens: number;
+}
+
 export type ParseResult<T = ExecuteAnalysisRequest> =
   | { ok: true; request: T }
   | { ok: false; error: string };
@@ -80,6 +86,62 @@ const DATASET_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 const SANDBOX_ID_PATTERN = /^[A-Za-z0-9_-]{1,63}$/;
 const RUN_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const TOKEN_PATTERN = /^[A-Fa-f0-9]{64}$/;
+
+export function isSandboxRunToken(value: string): boolean {
+  return TOKEN_PATTERN.test(value);
+}
+
+export function parseOpenRouterChatCompletionsPath(pathname: string): string | null {
+  const match = /^\/ai-proxy\/openrouter\/([A-Za-z0-9_-]{1,128})\/api\/v1\/chat\/completions$/.exec(
+    pathname,
+  );
+  return match?.[1] ?? null;
+}
+
+export function parseOpenRouterChatCompletionsRequest(
+  value: unknown,
+  maxOutputTokens: number,
+): ParseResult<OpenRouterChatCompletionsRequest> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, error: 'Payload must be an object' };
+  }
+  const payload = value as Record<string, unknown>;
+  if (!Array.isArray(payload.messages) || payload.messages.length === 0) {
+    return { ok: false, error: 'messages must be a non-empty array' };
+  }
+
+  const requested = payload.max_completion_tokens ?? payload.max_tokens ?? maxOutputTokens;
+  if (typeof requested !== 'number' || !Number.isInteger(requested) || requested < 1) {
+    return { ok: false, error: 'Invalid output token limit' };
+  }
+
+  return {
+    ok: true,
+    request: {
+      payload,
+      requestedOutputTokens: Math.min(requested, maxOutputTokens),
+    },
+  };
+}
+
+export function secureOpenRouterChatCompletionsPayload(
+  request: OpenRouterChatCompletionsRequest,
+  runId: string,
+  model: string,
+): string {
+  const payload = { ...request.payload };
+  payload.model = model;
+  payload.max_tokens = request.requestedOutputTokens;
+  delete payload.max_completion_tokens;
+  delete payload.models;
+  delete payload.plugins;
+  delete payload.transforms;
+  delete payload.modalities;
+  delete payload.audio;
+  payload.session_id = runId;
+  payload.usage = { include: true };
+  return JSON.stringify(payload);
+}
 
 function parseObjectArguments(value: unknown): ParseResult<Record<string, unknown>> {
   if (value === undefined || value === null) return { ok: true, request: {} };
@@ -201,7 +263,7 @@ export function parseStartPiRunRequest(value: unknown): ParseResult<StartPiRunRe
   if (typeof payload.runId !== 'string' || !RUN_ID_PATTERN.test(payload.runId)) {
     return { ok: false, error: 'Invalid runId' };
   }
-  if (typeof payload.runToken !== 'string' || !TOKEN_PATTERN.test(payload.runToken)) {
+  if (typeof payload.runToken !== 'string' || !isSandboxRunToken(payload.runToken)) {
     return { ok: false, error: 'Invalid runToken' };
   }
   if (typeof payload.sandboxId !== 'string' || !SANDBOX_ID_PATTERN.test(payload.sandboxId)) {

@@ -330,7 +330,7 @@ export const isCallerAdmin = internalQuery({
       .query('users')
       .withIndex('by_token_identifier', (q) => q.eq('tokenIdentifier', identity.tokenIdentifier))
       .first();
-    return user?.isAdmin === true;
+    return user?.enabled === true && user.isAdmin === true;
   },
 });
 

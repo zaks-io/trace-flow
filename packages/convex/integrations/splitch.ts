@@ -74,6 +74,7 @@ export const proSubscriptionEnabled = query({
     if (!identity) throw new Error('Authentication required');
 
     const user = await getCurrentUser(ctx);
+    if (user && !user.enabled) return false;
     const subscription = user?.orgId
       ? await ctx.db
           .query('subscriptions')

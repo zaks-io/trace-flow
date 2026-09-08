@@ -11,6 +11,9 @@ import { sandboxRunEventInput } from './analystSandboxSchema';
 import {
   ACTIVE_SANDBOX_RUN_STATUSES,
   isActiveSandboxRunStatus,
+  SANDBOX_INFERENCE_MAX_REQUESTS,
+  SANDBOX_INFERENCE_MAX_OUTPUT_TOKENS_PER_REQUEST,
+  SANDBOX_INFERENCE_MAX_RESERVED_OUTPUT_TOKENS,
   sandboxRunDeadlineMs,
   shouldScheduleContinuation,
 } from './analystSandboxPolicy';
@@ -157,7 +160,49 @@ export const createSandboxRun = internalMutation({
       resumeAttempt: args.resumeAttempt,
       updatedAt: args.now,
       nextSeq: 0,
+      inferenceRequestCount: 0,
+      inferenceReservedOutputTokens: 0,
     });
+  },
+});
+
+export const reserveSandboxInference = internalMutation({
+  args: {
+    runId: v.id('analystSandboxRuns'),
+    tokenHash: v.string(),
+    requestedOutputTokens: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (run?.runTokenHash !== args.tokenHash) {
+      return { ok: false as const, reason: 'unauthorized' as const, status: null };
+    }
+    if (!ACTIVE_SANDBOX_RUN_STATUSES.has(run.status)) {
+      return { ok: false as const, reason: 'inactive' as const, status: run.status };
+    }
+    if (
+      !Number.isInteger(args.requestedOutputTokens) ||
+      args.requestedOutputTokens < 1 ||
+      args.requestedOutputTokens > SANDBOX_INFERENCE_MAX_OUTPUT_TOKENS_PER_REQUEST
+    ) {
+      return { ok: false as const, reason: 'invalid_request' as const, status: run.status };
+    }
+
+    const requestCount = run.inferenceRequestCount ?? 0;
+    const reservedOutputTokens = run.inferenceReservedOutputTokens ?? 0;
+    if (
+      requestCount >= SANDBOX_INFERENCE_MAX_REQUESTS ||
+      reservedOutputTokens + args.requestedOutputTokens >
+        SANDBOX_INFERENCE_MAX_RESERVED_OUTPUT_TOKENS
+    ) {
+      return { ok: false as const, reason: 'quota_exceeded' as const, status: run.status };
+    }
+
+    await ctx.db.patch(args.runId, {
+      inferenceRequestCount: requestCount + 1,
+      inferenceReservedOutputTokens: reservedOutputTokens + args.requestedOutputTokens,
+    });
+    return { ok: true as const, status: run.status };
   },
 });
 

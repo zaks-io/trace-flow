@@ -2,7 +2,7 @@ import { query, mutation, internalQuery, internalMutation } from '../_generated/
 import type { MutationCtx } from '../_generated/server';
 import { v } from 'convex/values';
 import { requireAuthenticated } from './auth';
-import { getCurrentUser, requireEnabledUser } from './userHelpers';
+import { getCurrentEnabledUser, requireEnabledUser } from './userHelpers';
 import { organizationValidator } from '../validators';
 import { internal } from '../_generated/api';
 import { TIER_CONFIG } from '@trace-flow/types';
@@ -31,7 +31,7 @@ export const get = query({
   returns: v.union(v.null(), organizationValidator),
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
-    const user = await getCurrentUser(ctx);
+    const user = await getCurrentEnabledUser(ctx);
     if (!user?.orgId) return null;
     return await ctx.db.get(user.orgId);
   },
@@ -54,7 +54,7 @@ export const getMembers = query({
   ),
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
-    const user = await getCurrentUser(ctx);
+    const user = await getCurrentEnabledUser(ctx);
     if (!user?.orgId) return [];
     return await ctx.db
       .query('organizationMembers')

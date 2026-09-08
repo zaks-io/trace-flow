@@ -3,6 +3,10 @@ import { api, internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
 import { ANALYST_PRO_REQUIRED_MESSAGE } from '../analyst';
 import { sha256Hex } from '../analystSandboxRun';
+import {
+  SANDBOX_INFERENCE_MAX_OUTPUT_TOKENS_PER_REQUEST,
+  SANDBOX_INFERENCE_MAX_REQUESTS,
+} from '../analystSandboxPolicy';
 import { initConvexTest, type ArchiveTestConvex } from './convexTest.setup';
 
 interface AnalystWorld {
@@ -193,10 +197,10 @@ describe('Analyst Pro entitlement', () => {
       world.t.action(api.analystSandbox.verifySandboxRunToken, { runId, token }),
     ).resolves.toEqual({ ok: true, status: 'running' });
     await expect(
-      world.t.action(api.analystSandbox.verifySandboxRunToken, {
+      world.t.action(api.analystSandboxInference.authorizeSandboxInference, {
         runId,
         token,
-        purpose: 'inference',
+        requestedOutputTokens: SANDBOX_INFERENCE_MAX_OUTPUT_TOKENS_PER_REQUEST,
       }),
     ).rejects.toThrow(ANALYST_PRO_REQUIRED_MESSAGE);
 
@@ -213,12 +217,25 @@ describe('Analyst Pro entitlement', () => {
       world.t.action(api.analystSandbox.verifySandboxRunToken, { runId, token }),
     ).resolves.toEqual({ ok: true, status: 'running' });
     await expect(
-      world.t.action(api.analystSandbox.verifySandboxRunToken, {
+      world.t.action(api.analystSandboxInference.authorizeSandboxInference, {
         runId,
         token,
-        purpose: 'inference',
+        requestedOutputTokens: SANDBOX_INFERENCE_MAX_OUTPUT_TOKENS_PER_REQUEST,
       }),
-    ).resolves.toEqual({ ok: true, status: 'running' });
+    ).resolves.toMatchObject({ ok: true, status: 'running', model: 'z-ai/glm-5.2' });
+
+    await world.t.run((ctx) =>
+      ctx.db.patch(runId, {
+        inferenceRequestCount: SANDBOX_INFERENCE_MAX_REQUESTS,
+      }),
+    );
+    await expect(
+      world.t.action(api.analystSandboxInference.authorizeSandboxInference, {
+        runId,
+        token,
+        requestedOutputTokens: 1,
+      }),
+    ).resolves.toMatchObject({ ok: false, reason: 'quota_exceeded', model: null });
   });
 
   it('keeps cancellation available after the organization downgrades', async () => {
