@@ -57,6 +57,32 @@ export const list = query({
   },
 });
 
+export const listActiveForCurrentUser = query({
+  args: {},
+  returns: v.array(collectorCredentialPublicValidator),
+  handler: async (ctx) => {
+    await requireAuthenticated(ctx);
+    const user = await requireEnabledUser(ctx);
+    if (!user.orgId) throw new Error('Collector Credentials require an organization');
+    const orgId = user.orgId;
+
+    const now = Date.now();
+    const creds = await ctx.db
+      .query('collectorCredentials')
+      .withIndex('by_org_id', (q) => q.eq('orgId', orgId))
+      .collect();
+
+    return creds
+      .filter(
+        (credential) =>
+          credential.userId === user._id &&
+          credential.status === 'active' &&
+          credential.expiresAt > now,
+      )
+      .map(toPublic);
+  },
+});
+
 export const mint = mutation({
   args: {
     collectorId: v.string(),

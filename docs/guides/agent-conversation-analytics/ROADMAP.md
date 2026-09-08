@@ -299,9 +299,10 @@ Ingest's fact envelope.
 - Add an operator-only v1 integrity repair that can clear an error only after re-verifying the canonical
   chain and exact deterministic commit or pending batch. It cannot discard records, rebase the chain,
   synthesize a checkpoint, or expose decrypted content.
-- Add the fixed 2 GB encrypted Desktop Archive Spool, guided owner activation, member contribution,
-  explicit new-only or all-currently-available-history choice, and capture through the existing
-  immediate plus five-minute authorized Desktop cycle.
+- Add the fixed 2 GB encrypted Desktop Archive Spool, website-owned activation and member enrollment,
+  an explicit per-Source new-only or all-currently-available-history choice, and capture through the
+  existing immediate plus five-minute authorized Desktop cycle. Desktop reaches setup through the
+  existing Open dashboard action and refreshes read-only policy with its Collector Credential.
 - For new-only enrollment, persist a complete pre-capture session baseline and permanently exclude those
   sessions, later appends to them, and any later-discovered session with pre-enrollment or ambiguous
   history. All-history enrollment has no baseline exclusion.

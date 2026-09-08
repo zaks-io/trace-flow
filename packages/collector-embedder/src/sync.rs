@@ -29,8 +29,8 @@ use anyhow::{Context, Result};
 use collector_api_client::{CollectorApiClient, CollectorApiClientConfig};
 use collector_archive::ArchiveSource;
 use collector_archive_sync::{
-    archive_source_session_id, finish_terminal_cleanup, policy_from_denial_reason,
-    run_archive_cycle, transcript_part_for, ArchiveClient, ArchiveClientConfig, ArchiveCycleReport,
+    archive_source_session_id, finish_terminal_cleanup, run_archive_cycle, transcript_part_for,
+    ArchiveAuthorizedSource, ArchiveClient, ArchiveClientConfig, ArchiveCycleReport,
     ArchiveEnrollmentRecord, ArchiveSnapshot, OsKeyStore,
 };
 
@@ -99,6 +99,15 @@ pub struct ArchiveRunConfig {
     pub enrollment_path: PathBuf,
     pub key_store: Arc<dyn ArchiveKeyStore>,
     pub policy: ArchivePolicy,
+    pub authorized_sources: Vec<ArchiveAuthorizedSource>,
+}
+
+impl ArchiveRunConfig {
+    fn authorizes(&self, source: ArchiveSource) -> bool {
+        self.authorized_sources
+            .iter()
+            .any(|authorization| authorization.source == source)
+    }
 }
 
 /// The inputs a sync run needs that don't come from saved state: where the ingest worker is and the
@@ -139,13 +148,14 @@ pub fn load_archive_run_config(
     let enrollment_path = paths.archive_enrollment_file(org_id);
     let spool_dir = paths.archive_spool_dir(org_id);
     let cleanup_required = cleanup_obligation_exists(&spool_dir);
-    let policy = match ArchiveEnrollmentRecord::load(&enrollment_path) {
-        Ok(policy) => policy,
-        Err(_) if cleanup_required => ArchivePolicy::Revoked,
+    let enrollment = match ArchiveEnrollmentRecord::load_record(&enrollment_path) {
+        Ok(enrollment) => enrollment,
+        Err(_) if cleanup_required => ArchiveEnrollmentRecord::from_policy(ArchivePolicy::Revoked),
         Err(err) => {
             return Err(err).context("load archive enrollment");
         }
     };
+    let policy = enrollment.policy().context("load archive enrollment")?;
     if cleanup_required {
         return Ok(Some(ArchiveRunConfig {
             archive_url,
@@ -153,6 +163,7 @@ pub fn load_archive_run_config(
             enrollment_path,
             key_store,
             policy: ArchivePolicy::Revoked,
+            authorized_sources: Vec::new(),
         }));
     }
     if policy == ArchivePolicy::Inactive {
@@ -164,6 +175,7 @@ pub fn load_archive_run_config(
         enrollment_path,
         key_store,
         policy,
+        authorized_sources: enrollment.authorized_sources,
     }))
 }
 
@@ -394,8 +406,10 @@ fn apply_archive_policy_after_cycle(
     // retention. Those states only retain for frozen/expired/grace denials, not for
     // credential_revoked / enrollment_invalid / deleting / revoked.
     let fact_revoked = reports.iter().any(|(_, report)| {
-        ingest_denial_reason(&report.first_error).and_then(policy_from_denial_reason)
-            == Some(ArchivePolicy::Revoked)
+        matches!(
+            ingest_denial_reason(&report.first_error),
+            Some("credential_revoked" | "enrollment_invalid" | "deleting" | "revoked")
+        )
     });
     let archive_halted = archive.as_ref().is_some_and(|report| report.halted);
     if archive_purged || fact_revoked || archive_halted {
@@ -423,7 +437,10 @@ fn apply_archive_policy_after_cycle(
         return;
     }
     if archive.as_ref().is_some_and(|report| report.frozen) {
-        let _ = ArchiveEnrollmentRecord::save(&archive_cfg.enrollment_path, ArchivePolicy::Frozen);
+        if let Ok(mut record) = ArchiveEnrollmentRecord::load_record(&archive_cfg.enrollment_path) {
+            record.status = ArchivePolicy::Frozen.as_str().to_string();
+            let _ = record.save_record(&archive_cfg.enrollment_path);
+        }
     }
 }
 
@@ -532,10 +549,13 @@ fn archive_files_for_source(
     window: ImportWindow,
     archive: Option<&ArchiveRunConfig>,
 ) -> Vec<DiscoveredFile> {
-    if !archive.is_some_and(|config| config.policy.captures()) {
+    let Some(archive) = archive.filter(|config| config.policy.captures()) else {
         return Vec::new();
-    }
-    if ArchiveSource::try_from(source).is_err() {
+    };
+    let Ok(archive_source) = ArchiveSource::try_from(source) else {
+        return Vec::new();
+    };
+    if !archive.authorizes(archive_source) {
         return Vec::new();
     }
     files
@@ -632,12 +652,18 @@ async fn run_archive_work(
         }
     };
 
+    let authorized_sources: Vec<_> = archive
+        .authorized_sources
+        .iter()
+        .map(|authorization| authorization.source)
+        .collect();
     run_archive_cycle(
         &uploader,
         &mut spool,
         archive.key_store.as_ref(),
         snapshots,
         archive.policy,
+        &authorized_sources,
         None,
     )
     .await
@@ -696,8 +722,8 @@ mod tests {
     use super::*;
     use collector_archive::default_transcript_part_id;
     use collector_archive_sync::{
-        cleanup_obligation_exists, ArchiveEnrollmentRecord, ArchiveKeyStore, ArchiveSpool,
-        ArchiveSpoolKey, ArchiveSyncError, ArchiveSyncResult, PendingArchiveRequest,
+        cleanup_obligation_exists, ArchiveEnrollmentRecord, ArchiveHistoryChoice, ArchiveKeyStore,
+        ArchiveSpool, ArchiveSpoolKey, ArchiveSyncError, ArchiveSyncResult, PendingArchiveRequest,
     };
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
@@ -706,6 +732,14 @@ mod tests {
 
     const CLAUDE: &[u8] = include_bytes!("../../collector-archive/tests/fixtures/claude.jsonl");
     const CODEX: &[u8] = include_bytes!("../../collector-archive/tests/fixtures/codex.jsonl");
+
+    fn authorization(source: ArchiveSource) -> ArchiveAuthorizedSource {
+        ArchiveAuthorizedSource {
+            source,
+            history_choice: ArchiveHistoryChoice::AllHistory,
+            authorized_at: 1_770_000_000_001,
+        }
+    }
 
     fn test_pending(session: &str, body: &[u8]) -> PendingArchiveRequest {
         PendingArchiveRequest {
@@ -949,6 +983,10 @@ mod tests {
                 enrollment_path: state.path().join("archive-enrollment-org_1.json"),
                 key_store: keys,
                 policy: ArchivePolicy::Enrolled,
+                authorized_sources: vec![
+                    authorization(ArchiveSource::Claude),
+                    authorization(ArchiveSource::Codex),
+                ],
             }),
         )
         .await;
@@ -991,6 +1029,10 @@ mod tests {
                 enrollment_path: state.path().join("archive-enrollment-org_1.json"),
                 key_store: Arc::new(MemoryKeyStore::new()),
                 policy: ArchivePolicy::Enrolled,
+                authorized_sources: vec![
+                    authorization(ArchiveSource::Claude),
+                    authorization(ArchiveSource::Codex),
+                ],
             }),
         )
         .await;
@@ -1022,9 +1064,74 @@ mod tests {
                 enrollment_path: PathBuf::from("/tmp/enroll.json"),
                 key_store: Arc::new(MemoryKeyStore::new()),
                 policy: ArchivePolicy::Enrolled,
+                authorized_sources: vec![authorization(ArchiveSource::Claude)],
             }),
         );
         assert!(files.is_empty());
+    }
+
+    #[test]
+    fn archive_capture_includes_only_authorized_sources() {
+        let file = DiscoveredFile {
+            path: "/tmp/session.jsonl".to_string(),
+            mtime_ms: 1.0,
+            size_bytes: 1,
+        };
+        let archive = ArchiveRunConfig {
+            archive_url: "http://127.0.0.1:1".to_string(),
+            spool_dir: PathBuf::from("/tmp/spool"),
+            enrollment_path: PathBuf::from("/tmp/enroll.json"),
+            key_store: Arc::new(MemoryKeyStore::new()),
+            policy: ArchivePolicy::Enrolled,
+            authorized_sources: vec![authorization(ArchiveSource::Claude)],
+        };
+
+        assert_eq!(
+            archive_files_for_source(
+                AgentSource::Claude,
+                std::slice::from_ref(&file),
+                ImportWindow::first_incremental(2),
+                Some(&archive),
+            )
+            .len(),
+            1
+        );
+        assert!(archive_files_for_source(
+            AgentSource::Codex,
+            &[file],
+            ImportWindow::first_incremental(2),
+            Some(&archive),
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn after_cycle_freeze_preserves_source_authorization_metadata() {
+        let state = tempfile::TempDir::new().unwrap();
+        let enrollment_path = state.path().join("archive-enrollment-org_1.json");
+        let original = ArchiveEnrollmentRecord {
+            status: ArchivePolicy::Enrolled.as_str().to_string(),
+            authorized_sources: vec![authorization(ArchiveSource::Claude)],
+        };
+        original.save_record(&enrollment_path).unwrap();
+        let archive = ArchiveRunConfig {
+            archive_url: "http://127.0.0.1:1".to_string(),
+            spool_dir: state.path().join("archive-spool-org_1"),
+            enrollment_path: enrollment_path.clone(),
+            key_store: Arc::new(MemoryKeyStore::new()),
+            policy: ArchivePolicy::Enrolled,
+            authorized_sources: original.authorized_sources.clone(),
+        };
+        let mut report = ArchiveCycleReport {
+            frozen: true,
+            ..ArchiveCycleReport::default()
+        };
+
+        apply_archive_policy_after_cycle(Some(&archive), "org_1", Some(&mut report), &[]);
+
+        let persisted = ArchiveEnrollmentRecord::load_record(&enrollment_path).unwrap();
+        assert_eq!(persisted.policy().unwrap(), ArchivePolicy::Frozen);
+        assert_eq!(persisted.authorized_sources, original.authorized_sources);
     }
 
     #[tokio::test]
@@ -1063,6 +1170,7 @@ mod tests {
                 enrollment_path: state.path().join("archive-enrollment-org_1.json"),
                 key_store: keys.clone(),
                 policy: ArchivePolicy::Revoked,
+                authorized_sources: Vec::new(),
             }),
         )
         .await;
@@ -1111,6 +1219,7 @@ mod tests {
                 enrollment_path: enrollment_path.clone(),
                 key_store: keys.clone(),
                 policy: ArchivePolicy::Enrolled,
+                authorized_sources: vec![authorization(ArchiveSource::Claude)],
             }),
         )
         .await;
@@ -1160,6 +1269,7 @@ mod tests {
                 enrollment_path: enrollment_path.clone(),
                 key_store: keys.clone(),
                 policy: ArchivePolicy::Frozen,
+                authorized_sources: vec![authorization(ArchiveSource::Claude)],
             }),
         )
         .await;
@@ -1207,6 +1317,7 @@ mod tests {
                 enrollment_path: enrollment_path.clone(),
                 key_store: keys.clone(),
                 policy: ArchivePolicy::Grace,
+                authorized_sources: vec![authorization(ArchiveSource::Claude)],
             }),
         )
         .await;
@@ -1267,6 +1378,7 @@ mod tests {
                 enrollment_path: state.path().join("archive-enrollment-org_1.json"),
                 key_store: keys.clone(),
                 policy: ArchivePolicy::Grace,
+                authorized_sources: vec![authorization(ArchiveSource::Claude)],
             }),
         )
         .await;
@@ -1373,7 +1485,12 @@ mod tests {
         paths.ensure().unwrap();
         let enroll = paths.archive_enrollment_file("org_1");
         let spool_dir = paths.archive_spool_dir("org_1");
-        ArchiveEnrollmentRecord::save(&enroll, ArchivePolicy::Enrolled).unwrap();
+        ArchiveEnrollmentRecord {
+            status: ArchivePolicy::Enrolled.as_str().to_string(),
+            authorized_sources: vec![authorization(ArchiveSource::Claude)],
+        }
+        .save_record(&enroll)
+        .unwrap();
         block_enrollment_replace(&enroll);
 
         let keys = Arc::new(ControllableDeleteKeyStore::new());

@@ -25,6 +25,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use collector_embedder::connection::Paths;
 use collector_embedder::keychain;
 use collector_embedder::sync::{self, ArchiveKeyStore, Window};
+use collector_embedder::{archive_policy, defaults};
 use tokio::sync::mpsc;
 
 use crate::settings::{Settings, SettingsFile};
@@ -387,21 +388,13 @@ impl CycleIsolation {
 /// Cleanup markers keep Archive on the cycle even when enrollment is unreadable. Parse failures
 /// without a marker stay fail-loud in the error string but do not abort parsed-fact sync.
 fn cycle_archive_config(
+    paths: &Paths,
     org_id: &str,
-    state_dir: Option<&std::path::Path>,
     archive: Option<(String, Arc<dyn ArchiveKeyStore>)>,
 ) -> (Option<sync::ArchiveRunConfig>, Option<String>) {
-    let paths = match state_dir {
-        Some(dir) => Paths::at(dir.to_path_buf()),
-        None => match Paths::resolve() {
-            Ok(paths) => paths,
-            Err(err) => return (None, Some(format!("resolve collector paths: {err}"))),
-        },
-    };
-    let _ = paths.ensure();
     match archive {
-        Some((url, keys)) => sync::prepare_serialized_archive(&paths, org_id, url, keys),
-        None => sync::prepare_desktop_serialized_archive(&paths, org_id),
+        Some((url, keys)) => sync::prepare_serialized_archive(paths, org_id, url, keys),
+        None => sync::prepare_desktop_serialized_archive(paths, org_id),
     }
 }
 
@@ -431,8 +424,46 @@ fn run_cycle_blocking(
         }
     };
 
-    let (archive, mut archive_setup_error) =
-        cycle_archive_config(&org_id, isolation.state_dir.as_deref(), isolation.archive);
+    let state_dir = isolation.state_dir;
+    let archive_input = isolation.archive;
+    let paths = match state_dir.as_deref() {
+        Some(dir) => Ok(Paths::at(dir.to_path_buf())),
+        None => Paths::resolve().map_err(|err| format!("resolve collector paths: {err}")),
+    };
+    let mut archive_setup_error = match &paths {
+        Ok(paths) => paths
+            .ensure()
+            .err()
+            .map(|err| format!("prepare collector paths: {err}")),
+        Err(err) => Some(err.clone()),
+    };
+
+    let should_refresh_policy = state_dir.is_none() || archive_input.is_some();
+    if archive_setup_error.is_none() && should_refresh_policy {
+        let archive_url = archive_input
+            .as_ref()
+            .map(|(url, _)| url.clone())
+            .unwrap_or_else(defaults::archive_url);
+        if let Ok(paths) = &paths {
+            archive_setup_error = runtime
+                .block_on(archive_policy::refresh_archive_policy(
+                    paths,
+                    &org_id,
+                    archive_url,
+                    &credential,
+                ))
+                .err()
+                .map(|err| err.to_string());
+        }
+    }
+
+    let (archive, enrollment_error) = match &paths {
+        Ok(paths) => cycle_archive_config(paths, &org_id, archive_input),
+        Err(_) => (None, None),
+    };
+    if archive_setup_error.is_none() {
+        archive_setup_error = enrollment_error;
+    }
     let result = runtime.block_on(sync::run_detailed(sync::RunConfig {
         ingest_url,
         credential,
@@ -442,7 +473,7 @@ fn run_cycle_blocking(
         now_ms,
         batch_id_prefix: "desktop",
         archive,
-        state_dir: isolation.state_dir.as_deref(),
+        state_dir: state_dir.as_deref(),
     }));
 
     match result {
@@ -542,9 +573,14 @@ mod archive_engine_tests {
     use tempfile::TempDir;
 
     fn enrollment(paths: &Paths, org_id: &str, status: &str) {
+        let authorized_sources = if status == "enrolled" {
+            r#"[{"source":"claude","historyChoice":"all_history","authorizedAt":1770000000001}]"#
+        } else {
+            "[]"
+        };
         std::fs::write(
             paths.archive_enrollment_file(org_id),
-            format!(r#"{{"status":"{status}"}}"#),
+            format!(r#"{{"status":"{status}","authorizedSources":{authorized_sources}}}"#),
         )
         .unwrap();
     }
@@ -824,6 +860,180 @@ mod archive_engine_tests {
             window_for_authorized_cycle(&settings),
             Window::Incremental
         ));
+    }
+
+    #[test]
+    fn policy_refresh_persists_consent_before_the_serialized_archive_cycle() {
+        let home = TempDir::new().unwrap();
+        let state = TempDir::new().unwrap();
+        let paths = Paths::at(state.path().to_path_buf());
+        paths.ensure().unwrap();
+        let keys: Arc<dyn ArchiveKeyStore> = Arc::new(MemoryKeyStore::new());
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let read = std::io::Read::read(&mut stream, &mut request).unwrap();
+            let request = String::from_utf8_lossy(&request[..read]).to_ascii_lowercase();
+            assert!(request.starts_with("get /v1/archive/policy "));
+            assert!(request.contains("x-trace-flow-collector-secret: tfc_secret"));
+
+            let body = r#"{"enrolled":true,"authorizedSources":[{"source":"claude","historyChoice":"all_history","authorizedAt":1770000000001}],"reason":null}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            std::io::Write::write_all(&mut stream, response.as_bytes()).unwrap();
+        });
+
+        let outcome = run_cycle_blocking(
+            "org_1".to_string(),
+            "tfc_secret".to_string(),
+            "http://127.0.0.1:1".to_string(),
+            home.path().to_path_buf(),
+            Window::Incremental,
+            1_779_840_000_000,
+            CycleIsolation {
+                state_dir: Some(state.path().to_path_buf()),
+                archive: Some((format!("http://{addr}"), keys.clone())),
+            },
+        );
+        server.join().unwrap();
+
+        assert!(outcome.archive_setup_error.is_none());
+        let marker = std::fs::read_to_string(paths.archive_enrollment_file("org_1")).unwrap();
+        let marker_json: serde_json::Value = serde_json::from_str(&marker).unwrap();
+        assert_eq!(marker_json["status"], "enrolled");
+        assert_eq!(marker_json["authorizedSources"][0]["source"], "claude");
+        assert_eq!(
+            marker_json["authorizedSources"][0]["historyChoice"],
+            "all_history"
+        );
+        assert_eq!(
+            marker_json["authorizedSources"][0]["authorizedAt"],
+            1_770_000_000_001_i64
+        );
+        assert!(!marker.contains("tfc_secret"));
+        assert!(keys.load("org_1").unwrap().is_some());
+    }
+
+    #[test]
+    fn denial_only_marker_keeps_unavailability_nonfatal_while_facts_sync() {
+        const CLAUDE: &[u8] =
+            include_bytes!("../../../../packages/collector-archive/tests/fixtures/claude.jsonl");
+        let home = TempDir::new().unwrap();
+        let state = TempDir::new().unwrap();
+        let claude_dir = home.path().join(".claude").join("projects").join("p1");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(claude_dir.join("claude-session-001.jsonl"), CLAUDE).unwrap();
+        let paths = Paths::at(state.path().to_path_buf());
+        paths.ensure().unwrap();
+        enrollment(&paths, "org_1", "grace");
+        let marker = std::fs::read(paths.archive_enrollment_file("org_1")).unwrap();
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let fact_posts = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let posts = fact_posts.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(8) {
+                let Ok(mut stream) = stream else {
+                    continue;
+                };
+                let mut buf = [0u8; 4096];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
+                posts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let body = r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#;
+                let response = format!(
+                    "HTTP/1.1 202 Accepted\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
+            }
+        });
+
+        let outcome = run_cycle_blocking(
+            "org_1".to_string(),
+            "tfc_secret".to_string(),
+            format!("http://{addr}"),
+            home.path().to_path_buf(),
+            Window::Incremental,
+            1_779_840_000_000,
+            CycleIsolation {
+                state_dir: Some(state.path().to_path_buf()),
+                archive: Some((
+                    "http://127.0.0.1:1".to_string(),
+                    Arc::new(MemoryKeyStore::new()),
+                )),
+            },
+        );
+
+        assert!(outcome.archive_setup_error.is_none());
+        assert!(matches!(
+            sync_status_from_outcome(&outcome),
+            SyncStatus::Idle
+        ));
+        assert!(outcome.advanced >= 1);
+        assert!(fact_posts.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+        assert!(fact_cycle_reached_ingest(&outcome));
+        assert_eq!(
+            std::fs::read(paths.archive_enrollment_file("org_1")).unwrap(),
+            marker
+        );
+    }
+
+    #[test]
+    fn deleting_marker_drives_cleanup_without_an_existing_spool() {
+        let home = TempDir::new().unwrap();
+        let state = TempDir::new().unwrap();
+        let paths = Paths::at(state.path().to_path_buf());
+        paths.ensure().unwrap();
+        let spool_dir = paths.archive_spool_dir("org_1");
+        let durable_marker = ArchiveSpool::durable_cleanup_marker_path(&spool_dir);
+        let keys: Arc<dyn ArchiveKeyStore> = Arc::new(MemoryKeyStore::new());
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let _ = std::io::Read::read(&mut stream, &mut request).unwrap();
+            let body = r#"{"enrolled":false,"authorizedSources":[],"reason":"deleting"}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            std::io::Write::write_all(&mut stream, response.as_bytes()).unwrap();
+        });
+
+        let outcome = run_cycle_blocking(
+            "org_1".to_string(),
+            "tfc_secret".to_string(),
+            "http://127.0.0.1:1".to_string(),
+            home.path().to_path_buf(),
+            Window::Incremental,
+            1_779_840_000_000,
+            CycleIsolation {
+                state_dir: Some(state.path().to_path_buf()),
+                archive: Some((format!("http://{addr}"), keys.clone())),
+            },
+        );
+        server.join().unwrap();
+
+        assert!(outcome.archive_setup_error.is_none());
+        assert!(matches!(
+            sync_status_from_outcome(&outcome),
+            SyncStatus::Idle
+        ));
+        let enrollment: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(paths.archive_enrollment_file("org_1")).unwrap())
+                .unwrap();
+        assert_eq!(enrollment["status"], "revoked");
+        assert!(!spool_dir.exists());
+        assert!(!durable_marker.exists());
+        assert!(keys.load("org_1").unwrap().is_none());
     }
 
     #[test]

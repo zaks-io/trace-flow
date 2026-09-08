@@ -1,3 +1,8 @@
+use std::collections::HashSet;
+
+use collector_archive::ArchiveSource;
+use serde::{Deserialize, Serialize};
+
 /// Local Archive enrollment policy. This is not a secret and does not authorize uploads by itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArchivePolicy {
@@ -73,8 +78,79 @@ pub fn policy_from_denial_reason(reason: &str) -> Option<ArchivePolicy> {
         "credential_revoked" | "enrollment_invalid" | "deleting" | "revoked" => {
             Some(ArchivePolicy::Revoked)
         }
-        "frozen" => Some(ArchivePolicy::Frozen),
+        "frozen" | "expired" => Some(ArchivePolicy::Frozen),
+        "not_pro" => Some(ArchivePolicy::Grace),
+        "server_disabled" | "not_activated" | "not_enrolled" => Some(ArchivePolicy::Inactive),
         _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveHistoryChoice {
+    NewOnly,
+    AllHistory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ArchiveAuthorizedSource {
+    pub source: ArchiveSource,
+    pub history_choice: ArchiveHistoryChoice,
+    pub authorized_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ArchivePolicyResponse {
+    pub enrolled: bool,
+    pub authorized_sources: Vec<ArchiveAuthorizedSource>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmedArchivePolicy {
+    pub policy: ArchivePolicy,
+    pub authorized_sources: Vec<ArchiveAuthorizedSource>,
+}
+
+impl ArchivePolicyResponse {
+    pub fn confirmed(self) -> Result<ConfirmedArchivePolicy, ArchivePolicyParseError> {
+        if self.enrolled {
+            if self.reason.is_some() || self.authorized_sources.is_empty() {
+                return Err(ArchivePolicyParseError);
+            }
+            let unique: HashSet<_> = self
+                .authorized_sources
+                .iter()
+                .map(|source| source.source)
+                .collect();
+            if unique.len() != self.authorized_sources.len()
+                || self
+                    .authorized_sources
+                    .iter()
+                    .any(|source| source.authorized_at < 0)
+            {
+                return Err(ArchivePolicyParseError);
+            }
+            return Ok(ConfirmedArchivePolicy {
+                policy: ArchivePolicy::Enrolled,
+                authorized_sources: self.authorized_sources,
+            });
+        }
+
+        if !self.authorized_sources.is_empty() {
+            return Err(ArchivePolicyParseError);
+        }
+        let policy = self
+            .reason
+            .as_deref()
+            .and_then(policy_from_denial_reason)
+            .ok_or(ArchivePolicyParseError)?;
+        Ok(ConfirmedArchivePolicy {
+            policy,
+            authorized_sources: Vec::new(),
+        })
     }
 }
 
@@ -110,12 +186,92 @@ mod tests {
             policy_from_denial_reason("frozen"),
             Some(ArchivePolicy::Frozen)
         );
+        assert_eq!(
+            policy_from_denial_reason("not_pro"),
+            Some(ArchivePolicy::Grace)
+        );
+        assert_eq!(
+            policy_from_denial_reason("expired"),
+            Some(ArchivePolicy::Frozen)
+        );
         for policy in [ArchivePolicy::Frozen, ArchivePolicy::Grace] {
             assert!(policy.retains());
             assert!(!policy.uploads());
             assert!(!policy.captures());
             assert!(!policy.purges());
         }
+    }
+
+    #[test]
+    fn inactive_server_states_are_valid_policy_responses() {
+        for reason in ["server_disabled", "not_activated", "not_enrolled"] {
+            assert_eq!(
+                policy_from_denial_reason(reason),
+                Some(ArchivePolicy::Inactive)
+            );
+            assert_eq!(
+                ArchivePolicyResponse {
+                    enrolled: false,
+                    authorized_sources: Vec::new(),
+                    reason: Some(reason.to_string()),
+                }
+                .confirmed()
+                .unwrap()
+                .policy,
+                ArchivePolicy::Inactive
+            );
+        }
+    }
+
+    #[test]
+    fn server_policy_preserves_source_consent_metadata() {
+        let confirmed = ArchivePolicyResponse {
+            enrolled: true,
+            authorized_sources: vec![
+                ArchiveAuthorizedSource {
+                    source: ArchiveSource::Claude,
+                    history_choice: ArchiveHistoryChoice::AllHistory,
+                    authorized_at: 1_770_000_000_001,
+                },
+                ArchiveAuthorizedSource {
+                    source: ArchiveSource::Codex,
+                    history_choice: ArchiveHistoryChoice::NewOnly,
+                    authorized_at: 1_770_000_000_002,
+                },
+            ],
+            reason: None,
+        }
+        .confirmed()
+        .unwrap();
+
+        assert_eq!(confirmed.policy, ArchivePolicy::Enrolled);
+        assert_eq!(confirmed.authorized_sources.len(), 2);
+        assert_eq!(
+            confirmed.authorized_sources[0].history_choice,
+            ArchiveHistoryChoice::AllHistory
+        );
+        assert_eq!(
+            confirmed.authorized_sources[1].authorized_at,
+            1_770_000_000_002
+        );
+    }
+
+    #[test]
+    fn malformed_or_unknown_server_policy_is_not_confirmed() {
+        assert!(ArchivePolicyResponse {
+            enrolled: true,
+            authorized_sources: Vec::new(),
+            reason: None,
+        }
+        .confirmed()
+        .is_err());
+        assert!(ArchivePolicyResponse {
+            enrolled: false,
+            authorized_sources: Vec::new(),
+            reason: Some("policy_unavailable".to_string()),
+        }
+        .confirmed()
+        .is_err());
     }
 
     #[test]
