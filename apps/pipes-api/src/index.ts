@@ -31,6 +31,7 @@ const NON_PROD_ORIGINS = [
 const DEV_ORIGINS = ['http://localhost:3000', 'http://localhost:8788'];
 const ALLOWED_BROWSER_HEADERS = ['Content-Type', 'Authorization', 'Baggage', 'Sentry-Trace'];
 const EXPOSED_BROWSER_HEADERS = [
+  'X-Cache',
   'X-Trace-Flow-Pipe',
   'X-Upstream-Status',
   'X-Tinybird-Request-Id',
