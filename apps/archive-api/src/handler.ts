@@ -8,10 +8,12 @@ import { assertIncomingObservationCount, parseAndValidateUpload } from './archiv
 import {
   assertArchiveWriteIdentity,
   authorizeArchiveUpload,
-  getArchiveWrappedKey,
   isArchiveSupportedSource,
 } from './enrollment';
-import { getActiveArchiveWrappedKey, markArchiveKeyRotationFailed } from './archive-key-client';
+import {
+  markArchiveKeyRotationFailed,
+  resolveArchiveWrappedKeyForUpload,
+} from './archive-key-client';
 import { mintAndActivateNextKey } from './archive-key-rotation';
 import type { ArchiveKeyRotationHealth } from './archive-key-rotation-state';
 import {
@@ -255,16 +257,20 @@ export async function handleUpload(c: Context<{ Bindings: ArchiveApiEnv }>): Pro
       logger.error('archive_api.key_configuration_invalid');
       return c.json({ error: 'archive_unavailable', reason: 'key_configuration_invalid' }, 503);
     }
-    let wrappedKey: Awaited<ReturnType<typeof getArchiveWrappedKey>>;
+    let wrappedKey: Awaited<ReturnType<typeof resolveArchiveWrappedKeyForUpload>>;
     try {
-      const active = await getActiveArchiveWrappedKey(c.env, currentDecision.orgId, logger);
-      wrappedKey =
-        active ??
-        (await getArchiveWrappedKey(
-          c.env,
-          { orgId: currentDecision.orgId, keyVersion: configuredKeyVersion },
-          logger,
-        ));
+      wrappedKey = await resolveArchiveWrappedKeyForUpload(
+        c.env,
+        {
+          hashedSecret: auth.credential.collectorCredentialId,
+          source,
+          orgId: currentDecision.orgId,
+          userId: currentDecision.userId,
+          collectorId: currentDecision.collectorId,
+          keyVersion: configuredKeyVersion,
+        },
+        logger,
+      );
     } catch {
       return c.json({ error: 'archive_unavailable', reason: 'key_unavailable' }, 503);
     }

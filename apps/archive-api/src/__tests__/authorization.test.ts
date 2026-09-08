@@ -90,7 +90,11 @@ function installFetchMock(): void {
     ) {
       return new Response(JSON.stringify({ error: 'Archive key unavailable' }), { status: 404 });
     }
-    if (req.method === 'POST' && url.origin === CONVEX && url.pathname === '/archive-api/key') {
+    if (
+      req.method === 'POST' &&
+      url.origin === CONVEX &&
+      url.pathname === '/archive-api/key/initialize'
+    ) {
       if (!keyResponder) throw new Error(`unexpected fetch (no key stub): ${req.url}`);
       return keyResponder();
     }

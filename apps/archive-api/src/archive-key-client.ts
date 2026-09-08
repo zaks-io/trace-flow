@@ -1,5 +1,9 @@
 import type { Logger } from '@trace-flow/logging';
-import { parseArchiveWrappedKeyVersion } from '@trace-flow/utils';
+import {
+  createArchiveEncryptionKeyVersion,
+  parseArchiveWrappedKeyVersion,
+  serializeArchiveWrappedKeyVersion,
+} from '@trace-flow/utils';
 import type { ArchiveApiEnv } from './context';
 import { ArchiveContractError } from './archive-contract';
 import type { ArchiveWrappedKey } from './enrollment';
@@ -116,6 +120,53 @@ export async function getActiveArchiveWrappedKey(
   } catch (error) {
     if (error instanceof ArchiveContractError) throw error;
     logger.error('archive_api.active_key_fetch_error', error);
+    throw new ArchiveContractError('key_unavailable');
+  }
+}
+
+export async function resolveArchiveWrappedKeyForUpload(
+  env: Pick<
+    ArchiveApiEnv,
+    'CONVEX_SITE_URL' | 'ARCHIVE_API_SHARED_SECRET' | 'ARCHIVE_KEY_WRAPPING_SECRET'
+  >,
+  input: {
+    hashedSecret: string;
+    source: 'claude' | 'codex';
+    orgId: string;
+    userId: string;
+    collectorId: string;
+    keyVersion: number;
+  },
+  logger: Logger,
+): Promise<ArchiveWrappedKey> {
+  const active = await getActiveArchiveWrappedKey(env, input.orgId, logger);
+  if (active) return active;
+
+  try {
+    const candidate = serializeArchiveWrappedKeyVersion(
+      await createArchiveEncryptionKeyVersion({
+        orgId: input.orgId,
+        keyVersion: input.keyVersion,
+        wrappingSecretBase64: env.ARCHIVE_KEY_WRAPPING_SECRET,
+      }),
+    );
+    const { status, payload } = await postConvex<Record<string, unknown>>(
+      env,
+      '/archive-api/key/initialize',
+      { ...input, wrappedKey: candidate },
+    );
+    if (status >= 400 || !isWrappedKey(payload)) {
+      logger.error('archive_api.key_initialize_failed', undefined, { status });
+      throw new ArchiveContractError('key_unavailable');
+    }
+    parseArchiveWrappedKeyVersion(payload.wrappedKey, {
+      orgId: input.orgId,
+      keyVersion: payload.keyVersion,
+    });
+    return { keyVersion: payload.keyVersion, wrappedKey: payload.wrappedKey };
+  } catch (error) {
+    if (error instanceof ArchiveContractError) throw error;
+    logger.error('archive_api.key_initialize_error', error);
     throw new ArchiveContractError('key_unavailable');
   }
 }

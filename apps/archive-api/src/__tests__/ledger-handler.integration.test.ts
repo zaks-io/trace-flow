@@ -439,6 +439,7 @@ describe('Archive Session Ledger', () => {
     }
 
     const policyRequests: { collectorId: string; hashedSecret: string }[] = [];
+    let initializedKey: string | undefined;
     const integrityStatusBodies: Record<string, unknown>[] = [];
     const integrityAuditBodies: Record<string, unknown>[] = [];
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -470,8 +471,16 @@ describe('Archive Session Ledger', () => {
           collectorCredentialId: identity.collectorCredentialId,
         });
       }
-      const keyResponse = await fallbackArchiveKeyHttp(url.pathname, currentScope.orgId);
-      if (keyResponse) return keyResponse;
+      if (url.pathname === '/archive-api/key/active') {
+        return initializedKey
+          ? Response.json({ wrappedKey: initializedKey, keyVersion: KEY_VERSION })
+          : Response.json({ error: 'Archive key unavailable' }, { status: 404 });
+      }
+      if (url.pathname === '/archive-api/key/initialize') {
+        const body = await request.json<Record<string, unknown>>();
+        initializedKey ??= String(body.wrappedKey);
+        return Response.json({ wrappedKey: initializedKey, keyVersion: KEY_VERSION });
+      }
       if (url.pathname === '/archive-api/session-integrity') {
         const body = await request.json<Record<string, unknown>>();
         integrityStatusBodies.push(body);
@@ -545,6 +554,7 @@ describe('Archive Session Ledger', () => {
         appended_records: 1,
         generation: 1,
       });
+      expect(initializedKey).toEqual(expect.any(String));
       const unchangedPrefix = new TextEncoder().encode(`${record.payload}\n`);
       const unchanged = await send(identities[1]!.secret, {
         ...upload,
@@ -630,7 +640,8 @@ describe('Archive Session Ledger', () => {
         ...state.storage.sql.exec<{ data: string }>('SELECT data FROM ledger_state WHERE id = 1'),
       ]);
       expect(JSON.parse(stateRows[0]!.data)).toMatchObject({ generation: 1 });
-      const wrapped = await archiveKey(currentScope.orgId);
+      if (!initializedKey) throw new Error('archive key was not initialized');
+      const wrapped = initializedKey;
       const key = await unwrapArchiveEncryptionKey(JSON.parse(wrapped), {
         orgId: currentScope.orgId,
         keyVersion: KEY_VERSION,
