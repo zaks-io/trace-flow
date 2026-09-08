@@ -73,16 +73,19 @@ export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
           ? (body as Record<string, unknown>).upload
           : undefined;
       assertIncomingObservationCount(upload);
-      await armLedgerRecovery(this.ctx.storage);
-      const turn = this.commitQueue.then(() =>
-        commitArchiveSession(this.ctx.storage, this.env, body)
+      const turn = this.commitQueue.then(async () => {
+        await armLedgerRecovery(this.ctx.storage);
+        return commitArchiveSession(this.ctx.storage, this.env, body)
           .then(
             (acknowledgement) => ({ acknowledgement }),
             (error: unknown) => ({ error }),
           )
-          .finally(() => scheduleLedgerRecovery(this.ctx.storage)),
+          .finally(() => scheduleLedgerRecovery(this.ctx.storage));
+      });
+      this.commitQueue = turn.then(
+        () => undefined,
+        () => undefined,
       );
-      this.commitQueue = turn.then(() => undefined);
       const result = await turn;
       if ('error' in result) throw result.error;
       return Response.json(result.acknowledgement);
@@ -135,7 +138,10 @@ export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
         else await this.ctx.storage.deleteAlarm();
       }
     });
-    this.commitQueue = turn.then(() => undefined);
+    this.commitQueue = turn.then(
+      () => undefined,
+      () => undefined,
+    );
     await turn;
   }
 }
