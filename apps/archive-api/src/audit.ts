@@ -38,6 +38,8 @@ export interface ArchiveAuditAppendRequest {
   targetId?: string;
   relevantCount?: number;
   manifestRootHash?: string;
+  manifestRootCount?: number;
+  manifestRootSetHash?: string;
   source?: 'claude' | 'codex';
   sourceSessionId?: string;
 }

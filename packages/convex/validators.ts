@@ -432,6 +432,8 @@ export const archiveAuditEventValidator = v.object({
   sourceSessionId: v.optional(v.string()),
   relevantCount: v.optional(v.number()),
   manifestRootHash: v.optional(v.string()),
+  manifestRootCount: v.optional(v.number()),
+  manifestRootSetHash: v.optional(v.string()),
 });
 
 export const archiveAuditAppendResultValidator = v.object({

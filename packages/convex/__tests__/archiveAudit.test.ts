@@ -188,6 +188,7 @@ function asUser(world: SeededWorld, user: { tokenIdentifier: string }) {
 
 const sources = [{ source: 'claude' as const, historyChoice: 'new_only' as const }];
 const MANIFEST_ROOT = 'a'.repeat(64);
+const MANIFEST_ROOT_SET = 'b'.repeat(64);
 
 describe('archive audit serializer', () => {
   const valid = {
@@ -225,6 +226,16 @@ describe('archive audit serializer', () => {
     expect(() =>
       serializeArchiveApiAuditInput({ ...valid, manifestRootHash: '/tmp/records.jsonl' }),
     ).toThrow('Manifest root hash');
+    expect(() => serializeArchiveApiAuditInput({ ...valid, manifestRootCount: 2 })).toThrow(
+      'Manifest root set hash',
+    );
+    expect(() =>
+      serializeArchiveApiAuditInput({
+        ...valid,
+        manifestRootCount: 0,
+        manifestRootSetHash: MANIFEST_ROOT_SET,
+      }),
+    ).toThrow('Manifest root count');
     expect(() =>
       serializeArchiveApiAuditInput({ ...valid, targetId: '/home/user/session' }),
     ).toThrow('must not contain a path');
@@ -418,6 +429,8 @@ describe('archive audit control plane', () => {
       targetId: 'export-2',
       relevantCount: 3,
       manifestRootHash: MANIFEST_ROOT,
+      manifestRootCount: 2,
+      manifestRootSetHash: MANIFEST_ROOT_SET,
     });
     const completedReplay = await world.t.mutation(
       internal.archiveAuditInternal.appendSemanticEvent,
@@ -430,6 +443,8 @@ describe('archive audit control plane', () => {
         targetId: 'export-2',
         relevantCount: 3,
         manifestRootHash: MANIFEST_ROOT,
+        manifestRootCount: 2,
+        manifestRootSetHash: MANIFEST_ROOT_SET,
       },
     );
     expect(completed.created).toBe(true);
@@ -497,6 +512,8 @@ describe('archive audit control plane', () => {
       actorKind: 'archive_api',
       relevantCount: 3,
       manifestRootHash: MANIFEST_ROOT,
+      manifestRootCount: 2,
+      manifestRootSetHash: MANIFEST_ROOT_SET,
     });
     expect(completedEvent?.actorUserId).toBeUndefined();
     expect(events.find((event) => event.action === 'operator_repair_attempt')).toMatchObject({

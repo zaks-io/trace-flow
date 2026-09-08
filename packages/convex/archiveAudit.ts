@@ -26,6 +26,8 @@ function projectAuditEvent(row: Doc<'archiveAuditEvents'>) {
     sourceSessionId: row.sourceSessionId,
     relevantCount: row.relevantCount,
     manifestRootHash: row.manifestRootHash,
+    manifestRootCount: row.manifestRootCount,
+    manifestRootSetHash: row.manifestRootSetHash,
   };
 }
 

@@ -13,6 +13,40 @@ export interface ArchiveR2Object {
   key: string;
   body: string;
   objectClass: 'chunk' | 'manifest';
+  keyVersion?: number;
+}
+
+const ARCHIVE_KEY_VERSION_METADATA = 'archive-key-version';
+
+export function archiveKeyVersionMetadata(keyVersion: number): Record<string, string> {
+  if (!Number.isSafeInteger(keyVersion) || keyVersion < 1) {
+    throw new ArchiveContractError('invalid_archive_key_version');
+  }
+  return { [ARCHIVE_KEY_VERSION_METADATA]: String(keyVersion) };
+}
+
+export function optionalKeyVersionFromR2Metadata(
+  metadata: Record<string, string> | undefined,
+): number | null {
+  const raw = metadata?.[ARCHIVE_KEY_VERSION_METADATA];
+  if (raw === undefined) return null;
+  const keyVersion = Number(raw);
+  if (!Number.isSafeInteger(keyVersion) || keyVersion < 1 || String(keyVersion) !== raw) {
+    throw new ArchiveContractError('archive_key_version_unknown');
+  }
+  return keyVersion;
+}
+
+function keyVersionFromBody(body: string): number {
+  try {
+    const parsed = JSON.parse(body) as { keyVersion?: unknown };
+    if (!Number.isSafeInteger(parsed.keyVersion) || (parsed.keyVersion as number) < 1) {
+      throw new Error('invalid');
+    }
+    return parsed.keyVersion as number;
+  } catch {
+    throw new ArchiveContractError('archive_object_envelope_invalid');
+  }
 }
 
 export class ArchiveR2BatchWriteError extends Error {
@@ -25,12 +59,16 @@ export class ArchiveR2BatchWriteError extends Error {
   }
 }
 
-export function storageBudgetObject(object: ArchiveR2Object): StorageBudgetObject {
+export function storageBudgetObject(
+  object: ArchiveR2Object,
+  keyVersion?: number,
+): StorageBudgetObject {
   return {
     objectKey: object.key,
     objectClass: object.objectClass === 'chunk' ? 'agent_archive_chunk' : 'agent_archive_manifest',
     bytes: new TextEncoder().encode(object.body).byteLength,
     expiresAt: null,
+    ...(keyVersion === undefined ? {} : { keyVersion }),
   };
 }
 
@@ -85,8 +123,11 @@ export async function verifyOrPutImmutableObject(
     return;
   }
   try {
+    const keyVersion = object.keyVersion ?? keyVersionFromBody(object.body);
     await bucket.put(object.key, object.body, {
+      onlyIf: new Headers({ 'If-None-Match': '*' }),
       httpMetadata: { contentType: 'application/json' },
+      customMetadata: archiveKeyVersionMetadata(keyVersion),
     });
   } catch (error) {
     throw markWriteAttempt(error, true);
@@ -160,9 +201,8 @@ export async function verifyEncryptedPlannedObject(
 export async function verifyCommittedManifestObject(
   bucket: R2Bucket,
   objectKey: string,
-  key: CryptoKey,
+  resolveKey: (keyVersion: number) => Promise<CryptoKey>,
   scope: ArchiveScope,
-  keyVersion: number,
   expected: { generation: number; elementCount: number; chainHead: string },
 ): Promise<void> {
   const object = await bucket.get(objectKey);
@@ -170,12 +210,16 @@ export async function verifyCommittedManifestObject(
   const serialized = await object.text();
 
   try {
-    const plaintext = await decryptArchiveObject(JSON.parse(serialized) as ArchiveObjectEnvelope, {
-      key,
+    const envelope = JSON.parse(serialized) as ArchiveObjectEnvelope;
+    if (!Number.isSafeInteger(envelope.keyVersion) || envelope.keyVersion < 1) {
+      throw new Error('manifest_key_version_invalid');
+    }
+    const plaintext = await decryptArchiveObject(envelope, {
+      key: await resolveKey(envelope.keyVersion),
       orgId: scope.orgId,
       objectKey,
       objectClass: 'manifest',
-      keyVersion,
+      keyVersion: envelope.keyVersion,
     });
     const digest = digestString(new Uint8Array(await crypto.subtle.digest('SHA-256', plaintext)));
     if ((await archiveObjectKey(scope, 'manifests', digest)) !== objectKey) {

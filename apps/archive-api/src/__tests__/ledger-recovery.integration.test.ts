@@ -22,7 +22,7 @@ import {
   digest,
   observation,
   checkpoint,
-  archiveKey,
+  fallbackArchiveKeyHttp,
   scope,
   envelope,
   call,
@@ -194,7 +194,7 @@ describe('Archive Session Ledger', () => {
       if (!pending) throw new Error('pending intent missing');
       markIntentReady(state.storage, pending.intentHash);
       markIntentWriteAuthorized(state.storage, pending.intentHash);
-      discardPendingIntent(state.storage, pending.intentHash);
+      discardPendingIntent(state.storage, pending.intentHash, 'unreserved_only');
       return readPendingIntent(state.storage);
     });
     expect(authorizedIntent).toMatchObject({ status: 'write_authorized' });
@@ -439,12 +439,8 @@ describe('Archive Session Ledger', () => {
           collectorCredentialId: identity.hashedSecret,
         });
       }
-      if (url.pathname === '/archive-api/key') {
-        return Response.json({
-          wrappedKey: await archiveKey(currentScope.orgId),
-          keyVersion: KEY_VERSION,
-        });
-      }
+      const keyResponse = await fallbackArchiveKeyHttp(url.pathname, currentScope.orgId);
+      if (keyResponse) return keyResponse;
       throw new Error(`unexpected fetch: ${request.method} ${request.url}`);
     });
     const handlerEnv = {

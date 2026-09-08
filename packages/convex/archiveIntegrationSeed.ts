@@ -96,6 +96,18 @@ export const cleanupConcurrentEnrollment = internalMutation({
       await ctx.db.delete(row._id);
     }
     for (const row of await ctx.db
+      .query('archiveEncryptionCustody')
+      .withIndex('by_org_id', (q) => q.eq('orgId', orgId))
+      .collect()) {
+      await ctx.db.delete(row._id);
+    }
+    for (const row of await ctx.db
+      .query('archiveEncryptionKeyVersions')
+      .withIndex('by_org_id', (q) => q.eq('orgId', orgId))
+      .collect()) {
+      await ctx.db.delete(row._id);
+    }
+    for (const row of await ctx.db
       .query('archiveSessionIntegrity')
       .withIndex('by_org_id', (q) => q.eq('orgId', orgId))
       .collect()) {

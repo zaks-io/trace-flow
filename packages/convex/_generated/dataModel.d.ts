@@ -405,6 +405,8 @@ export type DataModel = {
       contributionId?: Id<"archiveContributions">;
       enrollmentId?: Id<"archiveEnrollments">;
       manifestRootHash?: string;
+      manifestRootCount?: number;
+      manifestRootSetHash?: string;
       occurredAt: number;
       operationId: string;
       orgId: Id<"organizations">;
@@ -434,6 +436,8 @@ export type DataModel = {
       | "contributionId"
       | "enrollmentId"
       | "manifestRootHash"
+      | "manifestRootCount"
+      | "manifestRootSetHash"
       | "occurredAt"
       | "operationId"
       | "orgId"
@@ -484,6 +488,34 @@ export type DataModel = {
       by_org_id: ["orgId", "_creationTime"];
       by_org_user: ["orgId", "userId", "_creationTime"];
       by_user_id: ["userId", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  archiveEncryptionCustody: {
+    document: {
+      activeKeyVersion: number;
+      orgId: Id<"organizations">;
+      retiringKeyVersion?: number;
+      rotationOperationId?: string;
+      rotationStatus?: "rotating" | "succeeded" | "failed";
+      updatedAt: number;
+      _id: Id<"archiveEncryptionCustody">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "activeKeyVersion"
+      | "orgId"
+      | "retiringKeyVersion"
+      | "rotationOperationId"
+      | "rotationStatus"
+      | "updatedAt";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
     };
     searchIndexes: {};
     vectorIndexes: {};
