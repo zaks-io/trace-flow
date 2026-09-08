@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 
 use collector_archive::{
@@ -8,11 +9,13 @@ use collector_archive::{
 };
 use collector_archive_sync::{
     acknowledgement_matches, archive_source_session_id, run_archive_cycle, transcript_part_for,
-    ArchiveAcknowledgement, ArchiveClient, ArchiveClientConfig, ArchiveClientError,
-    ArchiveEnrollmentRecord, ArchiveKeyStore, ArchivePolicy, ArchiveSnapshot, ArchiveSpool,
-    ArchiveSpoolKey, ArchiveSyncError, ArchiveUploader, MemoryKeyStore, PendingArchiveRequest,
-    PendingLoad, ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE, MAX_ARCHIVE_UPLOAD_BYTES,
-    MAX_UPLOAD_OBSERVATIONS,
+    ArchiveAcknowledgement, ArchiveBaselineTarget, ArchiveClient, ArchiveClientConfig,
+    ArchiveClientError, ArchiveEnrollmentRecord, ArchiveHistoryChoice, ArchiveHistoryGeneration,
+    ArchiveHistoryPlan, ArchiveHistoryState, ArchiveInitialImport, ArchiveKeyStore, ArchivePolicy,
+    ArchiveSnapshot, ArchiveSpool, ArchiveSpoolKey, ArchiveSyncError, ArchiveUploader,
+    ArchiveWorkClass, DeferredArchiveSnapshot, MemoryKeyStore, PendingArchiveRequest, PendingLoad,
+    ARCHIVE_CAPTURE_WINDOW_BYTES, ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE,
+    MAX_ARCHIVE_UPLOAD_BYTES, MAX_UPLOAD_OBSERVATIONS,
 };
 use collector_contracts::AgentSource;
 use tempfile::TempDir;
@@ -21,6 +24,48 @@ use tokio_util::sync::CancellationToken;
 const CLAUDE: &[u8] = include_bytes!("../../collector-archive/tests/fixtures/claude.jsonl");
 const CODEX: &[u8] = include_bytes!("../../collector-archive/tests/fixtures/codex.jsonl");
 const ALL_ARCHIVE_SOURCES: &[ArchiveSource] = &[ArchiveSource::Claude, ArchiveSource::Codex];
+
+fn plan_for(sources: &[ArchiveSource]) -> ArchiveHistoryPlan {
+    ArchiveHistoryPlan::new(
+        sources
+            .iter()
+            .copied()
+            .map(|source| {
+                ArchiveHistoryState::new(
+                    ArchiveHistoryGeneration {
+                        source,
+                        history_choice: ArchiveHistoryChoice::AllHistory,
+                        authorized_at: 0,
+                    },
+                    0,
+                    Vec::new(),
+                )
+            })
+            .collect(),
+    )
+}
+
+fn state_with_target(
+    source: ArchiveSource,
+    choice: ArchiveHistoryChoice,
+    session: &str,
+) -> ArchiveHistoryState {
+    ArchiveHistoryState::new(
+        ArchiveHistoryGeneration {
+            source,
+            history_choice: choice,
+            authorized_at: 10,
+        },
+        10,
+        vec![ArchiveBaselineTarget {
+            source_session_id: session.to_string(),
+            source_transcript_part_id: default_transcript_part_id(source),
+            activity_rank_ms: 1,
+            registered_size_bytes: 1,
+            registered_complete_byte_offset: 1,
+        }],
+    )
+}
 
 struct ScriptedUploader {
     calls: Cell<u32>,
@@ -85,7 +130,10 @@ fn snapshot(source: ArchiveSource, bytes: &[u8], observed_at: i64) -> ArchiveSna
         source_transcript_part_id: default_transcript_part_id(source),
         transcript_part_identity: None,
         bytes: bytes.to_vec(),
+        deferred_file: None,
         observed_at,
+        class: ArchiveWorkClass::Live,
+        activity_rank_ms: None,
     }
 }
 
@@ -104,7 +152,10 @@ fn snapshot_for_path(
         source_transcript_part_id,
         transcript_part_identity,
         bytes: bytes.to_vec(),
+        deferred_file: None,
         observed_at,
+        class: ArchiveWorkClass::Live,
+        activity_rank_ms: None,
     }
 }
 
@@ -389,7 +440,7 @@ async fn exact_body_retry_posts_the_persisted_bytes() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -418,7 +469,7 @@ async fn acknowledgement_mismatch_does_not_advance() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -451,7 +502,7 @@ async fn session_error_does_not_block_other_sessions() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -486,7 +537,7 @@ async fn cursor_snapshots_are_not_required_for_jsonl_uploads() {
         &keys,
         &[claude],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -512,7 +563,7 @@ async fn unauthorized_source_is_neither_captured_nor_uploaded() {
         &keys,
         &[snapshot(ArchiveSource::Codex, CODEX, 11)],
         ArchivePolicy::Enrolled,
-        &[ArchiveSource::Claude],
+        &plan_for(&[ArchiveSource::Claude]),
         None,
     )
     .await;
@@ -551,7 +602,7 @@ async fn terminal_revocation_purges_spool_key_and_progress() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -585,7 +636,7 @@ async fn expired_credential_retains_pending_spool_key_and_progress() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -614,7 +665,7 @@ async fn local_revoked_policy_purges_without_uploading() {
         &keys,
         &[snapshot(ArchiveSource::Claude, CLAUDE, 10)],
         ArchivePolicy::Revoked,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -639,7 +690,7 @@ async fn server_frozen_denial_does_not_purge_or_advance() {
         &keys,
         &[snapshot(ArchiveSource::Claude, CLAUDE, 10)],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -671,7 +722,7 @@ async fn live_frozen_during_capture_stops_later_sessions() {
         &keys,
         &[claude, codex],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -705,7 +756,7 @@ async fn grace_and_frozen_retain_without_uploading() {
             &keys,
             &[snapshot(ArchiveSource::Claude, CLAUDE, 10)],
             policy,
-            ALL_ARCHIVE_SOURCES,
+            &plan_for(ALL_ARCHIVE_SOURCES),
             None,
         )
         .await;
@@ -824,6 +875,39 @@ struct AckingUploader {
     session_record_count: Cell<u64>,
 }
 
+#[cfg(unix)]
+struct PermissionRestoringUploader {
+    inner: AckingUploader,
+    path: std::path::PathBuf,
+    permissions: RefCell<Option<std::fs::Permissions>>,
+}
+
+#[cfg(unix)]
+impl PermissionRestoringUploader {
+    fn new(path: std::path::PathBuf, permissions: std::fs::Permissions) -> Self {
+        Self {
+            inner: AckingUploader::new(),
+            path,
+            permissions: RefCell::new(Some(permissions)),
+        }
+    }
+}
+
+#[cfg(unix)]
+impl ArchiveUploader for PermissionRestoringUploader {
+    async fn upload(
+        &self,
+        source: ArchiveSource,
+        body: &[u8],
+        cancel: Option<&CancellationToken>,
+    ) -> Result<ArchiveAcknowledgement, ArchiveClientError> {
+        if let Some(permissions) = self.permissions.borrow_mut().take() {
+            fs::set_permissions(&self.path, permissions).unwrap();
+        }
+        self.inner.upload(source, body, cancel).await
+    }
+}
+
 impl AckingUploader {
     fn new() -> Self {
         Self {
@@ -905,7 +989,7 @@ async fn oversized_session_splits_at_byte_limit() {
         &keys,
         &[snapshot(ArchiveSource::Claude, &bytes, 10)],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -961,7 +1045,7 @@ async fn bounded_upload_failure_keeps_later_records_after_source_disappears() {
         &keys,
         &[snapshot(ArchiveSource::Claude, &bytes, 10)],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -1005,7 +1089,7 @@ async fn bounded_upload_failure_keeps_later_records_after_source_disappears() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -1075,7 +1159,7 @@ async fn existing_pending_does_not_strand_later_observed_bytes() {
         &keys,
         &[snapshot(ArchiveSource::Claude, &bytes, 11)],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -1111,7 +1195,7 @@ async fn existing_pending_does_not_strand_later_observed_bytes() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -1153,7 +1237,7 @@ async fn oversized_session_splits_at_observation_count() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -1200,7 +1284,7 @@ async fn acknowledgement_at_exact_cap_clears_pending() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -1277,7 +1361,7 @@ async fn corrupt_claude_pending_does_not_block_codex() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -1323,7 +1407,10 @@ async fn claude_parent_and_subagent_same_session_upload_independently() {
             source_transcript_part_id: parent_part.clone(),
             transcript_part_identity: None,
             bytes: parent_bytes.to_vec(),
+            deferred_file: None,
             observed_at: 10,
+            class: ArchiveWorkClass::Live,
+            activity_rank_ms: None,
         },
         ArchiveSnapshot {
             source: ArchiveSource::Claude,
@@ -1331,7 +1418,10 @@ async fn claude_parent_and_subagent_same_session_upload_independently() {
             source_transcript_part_id: sub_part.clone(),
             transcript_part_identity: Some("agent-001".to_string()),
             bytes: subagent_bytes.to_vec(),
+            deferred_file: None,
             observed_at: 11,
+            class: ArchiveWorkClass::Live,
+            activity_rank_ms: None,
         },
     ];
     let uploader = AckingUploader::new();
@@ -1341,7 +1431,7 @@ async fn claude_parent_and_subagent_same_session_upload_independently() {
         &keys,
         &snapshots,
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -1427,7 +1517,7 @@ async fn missing_or_empty_agent_id_subagent_does_not_collide_with_parent_across_
             &keys,
             &[child.clone(), parent.clone()],
             ArchivePolicy::Enrolled,
-            ALL_ARCHIVE_SOURCES,
+            &plan_for(ALL_ARCHIVE_SOURCES),
             None,
         )
         .await;
@@ -1464,7 +1554,7 @@ async fn missing_or_empty_agent_id_subagent_does_not_collide_with_parent_across_
             &keys,
             &[child, parent_append],
             ArchivePolicy::Enrolled,
-            ALL_ARCHIVE_SOURCES,
+            &plan_for(ALL_ARCHIVE_SOURCES),
             None,
         )
         .await;
@@ -1696,7 +1786,7 @@ async fn session_aggregate_duplicate_parent_rescan_advances() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -1729,7 +1819,7 @@ async fn failing_keyring_delete_does_not_claim_purge() {
         &keys,
         &[snapshot(ArchiveSource::Claude, CLAUDE, 10)],
         ArchivePolicy::Revoked,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -1756,7 +1846,7 @@ async fn failing_keyring_delete_does_not_claim_purge() {
         &live_keys,
         &[],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -1785,7 +1875,7 @@ async fn failing_keyring_delete_does_not_claim_purge() {
         &stop_keys,
         &[later],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -1818,7 +1908,7 @@ async fn enrollment_invalid_failed_delete_retries_cleanup_after_relaunch() {
         &keys,
         &[],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -1848,7 +1938,7 @@ async fn enrollment_invalid_failed_delete_retries_cleanup_after_relaunch() {
         &keys,
         &[later],
         policy,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -1895,7 +1985,7 @@ async fn failing_policy_replace_blocks_all_sources_and_retries_purge() {
         &keys,
         &[later],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -1925,7 +2015,7 @@ async fn failing_policy_replace_blocks_all_sources_and_retries_purge() {
         &keys,
         &[relaunch_later],
         ArchivePolicy::Enrolled,
-        ALL_ARCHIVE_SOURCES,
+        &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
@@ -1977,4 +2067,391 @@ fn finish_cleanup_keeps_marker_when_enrollment_replace_fails() {
         "must not mint a replacement key while cleanup remains"
     );
     assert!(keys.load("org_1").unwrap().is_none());
+}
+
+#[tokio::test]
+async fn current_new_only_authority_retains_excluded_pending() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    spool.persist_pending(&pending).unwrap();
+    let path = pending_disk_path(dir.path(), &pending);
+    let mut encrypted = fs::read(&path).unwrap();
+    let last = encrypted.len() - 1;
+    encrypted[last] ^= 0xff;
+    fs::write(&path, encrypted).unwrap();
+    let plan = ArchiveHistoryPlan::new(vec![state_with_target(
+        ArchiveSource::Claude,
+        ArchiveHistoryChoice::NewOnly,
+        &pending.source_session_id,
+    )]);
+    let uploader = AckingUploader::new();
+
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        &plan,
+        None,
+    )
+    .await;
+
+    assert!(uploader.bodies.borrow().is_empty());
+    assert!(path.exists());
+    assert_eq!(report.failed, 0);
+    assert!(report.first_error.is_none());
+    assert_eq!(report.history[0].retained_excluded_pending, 1);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unreadable_excluded_directory_does_not_block_permitted_pending() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let excluded = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    let permitted = pending_from_bytes(ArchiveSource::Codex, CODEX, 10);
+    spool.persist_pending(&excluded).unwrap();
+    spool.persist_pending(&permitted).unwrap();
+    let excluded_dir = pending_disk_path(dir.path(), &excluded)
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let original_permissions = fs::metadata(&excluded_dir).unwrap().permissions();
+    let mut unreadable = original_permissions.clone();
+    unreadable.set_mode(0o000);
+    fs::set_permissions(&excluded_dir, unreadable).unwrap();
+
+    let plan = ArchiveHistoryPlan::new(vec![
+        state_with_target(
+            ArchiveSource::Claude,
+            ArchiveHistoryChoice::NewOnly,
+            &excluded.source_session_id,
+        ),
+        ArchiveHistoryState::new(
+            ArchiveHistoryGeneration {
+                source: ArchiveSource::Codex,
+                history_choice: ArchiveHistoryChoice::AllHistory,
+                authorized_at: 10,
+            },
+            10,
+            Vec::new(),
+        ),
+    ]);
+    let uploader =
+        PermissionRestoringUploader::new(excluded_dir.clone(), original_permissions.clone());
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        &plan,
+        None,
+    )
+    .await;
+    fs::set_permissions(&excluded_dir, original_permissions).unwrap();
+
+    assert_eq!(report.uploaded, 1, "{report:?}");
+    assert_eq!(report.failed, 1);
+    assert_eq!(report.first_error.as_deref(), Some("archive_spool_corrupt"));
+    let uploaded: serde_json::Value =
+        serde_json::from_slice(&uploader.inner.bodies.borrow()[0]).unwrap();
+    assert_eq!(uploaded["source_session_id"], permitted.source_session_id);
+    assert!(pending_disk_path(dir.path(), &excluded).exists());
+}
+
+#[tokio::test]
+async fn deferred_oversized_snapshot_makes_bounded_progress() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path().join("spool"), "org_1", &keys).unwrap();
+    let path = dir.path().join("claude.jsonl");
+    let mut prefix = Vec::new();
+    while prefix.len() <= ARCHIVE_CAPTURE_WINDOW_BYTES as usize + CLAUDE.len() {
+        prefix.extend_from_slice(CLAUDE);
+    }
+    fs::write(&path, prefix).unwrap();
+    let registered_size = 1024 * 1024 * 1024 + 1;
+    let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+    file.set_len(registered_size).unwrap();
+    file.seek(SeekFrom::End(-1)).unwrap();
+    file.write_all(b"\n").unwrap();
+    let mut deferred = snapshot(ArchiveSource::Claude, CLAUDE, 10);
+    deferred.bytes.clear();
+    deferred.deferred_file = Some(DeferredArchiveSnapshot {
+        path,
+        prior_offset: 0,
+        minimum_observed_size: 0,
+    });
+    let uploader = AckingUploader::new();
+
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        std::slice::from_ref(&deferred),
+        ArchivePolicy::Enrolled,
+        &plan_for(&[ArchiveSource::Claude]),
+        None,
+    )
+    .await;
+
+    assert_eq!(report.failed, 0);
+    assert!(report.uploaded > 0);
+    let progress = spool
+        .progress(ArchiveSource::Claude, &deferred.source_session_id)
+        .unwrap()
+        .unwrap();
+    assert!(progress.last_complete_byte_offset > 0);
+    assert!(progress.last_complete_byte_offset < registered_size);
+}
+
+#[tokio::test]
+async fn invalid_source_state_does_not_block_another_source() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let claude = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    let codex = pending_from_bytes(ArchiveSource::Codex, CODEX, 10);
+    spool.persist_pending(&claude).unwrap();
+    spool.persist_pending(&codex).unwrap();
+    let plan = ArchiveHistoryPlan::new(vec![ArchiveHistoryState::new(
+        ArchiveHistoryGeneration {
+            source: ArchiveSource::Codex,
+            history_choice: ArchiveHistoryChoice::AllHistory,
+            authorized_at: 10,
+        },
+        10,
+        Vec::new(),
+    )])
+    .with_failed_sources(vec![ArchiveSource::Claude]);
+    let uploader = AckingUploader::new();
+
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        &plan,
+        None,
+    )
+    .await;
+
+    assert_eq!(report.uploaded, 1);
+    assert_eq!(report.failed, 0);
+    let claude_history = report
+        .history
+        .iter()
+        .find(|history| history.source == ArchiveSource::Claude)
+        .unwrap();
+    assert_eq!(claude_history.retained_excluded_pending, 1);
+    let uploaded: serde_json::Value = serde_json::from_slice(&uploader.bodies.borrow()[0]).unwrap();
+    assert_eq!(uploaded["source_session_id"], codex.source_session_id);
+    assert!(pending_disk_path(dir.path(), &claude).exists());
+}
+
+#[tokio::test]
+async fn ambiguous_new_only_exclusion_is_reported_without_operational_failure() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let state = ArchiveHistoryState::new(
+        ArchiveHistoryGeneration {
+            source: ArchiveSource::Codex,
+            history_choice: ArchiveHistoryChoice::NewOnly,
+            authorized_at: 10,
+        },
+        10,
+        Vec::new(),
+    );
+    let plan = ArchiveHistoryPlan::new(vec![state])
+        .with_ambiguous_excluded(vec![(ArchiveSource::Codex, 2)]);
+
+    let report = run_archive_cycle(
+        &AckingUploader::new(),
+        &mut spool,
+        &keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        &plan,
+        None,
+    )
+    .await;
+
+    assert_eq!(report.failed, 0);
+    assert!(report.first_error.is_none());
+    assert_eq!(report.history.len(), 1);
+    assert_eq!(report.history[0].ambiguous_excluded_sessions, 2);
+}
+
+#[tokio::test]
+async fn live_session_runs_before_baseline_after_plan_rebuild() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let mut baseline = snapshot(ArchiveSource::Claude, CLAUDE, 10);
+    baseline.class = ArchiveWorkClass::Baseline;
+    baseline.activity_rank_ms = Some(i64::MAX);
+    let live_bytes = br#"{"sessionId":"live-session","uuid":"live-1"}
+"#;
+    let live = snapshot(ArchiveSource::Claude, live_bytes, 11);
+    let state = state_with_target(
+        ArchiveSource::Claude,
+        ArchiveHistoryChoice::AllHistory,
+        &baseline.source_session_id,
+    );
+    let plan = ArchiveHistoryPlan::new(vec![state]).with_live_sessions(vec![(
+        ArchiveSource::Claude,
+        live.source_session_id.clone(),
+        11,
+    )]);
+    let uploader = AckingUploader::new();
+
+    run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[baseline, live],
+        ArchivePolicy::Enrolled,
+        &plan,
+        None,
+    )
+    .await;
+
+    let first: serde_json::Value = serde_json::from_slice(&uploader.bodies.borrow()[0]).unwrap();
+    assert_eq!(first["source_session_id"], "live-session");
+}
+
+#[test]
+fn encrypted_history_state_round_trips_and_purges_with_the_spool() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let state = state_with_target(
+        ArchiveSource::Claude,
+        ArchiveHistoryChoice::AllHistory,
+        "baseline-session",
+    );
+    spool.commit_history_state(&state).unwrap();
+    let encrypted = fs::read(dir.path().join("history/claude.bin")).unwrap();
+    assert!(!encrypted
+        .windows("baseline-session".len())
+        .any(|window| window == b"baseline-session"));
+    drop(spool);
+
+    let reopened = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    assert_eq!(
+        reopened.history_state(ArchiveSource::Claude).unwrap(),
+        Some(state)
+    );
+    reopened.purge(&keys).unwrap();
+    assert!(!dir.path().join("history").exists());
+}
+
+#[test]
+fn history_without_its_key_fails_loud() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    spool
+        .commit_history_state(&state_with_target(
+            ArchiveSource::Codex,
+            ArchiveHistoryChoice::AllHistory,
+            "baseline-session",
+        ))
+        .unwrap();
+    keys.delete("org_1").unwrap();
+    assert!(matches!(
+        ArchiveSpool::open(dir.path(), "org_1", &keys),
+        Err(ArchiveSyncError::Corrupt)
+    ));
+}
+
+#[tokio::test]
+async fn missing_baseline_stays_in_progress() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let state = state_with_target(
+        ArchiveSource::Claude,
+        ArchiveHistoryChoice::AllHistory,
+        "missing-session",
+    );
+    let plan = ArchiveHistoryPlan::new(vec![state]);
+    let report = run_archive_cycle(
+        &AckingUploader::new(),
+        &mut spool,
+        &keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        &plan,
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        report.first_error.as_deref(),
+        Some("archive_history_missing_baseline")
+    );
+    assert_eq!(
+        report.history[0].initial_import,
+        ArchiveInitialImport::InProgress
+    );
+    assert_eq!(report.history[0].completed_targets, 0);
+}
+
+#[tokio::test]
+async fn acknowledgement_of_complete_records_finishes_a_partial_tail_target() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let complete = b"{\"sessionId\":\"partial-session\",\"uuid\":\"one\"}\n";
+    let mut bytes = complete.to_vec();
+    bytes.extend_from_slice(b"{\"unfinished\":");
+    let mut target = snapshot(ArchiveSource::Claude, &bytes, 10);
+    target.class = ArchiveWorkClass::Baseline;
+    target.activity_rank_ms = Some(10);
+    let state = ArchiveHistoryState::new(
+        ArchiveHistoryGeneration {
+            source: ArchiveSource::Claude,
+            history_choice: ArchiveHistoryChoice::AllHistory,
+            authorized_at: 10,
+        },
+        10,
+        vec![ArchiveBaselineTarget {
+            source_session_id: target.source_session_id.clone(),
+            source_transcript_part_id: target.source_transcript_part_id.clone(),
+            activity_rank_ms: 10,
+            registered_size_bytes: bytes.len() as u64,
+            registered_complete_byte_offset: complete.len() as u64,
+        }],
+    );
+    let plan = ArchiveHistoryPlan::new(vec![state]).with_present_parts(vec![(
+        ArchiveSource::Claude,
+        target.source_session_id.clone(),
+        target.source_transcript_part_id.clone(),
+    )]);
+    let report = run_archive_cycle(
+        &AckingUploader::new(),
+        &mut spool,
+        &keys,
+        &[target],
+        ArchivePolicy::Enrolled,
+        &plan,
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        report.history[0].initial_import,
+        ArchiveInitialImport::Complete
+    );
+    assert_eq!(report.history[0].completed_targets, 1);
 }

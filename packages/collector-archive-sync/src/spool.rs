@@ -10,6 +10,7 @@ use collector_archive::{
 use crate::crypto::{decrypt, encrypt};
 use crate::enrollment::ArchiveEnrollmentRecord;
 use crate::error::{ArchiveSyncError, ArchiveSyncResult};
+use crate::history::ArchiveHistoryState;
 use crate::key_store::{ArchiveKeyStore, ArchiveSpoolKey};
 use crate::policy::ArchivePolicy;
 
@@ -62,6 +63,12 @@ pub enum PendingLoad {
         source_transcript_part_id: String,
         class: &'static str,
     },
+}
+
+pub(crate) struct PendingLoads {
+    pub loads: Vec<PendingLoad>,
+    pub retained_excluded: Vec<ArchiveSource>,
+    pub metadata_errors: Vec<&'static str>,
 }
 
 pub struct ArchiveSpool {
@@ -279,7 +286,17 @@ impl ArchiveSpool {
     }
 
     pub fn all_pending(&self) -> ArchiveSyncResult<Vec<PendingLoad>> {
+        self.all_pending_permitted(|_, _| true)
+            .map(|selection| selection.loads)
+    }
+
+    pub(crate) fn all_pending_permitted(
+        &self,
+        permits: impl Copy + Fn(ArchiveSource, &str) -> bool,
+    ) -> ArchiveSyncResult<PendingLoads> {
         let mut pending = Vec::new();
+        let mut retained_excluded = Vec::new();
+        let mut metadata_errors = Vec::new();
         for source in [ArchiveSource::Claude, ArchiveSource::Codex] {
             let dir = self.root.join("pending").join(source.as_str());
             let Ok(entries) = fs::read_dir(&dir) else {
@@ -320,6 +337,21 @@ impl ArchiveSpool {
                         source_transcript_part_id: default_transcript_part_id(source),
                         class: ArchiveSyncError::Corrupt.class(),
                     });
+                    continue;
+                }
+                if !permits(source, session) {
+                    match fs::read_dir(&path) {
+                        Ok(entries) => retained_excluded.extend(
+                            entries
+                                .filter_map(Result::ok)
+                                .filter(|entry| {
+                                    entry.path().extension().and_then(|ext| ext.to_str())
+                                        == Some("bin")
+                                })
+                                .map(|_| source),
+                        ),
+                        Err(_) => metadata_errors.push(ArchiveSyncError::Corrupt.class()),
+                    }
                     continue;
                 }
                 let session = session.to_string();
@@ -372,7 +404,12 @@ impl ArchiveSpool {
                 }
             }
         }
-        self.collect_remainder_loads(&mut pending)?;
+        self.collect_remainder_loads(
+            &mut pending,
+            &mut retained_excluded,
+            &mut metadata_errors,
+            permits,
+        )?;
         pending.sort_by(|left, right| {
             let left_key = load_sort_key(left);
             let right_key = load_sort_key(right);
@@ -383,7 +420,11 @@ impl ArchiveSpool {
                 .then_with(|| left_key.2.cmp(right_key.2))
                 .then_with(|| left_key.3.cmp(&right_key.3))
         });
-        Ok(pending)
+        Ok(PendingLoads {
+            loads: pending,
+            retained_excluded,
+            metadata_errors,
+        })
     }
 
     pub fn slices_for_part(
@@ -446,6 +487,26 @@ impl ArchiveSpool {
             ),
             |plain| serde_json::from_slice(plain).map_err(|_| ArchiveSyncError::Corrupt),
         )
+    }
+
+    pub fn history_state(
+        &self,
+        source: ArchiveSource,
+    ) -> ArchiveSyncResult<Option<ArchiveHistoryState>> {
+        let path = self.history_path(source);
+        self.read_encrypted(
+            &path,
+            &self.aad("history", source, "history", "state"),
+            |plain| serde_json::from_slice(plain).map_err(|_| ArchiveSyncError::Corrupt),
+        )
+    }
+
+    pub fn commit_history_state(&self, state: &ArchiveHistoryState) -> ArchiveSyncResult<()> {
+        let source = state.generation.source;
+        let plaintext = serde_json::to_vec(state)?;
+        let aad = self.aad("history", source, "history", "state");
+        let blob = encrypt(&self.key, &aad, &plaintext)?;
+        self.write_capped(&self.history_path(source), &blob)
     }
 
     pub fn clear_pending(
@@ -865,7 +926,13 @@ impl ArchiveSpool {
         )
     }
 
-    fn collect_remainder_loads(&self, pending: &mut Vec<PendingLoad>) -> ArchiveSyncResult<()> {
+    fn collect_remainder_loads(
+        &self,
+        pending: &mut Vec<PendingLoad>,
+        retained_excluded: &mut Vec<ArchiveSource>,
+        metadata_errors: &mut Vec<&'static str>,
+        permits: impl Copy + Fn(ArchiveSource, &str) -> bool,
+    ) -> ArchiveSyncResult<()> {
         for source in [ArchiveSource::Claude, ArchiveSource::Codex] {
             let dir = self.root.join("remainder").join(source.as_str());
             let Ok(entries) = fs::read_dir(&dir) else {
@@ -906,6 +973,36 @@ impl ArchiveSpool {
                         source_transcript_part_id: default_transcript_part_id(source),
                         class: ArchiveSyncError::Corrupt.class(),
                     });
+                    continue;
+                }
+                if !permits(source, session) {
+                    match fs::read_dir(&path) {
+                        Ok(parts) => {
+                            for part in parts.filter_map(Result::ok) {
+                                if !part.path().is_dir() {
+                                    continue;
+                                }
+                                match fs::read_dir(part.path()) {
+                                    Ok(entries) => retained_excluded.extend(
+                                        entries
+                                            .filter_map(Result::ok)
+                                            .filter(|entry| {
+                                                entry
+                                                    .path()
+                                                    .extension()
+                                                    .and_then(|ext| ext.to_str())
+                                                    == Some("bin")
+                                            })
+                                            .map(|_| source),
+                                    ),
+                                    Err(_) => {
+                                        metadata_errors.push(ArchiveSyncError::Corrupt.class())
+                                    }
+                                }
+                            }
+                        }
+                        Err(_) => metadata_errors.push(ArchiveSyncError::Corrupt.class()),
+                    }
                     continue;
                 }
                 let session = session.to_string();
@@ -1035,6 +1132,12 @@ impl ArchiveSpool {
             .join(source.as_str())
             .join(session_dir_name(source_session_id)?)
             .join(part_file_name(source_transcript_part_id)?))
+    }
+
+    fn history_path(&self, source: ArchiveSource) -> PathBuf {
+        self.root
+            .join("history")
+            .join(format!("{}.bin", source.as_str()))
     }
 
     fn aad(

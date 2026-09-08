@@ -20,6 +20,7 @@
 //! - [`defaults`] — the production ingest + Convex-site + Archive URLs, resolved as env override →
 //!   baked default so a normal user never has to know or set a URL.
 
+mod archive_history;
 pub mod archive_policy;
 pub mod connection;
 pub mod defaults;

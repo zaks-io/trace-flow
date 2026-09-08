@@ -6,11 +6,13 @@
 
 mod ack;
 mod bound;
+mod capture;
 mod client;
 mod crypto;
 mod cycle;
 mod enrollment;
 mod error;
+mod history;
 mod key_store;
 mod policy;
 mod scan;
@@ -23,15 +25,25 @@ pub use bound::{
 };
 pub use client::{ArchiveClient, ArchiveClientConfig, ArchiveUploader};
 pub use collector_archive::ArchiveSource;
-pub use cycle::{run_archive_cycle, ArchiveCycleReport, ArchiveSnapshot};
+pub use cycle::{
+    run_archive_cycle, ArchiveCycleReport, ArchiveInitialImport, ArchiveSnapshot,
+    ArchiveSourceHistoryReport, DeferredArchiveSnapshot,
+};
 pub use enrollment::ArchiveEnrollmentRecord;
 pub use error::{ArchiveClientError, ArchiveSyncError, ArchiveSyncResult};
+pub use history::{
+    ArchiveBaselineTarget, ArchiveHistoryGeneration, ArchiveHistoryPlan, ArchiveHistoryState,
+    ArchiveWorkClass, ARCHIVE_CAPTURE_WINDOW_BYTES, ARCHIVE_HISTORY_STATE_VERSION,
+};
 pub use key_store::{ArchiveKeyStore, ArchiveSpoolKey, MemoryKeyStore, OsKeyStore};
 pub use policy::{
     policy_from_denial_reason, ArchiveAuthorizedSource, ArchiveHistoryChoice, ArchivePolicy,
     ArchivePolicyParseError, ArchivePolicyResponse, ConfirmedArchivePolicy,
 };
-pub use scan::{archive_source_session_id, scan_snapshot, transcript_part_for};
+pub use scan::{
+    archive_source_session_id, archive_source_session_id_from_records, parse_jsonl_records,
+    scan_snapshot, transcript_part_for, transcript_part_for_records,
+};
 pub use spool::{
     cleanup_obligation_exists, finish_terminal_cleanup, ArchiveSpool, PendingArchiveRequest,
     PendingLoad, ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE,
