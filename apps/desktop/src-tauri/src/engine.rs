@@ -489,6 +489,7 @@ fn run_cycle_blocking(
                 }
             }
             if let Some(archive) = &outcome.archive {
+                tracing::info!(history = ?archive.history, "archive history progress");
                 failed += archive.failed;
                 if archive_setup_error.is_none() {
                     archive_setup_error = archive.first_error.clone();

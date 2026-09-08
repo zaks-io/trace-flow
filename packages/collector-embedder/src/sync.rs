@@ -27,11 +27,14 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use collector_api_client::{CollectorApiClient, CollectorApiClientConfig};
+#[cfg(test)]
 use collector_archive::ArchiveSource;
+#[cfg(test)]
+use collector_archive_sync::{archive_source_session_id, transcript_part_for};
 use collector_archive_sync::{
-    archive_source_session_id, finish_terminal_cleanup, run_archive_cycle, transcript_part_for,
-    ArchiveAuthorizedSource, ArchiveClient, ArchiveClientConfig, ArchiveCycleReport,
-    ArchiveEnrollmentRecord, ArchiveSnapshot, OsKeyStore,
+    finish_terminal_cleanup, run_archive_cycle, ArchiveAuthorizedSource, ArchiveClient,
+    ArchiveClientConfig, ArchiveCycleReport, ArchiveEnrollmentRecord, ArchiveHistoryPlan,
+    ArchiveSnapshot, OsKeyStore,
 };
 
 pub use collector_archive_sync::{
@@ -44,6 +47,7 @@ use collector_sync::{
     ImportWindow, Orchestrator, SyncUnit, Trigger,
 };
 
+use crate::archive_history::prepare as prepare_archive_history;
 use crate::connection::Paths;
 use crate::sources::{cursor_db_path, ingestable_sources, source_root};
 
@@ -103,6 +107,7 @@ pub struct ArchiveRunConfig {
 }
 
 impl ArchiveRunConfig {
+    #[cfg(test)]
     fn authorizes(&self, source: ArchiveSource) -> bool {
         self.authorized_sources
             .iter()
@@ -264,10 +269,37 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
         format!("{prefix}-{batch_seq}")
     };
 
+    let history = if let Some(archive_cfg) = &cfg.archive {
+        if archive_cfg.policy.captures() {
+            match open_spool_for_policy(archive_cfg, cfg.org_id) {
+                Ok(Some(spool)) => prepare_archive_history(
+                    cfg.home,
+                    &spool,
+                    &archive_cfg.authorized_sources,
+                    cfg.now_ms,
+                ),
+                Ok(None) => Default::default(),
+                Err(class) => {
+                    let mut history = crate::archive_history::PreparedArchiveHistory::default();
+                    history.errors.push(class.to_string());
+                    history.plan = ArchiveHistoryPlan::default().with_failed_sources(
+                        archive_cfg
+                            .authorized_sources
+                            .iter()
+                            .map(|authorization| authorization.source)
+                            .collect(),
+                    );
+                    history
+                }
+            }
+        } else {
+            Default::default()
+        }
+    } else {
+        Default::default()
+    };
     let mut discovery_passes = 0usize;
     let mut files_read = 0usize;
-    let mut archive_snapshots = Vec::new();
-    let mut archive_discovery_errors = Vec::new();
     let mut prepared = Vec::new();
 
     for source in ingestable_sources() {
@@ -275,19 +307,9 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
         let units = match source_root(cfg.home, source) {
             Some(root) => {
                 discovery_passes += 1;
-                let pass = assemble_jsonl_pass(
-                    &store,
-                    &cache,
-                    source,
-                    &root,
-                    window,
-                    cfg.archive.as_ref(),
-                    &mut report,
-                )
-                .await?;
+                let pass =
+                    assemble_jsonl_pass(&store, &cache, source, &root, window, &mut report).await?;
                 files_read += pass.files_read;
-                archive_snapshots.extend(pass.snapshots);
-                archive_discovery_errors.extend(pass.archive_discovery_errors);
                 pass.units
             }
             None => assemble_cursor_source_units(&store, &cfg, window, &mut report)?,
@@ -296,9 +318,15 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
     }
 
     let mut archive = if let Some(archive_cfg) = &cfg.archive {
-        let mut report =
-            run_archive_work(archive_cfg, cfg.org_id, &cfg.credential, &archive_snapshots).await;
-        for class in &archive_discovery_errors {
+        let mut report = run_archive_work(
+            archive_cfg,
+            cfg.org_id,
+            &cfg.credential,
+            &history.snapshots,
+            &history.plan,
+        )
+        .await;
+        for class in &history.errors {
             report.failed += 1;
             if report.first_error.is_none() {
                 report.first_error = Some(class.clone());
@@ -319,13 +347,9 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
 
     apply_archive_policy_after_cycle(cfg.archive.as_ref(), cfg.org_id, archive.as_mut(), &reports);
 
-    let archive_incomplete = archive
-        .as_ref()
-        .is_some_and(|report| report.failed > 0 && !report.purged);
     let complete = reports
         .iter()
-        .all(|(_, report)| report.failed == 0 && !report.aborted_early)
-        && !archive_incomplete;
+        .all(|(_, report)| report.failed == 0 && !report.aborted_early);
     if complete {
         // The pass started at `now_ms`; anything modified after that is caught by the next pass's
         // grace window. A pass with failures keeps the old watermark so the failed files stay in scope.
@@ -451,9 +475,7 @@ fn is_unauthorized(first_error: &Option<String>) -> bool {
 
 struct JsonlPass {
     units: Vec<SyncUnit>,
-    snapshots: Vec<ArchiveSnapshot>,
     files_read: usize,
-    archive_discovery_errors: Vec<String>,
 }
 
 /// Discover + assemble units for a JSONL source (Claude, Codex): one walk, one full read per needed
@@ -464,7 +486,6 @@ async fn assemble_jsonl_pass(
     source: AgentSource,
     root: &Path,
     window: ImportWindow,
-    archive: Option<&ArchiveRunConfig>,
     report: &mut SourceReport,
 ) -> Result<JsonlPass> {
     let files = walk_transcripts(root);
@@ -474,10 +495,8 @@ async fn assemble_jsonl_pass(
         select_changed(files.clone(), store, source, window).context("select changed files")?;
     report.selected = selected.len();
 
-    let archive_files = archive_files_for_source(source, &files, window, archive);
-
     let mut needed: HashMap<String, DiscoveredFile> = HashMap::new();
-    for file in selected.iter().chain(archive_files.iter()) {
+    for file in &selected {
         needed.insert(file.path.clone(), file.clone());
     }
 
@@ -490,15 +509,10 @@ async fn assemble_jsonl_pass(
         }
     }
 
-    let (snapshots, archive_discovery_errors) =
-        archive_snapshots_from_bytes(source, &archive_files, &bytes_by_path);
-
     if selected.is_empty() {
         return Ok(JsonlPass {
             units: Vec::new(),
-            snapshots,
             files_read,
-            archive_discovery_errors,
         });
     }
 
@@ -535,14 +549,10 @@ async fn assemble_jsonl_pass(
             }
         }
     }
-    Ok(JsonlPass {
-        units,
-        snapshots,
-        files_read,
-        archive_discovery_errors,
-    })
+    Ok(JsonlPass { units, files_read })
 }
 
+#[cfg(test)]
 fn archive_files_for_source(
     source: AgentSource,
     files: &[DiscoveredFile],
@@ -565,6 +575,7 @@ fn archive_files_for_source(
         .collect()
 }
 
+#[cfg(test)]
 fn archive_snapshots_from_bytes(
     source: AgentSource,
     archive_files: &[DiscoveredFile],
@@ -590,7 +601,10 @@ fn archive_snapshots_from_bytes(
                             source_transcript_part_id,
                             transcript_part_identity,
                             bytes: bytes.clone(),
+                            deferred_file: None,
                             observed_at: file.mtime_ms as i64,
+                            class: collector_archive_sync::ArchiveWorkClass::Live,
+                            activity_rank_ms: None,
                         });
                     }
                     Err(_) => errors.push("invalid_archive_session".to_string()),
@@ -607,6 +621,7 @@ async fn run_archive_work(
     org_id: &str,
     credential: &str,
     snapshots: &[ArchiveSnapshot],
+    plan: &ArchiveHistoryPlan,
 ) -> ArchiveCycleReport {
     if archive.policy.purges() || cleanup_obligation_exists(&archive.spool_dir) {
         let mut report = ArchiveCycleReport::default();
@@ -652,18 +667,13 @@ async fn run_archive_work(
         }
     };
 
-    let authorized_sources: Vec<_> = archive
-        .authorized_sources
-        .iter()
-        .map(|authorization| authorization.source)
-        .collect();
     run_archive_cycle(
         &uploader,
         &mut spool,
         archive.key_store.as_ref(),
         snapshots,
         archive.policy,
-        &authorized_sources,
+        plan,
         None,
     )
     .await

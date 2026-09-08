@@ -6,11 +6,13 @@
 
 mod ack;
 mod bound;
+mod capture;
 mod client;
 mod crypto;
 mod cycle;
 mod enrollment;
 mod error;
+mod history;
 mod key_store;
 mod policy;
 mod scan;
@@ -23,9 +25,16 @@ pub use bound::{
 };
 pub use client::{ArchiveClient, ArchiveClientConfig, ArchiveUploader};
 pub use collector_archive::ArchiveSource;
-pub use cycle::{run_archive_cycle, ArchiveCycleReport, ArchiveSnapshot};
+pub use cycle::{
+    run_archive_cycle, ArchiveCycleReport, ArchiveInitialImport, ArchiveSnapshot,
+    ArchiveSourceHistoryReport, DeferredArchiveSnapshot,
+};
 pub use enrollment::ArchiveEnrollmentRecord;
 pub use error::{ArchiveClientError, ArchiveSyncError, ArchiveSyncResult};
+pub use history::{
+    ArchiveBaselineTarget, ArchiveHistoryGeneration, ArchiveHistoryPlan, ArchiveHistoryState,
+    ArchiveWorkClass, ARCHIVE_CAPTURE_WINDOW_BYTES, ARCHIVE_HISTORY_STATE_VERSION,
+};
 pub use key_store::{ArchiveKeyStore, ArchiveSpoolKey, MemoryKeyStore, OsKeyStore};
 pub use policy::{
     policy_from_denial_reason, ArchiveAuthorizedSource, ArchiveHistoryChoice, ArchivePolicy,

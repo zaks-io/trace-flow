@@ -58,6 +58,17 @@ pub fn source_root(home: &std::path::Path, source: AgentSource) -> Option<PathBu
     }
 }
 
+pub fn archive_source_roots(home: &std::path::Path, source: AgentSource) -> Vec<PathBuf> {
+    match source {
+        AgentSource::Claude => vec![home.join(".claude").join("projects")],
+        AgentSource::Codex => vec![
+            home.join(".codex").join("sessions"),
+            home.join(".codex").join("archived_sessions"),
+        ],
+        AgentSource::Cursor => Vec::new(),
+    }
+}
+
 /// The Cursor `state.vscdb` path under `home`, or `None` on a platform where Cursor's global store is
 /// not at the known macOS location. This single DB under globalStorage holds every composer (session)
 /// and bubble (message); the per-workspace stores are not the v1 target.
