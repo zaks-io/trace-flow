@@ -6,10 +6,6 @@ import {
   sensitiveArgumentValues,
 } from './archive-api-process-diagnostics';
 import {
-  createArchiveEncryptionKeyVersion,
-  serializeArchiveWrappedKeyVersion,
-} from '../../packages/utils/src/archive-crypto';
-import {
   ARCHIVE_FORMAT_VERSION,
   CHAIN_HASH_VERSION,
   GENESIS_CHAIN_HASH,
@@ -284,6 +280,21 @@ async function sendUpload(
   });
 }
 
+async function waitForCredentialPolicy(archiveUrl: string, credential: string): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const response = await fetch(`${archiveUrl}/v1/archive/policy`, {
+      headers: { 'X-Trace-Flow-Collector-Secret': credential },
+    });
+    if (response.status === 200) return;
+    if (response.status !== 401) {
+      throw new Error(`Collector policy warmup failed with status ${response.status}`);
+    }
+    await sleep(1_000);
+  }
+  throw new Error('Collector Credential did not reach the Archive API before the timeout');
+}
+
 async function waitForCredentialRevocation(archiveUrl: string, credential: string): Promise<void> {
   // The Worker reads KV on every request, but a delete can take 60 seconds or more
   // to replace a value cached in another Cloudflare location.
@@ -364,7 +375,6 @@ async function waitForDurableStatus(
 async function main(): Promise<void> {
   const deployment = requiredEnvironment('TRACE_FLOW_ARCHIVE_SMOKE_DEPLOYMENT');
   const archiveUrl = requiredEnvironment('TRACE_FLOW_ARCHIVE_SMOKE_URL').replace(/\/$/u, '');
-  const wrappingSecret = requiredEnvironment('ARCHIVE_KEY_WRAPPING_SECRET');
   assert.equal(deployment, expectedDeployment, 'Smoke is restricted to the Cloud-Dev deployment');
   assert.equal(archiveUrl, expectedArchiveUrl, 'Smoke is restricted to the Cloud-Dev Archive API');
 
@@ -376,7 +386,6 @@ async function main(): Promise<void> {
   let foreign: SeedResult | undefined;
   let minted: MintResult | undefined;
   let enrollment: EnrollmentResult | undefined;
-  let keyStored = false;
   const archiveObjectKeys = new Set<string>();
   let smokeEvidence: Record<string, unknown> | undefined;
   let smokeFailed = false;
@@ -432,17 +441,27 @@ async function main(): Promise<void> {
       primary.tokenIdentifier,
     );
 
-    const wrappedKey = await createArchiveEncryptionKeyVersion({
-      orgId: primary.orgId,
-      keyVersion: 1,
-      wrappingSecretBase64: wrappingSecret,
-    });
-    await runConvex(deployment, 'archiveKeysInternal:storeVersion', {
-      orgId: primary.orgId,
-      keyVersion: 1,
-      wrappedKey: serializeArchiveWrappedKeyVersion(wrappedKey),
-    });
-    keyStored = true;
+    await waitForCredentialPolicy(archiveUrl, minted.secret);
+    assert.equal(
+      await runConvex<null>(
+        deployment,
+        'archiveKeysInternal:getActiveVersion',
+        { orgId: primary.orgId },
+        undefined,
+        true,
+      ),
+      null,
+    );
+    assert.equal(
+      await runConvex<null>(
+        deployment,
+        'archiveKeysInternal:getCustody',
+        { orgId: primary.orgId },
+        undefined,
+        true,
+      ),
+      null,
+    );
 
     const baseline = await runConvex<ArchiveStatus>(
       deployment,
@@ -452,27 +471,46 @@ async function main(): Promise<void> {
     );
     assert.notEqual(baseline.storedBytes, null);
     const startedAt = Date.now();
-    const claudeSession = `claude-smoke-${crypto.randomUUID()}`;
-    const claudeFixture = await uploadFixture('claude', claudeSession);
-
-    let claudeResponse: Response | undefined;
-    const credentialSyncDeadline = Date.now() + 30_000;
-    while (Date.now() < credentialSyncDeadline) {
-      claudeResponse = await sendUpload(archiveUrl, minted.secret, 'claude', claudeFixture.upload);
-      if (claudeResponse.status !== 401) break;
-      await sleep(1_000);
-    }
-    assert.ok(claudeResponse);
-    assert.equal(claudeResponse.status, 200);
-    const claudeAck = (await responseJson(claudeResponse)) as ArchiveAcknowledgement;
-    assertDurableAcknowledgement(
-      claudeAck,
-      'claude',
-      claudeSession,
-      claudeFixture.expectedChainHead,
+    const claudeFixtures = await Promise.all(
+      Array.from({ length: 3 }, async () => {
+        const session = `claude-smoke-${crypto.randomUUID()}`;
+        return { session, fixture: await uploadFixture('claude', session) };
+      }),
     );
-    archiveObjectKeys.add(claudeAck.manifest_key);
-    claudeAck.chunk_keys.forEach((key) => archiveObjectKeys.add(key));
+    const claudeResponses = await Promise.all(
+      claudeFixtures.map(({ fixture }) =>
+        sendUpload(archiveUrl, minted!.secret, 'claude', fixture.upload),
+      ),
+    );
+    const claudeAcks = await Promise.all(
+      claudeResponses.map(async (response, index) => {
+        assert.equal(response.status, 200);
+        const ack = (await responseJson(response)) as ArchiveAcknowledgement;
+        const item = claudeFixtures[index]!;
+        assertDurableAcknowledgement(ack, 'claude', item.session, item.fixture.expectedChainHead);
+        archiveObjectKeys.add(ack.manifest_key);
+        ack.chunk_keys.forEach((key) => archiveObjectKeys.add(key));
+        return ack;
+      }),
+    );
+    const firstClaude = claudeFixtures[0];
+    const [claudeAck] = claudeAcks;
+    assert.ok(firstClaude && claudeAck);
+    const { session: claudeSession, fixture: claudeFixture } = firstClaude;
+    const activeKey = await runConvex<{ keyVersion: number; wrappedKey: string } | null>(
+      deployment,
+      'archiveKeysInternal:getActiveVersion',
+      { orgId: primary.orgId },
+    );
+    const custody = await runConvex<{ activeKeyVersion: number } | null>(
+      deployment,
+      'archiveKeysInternal:getCustody',
+      { orgId: primary.orgId },
+    );
+    assert.ok(activeKey);
+    assert.ok(custody);
+    assert.equal(activeKey.keyVersion, 1);
+    assert.equal(custody.activeKeyVersion, activeKey.keyVersion);
 
     const retryResponse = await sendUpload(
       archiveUrl,
@@ -536,6 +574,7 @@ async function main(): Promise<void> {
       idempotentRetry: true,
       sourcePolicyFailure: true,
       crossOrganizationFailure: true,
+      firstKeyBootstrap: true,
       auditEventsVerified: true,
     };
   } catch (error) {
@@ -576,16 +615,6 @@ async function main(): Promise<void> {
       );
     }
     await cleanup('R2 object deletion', () => deleteArchiveObjects(archiveObjectKeys));
-    if (primary && keyStored) {
-      await cleanup('archive encryption key deletion', async () => {
-        const destroyed = await runConvex<boolean>(
-          deployment,
-          'archiveKeysInternal:destroyVersion',
-          { orgId: primary!.orgId, keyVersion: 1 },
-        );
-        assert.equal(destroyed, true);
-      });
-    }
     if (foreign) {
       await cleanup('foreign organization deletion', () =>
         runConvex(

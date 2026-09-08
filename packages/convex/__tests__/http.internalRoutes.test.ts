@@ -734,6 +734,74 @@ describe('convex/http.ts internal routes', () => {
       });
     });
 
+    it('initializes a key only through the collector-bound upload mutation', async () => {
+      ctx.runMutation.mockResolvedValueOnce({
+        allowed: true,
+        keyVersion: 1,
+        wrappedKey: 'persisted-winner',
+      });
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/archive-api/key/initialize',
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer archive-secret' },
+          body: JSON.stringify({
+            hashedSecret: 'collector-secret-hash',
+            source: 'claude',
+            orgId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+            userId: 'j57axc8sefsfp6k28nx6c481js806pwv',
+            collectorId: 'collector-1',
+            keyVersion: 1,
+            wrappedKey: 'candidate',
+          }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({
+        keyVersion: 1,
+        wrappedKey: 'persisted-winner',
+      });
+      expect(ctx.runMutation.mock.calls[0]?.[1]).toMatchObject({
+        hashedSecret: 'collector-secret-hash',
+        source: 'claude',
+        orgId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+        userId: 'j57axc8sefsfp6k28nx6c481js806pwv',
+        collectorId: 'collector-1',
+        keyVersion: 1,
+        wrappedKey: 'candidate',
+        now: expect.any(Number),
+      });
+    });
+
+    it('returns a collector authorization denial without a key', async () => {
+      ctx.runMutation.mockResolvedValueOnce({ allowed: false, reason: 'credential_revoked' });
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/archive-api/key/initialize',
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer archive-secret' },
+          body: JSON.stringify({
+            hashedSecret: 'collector-secret-hash',
+            source: 'claude',
+            orgId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+            userId: 'j57axc8sefsfp6k28nx6c481js806pwv',
+            collectorId: 'collector-1',
+            keyVersion: 1,
+            wrappedKey: 'candidate',
+          }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(403);
+      await expect(res.json()).resolves.toEqual({
+        error: 'Forbidden',
+        reason: 'credential_revoked',
+      });
+    });
+
     it('activates a new wrapped key version', async () => {
       ctx.runMutation.mockResolvedValueOnce({
         orgId: 'k57axc8sefsfp6k28nx6c481js806pwv',

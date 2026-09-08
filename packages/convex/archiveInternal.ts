@@ -230,7 +230,7 @@ export const enrollCollectorByHashedSecret = internalMutation({
 });
 
 async function authorizeArchiveWriteForCredential(
-  ctx: QueryCtx,
+  ctx: QueryCtx | MutationCtx,
   credential: Doc<'collectorCredentials'> | null,
   source: ArchiveSupportedSource,
 ): Promise<
@@ -300,36 +300,48 @@ export const authorizeArchiveWriteByHashedSecret = internalQuery({
     now: v.number(),
   },
   returns: archiveWriteAuthorizationWithTenancyValidator,
-  handler: async (ctx, args) => {
-    const credential = await ctx.db
-      .query('collectorCredentials')
-      .withIndex('by_hashed_secret', (q) => q.eq('hashedSecret', args.hashedSecret))
-      .unique();
-    if (credential == null) {
-      return { allowed: false as const, reason: 'not_enrolled' as const };
-    }
-    if (
-      credential.orgId !== args.orgId ||
-      credential.userId !== args.userId ||
-      credential.collectorId !== args.collectorId
-    ) {
-      return { allowed: false as const, reason: 'not_enrolled' as const };
-    }
-    if (isCollectorCredentialExpired(credential, args.now)) {
-      return { allowed: false as const, reason: 'credential_revoked' as const };
-    }
-
-    const decision = await authorizeArchiveWriteForCredential(ctx, credential, args.source);
-    if (!decision.allowed) return decision;
-    return {
-      ...decision,
-      orgId: credential.orgId,
-      userId: credential.userId,
-      collectorId: credential.collectorId,
-      collectorCredentialId: credential._id,
-    };
-  },
+  handler: async (ctx, args) => authorizeArchiveWriteByHashedSecretCore(ctx, args),
 });
+
+export async function authorizeArchiveWriteByHashedSecretCore(
+  ctx: QueryCtx | MutationCtx,
+  args: {
+    hashedSecret: string;
+    source: ArchiveSupportedSource;
+    orgId: Id<'organizations'>;
+    userId: Id<'users'>;
+    collectorId: string;
+    now: number;
+  },
+) {
+  const credential = await ctx.db
+    .query('collectorCredentials')
+    .withIndex('by_hashed_secret', (q) => q.eq('hashedSecret', args.hashedSecret))
+    .unique();
+  if (credential == null) {
+    return { allowed: false as const, reason: 'not_enrolled' as const };
+  }
+  if (
+    credential.orgId !== args.orgId ||
+    credential.userId !== args.userId ||
+    credential.collectorId !== args.collectorId
+  ) {
+    return { allowed: false as const, reason: 'not_enrolled' as const };
+  }
+  if (isCollectorCredentialExpired(credential, args.now)) {
+    return { allowed: false as const, reason: 'credential_revoked' as const };
+  }
+
+  const decision = await authorizeArchiveWriteForCredential(ctx, credential, args.source);
+  if (!decision.allowed) return decision;
+  return {
+    ...decision,
+    orgId: credential.orgId,
+    userId: credential.userId,
+    collectorId: credential.collectorId,
+    collectorCredentialId: credential._id,
+  };
+}
 
 async function applyServerStatusForOrganization(
   ctx: MutationCtx,

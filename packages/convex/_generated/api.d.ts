@@ -2427,6 +2427,34 @@ export declare const internal: {
         wrappedKey: string;
       } | null
     >;
+    initializeForAuthorizedUpload: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        collectorId: string;
+        hashedSecret: string;
+        keyVersion: number;
+        now: number;
+        orgId: Id<"organizations">;
+        source: "claude" | "codex";
+        userId: Id<"users">;
+        wrappedKey: string;
+      },
+      | { allowed: true; keyVersion: number; wrappedKey: string }
+      | {
+          allowed: false;
+          reason:
+            | "server_disabled"
+            | "not_activated"
+            | "frozen"
+            | "deleting"
+            | "not_pro"
+            | "credential_revoked"
+            | "not_enrolled"
+            | "enrollment_invalid"
+            | "source_unauthorized";
+        }
+    >;
     markRotationFailed: FunctionReference<
       "mutation",
       "internal",

@@ -120,6 +120,83 @@ export function registerArchiveKeyRoutes(app: HonoWithConvex<ActionCtx>): void {
     }
   });
 
+  app.post('/archive-api/key/initialize', async (c) => {
+    const logger = getRequestLogger(c.req.raw, { operation: 'archive_key_initialize' });
+    const authHeader = c.req.header('Authorization');
+    const secret = process.env.ARCHIVE_API_SHARED_SECRET;
+    if (!hasValidBearerSecret(authHeader, secret)) {
+      logger.warn('convex.archive_key_shared_secret_invalid', {
+        reason: unauthorizedReason(authHeader, secret),
+      });
+      await logger.flush();
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    let body: {
+      hashedSecret?: string;
+      source?: string;
+      orgId?: string;
+      userId?: string;
+      collectorId?: string;
+      keyVersion?: number;
+      wrappedKey?: string;
+    };
+    try {
+      body = await c.req.json();
+    } catch {
+      logger.warn('convex.archive_key_initialize_request_invalid', { reason: 'invalid_json' });
+      await logger.flush();
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+    if (
+      typeof body.hashedSecret !== 'string' ||
+      body.hashedSecret.length === 0 ||
+      (body.source !== 'claude' && body.source !== 'codex') ||
+      !isConvexDocumentId(body.orgId) ||
+      !isConvexDocumentId(body.userId) ||
+      typeof body.collectorId !== 'string' ||
+      body.collectorId.length === 0 ||
+      typeof body.keyVersion !== 'number' ||
+      !Number.isSafeInteger(body.keyVersion) ||
+      body.keyVersion < 1 ||
+      typeof body.wrappedKey !== 'string'
+    ) {
+      logger.warn('convex.archive_key_initialize_request_invalid', { reason: 'invalid_input' });
+      await logger.flush();
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+
+    try {
+      const result = await c.env.runMutation(
+        internal.archiveKeysInternal.initializeForAuthorizedUpload,
+        {
+          hashedSecret: body.hashedSecret,
+          source: body.source,
+          orgId: body.orgId as Id<'organizations'>,
+          userId: body.userId as Id<'users'>,
+          collectorId: body.collectorId,
+          keyVersion: body.keyVersion,
+          wrappedKey: body.wrappedKey,
+          now: Date.now(),
+        },
+      );
+      if (!result.allowed) {
+        logger.warn('convex.archive_key_initialize_denied', { reason: result.reason });
+        await logger.flush();
+        return c.json({ error: 'Forbidden', reason: result.reason }, 403);
+      }
+      logger.info('convex.archive_key_initialized', { key_version: result.keyVersion });
+      await logger.flush();
+      return c.json({ keyVersion: result.keyVersion, wrappedKey: result.wrappedKey });
+    } catch (error) {
+      logger.error('convex.archive_key_initialize_failed', error, {
+        error_class: 'mutation_failed',
+      });
+      await logger.flush();
+      return c.json({ error: 'Archive key unavailable' }, 503);
+    }
+  });
+
   app.post('/archive-api/key/activate', async (c) => {
     const logger = getRequestLogger(c.req.raw, { operation: 'archive_key_activate' });
     const authHeader = c.req.header('Authorization');

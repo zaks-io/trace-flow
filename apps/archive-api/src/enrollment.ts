@@ -1,5 +1,4 @@
 import type { Logger } from '@trace-flow/logging';
-import { parseArchiveWrappedKeyVersion } from '@trace-flow/utils';
 import type { ArchiveApiEnv } from './context';
 import { assertIdentifier } from './archive-contract';
 
@@ -154,37 +153,6 @@ export async function authorizeArchiveUpload(
   } catch (err) {
     logger.error('archive_api.policy_fetch_error', err);
     return degradeOrFail(key, logger);
-  }
-}
-
-export async function getArchiveWrappedKey(
-  env: Pick<ArchiveApiEnv, 'CONVEX_SITE_URL' | 'ARCHIVE_API_SHARED_SECRET'>,
-  input: { orgId: string; keyVersion: number },
-  logger: Logger,
-): Promise<ArchiveWrappedKey> {
-  try {
-    const response = await fetch(`${env.CONVEX_SITE_URL}/archive-api/key`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.ARCHIVE_API_SHARED_SECRET}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(input),
-      signal: AbortSignal.timeout(POLICY_TIMEOUT_MS),
-    });
-    if (!response.ok) {
-      logger.error('archive_api.key_fetch_failed', undefined, { status: response.status });
-      throw new Error('archive_key_unavailable');
-    }
-    const parsed = await response.json<Record<string, unknown>>();
-    if (typeof parsed.wrappedKey !== 'string' || parsed.keyVersion !== input.keyVersion) {
-      throw new Error('archive_key_malformed');
-    }
-    parseArchiveWrappedKeyVersion(parsed.wrappedKey, input);
-    return { keyVersion: input.keyVersion, wrappedKey: parsed.wrappedKey };
-  } catch (error) {
-    logger.error('archive_api.key_fetch_error', error);
-    throw new Error('archive_key_unavailable');
   }
 }
 

@@ -9,7 +9,15 @@ import { app } from '../index';
 import type { ArchiveApiEnv } from '../context';
 import type { ArchiveSessionLedger } from '../archive-ledger';
 import type { StorageBudget } from '../archive-storage-budget';
+import type { ArchiveUploadRequest } from '../archive-contract';
 import { __resetArchivePolicyCache } from '../enrollment';
+import {
+  base64,
+  checkpoint,
+  exactPrefix,
+  observation,
+  partFor,
+} from './ledger.integration.fixtures';
 
 const CONVEX = 'https://convex.test';
 const SECRET = 'valid-collector-secret';
@@ -90,7 +98,11 @@ function installFetchMock(): void {
     ) {
       return new Response(JSON.stringify({ error: 'Archive key unavailable' }), { status: 404 });
     }
-    if (req.method === 'POST' && url.origin === CONVEX && url.pathname === '/archive-api/key') {
+    if (
+      req.method === 'POST' &&
+      url.origin === CONVEX &&
+      url.pathname === '/archive-api/key/initialize'
+    ) {
       if (!keyResponder) throw new Error(`unexpected fetch (no key stub): ${req.url}`);
       return keyResponder();
     }
@@ -329,6 +341,82 @@ describe('Archive API authorization', () => {
     expect(await res.json()).toMatchObject({ reason: 'credential_revoked' });
     expect(authorizationCalls).toBe(2);
   });
+
+  it.each([
+    {
+      reason: 'credential_revoked',
+      expectedStatus: 403,
+      expectedBody: { error: 'forbidden', reason: 'credential_revoked' },
+    },
+    {
+      reason: 'deleting',
+      expectedStatus: 403,
+      expectedBody: { error: 'forbidden', reason: 'deleting' },
+    },
+    {
+      reason: 'unexpected_reason',
+      expectedStatus: 503,
+      expectedBody: { error: 'archive_unavailable', reason: 'key_unavailable' },
+    },
+  ])(
+    'maps first-key initialization denial $reason without reaching the ledger',
+    async ({ reason, expectedStatus, expectedBody }) => {
+      const source = 'claude';
+      const sourceSessionId = `init-denied-${reason}`;
+      let authorizationCalls = 0;
+      authorizeResponder = () => {
+        authorizationCalls++;
+        return Response.json({
+          allowed: true,
+          enrollmentId: 'enr_1',
+          contributionId: 'con_1',
+          orgId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+          userId: 'j57axc8sefsfp6k28nx6c481js806pwv',
+          collectorId: 'collector-1',
+          collectorCredentialId: 'cred_1',
+        });
+      };
+      let initializationCalls = 0;
+      keyResponder = () => {
+        initializationCalls++;
+        return Response.json({ error: 'Forbidden', reason }, { status: 403 });
+      };
+      const idFromName = vi.fn(() => {
+        throw new Error('denied initialization must not reach the ledger');
+      });
+      const env = {
+        ...makeEnv(await validCredEntries()),
+        ARCHIVE_SESSION_LEDGER: {
+          idFromName,
+        } as unknown as ArchiveApiEnv['ARCHIVE_SESSION_LEDGER'],
+      };
+      const record = await observation(
+        source,
+        sourceSessionId,
+        partFor(source),
+        'init-denied-record',
+        '{}',
+      );
+      const upload: ArchiveUploadRequest = {
+        source_session_id: sourceSessionId,
+        observations: [record],
+        checkpoint: await checkpoint(source, sourceSessionId, partFor(source), [record]),
+        complete_prefix_base64: base64(exactPrefix([record])),
+      };
+
+      const response = await fetchRoute(env, '/v1/archive/uploads', {
+        method: 'POST',
+        headers: { ...collectorHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify(upload),
+      });
+
+      expect(response.status).toBe(expectedStatus);
+      expect(await response.json()).toEqual(expectedBody);
+      expect(authorizationCalls).toBe(2);
+      expect(initializationCalls).toBe(1);
+      expect(idFromName).not.toHaveBeenCalled();
+    },
+  );
 
   it('fails closed when Convex is unavailable and no current cache exists', async () => {
     authorizeResponder = () => {

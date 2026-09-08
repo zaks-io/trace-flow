@@ -4,6 +4,8 @@ import type { Doc, Id } from './_generated/dataModel';
 import { parseArchiveWrappedKeyVersion } from '@trace-flow/utils';
 import { v } from 'convex/values';
 import { getArchiveActivation } from './archiveLib';
+import { archiveSupportedSourceValidator, archiveWriteDenialReasonValidator } from './validators';
+import { authorizeArchiveWriteByHashedSecretCore } from './archiveInternal';
 
 const archiveKeyVersionValidator = v.object({
   orgId: v.id('organizations'),
@@ -41,6 +43,18 @@ const archiveActivateResultValidator = v.object({
   activationId: v.optional(v.id('archiveActivations')),
   operationId: v.string(),
 });
+
+const archiveKeyInitializationResultValidator = v.union(
+  v.object({
+    allowed: v.literal(true),
+    keyVersion: v.number(),
+    wrappedKey: v.string(),
+  }),
+  v.object({
+    allowed: v.literal(false),
+    reason: archiveWriteDenialReasonValidator,
+  }),
+);
 
 function assertKeyVersion(version: number): void {
   if (!Number.isSafeInteger(version) || version < 1) {
@@ -160,6 +174,76 @@ export const storeVersion = internalMutation({
     const id = await upsertStoredVersion(ctx, args);
     await ensureCustodyForStoredKeys(ctx, args.orgId);
     return id;
+  },
+});
+
+export const initializeForAuthorizedUpload = internalMutation({
+  args: {
+    hashedSecret: v.string(),
+    source: archiveSupportedSourceValidator,
+    orgId: v.id('organizations'),
+    userId: v.id('users'),
+    collectorId: v.string(),
+    now: v.number(),
+    keyVersion: v.number(),
+    wrappedKey: v.string(),
+  },
+  returns: archiveKeyInitializationResultValidator,
+  handler: async (ctx, args) => {
+    assertKeyVersion(args.keyVersion);
+    parseArchiveWrappedKeyVersion(args.wrappedKey, args);
+
+    const authorization = await authorizeArchiveWriteByHashedSecretCore(ctx, args);
+    if (!authorization.allowed) return authorization;
+
+    const custody = await getCustodyRow(ctx, args.orgId);
+    if (custody) {
+      const active = await getKeyRecord(ctx, args.orgId, custody.activeKeyVersion);
+      if (
+        !active ||
+        !isValidStoredWrappedKey(active.wrappedKey, {
+          orgId: args.orgId,
+          keyVersion: active.keyVersion,
+        })
+      ) {
+        throw new Error('Active archive key is unavailable');
+      }
+      return {
+        allowed: true as const,
+        keyVersion: active.keyVersion,
+        wrappedKey: active.wrappedKey,
+      };
+    }
+
+    const legacy = await getLatestKeyRecord(ctx, args.orgId);
+    if (legacy) {
+      if (
+        !isValidStoredWrappedKey(legacy.wrappedKey, {
+          orgId: args.orgId,
+          keyVersion: legacy.keyVersion,
+        })
+      ) {
+        throw new Error('Active archive key is unavailable');
+      }
+      return {
+        allowed: true as const,
+        keyVersion: legacy.keyVersion,
+        wrappedKey: legacy.wrappedKey,
+      };
+    }
+
+    await ctx.db.insert('archiveEncryptionKeyVersions', {
+      orgId: args.orgId,
+      keyVersion: args.keyVersion,
+      wrappedKey: args.wrappedKey,
+      createdAt: args.now,
+    });
+    await ctx.db.insert('archiveEncryptionCustody', {
+      orgId: args.orgId,
+      activeKeyVersion: args.keyVersion,
+      updatedAt: args.now,
+    });
+    return { allowed: true as const, keyVersion: args.keyVersion, wrappedKey: args.wrappedKey };
   },
 });
 

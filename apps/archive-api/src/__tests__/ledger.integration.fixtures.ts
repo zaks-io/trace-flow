@@ -88,7 +88,7 @@ export async function archiveKeyHttpResponse(
   if (pathname === '/archive-api/key/active') {
     return new Response(JSON.stringify({ error: 'Archive key unavailable' }), { status: 404 });
   }
-  if (pathname === '/archive-api/key') {
+  if (pathname === '/archive-api/key' || pathname === '/archive-api/key/initialize') {
     return await onVersionedKey();
   }
   return null;
