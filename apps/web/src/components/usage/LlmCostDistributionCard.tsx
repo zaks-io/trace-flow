@@ -25,7 +25,7 @@ const VERDICT_TONE: Record<string, string> = {
 /**
  * Per-request cost SHAPE for the current slice (one API key / operation / model, per the active
  * filters). Answers "uniform vs fat-tailed" so the user knows the optimization lever: lower the
- * per-call cost vs hunt the outliers. The decile histogram plots SUMMED spend per cost band (where
+ * per-call cost vs hunt the outliers. The adaptive histogram plots SUMMED spend per cost band (where
  * the dollars are); the Lorenz curve shows how concentrated that spend is, with the bias-corrected
  * Gini as the single number. All robust/quantileExact per ADR 0021 — no mean/stddev.
  */
@@ -83,15 +83,15 @@ export function LlmCostDistributionCard({
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <div>
           <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            Spend by cost band
+            Spend by cost band · logarithmic ranges
           </p>
           {buckets.length === 0 ? (
-            <p className="flex h-[150px] items-center text-sm text-muted-foreground">
+            <p className="flex h-[210px] items-center text-sm text-muted-foreground">
               Not enough spread to bucket spend.
             </p>
           ) : (
-            <ChartContainer config={HISTOGRAM_CONFIG} className="!aspect-auto h-[150px] w-full">
-              <BarChart data={buckets} margin={{ top: 4, right: 8, bottom: 16, left: 0 }}>
+            <ChartContainer config={HISTOGRAM_CONFIG} className="!aspect-auto h-[210px] w-full">
+              <BarChart data={buckets} margin={{ top: 4, right: 8, bottom: 30, left: 0 }}>
                 <CartesianGrid
                   strokeDasharray="3 3"
                   vertical={false}
@@ -103,8 +103,9 @@ export function LlmCostDistributionCard({
                   tickMargin={6}
                   angle={-30}
                   textAnchor="end"
-                  interval={0}
-                  height={36}
+                  interval="preserveStartEnd"
+                  minTickGap={8}
+                  height={60}
                 />
                 <YAxis
                   tick={{ fontSize: 10 }}
@@ -133,7 +134,7 @@ export function LlmCostDistributionCard({
           <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             Spend concentration (Lorenz)
           </p>
-          <ChartContainer config={LORENZ_CONFIG} className="!aspect-auto h-[150px] w-full">
+          <ChartContainer config={LORENZ_CONFIG} className="!aspect-auto h-[210px] w-full">
             <AreaChart data={lorenz} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
               <XAxis
