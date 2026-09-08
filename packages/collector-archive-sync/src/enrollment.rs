@@ -51,6 +51,16 @@ impl ArchiveEnrollmentRecord {
             .map_err(|_| ArchiveSyncError::InvalidEnrollment)
     }
 
+    /// Server-confirmed source metadata is the durable enrollment footprint. The legacy enrolled
+    /// marker predates that metadata and still counts; denial-only legacy markers are ambiguous and
+    /// carry no actionable evidence.
+    pub fn has_enrollment_footprint(&self) -> bool {
+        !self.authorized_sources.is_empty()
+            || self
+                .policy()
+                .is_ok_and(|policy| policy == ArchivePolicy::Enrolled)
+    }
+
     pub fn load(path: &Path) -> ArchiveSyncResult<ArchivePolicy> {
         Self::load_record(path)?.policy()
     }
@@ -117,6 +127,19 @@ mod tests {
         let record = ArchiveEnrollmentRecord::load_record(&path).unwrap();
         assert_eq!(record.policy().unwrap(), ArchivePolicy::Enrolled);
         assert!(record.authorized_sources.is_empty());
+        assert!(record.has_enrollment_footprint());
+    }
+
+    #[test]
+    fn denial_only_markers_have_no_enrollment_footprint() {
+        for policy in [
+            ArchivePolicy::Inactive,
+            ArchivePolicy::Grace,
+            ArchivePolicy::Frozen,
+            ArchivePolicy::Revoked,
+        ] {
+            assert!(!ArchiveEnrollmentRecord::from_policy(policy).has_enrollment_footprint());
+        }
     }
 
     #[test]

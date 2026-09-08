@@ -220,6 +220,21 @@ describe('GET /v1/archive/policy', () => {
     });
   });
 
+  it('rejects policy_unavailable as an inbound authority decision', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () => new Response(JSON.stringify({ allowed: false, reason: 'policy_unavailable' })),
+    );
+    const response = await fetchRoute(makeEnv(await validCredEntries()), undefined, {
+      headers: { 'X-Trace-Flow-Collector-Secret': SECRET },
+    });
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: 'archive_unavailable',
+      reason: 'policy_unavailable',
+    });
+  });
+
   it.each([
     ['Convex outage', () => Promise.reject(new Error('offline'))],
     ['malformed response', () => Promise.resolve(new Response('{not-json'))],

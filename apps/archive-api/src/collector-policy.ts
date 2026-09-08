@@ -36,7 +36,6 @@ const DENIAL_REASONS = new Set<ArchiveWriteDenialReason>([
   'frozen',
   'deleting',
   'source_unauthorized',
-  'policy_unavailable',
 ]);
 
 function isAuthorizedSource(value: unknown): value is ArchiveAuthorizedSource {

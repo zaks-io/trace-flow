@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use collector_archive_sync::{
-    policy_from_denial_reason, ArchiveClient, ArchiveClientConfig, ArchiveClientError,
-    ArchiveEnrollmentRecord, ArchivePolicy, ArchivePolicyResponse, ConfirmedArchivePolicy,
+    cleanup_obligation_exists, policy_from_denial_reason, ArchiveClient, ArchiveClientConfig,
+    ArchiveClientError, ArchiveEnrollmentRecord, ArchivePolicyResponse, ConfirmedArchivePolicy,
 };
 
 use crate::connection::Paths;
@@ -29,7 +29,7 @@ fn persist_policy_result(
     let path = paths.archive_enrollment_file(org_id);
     let previous = ArchiveEnrollmentRecord::load_record(&path)
         .context("load prior archive enrollment policy")?;
-    let previous_policy = previous
+    previous
         .policy()
         .context("load prior archive enrollment policy")?;
     let confirmed = match result {
@@ -41,7 +41,10 @@ fn persist_policy_result(
                 policy,
                 authorized_sources: Vec::new(),
             },
-            None if previous_policy == ArchivePolicy::Inactive && policy_is_unavailable(&error) => {
+            None if policy_is_unavailable(&error)
+                && !previous.has_enrollment_footprint()
+                && !cleanup_obligation_exists(&paths.archive_spool_dir(org_id)) =>
+            {
                 return Ok(())
             }
             None => return Err(anyhow!("archive policy refresh failed: {}", error.class())),
@@ -65,10 +68,10 @@ fn policy_is_unavailable(error: &ArchiveClientError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use collector_archive::ArchiveSource;
+    use collector_archive::{scan_claude_jsonl, ArchiveSource};
     use collector_archive_sync::{
-        ArchiveAuthorizedSource, ArchiveHistoryChoice, ArchiveKeyStore, ArchiveSpool,
-        MemoryKeyStore, PendingArchiveRequest,
+        ArchiveAuthorizedSource, ArchiveHistoryChoice, ArchiveKeyStore, ArchivePolicy,
+        ArchiveSpool, MemoryKeyStore, PendingArchiveRequest,
     };
     use tempfile::TempDir;
 
@@ -140,7 +143,7 @@ mod tests {
     }
 
     #[test]
-    fn confirmed_revocation_uses_the_terminal_marker() {
+    fn deleting_policy_uses_the_terminal_marker() {
         let dir = TempDir::new().unwrap();
         let paths = Paths::at(dir.path().to_path_buf());
         paths.ensure().unwrap();
@@ -150,7 +153,7 @@ mod tests {
             Ok(ArchivePolicyResponse {
                 enrolled: false,
                 authorized_sources: Vec::new(),
-                reason: Some("enrollment_invalid".to_string()),
+                reason: Some("deleting".to_string()),
             }),
         )
         .unwrap();
@@ -161,24 +164,47 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_and_malformed_policy_leave_marker_unchanged() {
+    fn denial_only_marker_keeps_unavailability_nonfatal_and_is_not_rewritten() {
         let dir = TempDir::new().unwrap();
         let paths = Paths::at(dir.path().to_path_buf());
         paths.ensure().unwrap();
         let path = paths.archive_enrollment_file("org_1");
-        let original = ArchiveEnrollmentRecord::from_policy(ArchivePolicy::Grace);
-        original.save_record(&path).unwrap();
-        let before = std::fs::read(&path).unwrap();
-
-        assert!(persist_policy_result(
+        persist_policy_result(
             &paths,
             "org_1",
-            Err(ArchiveClientError::Unavailable {
-                reason: "policy_unavailable".to_string(),
+            Ok(ArchivePolicyResponse {
+                enrolled: false,
+                authorized_sources: Vec::new(),
+                reason: Some("not_pro".to_string()),
             }),
         )
-        .is_err());
-        assert_eq!(std::fs::read(&path).unwrap(), before);
+        .unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        for error in [
+            ArchiveClientError::Unavailable {
+                reason: "policy_unavailable".to_string(),
+            },
+            ArchiveClientError::UploadRejected {
+                reason: "not_found".to_string(),
+            },
+            ArchiveClientError::Transport(anyhow!("offline")),
+        ] {
+            persist_policy_result(&paths, "org_1", Err(error)).unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn malformed_policy_stays_loud_and_does_not_rewrite_the_marker() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        let path = paths.archive_enrollment_file("org_1");
+        ArchiveEnrollmentRecord::from_policy(ArchivePolicy::Grace)
+            .save_record(&path)
+            .unwrap();
+        let before = std::fs::read(&path).unwrap();
 
         assert!(persist_policy_result(
             &paths,
@@ -190,6 +216,57 @@ mod tests {
             }),
         )
         .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn legacy_enrolled_marker_and_cleanup_obligation_keep_unavailability_visible() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        let path = paths.archive_enrollment_file("org_1");
+        std::fs::write(&path, br#"{"status":"enrolled"}"#).unwrap();
+
+        assert!(persist_policy_result(
+            &paths,
+            "org_1",
+            Err(ArchiveClientError::Transport(anyhow!("offline"))),
+        )
+        .is_err());
+
+        ArchiveEnrollmentRecord::from_policy(ArchivePolicy::Grace)
+            .save_record(&path)
+            .unwrap();
+        std::fs::write(
+            ArchiveSpool::durable_cleanup_marker_path(&paths.archive_spool_dir("org_1")),
+            b"",
+        )
+        .unwrap();
+        assert!(persist_policy_result(
+            &paths,
+            "org_1",
+            Err(ArchiveClientError::Transport(anyhow!("offline"))),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn corrupt_local_marker_stays_loud_during_unavailability() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        let path = paths.archive_enrollment_file("org_1");
+        std::fs::write(&path, br#"{"status":"enrolle"}"#).unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        let error = persist_policy_result(
+            &paths,
+            "org_1",
+            Err(ArchiveClientError::Transport(anyhow!("offline"))),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("load prior archive enrollment policy"));
         assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 
@@ -242,6 +319,13 @@ mod tests {
             body: b"pending archive data".to_vec(),
         };
         spool.persist_pending(&pending).unwrap();
+        let progress_session = "claude-progress-session";
+        let progress = scan_claude_jsonl(progress_session, b"{\"uuid\":\"r1\"}\n", 10, None)
+            .unwrap()
+            .checkpoint;
+        spool
+            .persist_progress(ArchiveSource::Claude, progress_session, &progress)
+            .unwrap();
 
         persist_policy_result(
             &paths,
@@ -258,9 +342,35 @@ mod tests {
             record.authorized_sources[0].authorized_at,
             1_770_000_000_001
         );
+        assert_eq!(
+            record.authorized_sources[0].history_choice,
+            ArchiveHistoryChoice::AllHistory
+        );
         assert!(keys.load("org_1").unwrap().is_some());
         assert!(spool
             .pending(ArchiveSource::Claude, "claude-session-001")
+            .unwrap()
+            .is_some());
+        assert!(spool
+            .progress(ArchiveSource::Claude, progress_session)
+            .unwrap()
+            .is_some());
+
+        let frozen = std::fs::read(&path).unwrap();
+        assert!(persist_policy_result(
+            &paths,
+            "org_1",
+            Err(ArchiveClientError::Transport(anyhow!("offline"))),
+        )
+        .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), frozen);
+        assert!(keys.load("org_1").unwrap().is_some());
+        assert!(spool
+            .pending(ArchiveSource::Claude, "claude-session-001")
+            .unwrap()
+            .is_some());
+        assert!(spool
+            .progress(ArchiveSource::Claude, progress_session)
             .unwrap()
             .is_some());
     }

@@ -920,13 +920,44 @@ mod archive_engine_tests {
     }
 
     #[test]
-    fn unavailable_policy_is_nonfatal_before_archive_enrollment() {
+    fn denial_only_marker_keeps_unavailability_nonfatal_while_facts_sync() {
+        const CLAUDE: &[u8] =
+            include_bytes!("../../../../packages/collector-archive/tests/fixtures/claude.jsonl");
         let home = TempDir::new().unwrap();
         let state = TempDir::new().unwrap();
+        let claude_dir = home.path().join(".claude").join("projects").join("p1");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(claude_dir.join("claude-session-001.jsonl"), CLAUDE).unwrap();
+        let paths = Paths::at(state.path().to_path_buf());
+        paths.ensure().unwrap();
+        enrollment(&paths, "org_1", "grace");
+        let marker = std::fs::read(paths.archive_enrollment_file("org_1")).unwrap();
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let fact_posts = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let posts = fact_posts.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(8) {
+                let Ok(mut stream) = stream else {
+                    continue;
+                };
+                let mut buf = [0u8; 4096];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
+                posts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let body = r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#;
+                let response = format!(
+                    "HTTP/1.1 202 Accepted\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
+            }
+        });
+
         let outcome = run_cycle_blocking(
             "org_1".to_string(),
             "tfc_secret".to_string(),
-            "http://127.0.0.1:1".to_string(),
+            format!("http://{addr}"),
             home.path().to_path_buf(),
             Window::Incremental,
             1_779_840_000_000,
@@ -944,9 +975,65 @@ mod archive_engine_tests {
             sync_status_from_outcome(&outcome),
             SyncStatus::Idle
         ));
-        assert!(!Paths::at(state.path().to_path_buf())
-            .archive_enrollment_file("org_1")
-            .exists());
+        assert!(outcome.advanced >= 1);
+        assert!(fact_posts.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+        assert!(fact_cycle_reached_ingest(&outcome));
+        assert_eq!(
+            std::fs::read(paths.archive_enrollment_file("org_1")).unwrap(),
+            marker
+        );
+    }
+
+    #[test]
+    fn deleting_marker_drives_cleanup_without_an_existing_spool() {
+        let home = TempDir::new().unwrap();
+        let state = TempDir::new().unwrap();
+        let paths = Paths::at(state.path().to_path_buf());
+        paths.ensure().unwrap();
+        let spool_dir = paths.archive_spool_dir("org_1");
+        let durable_marker = ArchiveSpool::durable_cleanup_marker_path(&spool_dir);
+        let keys: Arc<dyn ArchiveKeyStore> = Arc::new(MemoryKeyStore::new());
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let _ = std::io::Read::read(&mut stream, &mut request).unwrap();
+            let body = r#"{"enrolled":false,"authorizedSources":[],"reason":"deleting"}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            std::io::Write::write_all(&mut stream, response.as_bytes()).unwrap();
+        });
+
+        let outcome = run_cycle_blocking(
+            "org_1".to_string(),
+            "tfc_secret".to_string(),
+            "http://127.0.0.1:1".to_string(),
+            home.path().to_path_buf(),
+            Window::Incremental,
+            1_779_840_000_000,
+            CycleIsolation {
+                state_dir: Some(state.path().to_path_buf()),
+                archive: Some((format!("http://{addr}"), keys.clone())),
+            },
+        );
+        server.join().unwrap();
+
+        assert!(outcome.archive_setup_error.is_none());
+        assert!(matches!(
+            sync_status_from_outcome(&outcome),
+            SyncStatus::Idle
+        ));
+        let enrollment: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(paths.archive_enrollment_file("org_1")).unwrap())
+                .unwrap();
+        assert_eq!(enrollment["status"], "revoked");
+        assert!(!spool_dir.exists());
+        assert!(!durable_marker.exists());
+        assert!(keys.load("org_1").unwrap().is_none());
     }
 
     #[test]
