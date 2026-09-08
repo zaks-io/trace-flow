@@ -61,12 +61,17 @@ describe('Archive Session Ledger overlapping fetch recovery', () => {
           .mockRejectedValueOnce(new Error('alarm_read_failed'));
         const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
         try {
-          const first = await instance.fetch(
-            new Request('https://ledger.test/commit', {
-              method: 'POST',
-              body: JSON.stringify(request),
-            }),
-          );
+          const firstError = await instance
+            .fetch(
+              new Request('https://ledger.test/commit', {
+                method: 'POST',
+                body: JSON.stringify(request),
+              }),
+            )
+            .then(
+              () => undefined,
+              (error: unknown) => error,
+            );
           const second = await instance.fetch(
             new Request('https://ledger.test/commit', {
               method: 'POST',
@@ -74,7 +79,8 @@ describe('Archive Session Ledger overlapping fetch recovery', () => {
             }),
           );
           return {
-            statuses: [first.status, second.status],
+            firstError,
+            secondStatus: second.status,
             checkpoint: readLedgerSnapshot(state.storage),
           };
         } finally {
@@ -84,7 +90,8 @@ describe('Archive Session Ledger overlapping fetch recovery', () => {
       },
     );
 
-    expect(result.statuses).toEqual([500, 200]);
+    expect(result.firstError).toEqual(new Error('alarm_read_failed'));
+    expect(result.secondStatus).toBe(200);
     expect(result.checkpoint.generation).toBe(1);
   });
 
@@ -201,13 +208,14 @@ describe('Archive Session Ledger overlapping fetch recovery', () => {
           alarm: await state.storage.getAlarm(),
         };
         releaseNewRead.resolve();
-        const [firstResponse, secondResponse] = await Promise.all([firstFetch, secondFetch]);
+        const [firstResponse, secondResponse] = await Promise.allSettled([firstFetch, secondFetch]);
         interrupting = false;
         mutable.env = originalEnv;
         await instance.alarm();
         return {
           interrupted,
-          statuses: [firstResponse.status, secondResponse.status],
+          firstStatus: firstResponse.status === 'fulfilled' ? firstResponse.value.status : null,
+          secondError: secondResponse.status === 'rejected' ? secondResponse.reason : null,
           recovered: {
             pending: readPendingIntent(state.storage),
             checkpoint: readLedgerSnapshot(state.storage),
@@ -219,7 +227,8 @@ describe('Archive Session Ledger overlapping fetch recovery', () => {
 
     expect(result.interrupted.pending).toMatchObject({ status: 'write_authorized' });
     expect(result.interrupted.alarm).not.toBeNull();
-    expect(result.statuses).toEqual([200, 500]);
+    expect(result.firstStatus).toBe(200);
+    expect(result.secondError).toEqual(new Error('second_fetch_interrupted'));
     expect(result.recovered.pending).toBeNull();
     expect(result.recovered.checkpoint.generation).toBe(2);
     expect(result.recovered.alarm).toBeNull();

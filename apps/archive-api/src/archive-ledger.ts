@@ -75,12 +75,17 @@ export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
       assertIncomingObservationCount(upload);
       const turn = this.commitQueue.then(async () => {
         await armLedgerRecovery(this.ctx.storage);
-        return commitArchiveSession(this.ctx.storage, this.env, body)
-          .then(
-            (acknowledgement) => ({ acknowledgement }),
-            (error: unknown) => ({ error }),
-          )
-          .finally(() => scheduleLedgerRecovery(this.ctx.storage));
+        const result = await commitArchiveSession(this.ctx.storage, this.env, body).then(
+          (acknowledgement) => ({ acknowledgement }),
+          (error: unknown) => ({ error }),
+        );
+        try {
+          await scheduleLedgerRecovery(this.ctx.storage);
+        } catch (recoveryError) {
+          if ('error' in result) throw result.error;
+          throw recoveryError;
+        }
+        return result;
       });
       this.commitQueue = turn.then(
         () => undefined,
@@ -103,15 +108,14 @@ export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
           { status: 409 },
         );
       }
-      const errorClass =
-        error instanceof ArchiveContractError ? error.errorClass : 'archive_commit_failed';
-      if (!(error instanceof ArchiveContractError)) {
-        const diagnosticClass = error instanceof Error ? error.name : 'unknown_error';
-        console.error(
-          JSON.stringify({ event: 'archive_ledger.commit_failed', errorClass: diagnosticClass }),
-        );
+      if (error instanceof ArchiveContractError) {
+        return Response.json({ error: error.errorClass }, { status: statusFor(error.errorClass) });
       }
-      return Response.json({ error: errorClass }, { status: statusFor(errorClass) });
+      const diagnosticClass = error instanceof Error ? error.name : 'unknown_error';
+      console.error(
+        JSON.stringify({ event: 'archive_ledger.commit_failed', errorClass: diagnosticClass }),
+      );
+      throw error;
     }
   }
 
