@@ -330,6 +330,7 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/pipes-api
           command: deploy --env production
+          environment: production
           packageManager: bun
           secrets: |
             SENTRY_DSN
