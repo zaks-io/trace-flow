@@ -44,6 +44,7 @@ pub struct ArchiveHistoryPlan {
     live_sessions: Vec<(ArchiveSource, String, i64)>,
     present_parts: Vec<(ArchiveSource, String, String)>,
     failed_sources: Vec<ArchiveSource>,
+    ambiguous_excluded: Vec<(ArchiveSource, u32)>,
 }
 
 impl ArchiveHistoryPlan {
@@ -53,6 +54,7 @@ impl ArchiveHistoryPlan {
             live_sessions: Vec::new(),
             present_parts: Vec::new(),
             failed_sources: Vec::new(),
+            ambiguous_excluded: Vec::new(),
         }
     }
 
@@ -63,6 +65,21 @@ impl ArchiveHistoryPlan {
 
     pub fn failed_sources(&self) -> &[ArchiveSource] {
         &self.failed_sources
+    }
+
+    pub fn with_ambiguous_excluded(
+        mut self,
+        ambiguous_excluded: Vec<(ArchiveSource, u32)>,
+    ) -> Self {
+        self.ambiguous_excluded = ambiguous_excluded;
+        self
+    }
+
+    pub fn ambiguous_excluded(&self, source: ArchiveSource) -> u32 {
+        self.ambiguous_excluded
+            .iter()
+            .find(|(candidate_source, _)| *candidate_source == source)
+            .map_or(0, |(_, count)| *count)
     }
 
     pub fn with_present_parts(

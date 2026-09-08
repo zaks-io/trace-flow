@@ -27,10 +27,6 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use collector_api_client::{CollectorApiClient, CollectorApiClientConfig};
-#[cfg(test)]
-use collector_archive::ArchiveSource;
-#[cfg(test)]
-use collector_archive_sync::{archive_source_session_id, transcript_part_for};
 use collector_archive_sync::{
     finish_terminal_cleanup, run_archive_cycle, ArchiveAuthorizedSource, ArchiveClient,
     ArchiveClientConfig, ArchiveCycleReport, ArchiveEnrollmentRecord, ArchiveHistoryPlan,
@@ -104,15 +100,6 @@ pub struct ArchiveRunConfig {
     pub key_store: Arc<dyn ArchiveKeyStore>,
     pub policy: ArchivePolicy,
     pub authorized_sources: Vec<ArchiveAuthorizedSource>,
-}
-
-impl ArchiveRunConfig {
-    #[cfg(test)]
-    fn authorizes(&self, source: ArchiveSource) -> bool {
-        self.authorized_sources
-            .iter()
-            .any(|authorization| authorization.source == source)
-    }
 }
 
 /// The inputs a sync run needs that don't come from saved state: where the ingest worker is and the
@@ -552,70 +539,6 @@ async fn assemble_jsonl_pass(
     Ok(JsonlPass { units, files_read })
 }
 
-#[cfg(test)]
-fn archive_files_for_source(
-    source: AgentSource,
-    files: &[DiscoveredFile],
-    window: ImportWindow,
-    archive: Option<&ArchiveRunConfig>,
-) -> Vec<DiscoveredFile> {
-    let Some(archive) = archive.filter(|config| config.policy.captures()) else {
-        return Vec::new();
-    };
-    let Ok(archive_source) = ArchiveSource::try_from(source) else {
-        return Vec::new();
-    };
-    if !archive.authorizes(archive_source) {
-        return Vec::new();
-    }
-    files
-        .iter()
-        .filter(|file| window.includes(file.mtime_ms))
-        .cloned()
-        .collect()
-}
-
-#[cfg(test)]
-fn archive_snapshots_from_bytes(
-    source: AgentSource,
-    archive_files: &[DiscoveredFile],
-    bytes_by_path: &HashMap<String, Vec<u8>>,
-) -> (Vec<ArchiveSnapshot>, Vec<String>) {
-    let Ok(archive_source) = ArchiveSource::try_from(source) else {
-        return (Vec::new(), Vec::new());
-    };
-    let mut snapshots = Vec::new();
-    let mut errors = Vec::new();
-    for file in archive_files {
-        let Some(bytes) = bytes_by_path.get(&file.path) else {
-            errors.push("archive_io".to_string());
-            continue;
-        };
-        match archive_source_session_id(archive_source, bytes) {
-            Ok(source_session_id) => {
-                match transcript_part_for(archive_source, Some(&file.path), bytes) {
-                    Ok((source_transcript_part_id, transcript_part_identity)) => {
-                        snapshots.push(ArchiveSnapshot {
-                            source: archive_source,
-                            source_session_id,
-                            source_transcript_part_id,
-                            transcript_part_identity,
-                            bytes: bytes.clone(),
-                            deferred_file: None,
-                            observed_at: file.mtime_ms as i64,
-                            class: collector_archive_sync::ArchiveWorkClass::Live,
-                            activity_rank_ms: None,
-                        });
-                    }
-                    Err(_) => errors.push("invalid_archive_session".to_string()),
-                }
-            }
-            Err(_) => errors.push("invalid_archive_session".to_string()),
-        }
-    }
-    (snapshots, errors)
-}
-
 async fn run_archive_work(
     archive: &ArchiveRunConfig,
     org_id: &str,
@@ -730,7 +653,7 @@ pub fn window_from_since(since: &str) -> Result<Window> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use collector_archive::default_transcript_part_id;
+    use collector_archive::{default_transcript_part_id, ArchiveSource};
     use collector_archive_sync::{
         cleanup_obligation_exists, ArchiveEnrollmentRecord, ArchiveHistoryChoice, ArchiveKeyStore,
         ArchiveSpool, ArchiveSpoolKey, ArchiveSyncError, ArchiveSyncResult, PendingArchiveRequest,
@@ -943,6 +866,14 @@ mod tests {
         .unwrap()
     }
 
+    fn last_complete_sync_at_ms(state: &Path) -> Option<i64> {
+        let path = Paths::at(state.to_path_buf()).cursor_db("org_1");
+        CursorStore::open(path, "org_1")
+            .unwrap()
+            .last_complete_sync_at_ms()
+            .unwrap()
+    }
+
     #[tokio::test]
     async fn one_traversal_feeds_archive_and_facts() {
         let home = tempfile::TempDir::new().unwrap();
@@ -1055,64 +986,24 @@ mod tests {
         assert!(fact_advanced >= 1);
         assert!(outcome.archive.as_ref().unwrap().failed >= 1);
         assert!(!outcome.archive.as_ref().unwrap().purged);
+        assert_eq!(
+            last_complete_sync_at_ms(state.path()),
+            Some(1_779_840_000_000)
+        );
     }
 
     #[tokio::test]
-    async fn cursor_is_not_an_archive_upload_source() {
-        assert!(ArchiveSource::try_from(AgentSource::Cursor).is_err());
-        let files = archive_files_for_source(
-            AgentSource::Cursor,
-            &[DiscoveredFile {
-                path: "/tmp/cursor.jsonl".to_string(),
-                mtime_ms: 1.0,
-                size_bytes: 1,
-            }],
-            ImportWindow::first_incremental(2),
-            Some(&ArchiveRunConfig {
-                archive_url: "http://127.0.0.1:1".to_string(),
-                spool_dir: PathBuf::from("/tmp/spool"),
-                enrollment_path: PathBuf::from("/tmp/enroll.json"),
-                key_store: Arc::new(MemoryKeyStore::new()),
-                policy: ArchivePolicy::Enrolled,
-                authorized_sources: vec![authorization(ArchiveSource::Claude)],
-            }),
-        );
-        assert!(files.is_empty());
-    }
+    async fn fact_failure_does_not_advance_the_complete_sync_watermark() {
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        write_home_transcripts(home.path());
+        let ingest_url =
+            spawn_http(|_raw| raw_response(500, "Error", r#"{"error":"ingest_failed"}"#)).await;
 
-    #[test]
-    fn archive_capture_includes_only_authorized_sources() {
-        let file = DiscoveredFile {
-            path: "/tmp/session.jsonl".to_string(),
-            mtime_ms: 1.0,
-            size_bytes: 1,
-        };
-        let archive = ArchiveRunConfig {
-            archive_url: "http://127.0.0.1:1".to_string(),
-            spool_dir: PathBuf::from("/tmp/spool"),
-            enrollment_path: PathBuf::from("/tmp/enroll.json"),
-            key_store: Arc::new(MemoryKeyStore::new()),
-            policy: ArchivePolicy::Enrolled,
-            authorized_sources: vec![authorization(ArchiveSource::Claude)],
-        };
+        let outcome = run_with_servers(home.path(), state.path(), ingest_url, None).await;
 
-        assert_eq!(
-            archive_files_for_source(
-                AgentSource::Claude,
-                std::slice::from_ref(&file),
-                ImportWindow::first_incremental(2),
-                Some(&archive),
-            )
-            .len(),
-            1
-        );
-        assert!(archive_files_for_source(
-            AgentSource::Codex,
-            &[file],
-            ImportWindow::first_incremental(2),
-            Some(&archive),
-        )
-        .is_empty());
+        assert!(outcome.reports.iter().any(|(_, report)| report.failed > 0));
+        assert_eq!(last_complete_sync_at_ms(state.path()), None);
     }
 
     #[test]
@@ -1408,38 +1299,6 @@ mod tests {
             .map(|(_, report)| report.advanced)
             .sum();
         assert!(fact_advanced >= 1);
-    }
-
-    #[test]
-    fn archive_unreadable_and_invalid_session_stay_off_fact_report() {
-        let files = vec![
-            DiscoveredFile {
-                path: "/missing.jsonl".to_string(),
-                mtime_ms: 1.0,
-                size_bytes: 1,
-            },
-            DiscoveredFile {
-                path: "/bad.jsonl".to_string(),
-                mtime_ms: 1.0,
-                size_bytes: 1,
-            },
-            DiscoveredFile {
-                path: "/ok.jsonl".to_string(),
-                mtime_ms: 1.0,
-                size_bytes: 1,
-            },
-        ];
-        let mut bytes = HashMap::new();
-        bytes.insert("/bad.jsonl".to_string(), b"{\"uuid\":\"x\"}".to_vec());
-        bytes.insert(
-            "/ok.jsonl".to_string(),
-            br#"{"sessionId":"claude-session-001","uuid":"r1"}"#.to_vec(),
-        );
-        let (snapshots, errors) = archive_snapshots_from_bytes(AgentSource::Claude, &files, &bytes);
-        assert_eq!(snapshots.len(), 1);
-        assert_eq!(errors.len(), 2);
-        assert!(errors.contains(&"archive_io".to_string()));
-        assert!(errors.contains(&"invalid_archive_session".to_string()));
     }
 
     struct ControllableDeleteKeyStore {

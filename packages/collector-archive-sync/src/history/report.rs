@@ -27,6 +27,7 @@ pub(crate) fn history_reports(
                     registered_targets: 0,
                     completed_targets: 0,
                     retained_excluded_pending,
+                    ambiguous_excluded_sessions: plan.ambiguous_excluded(state.generation.source),
                 };
             }
             let mut completed = 0u32;
@@ -69,16 +70,22 @@ pub(crate) fn history_reports(
                 registered_targets: state.targets().len() as u32,
                 completed_targets: completed,
                 retained_excluded_pending,
+                ambiguous_excluded_sessions: plan.ambiguous_excluded(state.generation.source),
             }
         })
         .collect();
     reports.extend(plan.failed_sources().iter().copied().map(|source| {
+        let retained_excluded_pending = retained_excluded
+            .iter()
+            .filter(|retained_source| **retained_source == source)
+            .count() as u32;
         ArchiveSourceHistoryReport {
             source,
             initial_import: ArchiveInitialImport::InProgress,
             registered_targets: 0,
             completed_targets: 0,
-            retained_excluded_pending: 0,
+            retained_excluded_pending,
+            ambiguous_excluded_sessions: plan.ambiguous_excluded(source),
         }
     }));
     reports

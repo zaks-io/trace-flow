@@ -7,7 +7,14 @@ use serde_json::Value;
 use crate::error::{ArchiveSyncError, ArchiveSyncResult};
 
 pub fn archive_source_session_id(source: ArchiveSource, bytes: &[u8]) -> ArchiveSyncResult<String> {
-    let records = jsonl_values(bytes);
+    let records = parse_jsonl_records(bytes);
+    archive_source_session_id_from_records(source, &records)
+}
+
+pub fn archive_source_session_id_from_records(
+    source: ArchiveSource,
+    records: &[Value],
+) -> ArchiveSyncResult<String> {
     let session_id = match source {
         ArchiveSource::Claude => records
             .iter()
@@ -41,10 +48,19 @@ pub fn transcript_part_for(
     transcript_path: Option<&str>,
     bytes: &[u8],
 ) -> ArchiveSyncResult<(String, Option<String>)> {
+    let records = parse_jsonl_records(bytes);
+    transcript_part_for_records(source, transcript_path, &records)
+}
+
+pub fn transcript_part_for_records(
+    source: ArchiveSource,
+    transcript_path: Option<&str>,
+    records: &[Value],
+) -> ArchiveSyncResult<(String, Option<String>)> {
     match source {
         ArchiveSource::Claude => {
             if transcript_path.is_some_and(claude_is_subagent_path) {
-                let identity = claude_agent_id(bytes)
+                let identity = claude_agent_id(records)
                     .or_else(|| transcript_path.and_then(claude_subagent_path_identity))
                     .ok_or(ArchiveSyncError::InvalidSession)?;
                 return Ok((claude_transcript_part_id(&identity)?, Some(identity)));
@@ -95,8 +111,8 @@ fn claude_subagent_path_identity(path: &str) -> Option<String> {
     Some(format!("path:{}", rest.join("/")))
 }
 
-fn claude_agent_id(bytes: &[u8]) -> Option<String> {
-    jsonl_values(bytes)
+fn claude_agent_id(records: &[Value]) -> Option<String> {
+    records
         .iter()
         .filter_map(|record| record.get("agentId").and_then(Value::as_str))
         .map(str::trim)
@@ -104,7 +120,7 @@ fn claude_agent_id(bytes: &[u8]) -> Option<String> {
         .map(str::to_string)
 }
 
-fn jsonl_values(bytes: &[u8]) -> Vec<Value> {
+pub fn parse_jsonl_records(bytes: &[u8]) -> Vec<Value> {
     let text = String::from_utf8_lossy(bytes);
     text.lines()
         .filter(|line| !line.trim().is_empty())

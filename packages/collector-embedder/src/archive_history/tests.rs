@@ -34,7 +34,7 @@ fn open_spool(dir: &TempDir, keys: &MemoryKeyStore) -> ArchiveSpool {
 }
 
 #[test]
-fn new_only_commits_inventory_before_admitting_a_later_session() {
+fn new_only_admits_post_enrollment_session_on_first_cycle() {
     let home = TempDir::new().unwrap();
     let spool_dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();
@@ -47,23 +47,37 @@ fn new_only_commits_inventory_before_admitting_a_later_session() {
     let spool = open_spool(&spool_dir, &keys);
     let auth = authorization(ArchiveSource::Codex, ArchiveHistoryChoice::NewOnly);
     let first = prepare(home.path(), &spool, std::slice::from_ref(&auth), 10);
+    assert_eq!(first.snapshots.len(), 1);
+    assert_eq!(first.snapshots[0].source_session_id, "existing");
+    assert_eq!(first.snapshots[0].class, ArchiveWorkClass::Live);
+    assert!(!spool
+        .history_state(ArchiveSource::Codex)
+        .unwrap()
+        .unwrap()
+        .excludes_session("existing"));
+}
+
+#[test]
+fn new_only_excludes_pre_enrollment_session_on_first_cycle() {
+    let home = TempDir::new().unwrap();
+    let spool_dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    write_codex(
+        &home,
+        "sessions",
+        "existing.jsonl",
+        &codex("existing", "2020-01-01T00:00:00Z", "one"),
+    );
+    let spool = open_spool(&spool_dir, &keys);
+    let auth = authorization(ArchiveSource::Codex, ArchiveHistoryChoice::NewOnly);
+    let first = prepare(home.path(), &spool, &[auth], 10);
+
     assert!(first.snapshots.is_empty());
     assert!(spool
         .history_state(ArchiveSource::Codex)
         .unwrap()
         .unwrap()
         .excludes_session("existing"));
-
-    write_codex(
-        &home,
-        "sessions",
-        "later.jsonl",
-        &codex("later", "2026-02-01T00:00:00Z", "two"),
-    );
-    let second = prepare(home.path(), &spool, &[auth], 11);
-    assert_eq!(second.snapshots.len(), 1);
-    assert_eq!(second.snapshots[0].source_session_id, "later");
-    assert_eq!(second.snapshots[0].class, ArchiveWorkClass::Live);
 }
 
 #[test]
@@ -288,6 +302,32 @@ fn all_history_registers_later_old_and_unknown_sessions() {
         .errors
         .iter()
         .any(|error| error == "archive_history_ambiguous"));
+}
+
+#[test]
+fn new_only_reports_unknown_timestamp_as_an_ambiguous_exclusion() {
+    let home = TempDir::new().unwrap();
+    let spool_dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    write_codex(
+        &home,
+        "sessions",
+        "unknown.jsonl",
+        "{\"type\":\"session_meta\",\"payload\":{\"id\":\"unknown\"}}\n",
+    );
+    let spool = open_spool(&spool_dir, &keys);
+    let auth = authorization(ArchiveSource::Codex, ArchiveHistoryChoice::NewOnly);
+
+    let prepared = prepare(home.path(), &spool, &[auth], 10);
+
+    assert!(prepared.snapshots.is_empty());
+    assert!(prepared.errors.is_empty());
+    assert_eq!(prepared.plan.ambiguous_excluded(ArchiveSource::Codex), 1);
+    assert!(prepared
+        .plan
+        .state(ArchiveSource::Codex)
+        .unwrap()
+        .excludes_session("unknown"));
 }
 
 #[test]

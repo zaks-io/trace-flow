@@ -2136,7 +2136,8 @@ async fn invalid_source_state_does_not_block_another_source() {
         },
         10,
         Vec::new(),
-    )]);
+    )])
+    .with_failed_sources(vec![ArchiveSource::Claude]);
     let uploader = AckingUploader::new();
 
     let report = run_archive_cycle(
@@ -2151,9 +2152,50 @@ async fn invalid_source_state_does_not_block_another_source() {
     .await;
 
     assert_eq!(report.uploaded, 1);
+    assert_eq!(report.failed, 0);
+    let claude_history = report
+        .history
+        .iter()
+        .find(|history| history.source == ArchiveSource::Claude)
+        .unwrap();
+    assert_eq!(claude_history.retained_excluded_pending, 1);
     let uploaded: serde_json::Value = serde_json::from_slice(&uploader.bodies.borrow()[0]).unwrap();
     assert_eq!(uploaded["source_session_id"], codex.source_session_id);
     assert!(pending_disk_path(dir.path(), &claude).exists());
+}
+
+#[tokio::test]
+async fn ambiguous_new_only_exclusion_is_reported_without_operational_failure() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let state = ArchiveHistoryState::new(
+        ArchiveHistoryGeneration {
+            source: ArchiveSource::Codex,
+            history_choice: ArchiveHistoryChoice::NewOnly,
+            authorized_at: 10,
+        },
+        10,
+        Vec::new(),
+    );
+    let plan = ArchiveHistoryPlan::new(vec![state])
+        .with_ambiguous_excluded(vec![(ArchiveSource::Codex, 2)]);
+
+    let report = run_archive_cycle(
+        &AckingUploader::new(),
+        &mut spool,
+        &keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        &plan,
+        None,
+    )
+    .await;
+
+    assert_eq!(report.failed, 0);
+    assert!(report.first_error.is_none());
+    assert_eq!(report.history.len(), 1);
+    assert_eq!(report.history[0].ambiguous_excluded_sessions, 2);
 }
 
 #[tokio::test]

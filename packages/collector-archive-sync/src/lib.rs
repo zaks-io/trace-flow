@@ -40,7 +40,10 @@ pub use policy::{
     policy_from_denial_reason, ArchiveAuthorizedSource, ArchiveHistoryChoice, ArchivePolicy,
     ArchivePolicyParseError, ArchivePolicyResponse, ConfirmedArchivePolicy,
 };
-pub use scan::{archive_source_session_id, scan_snapshot, transcript_part_for};
+pub use scan::{
+    archive_source_session_id, archive_source_session_id_from_records, parse_jsonl_records,
+    scan_snapshot, transcript_part_for, transcript_part_for_records,
+};
 pub use spool::{
     cleanup_obligation_exists, finish_terminal_cleanup, ArchiveSpool, PendingArchiveRequest,
     PendingLoad, ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE,

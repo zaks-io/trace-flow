@@ -4,7 +4,7 @@ mod identity;
 mod tests;
 mod window;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use collector_archive::ArchiveSource;
@@ -40,8 +40,19 @@ pub fn prepare(
     let mut live_sessions = Vec::new();
     let mut present_parts = Vec::new();
     let mut failed_sources = Vec::new();
+    let mut ambiguous_excluded = Vec::new();
     for authorization in authorizations {
         let candidates = discover(home, authorization.source, &mut prepared.errors);
+        if authorization.history_choice == ArchiveHistoryChoice::NewOnly {
+            let ambiguous_sessions: HashSet<_> = candidates
+                .iter()
+                .filter(|candidate| candidate.started_at.is_none())
+                .map(|candidate| candidate.session.as_str())
+                .collect();
+            if !ambiguous_sessions.is_empty() {
+                ambiguous_excluded.push((authorization.source, ambiguous_sessions.len() as u32));
+            }
+        }
         let generation = ArchiveHistoryGeneration {
             source: authorization.source,
             history_choice: authorization.history_choice,
@@ -69,11 +80,17 @@ pub fn prepare(
             .as_ref()
             .is_none_or(|state| state.generation != generation);
         let mut state = if reset {
-            ArchiveHistoryState::new(
-                generation,
-                now_ms,
-                candidates.iter().map(target_from).collect(),
-            )
+            let targets = candidates
+                .iter()
+                .filter(|candidate| {
+                    authorization.history_choice == ArchiveHistoryChoice::AllHistory
+                        || candidate
+                            .started_at
+                            .is_none_or(|started| started <= authorization.authorized_at)
+                })
+                .map(target_from)
+                .collect();
+            ArchiveHistoryState::new(generation, now_ms, targets)
         } else {
             loaded.expect("checked present generation")
         };
@@ -117,13 +134,6 @@ pub fn prepare(
                     !state.excludes_session(&candidate.session) && is_live
                 }
             };
-            if authorization.history_choice == ArchiveHistoryChoice::NewOnly
-                && candidate.started_at.is_none()
-            {
-                prepared
-                    .errors
-                    .push("archive_history_ambiguous".to_string());
-            }
             if !permitted {
                 continue;
             }
@@ -142,7 +152,8 @@ pub fn prepare(
     prepared.plan = ArchiveHistoryPlan::new(states)
         .with_live_sessions(live_sessions)
         .with_present_parts(present_parts)
-        .with_failed_sources(failed_sources);
+        .with_failed_sources(failed_sources)
+        .with_ambiguous_excluded(ambiguous_excluded);
     prepared
 }
 

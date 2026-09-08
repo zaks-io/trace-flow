@@ -31,12 +31,17 @@ pub(crate) fn read_capture_window(
     }
 
     file.seek(SeekFrom::Start(wanted))?;
-    let mut one = [0u8; 1];
-    while file.read(&mut one)? == 1 {
-        bytes.push(one[0]);
-        if one[0] == b'\n' {
+    let mut chunk = vec![0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut chunk)?;
+        if read == 0 {
             break;
         }
+        if let Some(index) = chunk[..read].iter().position(|byte| *byte == b'\n') {
+            bytes.extend_from_slice(&chunk[..=index]);
+            break;
+        }
+        bytes.extend_from_slice(&chunk[..read]);
     }
     Ok(bytes)
 }

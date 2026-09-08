@@ -44,6 +44,7 @@ pub struct ArchiveSourceHistoryReport {
     pub registered_targets: u32,
     pub completed_targets: u32,
     pub retained_excluded_pending: u32,
+    pub ambiguous_excluded_sessions: u32,
 }
 
 #[derive(Debug, Default, Clone)]
