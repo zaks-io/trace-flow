@@ -1,6 +1,7 @@
 import { encryptArchiveObject } from '@trace-flow/utils';
 import {
   ArchiveContractError,
+  ARCHIVE_CHUNK_TARGET_BYTES,
   MAX_CHUNK_BYTES,
   type ArchiveScope,
   type ArchiveSessionManifest,
@@ -119,7 +120,7 @@ async function packChunks(
     if (size > MAX_CHUNK_BYTES) {
       throw new ArchiveContractError('archive_element_exceeds_chunk_limit');
     }
-    if (currentSize > 0 && currentSize + size > MAX_CHUNK_BYTES) await flush();
+    if (currentSize > 0 && currentSize + size > ARCHIVE_CHUNK_TARGET_BYTES) await flush();
     current.push(element);
     currentSize += size;
   }

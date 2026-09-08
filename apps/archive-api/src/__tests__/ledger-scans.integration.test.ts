@@ -697,7 +697,7 @@ describe('Archive Session Ledger', () => {
     const batchSize = 100;
     const totalRecords = 2_500;
     const payloads = Array.from({ length: totalRecords }, (_, index) =>
-      JSON.stringify({ index, value: 'x'.repeat(3_400) }),
+      JSON.stringify({ index, value: 'x'.repeat(6_800) }),
     );
     let historicalPrefix = new Uint8Array();
     let priorCheckpoint: CompletedScanCheckpoint | undefined;

@@ -211,8 +211,11 @@ Archive Encryption Key, and commits through the Archive Session Ledger Durable O
 The ledger validates source observations and completed-scan checkpoints, retains
 changed identity versions, writes verified encrypted losslessly compressed chunks and
 manifest generations to the dedicated development Agent Archive R2 bucket, and
-returns a durable acknowledgement. Request JSON is bounded to 8 MiB so collectors
-flush before a session or sync grows beyond the Worker memory envelope. Ledger and
+returns a durable acknowledgement. Collector and handler request JSON is bounded to
+16 MiB, and the internal ledger commit envelope is bounded to 17 MiB. These bounds
+fit a measured 6,467,360-byte raw record whose serialized append request is
+15,094,156 bytes. Ordinary Archive Chunks retain their 1.5 MiB packing target, while
+a single stored element may occupy its own chunk up to the 8 MiB hard limit. Ledger and
 manifest history is read and extended through bounded durable pages; there is no
 lifetime record or checkpoint cap. Export and deletion routes remain fail-closed Archive
 Export Grant placeholders. Storage-budget enforcement, repair, export, deletion,

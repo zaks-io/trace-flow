@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import vectorsJson from '../../../../packages/collector-archive/tests/fixtures/archive-identifiers.json?raw';
-import { ArchiveContractError, assertIdentifier } from '../archive-contract';
+import { ArchiveContractError, assertIdentifier, decodeBase64Bytes } from '../archive-contract';
 
 const vectors = JSON.parse(vectorsJson) as {
   controls: string[];
@@ -70,4 +70,15 @@ describe('archive identifier contract', () => {
       ArchiveContractError,
     );
   });
+});
+
+describe('archive base64 contract', () => {
+  it.each(['*===', 'YQ', 'YQ===', 'Y Q==', 'YQ==\n'])(
+    'rejects invalid or noncanonical base64 %#',
+    (value) => {
+      expect(() => decodeBase64Bytes(value)).toThrowError(
+        expect.objectContaining({ errorClass: 'invalid_payload_encoding' }),
+      );
+    },
+  );
 });
