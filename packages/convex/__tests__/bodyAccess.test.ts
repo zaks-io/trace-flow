@@ -39,6 +39,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.BODY_ACCESS_JWT_SECRET = 'test-body-access-secret';
   process.env.TINYBIRD_ADMIN_TOKEN = 'test-tinybird-admin-token';
+  vi.stubEnv('SENTRY_DSN', 'https://public@sentry.test/1');
+  vi.stubEnv('SENTRY_ENVIRONMENT', 'test');
   delete process.env.TINYBIRD_API_URL;
   mocks.limit.mockResolvedValue(undefined);
   mocks.runAdminSql.mockResolvedValue([{ '1': 1 }]);

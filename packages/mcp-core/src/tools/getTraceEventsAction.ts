@@ -139,12 +139,7 @@ export async function getTraceEvents(
     pipeParams.order = params.order;
   }
 
-  const data = await queryPipe<EventRow>(
-    ctx.tinybirdBaseUrl,
-    token,
-    'mcp_trace_events',
-    pipeParams,
-  );
+  const data = await queryPipe<EventRow>(ctx, token, 'mcp_trace_events', pipeParams);
 
   const totalCount = data.length > 0 ? data[0]!.total_count : 0;
   const formattedEvents = data.map(formatEventRow);

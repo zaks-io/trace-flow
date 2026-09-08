@@ -934,7 +934,7 @@ async fn oversized_session_splits_at_byte_limit() {
     let dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();
     let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
-    let bytes = padded_records(12, 400_000, "big-session");
+    let bytes = padded_records(24, 400_000, "big-session");
     let full = collector_archive_sync::scan_snapshot(
         ArchiveSource::Claude,
         "big-session",
@@ -970,7 +970,7 @@ async fn oversized_session_splits_at_byte_limit() {
         .progress(ArchiveSource::Claude, "big-session")
         .unwrap()
         .expect("progress advanced through remaining bytes");
-    assert_eq!(progress.record_count, 12);
+    assert_eq!(progress.record_count, 24);
     let first: serde_json::Value = serde_json::from_slice(&uploader.bodies.borrow()[0]).unwrap();
     let second: serde_json::Value = serde_json::from_slice(&uploader.bodies.borrow()[1]).unwrap();
     assert_eq!(
@@ -988,7 +988,7 @@ async fn bounded_upload_failure_keeps_later_records_after_source_disappears() {
     let dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();
     let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
-    let bytes = padded_records(300, 20_000, "disappear-session");
+    let bytes = padded_records(300, 30_000, "disappear-session");
     let first = collector_archive_sync::build_bounded_pending(
         ArchiveSource::Claude,
         "disappear-session",
@@ -1085,7 +1085,7 @@ async fn existing_pending_does_not_strand_later_observed_bytes() {
     let dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();
     let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
-    let bytes = padded_records(300, 20_000, "pending-session");
+    let bytes = padded_records(300, 30_000, "pending-session");
     let first = collector_archive_sync::build_bounded_pending(
         ArchiveSource::Claude,
         "pending-session",

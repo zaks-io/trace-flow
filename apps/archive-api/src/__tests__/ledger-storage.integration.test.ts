@@ -925,7 +925,7 @@ describe('Archive Session Ledger', () => {
     expect(replacementResult.body).toMatchObject({ generation: 1 });
   });
 
-  it('holds the one-and-a-half MiB uncompressed chunk boundary', async () => {
+  it('holds the eight MiB uncompressed chunk boundary', async () => {
     const currentScope = scope('claude', `boundary-${crypto.randomUUID()}`);
     const base: StoredRecord = {
       kind: 'record',

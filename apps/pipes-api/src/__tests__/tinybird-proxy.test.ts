@@ -34,6 +34,30 @@ describe('pipes API Tinybird passthrough', () => {
     vi.unstubAllGlobals();
   });
 
+  it('exposes cache hits to browsers without querying Tinybird again', async () => {
+    const cachedBody = JSON.stringify({ data: [], statistics: { elapsed: 0.5 } });
+    vi.stubGlobal('caches', {
+      default: {
+        match: vi.fn().mockResolvedValue(new Response(cachedBody)),
+      },
+    });
+    const upstreamFetch = vi.fn();
+    vi.stubGlobal('fetch', upstreamFetch);
+
+    const response = await pipesApp.fetch(
+      new Request('https://pipes.trace-flow.dev/v0/pipes/traces_list.json?start=100', {
+        headers: { Authorization: 'Bearer pipe-token', Origin: 'https://trace-flow.dev' },
+      }),
+      env(),
+      executionCtx(),
+    );
+
+    expect(response.headers.get('X-Cache')).toBe('HIT');
+    expect(response.headers.get('Access-Control-Expose-Headers')?.split(',')).toContain('X-Cache');
+    expect(await response.text()).toBe(cachedBody);
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
   it('forwards caller bearer tokens to Tinybird without admin-token credentials', async () => {
     const cache = {
       match: vi.fn().mockResolvedValue(null),

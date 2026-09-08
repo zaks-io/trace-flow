@@ -9,6 +9,7 @@ let mockCtx: ToolCtx;
 function mockFetchJson(responseData: unknown) {
   vi.spyOn(globalThis, 'fetch').mockResolvedValue({
     ok: true,
+    headers: new Headers(),
     json: () => Promise.resolve(responseData),
   } as Response);
 }

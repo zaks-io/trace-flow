@@ -17,7 +17,8 @@
     "@sentry/cloudflare": "^10.73.0",
     "@trace-flow/logging": "workspace:*",
     "@trace-flow/utils": "workspace:*",
-    "hono": "^4.13.5"
+    "hono": "^4.13.5",
+    "@trace-flow/tinybird-client": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260702.1",

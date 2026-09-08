@@ -366,6 +366,7 @@ describe('dispatchToolCall', () => {
   it('dispatches tool calls with resolved keys and a minted Tinybird token', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
+      headers: new Headers(),
       json: () =>
         Promise.resolve({
           data: [
@@ -408,6 +409,7 @@ describe('dispatchToolCall', () => {
   it('dispatches agent analytics through the sandbox data API without requiring API keys', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
+      headers: new Headers(),
       json: () =>
         Promise.resolve({
           data: [

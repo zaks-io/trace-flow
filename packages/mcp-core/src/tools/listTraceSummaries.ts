@@ -105,12 +105,7 @@ export async function listTraceSummaries(
     'order',
   ]);
 
-  const rows = await queryPipe<TraceSummaryRow>(
-    ctx.tinybirdBaseUrl,
-    token,
-    'mcp_trace_summaries',
-    pipeParams,
-  );
+  const rows = await queryPipe<TraceSummaryRow>(ctx, token, 'mcp_trace_summaries', pipeParams);
   const totalCount = rows.length > 0 ? rows[0]!.total_count : 0;
 
   const result = {

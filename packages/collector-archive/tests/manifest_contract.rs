@@ -6,8 +6,8 @@ use collector_archive::{
 };
 
 #[test]
-fn archive_chunk_limit_is_one_and_a_half_mebibytes() {
-    assert_eq!(MAX_CHUNK_BYTES, 1_572_864);
+fn archive_chunk_limit_is_eight_mebibytes() {
+    assert_eq!(MAX_CHUNK_BYTES, 8_388_608);
 }
 
 #[test]

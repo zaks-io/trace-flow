@@ -48,7 +48,7 @@ interface CostBucketBar {
   sum: number;
 }
 
-/** Zip the parallel decile-bucket arrays from the pipe into drawable bars (sum = where the money is). */
+/** Zip the parallel cost-band arrays from the pipe into drawable bars (sum = where the money is). */
 export function buildCostBuckets(row: RequestStatsRow): CostBucketBar[] {
   const { cost_bucket_lo, cost_bucket_hi, cost_bucket_count, cost_bucket_sum } = row;
   if (!cost_bucket_lo?.length) return [];
@@ -57,7 +57,10 @@ export function buildCostBuckets(row: RequestStatsRow): CostBucketBar[] {
     hi: cost_bucket_hi[i],
     count: cost_bucket_count[i],
     sum: cost_bucket_sum[i],
-    label: `$${lo.toFixed(lo < 0.01 ? 4 : 2)}–$${cost_bucket_hi[i].toFixed(cost_bucket_hi[i] < 0.01 ? 4 : 2)}`,
+    label:
+      lo === cost_bucket_hi[i]
+        ? formatCostBoundary(lo)
+        : `${formatCostBoundary(lo)} to ${formatCostBoundary(cost_bucket_hi[i])}`,
   }));
 }
 
@@ -68,4 +71,8 @@ export function buildLorenzPoints(
   const xs = row.lorenz_request_pct ?? [];
   const ys = row.lorenz_cost_pct ?? [];
   return xs.map((x, i) => ({ requestPct: x, costPct: ys[i] ?? 0 }));
+}
+
+function formatCostBoundary(value: number): string {
+  return `$${new Intl.NumberFormat('en-US', { maximumFractionDigits: 6 }).format(value)}`;
 }

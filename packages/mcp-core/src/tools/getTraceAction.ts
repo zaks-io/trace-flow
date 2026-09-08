@@ -61,9 +61,9 @@ export async function getTrace(
   const baseParams = { trace_id: traceId };
 
   const [summaryData, byProviderData, byModelData] = await Promise.all([
-    queryPipe<SummaryRow>(ctx.tinybirdBaseUrl, token, 'mcp_trace_summary', baseParams),
-    queryPipe<ByProviderRow>(ctx.tinybirdBaseUrl, token, 'mcp_trace_by_provider', baseParams),
-    queryPipe<ByModelRow>(ctx.tinybirdBaseUrl, token, 'mcp_trace_by_model', baseParams),
+    queryPipe<SummaryRow>(ctx, token, 'mcp_trace_summary', baseParams),
+    queryPipe<ByProviderRow>(ctx, token, 'mcp_trace_by_provider', baseParams),
+    queryPipe<ByModelRow>(ctx, token, 'mcp_trace_by_model', baseParams),
   ]);
 
   const summaryRow = summaryData[0];

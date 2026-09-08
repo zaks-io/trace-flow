@@ -1,4 +1,11 @@
+import type { Scope } from '@sentry/core';
 import { TinybirdAuthError, TinybirdQueryError } from './errors';
+import {
+  finishTinybirdQuerySpan,
+  recordTinybirdResponse,
+  recordTinybirdStatistics,
+  startTinybirdQuerySpan,
+} from './tracing';
 
 export type PipeParam = string | number | boolean | undefined;
 
@@ -11,6 +18,8 @@ export interface FetchPipeOptions<T = unknown> {
   retry?: boolean;
   /** Optional zod-style validator. When present, each row in `data` is parsed. */
   schema?: { parse(value: unknown): T };
+  /** Explicit Sentry scope for runtimes where request scopes are not globally active. */
+  sentryScope?: Scope;
 }
 
 interface PipeResponse {
@@ -30,29 +39,40 @@ function buildPipeUrl(baseUrl: string, pipe: string, params?: Record<string, Pip
 }
 
 async function fetchOnce<T>(opts: FetchPipeOptions<T>): Promise<T[]> {
-  const url = buildPipeUrl(opts.baseUrl, opts.pipe, opts.params);
-
-  const response = await fetch(url.toString(), {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${opts.token}` },
+  const span = startTinybirdQuerySpan({
+    baseUrl: opts.baseUrl,
+    pipe: opts.pipe,
+    sentryScope: opts.sentryScope,
   });
+  let succeeded = false;
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    const message = `Tinybird pipe ${opts.pipe} failed: ${response.status} - ${errorText}`;
-    if (response.status === 403) {
-      throw new TinybirdAuthError(message);
+  try {
+    const url = buildPipeUrl(opts.baseUrl, opts.pipe, opts.params);
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${opts.token}` },
+    });
+    recordTinybirdResponse(span, response);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      const message = `Tinybird pipe ${opts.pipe} failed: ${response.status} - ${errorText}`;
+      if (response.status === 403) {
+        throw new TinybirdAuthError(message);
+      }
+      throw new TinybirdQueryError(message, response.status);
     }
-    throw new TinybirdQueryError(message, response.status);
-  }
 
-  const body: PipeResponse = await response.json();
-  const rows = body.data ?? [];
-  const schema = opts.schema;
-  if (schema) {
-    return rows.map((row) => schema.parse(row));
+    const body: PipeResponse = await response.json();
+    recordTinybirdStatistics(span, body);
+    const rows = body.data ?? [];
+    const schema = opts.schema;
+    const result = schema ? rows.map((row) => schema.parse(row)) : (rows as T[]);
+    succeeded = true;
+    return result;
+  } finally {
+    finishTinybirdQuerySpan(span, succeeded);
   }
-  return rows as T[];
 }
 
 /**

@@ -117,6 +117,15 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Configure Convex query tracing
+        run: |
+          test -n "$SENTRY_DSN"
+          bunx convex env set SENTRY_DSN "$SENTRY_DSN" --prod
+          bunx convex env set SENTRY_ENVIRONMENT prod --prod
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
+
       - name: Deploy Convex
         id: deploy
         run: |
@@ -320,8 +329,13 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/pipes-api
-          command: deploy --env production
+          command: deploy
+          environment: production
           packageManager: bun
+          secrets: |
+            SENTRY_DSN
+        env:
+          SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
 
   # MCP worker verifies access tokens via Convex JWKS, so Convex must deploy first.
   deploy-mcp:

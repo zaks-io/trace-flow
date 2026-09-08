@@ -7,7 +7,7 @@ use crate::scan::scan_snapshot;
 use crate::spool::PendingArchiveRequest;
 
 /// Archive API uncompressed JSON body limit (`apps/archive-api` `MAX_ARCHIVE_UPLOAD_BYTES`).
-pub const MAX_ARCHIVE_UPLOAD_BYTES: usize = 8_388_608;
+pub const MAX_ARCHIVE_UPLOAD_BYTES: usize = 16_777_216;
 /// Archive API observation-count limit (`apps/archive-api` `MAX_UPLOAD_OBSERVATIONS`).
 pub const MAX_UPLOAD_OBSERVATIONS: usize = 16_384;
 
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn api_limits_match_archive_api() {
-        assert_eq!(MAX_ARCHIVE_UPLOAD_BYTES, 8_388_608);
+        assert_eq!(MAX_ARCHIVE_UPLOAD_BYTES, 16_777_216);
         assert_eq!(MAX_UPLOAD_OBSERVATIONS, 16_384);
     }
 
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn byte_bound_splits_before_the_api_limit() {
-        let bytes = records(12, 400_000);
+        let bytes = records(24, 400_000);
         let pending = build_bounded_pending(
             ArchiveSource::Claude,
             "bound-session",
@@ -304,7 +304,7 @@ mod tests {
         .unwrap()
         .expect("bounded pending");
         assert!(pending.body.len() <= MAX_ARCHIVE_UPLOAD_BYTES);
-        assert!(observation_len(&pending.body) < 12);
+        assert!(observation_len(&pending.body) < 24);
         assert!(pending.expected_record_count >= 1);
         let full = scan_snapshot(
             ArchiveSource::Claude,
@@ -318,6 +318,57 @@ mod tests {
         .into_upload_request(&bytes)
         .unwrap();
         assert!(serde_json::to_vec(&full).unwrap().len() > MAX_ARCHIVE_UPLOAD_BYTES);
+    }
+
+    #[test]
+    fn single_large_append_record_fits_the_api_limit() {
+        const RAW_RECORD_BYTES: usize = 6_467_360;
+        const OLD_UPLOAD_LIMIT: usize = 8_388_608;
+
+        let initial = records(1, 8);
+        let prior = scan_snapshot(
+            ArchiveSource::Claude,
+            "bound-session",
+            None,
+            &initial,
+            9,
+            None,
+        )
+        .unwrap()
+        .checkpoint;
+        let prefix = r#"{"sessionId":"bound-session","uuid":"large","pad":""#;
+        let suffix = r#""}"#;
+        let pad = RAW_RECORD_BYTES - prefix.len() - suffix.len();
+        let mut bytes = initial;
+        bytes.extend_from_slice(prefix.as_bytes());
+        bytes.extend(std::iter::repeat_n(b'x', pad));
+        bytes.extend_from_slice(suffix.as_bytes());
+        bytes.push(b'\n');
+
+        let pending = build_bounded_pending(
+            ArchiveSource::Claude,
+            "bound-session",
+            None,
+            &bytes,
+            10,
+            Some(&prior),
+        )
+        .unwrap()
+        .expect("large append pending");
+        let value: serde_json::Value = serde_json::from_slice(&pending.body).unwrap();
+
+        assert!(pending.body.len() > OLD_UPLOAD_LIMIT);
+        assert!(pending.body.len() <= MAX_ARCHIVE_UPLOAD_BYTES);
+        assert_eq!(value["observations"].as_array().unwrap().len(), 1);
+        assert_eq!(value["prior_checkpoint"]["record_count"], 1);
+        assert_eq!(value["checkpoint"]["record_count"], 2);
+        assert_eq!(
+            value["append_proof"]["appended_prefix_base64"]
+                .as_str()
+                .unwrap()
+                .len(),
+            (RAW_RECORD_BYTES + 1).div_ceil(3) * 4
+        );
     }
 
     #[test]

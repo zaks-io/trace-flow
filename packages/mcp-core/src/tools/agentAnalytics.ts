@@ -44,17 +44,17 @@ export async function describeAgentAnalytics(
   );
   const baseParams = buildDiscoveryParams(params, window);
   const [sourceRows, modelRows, repoBreakdownRows] = await Promise.all([
-    queryPipe(ctx.tinybirdBaseUrl, token, 'agent_usage_breakdown', {
+    queryPipe(ctx, token, 'agent_usage_breakdown', {
       ...baseParams,
       dimension: 'source',
       order_by: 'message_count',
     }),
-    queryPipe(ctx.tinybirdBaseUrl, token, 'agent_usage_breakdown', {
+    queryPipe(ctx, token, 'agent_usage_breakdown', {
       ...baseParams,
       dimension: 'model',
       order_by: 'message_count',
     }),
-    queryPipe(ctx.tinybirdBaseUrl, token, 'agent_usage_breakdown', {
+    queryPipe(ctx, token, 'agent_usage_breakdown', {
       ...baseParams,
       dimension: 'repo',
       order_by: 'message_count',
@@ -63,7 +63,7 @@ export async function describeAgentAnalytics(
   const repoValues = valueRows(repoBreakdownRows).map((row) => String(row.value));
   const directoryRows =
     repoValues.length > 0
-      ? await queryPipe(ctx.tinybirdBaseUrl, token, 'agent_repo_directory', {
+      ? await queryPipe(ctx, token, 'agent_repo_directory', {
           start_time_ms: window.start_time_ms,
           end_time_ms: window.end_time_ms,
           repos: repoValues.join(','),
@@ -110,7 +110,7 @@ export async function queryAgentAnalytics(
   );
   const window = buildWindowParams(params, retentionDays);
   const pipeParams = buildPipeParams(view, params, window);
-  const data = await queryPipe(ctx.tinybirdBaseUrl, token, pipe, pipeParams);
+  const data = await queryPipe(ctx, token, pipe, pipeParams);
   const pageLimit = agentPageLimit(params, view);
   const pageOffset = typeof pipeParams.offset === 'number' ? pipeParams.offset : 0;
 

@@ -1,3 +1,4 @@
+import { withTinybirdTracing } from './tinybirdTracing';
 import { createTool, type ToolCtx as AgentToolCtx } from '@convex-dev/agent';
 import {
   dispatchToolCall,
@@ -80,13 +81,16 @@ async function runTraceFlowTool(
   userId: Id<'users'>,
   params: ToolCallParams,
 ): Promise<ToolCallResult> {
-  const response = await dispatchToolCall(
-    createMcpBackend(ctx, userId),
-    TINYBIRD_BASE_URL,
-    Date.now(),
-    params,
-    LATEST_PROTOCOL_VERSION,
-    'analyst',
+  const response = await withTinybirdTracing((sentryScope) =>
+    dispatchToolCall(
+      createMcpBackend(ctx, userId),
+      TINYBIRD_BASE_URL,
+      Date.now(),
+      params,
+      LATEST_PROTOCOL_VERSION,
+      'analyst',
+      sentryScope,
+    ),
   );
 
   if (response.error) {

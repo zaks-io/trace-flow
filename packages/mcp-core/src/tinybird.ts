@@ -1,4 +1,4 @@
-import { fetchPipe, type PipeParam } from '@trace-flow/tinybird-client';
+import { fetchPipe, type FetchPipeOptions, type PipeParam } from '@trace-flow/tinybird-client';
 
 export interface TinybirdScope {
   type: string;
@@ -29,6 +29,7 @@ export type TokenMinter = (
 export interface ToolCtx {
   mintToken: TokenMinter;
   tinybirdBaseUrl: string;
+  sentryScope?: FetchPipeOptions['sentryScope'];
   protocolVersion?: string;
 }
 
@@ -37,16 +38,17 @@ export interface ToolCtx {
  * in by the shared client.
  */
 export async function queryPipe<Row = Record<string, unknown>>(
-  baseUrl: string,
+  ctx: Pick<ToolCtx, 'tinybirdBaseUrl' | 'sentryScope'>,
   token: string,
   pipe: string,
   params?: Record<string, PipeParam>,
 ): Promise<Row[]> {
   return fetchPipe<Row>({
-    baseUrl,
+    baseUrl: ctx.tinybirdBaseUrl,
     token,
     pipe,
     params,
     retry: true,
+    sentryScope: ctx.sentryScope,
   });
 }

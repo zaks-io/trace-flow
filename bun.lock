@@ -153,6 +153,7 @@
       "dependencies": {
         "@sentry/cloudflare": "^10.73.0",
         "@trace-flow/logging": "workspace:*",
+        "@trace-flow/tinybird-client": "workspace:*",
         "@trace-flow/utils": "workspace:*",
         "hono": "^4.13.5",
       },
@@ -281,6 +282,7 @@
         "@convex-dev/rate-limiter": "^0.3.2",
         "@openrouter/ai-sdk-provider": "^2.10.0",
         "@react-email/components": "^1.0.12",
+        "@sentry/core": "10.73.0",
         "@splitch/convex": "^0.2.0",
         "@trace-flow/emails": "workspace:*",
         "@trace-flow/logging": "workspace:*",
@@ -421,6 +423,9 @@
     "packages/tinybird-client": {
       "name": "@trace-flow/tinybird-client",
       "version": "0.0.1",
+      "dependencies": {
+        "@sentry/core": "10.73.0",
+      },
       "devDependencies": {
         "@cloudflare/workers-types": "^4.20260702.1",
         "@vitest/coverage-v8": "^4.1.11",
