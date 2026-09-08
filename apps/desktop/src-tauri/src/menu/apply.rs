@@ -172,6 +172,8 @@ mod tests {
         pending.archive.pending = Some(ArchiveSource::Codex);
         let pending_view = archive_menu_view(&pending);
         assert_eq!(pending_view.status, "Codex: enabling\u{2026}");
+        assert!(!pending_view.codex.all_checked);
+        assert!(!pending_view.codex.new_checked);
         assert!(!pending_view.claude.enabled);
         assert!(!pending_view.codex.enabled);
 

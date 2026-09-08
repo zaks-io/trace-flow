@@ -8,7 +8,8 @@ use crate::connector::Connector;
 use crate::engine::{EngineCommand, EngineHandle};
 use crate::error::{DesktopError, Result};
 use crate::paths::logs_dir_path;
-use crate::state::{AppState, AppStateBus, SyncStatus};
+use crate::state::{AppState, AppStateBus, ArchiveConnectionIdentity, SyncStatus};
+use collector_embedder::connection::Paths;
 use collector_embedder::{ArchiveHistoryChoice, ArchiveSource};
 
 const TRAY_ICON_BYTES: &[u8] = include_bytes!(concat!(
@@ -37,6 +38,7 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
     if id.starts_with("archive_enroll:") {
         let bus: tauri::State<'_, AppStateBus> = app.state();
         if let Some(command) = archive_enrollment_command(&bus.snapshot(), id) {
+            mark_archive_dispatch_pending(&bus, &command);
             connect_then(app, command);
         }
         return;
@@ -74,6 +76,7 @@ fn archive_enrollment_command(state: &AppState, id: &str) -> Option<EngineComman
         return None;
     }
     Some(EngineCommand::EnrollArchiveSource {
+        connection: state.connection.archive_identity(),
         source,
         history_choice,
     })
@@ -135,6 +138,15 @@ fn connect_then<R: Runtime>(app: &AppHandle<R>, cmd: EngineCommand) {
             report_archive_dispatch_failure(&bus, &cmd, "connection was not completed");
             return;
         }
+        let cmd = match bind_archive_command_to_saved_connection(cmd) {
+            Ok(cmd) => cmd,
+            Err((cmd, message)) => {
+                crate::engine::refresh_connection(&bus);
+                report_archive_dispatch_failure(&bus, &cmd, message);
+                return;
+            }
+        };
+        mark_archive_dispatch_pending(&bus, &cmd);
         let handle: tauri::State<'_, EngineHandle> = app.state();
         if !handle.send(cmd.clone()) {
             tracing::warn!("engine gone; ignoring tray command");
@@ -143,11 +155,76 @@ fn connect_then<R: Runtime>(app: &AppHandle<R>, cmd: EngineCommand) {
     });
 }
 
+fn bind_archive_command_to_saved_connection(
+    cmd: EngineCommand,
+) -> std::result::Result<EngineCommand, (EngineCommand, &'static str)> {
+    let actual = Paths::resolve()
+        .and_then(|paths| paths.load_connection())
+        .ok()
+        .flatten()
+        .map(|connection| ArchiveConnectionIdentity {
+            org_id: connection.org_id,
+            collector_id: connection.collector_id,
+        });
+    bind_archive_command(cmd, actual)
+}
+
+fn bind_archive_command(
+    cmd: EngineCommand,
+    actual: Option<ArchiveConnectionIdentity>,
+) -> std::result::Result<EngineCommand, (EngineCommand, &'static str)> {
+    let (connection, source, history_choice) = match cmd {
+        EngineCommand::EnrollArchiveSource {
+            connection,
+            source,
+            history_choice,
+        } => (connection, source, history_choice),
+        other => return Ok(other),
+    };
+    let Some(actual) = actual else {
+        return Err((
+            EngineCommand::EnrollArchiveSource {
+                connection,
+                source,
+                history_choice,
+            },
+            "saved connection is unavailable",
+        ));
+    };
+    if connection
+        .as_ref()
+        .is_some_and(|expected| expected != &actual)
+    {
+        return Err((
+            EngineCommand::EnrollArchiveSource {
+                connection,
+                source,
+                history_choice,
+            },
+            "connection changed; choose Archive again",
+        ));
+    }
+    Ok(EngineCommand::EnrollArchiveSource {
+        connection: Some(actual),
+        source,
+        history_choice,
+    })
+}
+
 fn report_archive_dispatch_failure(bus: &AppStateBus, cmd: &EngineCommand, message: &str) {
     if matches!(cmd, EngineCommand::EnrollArchiveSource { .. }) {
         bus.update(|state| {
             state.archive.pending = None;
             state.archive.last_error = Some(message.to_string());
+        });
+    }
+}
+
+fn mark_archive_dispatch_pending(bus: &AppStateBus, cmd: &EngineCommand) {
+    if let EngineCommand::EnrollArchiveSource { source, .. } = cmd {
+        bus.update(|state| {
+            state.archive.pending = Some(*source);
+            state.archive.last_error = None;
         });
     }
 }
@@ -245,6 +322,7 @@ mod tests {
         assert_eq!(
             archive_enrollment_command(&state, "archive_enroll:claude:all_history"),
             Some(EngineCommand::EnrollArchiveSource {
+                connection: None,
                 source: ArchiveSource::Claude,
                 history_choice: ArchiveHistoryChoice::AllHistory,
             })
@@ -262,13 +340,27 @@ mod tests {
     }
 
     #[test]
-    fn failed_archive_dispatch_publishes_repaint_state() {
+    fn queued_and_failed_archive_dispatches_publish_repaint_state() {
         let bus = AppStateBus::new();
         let updates = bus.subscribe();
+        bus.update(|state| {
+            state.archive.sources = vec![(ArchiveSource::Claude, ArchiveHistoryChoice::AllHistory)];
+        });
         let command = EngineCommand::EnrollArchiveSource {
-            source: ArchiveSource::Claude,
+            connection: Some(ArchiveConnectionIdentity {
+                org_id: "org_1".to_string(),
+                collector_id: "collector_1".to_string(),
+            }),
+            source: ArchiveSource::Codex,
             history_choice: ArchiveHistoryChoice::AllHistory,
         };
+
+        mark_archive_dispatch_pending(&bus, &command);
+
+        let queued = bus.snapshot().archive;
+        assert_eq!(queued.pending, Some(ArchiveSource::Codex));
+        assert_eq!(queued.sources.len(), 1);
+        assert_eq!(queued.last_error, None);
 
         report_archive_dispatch_failure(&bus, &command, "connection was not completed");
 
@@ -279,6 +371,49 @@ mod tests {
             archive.last_error.as_deref(),
             Some("connection was not completed")
         );
-        assert!(archive.sources.is_empty());
+        assert_eq!(archive.sources.len(), 1);
+    }
+
+    #[test]
+    fn queued_archive_command_rejects_a_replacement_connection() {
+        let expected = ArchiveConnectionIdentity {
+            org_id: "org_1".to_string(),
+            collector_id: "collector_1".to_string(),
+        };
+        let replacement = ArchiveConnectionIdentity {
+            org_id: "org_1".to_string(),
+            collector_id: "collector_2".to_string(),
+        };
+        let command = EngineCommand::EnrollArchiveSource {
+            connection: Some(expected),
+            source: ArchiveSource::Claude,
+            history_choice: ArchiveHistoryChoice::AllHistory,
+        };
+
+        let (_, message) = bind_archive_command(command, Some(replacement)).unwrap_err();
+
+        assert_eq!(message, "connection changed; choose Archive again");
+    }
+
+    #[test]
+    fn first_archive_click_binds_to_the_connection_completed_for_it() {
+        let actual = ArchiveConnectionIdentity {
+            org_id: "org_1".to_string(),
+            collector_id: "collector_1".to_string(),
+        };
+        let command = EngineCommand::EnrollArchiveSource {
+            connection: None,
+            source: ArchiveSource::Claude,
+            history_choice: ArchiveHistoryChoice::NewOnly,
+        };
+
+        assert_eq!(
+            bind_archive_command(command, Some(actual.clone())).unwrap(),
+            EngineCommand::EnrollArchiveSource {
+                connection: Some(actual),
+                source: ArchiveSource::Claude,
+                history_choice: ArchiveHistoryChoice::NewOnly,
+            }
+        );
     }
 }

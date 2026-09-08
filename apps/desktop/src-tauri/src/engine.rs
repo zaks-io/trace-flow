@@ -22,7 +22,7 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use collector_embedder::connection::Paths;
+use collector_embedder::connection::{Connection, Paths};
 use collector_embedder::keychain;
 use collector_embedder::sync::{self, ArchiveKeyStore, Window};
 use collector_embedder::{
@@ -32,7 +32,10 @@ use collector_embedder::{
 use tokio::sync::mpsc;
 
 use crate::settings::{ArchiveRequest, Settings, SettingsFile};
-use crate::state::{AppStateBus, ArchiveMenuState, ConnectionState, SourceCounts, SyncStatus};
+use crate::state::{
+    AppStateBus, ArchiveConnectionIdentity, ArchiveMenuState, ConnectionState, SourceCounts,
+    SyncStatus,
+};
 
 /// How often the engine runs an incremental cycle while resumed.
 const TICK: Duration = Duration::from_secs(5 * 60);
@@ -58,6 +61,7 @@ pub enum EngineCommand {
     Pause,
     /// Authorize one Archive Source through the saved Collector Credential.
     EnrollArchiveSource {
+        connection: Option<ArchiveConnectionIdentity>,
         source: ArchiveSource,
         history_choice: ArchiveHistoryChoice,
     },
@@ -134,11 +138,16 @@ async fn run_loop(
                         persist(&settings_file, &settings);
                         run_authorized_cycle(&bus, &mut settings).await;
                     }
-                    EngineCommand::EnrollArchiveSource { source, history_choice } => {
+                    EngineCommand::EnrollArchiveSource {
+                        connection,
+                        source,
+                        history_choice,
+                    } => {
                         enroll_archive_source(
                             &bus,
                             &settings_file,
                             &mut settings,
+                            connection,
                             source,
                             history_choice,
                         ).await;
@@ -163,17 +172,12 @@ async fn enroll_archive_source(
     bus: &AppStateBus,
     settings_file: &SettingsFile,
     settings: &mut Settings,
+    expected_connection: Option<ArchiveConnectionIdentity>,
     source: ArchiveSource,
     history_choice: ArchiveHistoryChoice,
 ) {
     let snapshot = bus.snapshot();
-    if snapshot.archive.pending.is_some()
-        || snapshot
-            .archive
-            .sources
-            .iter()
-            .any(|(authorized, _)| *authorized == source)
-    {
+    if archive_enrollment_is_blocked(&snapshot.archive, source) {
         return;
     }
 
@@ -195,6 +199,17 @@ async fn enroll_archive_source(
             return;
         }
     };
+    let Some(expected_connection) = expected_connection else {
+        set_archive_error(bus, "saved connection is unavailable".to_string());
+        return;
+    };
+    if expected_connection.org_id != connection.org_id
+        || expected_connection.collector_id != connection.collector_id
+    {
+        refresh_connection(bus);
+        set_archive_error(bus, "connection changed; choose Archive again".to_string());
+        return;
+    }
     let request = match archive_request_for_connection(
         settings.archive_request.as_ref(),
         &connection.org_id,
@@ -232,6 +247,7 @@ async fn enroll_archive_source(
     });
 
     let org_id = connection.org_id.clone();
+    let collector_id = connection.collector_id.clone();
     let enrollment_request = ArchiveEnrollmentRequest {
         authorized_sources: vec![ArchiveSourceChoice {
             source,
@@ -247,6 +263,7 @@ async fn enroll_archive_source(
         runtime.block_on(archive_policy::enroll_archive_source(
             &paths,
             &org_id,
+            &collector_id,
             defaults::archive_url(),
             &credential,
             &enrollment_request,
@@ -260,14 +277,25 @@ async fn enroll_archive_source(
             persist(settings_file, settings);
             refresh_archive(bus);
             clear_archive_error(bus);
+            bus.update(|state| state.archive.pending = None);
             if run_immediately {
                 run_authorized_cycle(bus, settings).await;
             }
         }
-        Ok(Err(err)) => set_archive_command_error(bus, err),
+        Ok(Err(err)) => {
+            refresh_archive(bus);
+            set_archive_command_error(bus, err);
+        }
         Err(err) => set_archive_error(bus, format!("archive enrollment task crashed: {err}")),
     }
-    bus.update(|state| state.archive.pending = None);
+}
+
+fn archive_enrollment_is_blocked(state: &ArchiveMenuState, source: ArchiveSource) -> bool {
+    state.pending.is_some_and(|pending| pending != source)
+        || state
+            .sources
+            .iter()
+            .any(|(authorized, _)| *authorized == source)
 }
 
 fn archive_request_for_connection(
@@ -437,7 +465,7 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> Option<CycleOutcome> {
         Ok(Some(conn)) => conn,
         Ok(None) => {
             tracing::warn!("sync skipped: not connected");
-            bus.update(|s| s.connection = ConnectionState::Disconnected);
+            publish_disconnected(bus);
             return None;
         }
         Err(err) => {
@@ -455,10 +483,8 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> Option<CycleOutcome> {
         Ok(url) => url,
         Err(err) => {
             tracing::warn!(error = %err, "sync skipped: connection missing ingest URL");
+            publish_connection(bus, &conn);
             bus.update(|s| {
-                s.connection = ConnectionState::Connected {
-                    org_id: conn.org_id.clone(),
-                };
                 s.sync = SyncStatus::Error {
                     message: "connection missing ingest URL - sign in again".to_string(),
                 };
@@ -467,14 +493,13 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> Option<CycleOutcome> {
         }
     };
 
-    let org_id = conn.org_id.clone();
-    bus.update(|s| {
-        s.connection = ConnectionState::Connected {
-            org_id: org_id.clone(),
-        }
-    });
+    let archive_connection = ArchiveConnectionIdentity {
+        org_id: conn.org_id.clone(),
+        collector_id: conn.collector_id.clone(),
+    };
+    publish_connection(bus, &conn);
 
-    let credential = match keychain::load(&org_id) {
+    let credential = match keychain::load(&archive_connection.org_id) {
         Ok(Some(secret)) => secret,
         Ok(None) => {
             tracing::warn!("sync skipped: no Collector Credential in keychain");
@@ -506,7 +531,7 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> Option<CycleOutcome> {
     let now_ms = now_ms();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
         run_cycle_blocking(
-            org_id,
+            archive_connection,
             credential,
             ingest_url,
             home,
@@ -594,8 +619,18 @@ impl CycleIsolation {
 fn cycle_archive_config(
     paths: &Paths,
     org_id: &str,
+    collector_id: &str,
     archive: Option<(String, Arc<dyn ArchiveKeyStore>)>,
 ) -> (Option<sync::ArchiveRunConfig>, Option<String>) {
+    if !sync::cleanup_obligation_exists(&paths.archive_spool_dir(org_id)) {
+        if let Ok(record) = archive_policy::load_archive_policy(paths, org_id) {
+            if record.policy().is_ok_and(|policy| policy.captures())
+                && record.collector_id.as_deref() != Some(collector_id)
+            {
+                return (None, None);
+            }
+        }
+    }
     match archive {
         Some((url, keys)) => sync::prepare_serialized_archive(paths, org_id, url, keys),
         None => sync::prepare_desktop_serialized_archive(paths, org_id),
@@ -604,7 +639,7 @@ fn cycle_archive_config(
 
 /// The non-`Send` half: build a local current-thread runtime and drive one [`sync::run`] on it.
 fn run_cycle_blocking(
-    org_id: String,
+    connection: ArchiveConnectionIdentity,
     credential: String,
     ingest_url: String,
     home: std::path::PathBuf,
@@ -612,6 +647,10 @@ fn run_cycle_blocking(
     now_ms: i64,
     isolation: CycleIsolation,
 ) -> CycleOutcome {
+    let ArchiveConnectionIdentity {
+        org_id,
+        collector_id,
+    } = connection;
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -654,6 +693,7 @@ fn run_cycle_blocking(
             match runtime.block_on(archive_policy::refresh_archive_policy(
                 paths,
                 &org_id,
+                &collector_id,
                 archive_url,
                 &credential,
             )) {
@@ -664,7 +704,7 @@ fn run_cycle_blocking(
     }
 
     let (archive, enrollment_error) = match &paths {
-        Ok(paths) => cycle_archive_config(paths, &org_id, archive_input),
+        Ok(paths) => cycle_archive_config(paths, &org_id, &collector_id, archive_input),
         Err(_) => (None, None),
     };
     if archive_setup_error.is_none() {
@@ -735,14 +775,39 @@ fn set_idle(bus: &AppStateBus) {
 /// Reflect the on-disk connection into the bus (read-only; no egress).
 pub fn refresh_connection(bus: &AppStateBus) {
     match Paths::resolve().and_then(|p| p.load_connection()) {
-        Ok(Some(conn)) => bus.update(|s| {
-            s.connection = ConnectionState::Connected {
-                org_id: conn.org_id,
+        Ok(Some(conn)) => {
+            if publish_connection(bus, &conn) {
+                refresh_archive(bus);
             }
-        }),
-        Ok(None) => bus.update(|s| s.connection = ConnectionState::Disconnected),
+        }
+        Ok(None) => publish_disconnected(bus),
         Err(err) => tracing::warn!(error = %err, "failed to read connection state"),
     }
+}
+
+fn publish_connection(bus: &AppStateBus, connection: &Connection) -> bool {
+    let next = ConnectionState::Connected {
+        org_id: connection.org_id.clone(),
+        collector_id: connection.collector_id.clone(),
+    };
+    let mut changed = false;
+    bus.update(|state| {
+        changed = state.connection != next;
+        if changed {
+            state.archive = ArchiveMenuState::default();
+        }
+        state.connection = next;
+    });
+    changed
+}
+
+fn publish_disconnected(bus: &AppStateBus) {
+    bus.update(|state| {
+        if !matches!(state.connection, ConnectionState::Disconnected) {
+            state.archive = ArchiveMenuState::default();
+        }
+        state.connection = ConnectionState::Disconnected;
+    });
 }
 
 /// Reflect the local Archive policy into the menu without network access.
@@ -753,30 +818,44 @@ pub fn refresh_archive(bus: &AppStateBus) {
         };
         let record =
             collector_embedder::archive_policy::load_archive_policy(&paths, &connection.org_id)?;
-        Ok(ArchiveMenuState {
-            enrolled: record.policy()?.captures(),
-            reason: record.reason,
-            sources: record
-                .authorized_sources
-                .into_iter()
-                .map(|source| (source.source, source.history_choice))
-                .collect(),
-            pending: None,
-            last_error: None,
-        })
+        archive_menu_state_for_connection(record, &connection.collector_id)
     });
     match result {
-        Ok(archive) => bus.update(|state| {
-            let pending = state.archive.pending;
-            let last_error = state.archive.last_error.clone();
-            state.archive = ArchiveMenuState {
-                pending,
-                last_error,
-                ..archive
-            };
-        }),
+        Ok(archive) => publish_archive_refresh(bus, archive),
         Err(err) => set_archive_error(bus, format!("load archive enrollment: {err}")),
     }
+}
+
+fn publish_archive_refresh(bus: &AppStateBus, archive: ArchiveMenuState) {
+    bus.update(|state| {
+        let pending = state.archive.pending;
+        let last_error = state.archive.last_error.clone();
+        state.archive = ArchiveMenuState {
+            pending,
+            last_error,
+            ..archive
+        };
+    });
+}
+
+fn archive_menu_state_for_connection(
+    record: collector_embedder::ArchiveEnrollmentRecord,
+    collector_id: &str,
+) -> anyhow::Result<ArchiveMenuState> {
+    if record.collector_id.as_deref() != Some(collector_id) {
+        return Ok(ArchiveMenuState::default());
+    }
+    Ok(ArchiveMenuState {
+        enrolled: record.policy()?.captures(),
+        reason: record.reason,
+        sources: record
+            .authorized_sources
+            .into_iter()
+            .map(|source| (source.source, source.history_choice))
+            .collect(),
+        pending: None,
+        last_error: None,
+    })
 }
 
 /// Recount local `.jsonl` files per source (read-only; no egress).
@@ -825,9 +904,95 @@ mod archive_engine_tests {
         };
         std::fs::write(
             paths.archive_enrollment_file(org_id),
-            format!(r#"{{"status":"{status}","authorizedSources":{authorized_sources}}}"#),
+            format!(
+                r#"{{"status":"{status}","collectorId":"collector_1","authorizedSources":{authorized_sources}}}"#
+            ),
         )
         .unwrap();
+    }
+
+    fn saved_connection(org_id: &str, collector_id: &str) -> Connection {
+        Connection {
+            org_id: org_id.to_string(),
+            collector_id: collector_id.to_string(),
+            convex_url: "https://example.convex.cloud".to_string(),
+            ingest_url: "https://ingest.example".to_string(),
+            expires_at: 1_800_000_000_000,
+        }
+    }
+
+    fn archive_identity(org_id: &str, collector_id: &str) -> ArchiveConnectionIdentity {
+        ArchiveConnectionIdentity {
+            org_id: org_id.to_string(),
+            collector_id: collector_id.to_string(),
+        }
+    }
+
+    #[test]
+    fn collector_change_resets_menu_and_rejects_prior_collector_consent() {
+        let bus = AppStateBus::new();
+        let old = saved_connection("org_1", "collector_old");
+        let replacement = saved_connection("org_1", "collector_new");
+        publish_connection(&bus, &old);
+        bus.update(|state| {
+            state.archive.enrolled = true;
+            state.archive.sources = vec![(ArchiveSource::Claude, ArchiveHistoryChoice::AllHistory)];
+            state.archive.pending = Some(ArchiveSource::Codex);
+            state.archive.last_error = Some("old error".to_string());
+        });
+
+        assert!(publish_connection(&bus, &replacement));
+        assert_eq!(bus.snapshot().archive, ArchiveMenuState::default());
+
+        let old_policy = collector_embedder::ArchiveEnrollmentRecord {
+            status: ArchivePolicy::Enrolled.as_str().to_string(),
+            collector_id: Some("collector_old".to_string()),
+            authorized_sources: vec![collector_embedder::ArchiveAuthorizedSource {
+                source: ArchiveSource::Claude,
+                history_choice: ArchiveHistoryChoice::AllHistory,
+                authorized_at: 1_770_000_000_001,
+            }],
+            reason: None,
+        };
+        assert_eq!(
+            archive_menu_state_for_connection(old_policy, "collector_new").unwrap(),
+            ArchiveMenuState::default()
+        );
+    }
+
+    #[test]
+    fn collector_change_does_not_run_archive_with_prior_collector_consent() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        let policy_path = paths.archive_enrollment_file("org_1");
+        let policy = collector_embedder::ArchiveEnrollmentRecord {
+            status: ArchivePolicy::Enrolled.as_str().to_string(),
+            collector_id: Some("collector_old".to_string()),
+            authorized_sources: vec![collector_embedder::ArchiveAuthorizedSource {
+                source: ArchiveSource::Claude,
+                history_choice: ArchiveHistoryChoice::AllHistory,
+                authorized_at: 1_770_000_000_001,
+            }],
+            reason: None,
+        };
+        policy.save_record(&policy_path).unwrap();
+        let before = std::fs::read(&policy_path).unwrap();
+
+        let (config, error) = cycle_archive_config(
+            &paths,
+            "org_1",
+            "collector_new",
+            Some((
+                "https://archive.example".to_string(),
+                Arc::new(MemoryKeyStore::new()),
+            )),
+        );
+
+        assert!(config.is_none());
+        assert_eq!(error, None);
+        assert_eq!(std::fs::read(policy_path).unwrap(), before);
+        assert!(!paths.archive_spool_dir("org_1").exists());
     }
 
     #[test]
@@ -852,6 +1017,36 @@ mod archive_engine_tests {
         outcome.archive_recovered = true;
         clear_archive_error_after_cycle(&bus, &outcome);
         assert_eq!(bus.snapshot().archive.last_error, None);
+    }
+
+    #[test]
+    fn terminal_policy_refreshes_sources_before_reporting_enrollment_failure() {
+        let bus = AppStateBus::new();
+        bus.update(|state| {
+            state.archive.enrolled = true;
+            state.archive.sources = vec![(ArchiveSource::Claude, ArchiveHistoryChoice::AllHistory)];
+            state.archive.pending = Some(ArchiveSource::Codex);
+        });
+
+        publish_archive_refresh(
+            &bus,
+            ArchiveMenuState {
+                enrolled: false,
+                reason: Some("revoked".to_string()),
+                ..ArchiveMenuState::default()
+            },
+        );
+        publish_archive_error(&bus, "collector credential was revoked".to_string());
+
+        let archive = bus.snapshot().archive;
+        assert!(!archive.enrolled);
+        assert_eq!(archive.reason.as_deref(), Some("revoked"));
+        assert!(archive.sources.is_empty());
+        assert_eq!(archive.pending, None);
+        assert_eq!(
+            archive.last_error.as_deref(),
+            Some("collector credential was revoked")
+        );
     }
 
     #[test]
@@ -1022,7 +1217,7 @@ mod archive_engine_tests {
         });
 
         let outcome = run_cycle_blocking(
-            "org_1".to_string(),
+            archive_identity("org_1", "collector_1"),
             "tfc_secret".to_string(),
             format!("http://{addr}"),
             home.path().to_path_buf(),
@@ -1088,7 +1283,7 @@ mod archive_engine_tests {
         });
 
         let outcome = run_cycle_blocking(
-            "org_1".to_string(),
+            archive_identity("org_1", "collector_1"),
             "tfc_secret".to_string(),
             format!("http://{addr}"),
             home.path().to_path_buf(),
@@ -1159,7 +1354,7 @@ mod archive_engine_tests {
         });
 
         let outcome = run_cycle_blocking(
-            "org_1".to_string(),
+            archive_identity("org_1", "collector_1"),
             "tfc_secret".to_string(),
             "http://127.0.0.1:1".to_string(),
             home.path().to_path_buf(),
@@ -1225,7 +1420,7 @@ mod archive_engine_tests {
         });
 
         let outcome = run_cycle_blocking(
-            "org_1".to_string(),
+            archive_identity("org_1", "collector_1"),
             "tfc_secret".to_string(),
             format!("http://{addr}"),
             home.path().to_path_buf(),
@@ -1279,7 +1474,7 @@ mod archive_engine_tests {
         });
 
         let outcome = run_cycle_blocking(
-            "org_1".to_string(),
+            archive_identity("org_1", "collector_1"),
             "tfc_secret".to_string(),
             "http://127.0.0.1:1".to_string(),
             home.path().to_path_buf(),
@@ -1356,7 +1551,7 @@ mod archive_engine_tests {
         for cycle in 1..=3 {
             let window = window_for_authorized_cycle(&settings);
             let outcome = run_cycle_blocking(
-                "org_1".to_string(),
+                archive_identity("org_1", "collector_1"),
                 "tfc_secret".to_string(),
                 format!("http://{addr}"),
                 home.path().to_path_buf(),
@@ -1534,6 +1729,23 @@ mod archive_request_tests {
             history_choice: ArchiveHistoryChoice::AllHistory,
             idempotency_key: "archive-enroll:original".to_string(),
         }
+    }
+
+    #[test]
+    fn queued_marker_allows_its_command_and_blocks_another_source() {
+        let mut state = ArchiveMenuState {
+            pending: Some(ArchiveSource::Claude),
+            ..ArchiveMenuState::default()
+        };
+
+        assert!(!archive_enrollment_is_blocked(
+            &state,
+            ArchiveSource::Claude
+        ));
+        assert!(archive_enrollment_is_blocked(&state, ArchiveSource::Codex));
+
+        state.sources = vec![(ArchiveSource::Claude, ArchiveHistoryChoice::AllHistory)];
+        assert!(archive_enrollment_is_blocked(&state, ArchiveSource::Claude));
     }
 
     #[test]

@@ -12,6 +12,8 @@ use crate::spool::atomic_write;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ArchiveEnrollmentRecord {
     pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collector_id: Option<String>,
     #[serde(default)]
     pub authorized_sources: Vec<ArchiveAuthorizedSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -22,6 +24,7 @@ impl ArchiveEnrollmentRecord {
     pub fn from_policy(policy: ArchivePolicy) -> Self {
         Self {
             status: policy.as_str().to_string(),
+            collector_id: None,
             authorized_sources: Vec::new(),
             reason: None,
         }
@@ -44,6 +47,7 @@ impl ArchiveEnrollmentRecord {
         };
         Self {
             status: confirmed.policy.as_str().to_string(),
+            collector_id: previous.and_then(|record| record.collector_id.clone()),
             authorized_sources,
             reason: None,
         }
@@ -170,7 +174,7 @@ mod tests {
 
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("archive-enrollment.json");
-        let record = ArchiveEnrollmentRecord::from_confirmed(
+        let mut record = ArchiveEnrollmentRecord::from_confirmed(
             ConfirmedArchivePolicy {
                 policy: ArchivePolicy::Enrolled,
                 authorized_sources: vec![ArchiveAuthorizedSource {
@@ -181,12 +185,30 @@ mod tests {
             },
             None,
         );
+        record.collector_id = Some("collector_1".to_string());
         record.save_record(&path).unwrap();
 
         assert_eq!(ArchiveEnrollmentRecord::load_record(&path).unwrap(), record);
         let persisted = fs::read_to_string(path).unwrap();
         assert!(persisted.contains("all_history"));
         assert!(persisted.contains("1770000000001"));
+        assert!(persisted.contains("collector_1"));
         assert!(!persisted.contains("tfc_"));
+    }
+
+    #[test]
+    fn current_reader_accepts_an_enrollment_record_without_collector_binding() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("archive-enrollment.json");
+        fs::write(
+            &path,
+            br#"{"status":"enrolled","authorizedSources":[],"reason":null}"#,
+        )
+        .unwrap();
+
+        let record = ArchiveEnrollmentRecord::load_record(&path).unwrap();
+
+        assert_eq!(record.collector_id, None);
+        assert_eq!(record.policy().unwrap(), ArchivePolicy::Enrolled);
     }
 }

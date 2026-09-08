@@ -9,14 +9,40 @@ use collector_embedder::{ArchiveHistoryChoice, ArchiveSource};
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchiveConnectionIdentity {
+    pub org_id: String,
+    pub collector_id: String,
+}
+
 /// Whether the app holds a usable Collector Credential yet.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ConnectionState {
     /// No connection on disk — first run, or after disconnect.
     #[default]
     Disconnected,
-    /// A connection + credential is present, bound to `org_id`.
-    Connected { org_id: String },
+    /// A connection + credential is present. The collector id stays inside the native process and
+    /// lets Archive state distinguish two saved connections to the same organization.
+    Connected {
+        org_id: String,
+        #[serde(skip)]
+        collector_id: String,
+    },
+}
+
+impl ConnectionState {
+    pub fn archive_identity(&self) -> Option<ArchiveConnectionIdentity> {
+        match self {
+            Self::Disconnected => None,
+            Self::Connected {
+                org_id,
+                collector_id,
+            } => Some(ArchiveConnectionIdentity {
+                org_id: org_id.clone(),
+                collector_id: collector_id.clone(),
+            }),
+        }
+    }
 }
 
 /// What the background sync engine is doing. Starts `Paused` so nothing leaves the machine until the
@@ -129,7 +155,22 @@ impl Default for AppStateBus {
 
 #[cfg(test)]
 mod tests {
-    use super::UpdateStatus;
+    use super::{ConnectionState, UpdateStatus};
+
+    #[test]
+    fn connection_state_keeps_collector_identity_inside_the_native_process() {
+        let state = ConnectionState::Connected {
+            org_id: "org_1".to_string(),
+            collector_id: "collector_secretless_identity".to_string(),
+        };
+
+        let serialized = serde_json::to_value(state).unwrap();
+
+        assert_eq!(
+            serialized,
+            serde_json::json!({ "Connected": { "org_id": "org_1" } })
+        );
+    }
 
     #[test]
     fn update_status_has_a_stable_window_contract() {

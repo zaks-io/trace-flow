@@ -17,6 +17,7 @@ pub fn load_archive_policy(paths: &Paths, org_id: &str) -> Result<ArchiveEnrollm
 pub async fn refresh_archive_policy(
     paths: &Paths,
     org_id: &str,
+    collector_id: &str,
     archive_url: String,
     credential: &str,
 ) -> Result<bool> {
@@ -31,13 +32,14 @@ pub async fn refresh_archive_policy(
             .and_then(policy_from_denial_reason)
             .is_some(),
     };
-    persist_policy_result(paths, org_id, result)?;
+    persist_policy_result_for_collector(paths, org_id, collector_id, result)?;
     Ok(received_policy)
 }
 
 pub async fn enroll_archive_source(
     paths: &Paths,
     org_id: &str,
+    collector_id: &str,
     archive_url: String,
     credential: &str,
     request: &ArchiveEnrollmentRequest,
@@ -48,7 +50,7 @@ pub async fn enroll_archive_source(
     match client.enroll(request).await {
         Ok(response) => {
             let enrolled = response.enrolled;
-            persist_policy_result(paths, org_id, Ok(response))?;
+            persist_policy_result_for_collector(paths, org_id, collector_id, Ok(response))?;
             Ok(enrolled)
         }
         Err(error) => {
@@ -59,7 +61,7 @@ pub async fn enroll_archive_source(
                 .and_then(policy_from_denial_reason)
                 .is_some()
             {
-                persist_policy_result(paths, org_id, Err(error))?;
+                persist_policy_result_for_collector(paths, org_id, collector_id, Err(error))?;
                 return Err(anyhow!(detail).context(message));
             }
             Err(anyhow!(error).context(message))
@@ -77,9 +79,10 @@ fn enrollment_failure_message(class: &str) -> &'static str {
     }
 }
 
-fn persist_policy_result(
+fn persist_policy_result_for_collector(
     paths: &Paths,
     org_id: &str,
+    collector_id: &str,
     result: std::result::Result<ArchivePolicyResponse, ArchiveClientError>,
 ) -> Result<()> {
     let path = paths.archive_enrollment_file(org_id);
@@ -97,6 +100,7 @@ fn persist_policy_result(
             (confirmed, reason)
         }
         Err(error) => match error.denial_reason().and_then(policy_from_denial_reason) {
+            Some(_) if previous.collector_id.as_deref() != Some(collector_id) => return Ok(()),
             Some(policy) => (
                 ConfirmedArchivePolicy {
                     policy,
@@ -114,11 +118,22 @@ fn persist_policy_result(
         },
     };
 
-    let mut record = ArchiveEnrollmentRecord::from_confirmed(confirmed, Some(&previous));
+    let previous = (previous.collector_id.as_deref() == Some(collector_id)).then_some(&previous);
+    let mut record = ArchiveEnrollmentRecord::from_confirmed(confirmed, previous);
+    record.collector_id = Some(collector_id.to_string());
     record.reason = reason;
     record
         .save_record(&path)
         .context("save archive enrollment policy")
+}
+
+#[cfg(test)]
+fn persist_policy_result(
+    paths: &Paths,
+    org_id: &str,
+    result: std::result::Result<ArchivePolicyResponse, ArchiveClientError>,
+) -> Result<()> {
+    persist_policy_result_for_collector(paths, org_id, "collector_test", result)
 }
 
 fn policy_is_unavailable(error: &ArchiveClientError) -> bool {
@@ -184,10 +199,16 @@ mod tests {
         let paths = Paths::at(dir.path().to_path_buf());
         paths.ensure().unwrap();
 
-        let error =
-            enroll_archive_source(&paths, "org_1", archive_url, "tfc_test_secret", &request)
-                .await
-                .unwrap_err();
+        let error = enroll_archive_source(
+            &paths,
+            "org_1",
+            "collector_1",
+            archive_url,
+            "tfc_test_secret",
+            &request,
+        )
+        .await
+        .unwrap_err();
 
         assert_eq!(error.to_string(), message);
         assert!(format!("{error:#}").contains(detail));
@@ -207,13 +228,19 @@ mod tests {
         paths.ensure().unwrap();
         let request = enrollment_request(ArchiveHistoryChoice::AllHistory, "archive-enroll:test");
 
-        assert!(
-            enroll_archive_source(&paths, "org_1", archive_url, "tfc_test_secret", &request,)
-                .await
-                .unwrap()
-        );
+        assert!(enroll_archive_source(
+            &paths,
+            "org_1",
+            "collector_1",
+            archive_url,
+            "tfc_test_secret",
+            &request,
+        )
+        .await
+        .unwrap());
 
         let record = load_archive_policy(&paths, "org_1").unwrap();
+        assert_eq!(record.collector_id.as_deref(), Some("collector_1"));
         assert_eq!(record.policy().unwrap(), ArchivePolicy::Enrolled);
         assert_eq!(record.authorized_sources.len(), 1);
         assert_eq!(
@@ -250,11 +277,15 @@ mod tests {
         let paths = Paths::at(dir.path().to_path_buf());
         paths.ensure().unwrap();
 
-        assert!(
-            !refresh_archive_policy(&paths, "org_1", unavailable_url, "tfc_test_secret")
-                .await
-                .unwrap()
-        );
+        assert!(!refresh_archive_policy(
+            &paths,
+            "org_1",
+            "collector_1",
+            unavailable_url,
+            "tfc_test_secret",
+        )
+        .await
+        .unwrap());
         assert!(!paths.archive_enrollment_file("org_1").exists());
 
         let policy_url = serve_policy_response(
@@ -262,11 +293,15 @@ mod tests {
             r#"{"enrolled":false,"authorizedSources":[],"reason":"not_activated"}"#,
         )
         .await;
-        assert!(
-            refresh_archive_policy(&paths, "org_1", policy_url, "tfc_test_secret")
-                .await
-                .unwrap()
-        );
+        assert!(refresh_archive_policy(
+            &paths,
+            "org_1",
+            "collector_1",
+            policy_url,
+            "tfc_test_secret",
+        )
+        .await
+        .unwrap());
         assert_eq!(
             load_archive_policy(&paths, "org_1")
                 .unwrap()
@@ -338,6 +373,7 @@ mod tests {
         let path = paths.archive_enrollment_file("org_1");
         ArchiveEnrollmentRecord {
             status: ArchivePolicy::Enrolled.as_str().to_string(),
+            collector_id: Some("collector_test".to_string()),
             authorized_sources: vec![ArchiveAuthorizedSource {
                 source: ArchiveSource::Codex,
                 history_choice: ArchiveHistoryChoice::NewOnly,
@@ -366,6 +402,76 @@ mod tests {
             record.authorized_sources[0].authorized_at,
             1_770_000_000_002
         );
+    }
+
+    #[test]
+    fn new_collector_policy_never_inherits_prior_collector_sources() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        let path = paths.archive_enrollment_file("org_1");
+        ArchiveEnrollmentRecord {
+            status: ArchivePolicy::Enrolled.as_str().to_string(),
+            collector_id: Some("collector_old".to_string()),
+            authorized_sources: vec![ArchiveAuthorizedSource {
+                source: ArchiveSource::Claude,
+                history_choice: ArchiveHistoryChoice::AllHistory,
+                authorized_at: 1_770_000_000_002,
+            }],
+            reason: None,
+        }
+        .save_record(&path)
+        .unwrap();
+
+        persist_policy_result_for_collector(
+            &paths,
+            "org_1",
+            "collector_new",
+            Ok(ArchivePolicyResponse {
+                enrolled: false,
+                authorized_sources: Vec::new(),
+                reason: Some("frozen".to_string()),
+            }),
+        )
+        .unwrap();
+
+        let record = ArchiveEnrollmentRecord::load_record(&path).unwrap();
+        assert_eq!(record.collector_id.as_deref(), Some("collector_new"));
+        assert_eq!(record.policy().unwrap(), ArchivePolicy::Frozen);
+        assert!(record.authorized_sources.is_empty());
+    }
+
+    #[test]
+    fn error_policy_does_not_rebind_or_rewrite_prior_collector_state() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        let path = paths.archive_enrollment_file("org_1");
+        ArchiveEnrollmentRecord {
+            status: ArchivePolicy::Enrolled.as_str().to_string(),
+            collector_id: Some("collector_old".to_string()),
+            authorized_sources: vec![ArchiveAuthorizedSource {
+                source: ArchiveSource::Claude,
+                history_choice: ArchiveHistoryChoice::AllHistory,
+                authorized_at: 1_770_000_000_002,
+            }],
+            reason: None,
+        }
+        .save_record(&path)
+        .unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        persist_policy_result_for_collector(
+            &paths,
+            "org_1",
+            "collector_new",
+            Err(ArchiveClientError::Unauthorized {
+                reason: "expired".to_string(),
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 
     #[test]
@@ -524,6 +630,7 @@ mod tests {
         let path = paths.archive_enrollment_file("org_1");
         ArchiveEnrollmentRecord {
             status: ArchivePolicy::Enrolled.as_str().to_string(),
+            collector_id: Some("collector_test".to_string()),
             authorized_sources: vec![ArchiveAuthorizedSource {
                 source: ArchiveSource::Claude,
                 history_choice: ArchiveHistoryChoice::AllHistory,
