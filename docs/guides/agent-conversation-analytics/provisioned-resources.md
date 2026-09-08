@@ -79,6 +79,65 @@ Agent datasources + pipes deploy to `trace_flow_prod` (`a0263248-b28b-49de-804f-
 prod without that variable. The consumer holds a `DATASOURCE:APPEND` token for that workspace as a
 Worker secret. No client or smoke test ever receives a Tinybird token.
 
+## Conversation Archive resources (TRA-227)
+
+Archive API reuses the Collector Credential KV for authentication and has its own US-jurisdiction R2
+bucket and Durable Object namespaces. It never binds the proxy Body Object, Tinybird credentials, or
+the agent ingest queue.
+
+| Environment | Worker                           | Collector Credential KV | R2 bucket                       | Route / origin                                                 |
+| ----------- | -------------------------------- | ----------------------- | ------------------------------- | -------------------------------------------------------------- |
+| Cloud-Dev   | `trace-flow-archive-api-dev`     | dev ID above            | `trace-flow-agent-archive-dev`  | `https://trace-flow-archive-api-dev.isaac-a46.workers.dev`     |
+| Preview     | `trace-flow-archive-api-preview` | dev ID above            | `trace-flow-agent-archive-dev`  | `https://trace-flow-archive-api-preview.isaac-a46.workers.dev` |
+| Production  | `trace-flow-archive-api`         | production ID above     | `trace-flow-agent-archive-prod` | `archive.trace-flow.dev`                                       |
+
+Both buckets use the `us` jurisdiction. Preview shares the Cloud-Dev bucket and KV but uses a distinct
+Worker and Durable Object namespace. Production deployment is the normal merge workflow: it checks the
+resolved Wrangler config, creates the exact production bucket when absent, and deploys only after Convex.
+The production Worker declares `archive.trace-flow.dev` as a
+[Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/).
+Cloudflare creates the DNS record and certificate during the first merge-driven deployment. Do not
+provision that DNS record manually.
+
+Cloud-Dev uses Convex deployment `hardy-iguana-812` and site
+`https://hardy-iguana-812.convex.site`. Do not substitute the production deployment
+`laudable-bison-427`. Store stable values for `ARCHIVE_API_SHARED_SECRET` and
+`ARCHIVE_KEY_WRAPPING_SECRET` in the team secret manager. The maintainer macOS Keychain mirrors those
+values under service `com.trace-flow.archive-api.cloud-dev`, using each binding name as its Keychain
+account. Do not replace the wrapping secret while the development bucket contains objects.
+
+The existing root deployment command reads the two values from the environment or that Keychain. It
+checks the exact Convex deployment, current Worker origin, bindings, and health before changing the
+Cloud-Dev Worker. It supplies both secrets and `CONVEX_SITE_URL` on every deployment, then verifies the
+new version:
+
+```sh
+bun run deploy:dev
+```
+
+The Preview and Production GitHub environments each require these stable secrets:
+
+- `ARCHIVE_API_SHARED_SECRET`, also written to the matching Convex deployment by the workflow
+- `ARCHIVE_KEY_WRAPPING_SECRET`, retained unchanged so existing encrypted archive objects remain readable
+
+Create the Production values once without putting them in shell history, then verify names only:
+
+```sh
+set -euo pipefail
+umask 077
+secret_directory=$(mktemp -d)
+trap 'rm -rf "$secret_directory"' EXIT
+openssl rand -base64 32 > "$secret_directory/shared"
+openssl rand -base64 32 > "$secret_directory/wrapping"
+gh secret set ARCHIVE_API_SHARED_SECRET --env Production < "$secret_directory/shared"
+gh secret set ARCHIVE_KEY_WRAPPING_SECRET --env Production < "$secret_directory/wrapping"
+gh secret list --env Production --json name \
+  --jq '[.[].name] | map(select(startswith("ARCHIVE_"))) | sort | .[]'
+```
+
+Do not rotate either value through this setup procedure. Rotation and key destruction have their own
+operational workflow.
+
 ## Teardown
 
 See the [ops runbook](./runbook.md#teardown) for dev teardown. The dev resources at the top of this

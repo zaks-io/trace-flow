@@ -40,8 +40,8 @@ scripts/dev/verify.sh
 - `apps/agent-ingest`
 - `apps/agent-consumer`
 
-It does not start Web, Convex, MCP, Analyst Sandbox, or Archive API. Archive API is implemented but
-has no production environment, and Convex keeps archive availability off.
+It does not start Web, Convex, MCP, Analyst Sandbox, or Archive API. Archive API runs as a deployed
+Cloud-Dev Worker; it is deliberately absent from the Self-Contained Local stack.
 
 Run Convex and Web separately:
 
@@ -109,11 +109,12 @@ Set secrets through the owning platform only. Do not commit them.
 | `mcp`             | Convex JWKS/read-side runtime values for MCP access                               |
 | `agent-ingest`    | `AGENT_INGEST_SHARED_SECRET`, `SENTRY_DSN`                                        |
 | `agent-consumer`  | `TINYBIRD_TOKEN`, `SENTRY_DSN`                                                    |
+| `archive-api`     | `ARCHIVE_API_SHARED_SECRET`, `ARCHIVE_KEY_WRAPPING_SECRET`, optional `SENTRY_DSN` |
 | `analyst-sandbox` | `ANALYST_SANDBOX_SHARED_SECRET`, `OPENROUTER_API_KEY`                             |
 
-`archive-api` is not a production service and has no production secret setup. Its development
-configuration expects `ARCHIVE_API_SHARED_SECRET`, `ARCHIVE_KEY_WRAPPING_SECRET`, and `SENTRY_DSN`;
-do not provision production as if archive persistence were available.
+Archive API production configuration is deployed on merge, but Convex keeps production archive writes
+disabled until TRA-228. The required Archive API secrets are stable protected-environment values; never
+generate a new wrapping secret during a deploy.
 
 ### Convex Environment
 
@@ -176,11 +177,12 @@ The workflow:
 1. runs CI checks
 2. deploys Convex and exports `.convex.cloud` / `.convex.site` URLs through `GITHUB_OUTPUT`
 3. deploys Tinybird schema before consumer Workers
-4. deploys Proxy, Proxy Consumer, Pipes API, Raw API, MCP, Web, Agent Ingest, Agent Consumer, and Analyst Sandbox
+4. deploys Proxy, Proxy Consumer, Pipes API, Raw API, MCP, Web, Agent Ingest, Agent Consumer, Archive API, and Analyst Sandbox
 5. fails agent deploys if production config resolves to dev queues or KV namespaces
 
-The workflow does not deploy Archive API. Desktop distribution is handled independently by
-`.github/workflows/desktop-release.yml`. It signs and notarizes the macOS arm64 app, builds the
+The Archive API job verifies its exact config, creates its US production bucket when absent, and uploads
+the Worker plus secrets from the protected Production environment. Desktop distribution is handled
+independently by `.github/workflows/desktop-release.yml`. It signs and notarizes the macOS arm64 app, builds the
 Windows x64 installer, signs both platforms' updater artifacts with Tauri, and publishes the updater
 manifest last.
 
