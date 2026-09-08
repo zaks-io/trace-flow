@@ -10,15 +10,26 @@ function queryResult(firstValue: unknown) {
   };
 }
 
-function makeCtx(existingUser: Record<string, unknown> | null) {
+function makeCtx(
+  existingUser: Record<string, unknown> | null,
+  options: {
+    emailVerified?: boolean;
+    acceptedInvite?: Record<string, unknown> | null;
+  } = {},
+) {
   const subscription = { _id: 'subscription_1', orgId: 'org_1', tier: 'hobby' };
-  const dbInsert = vi.fn().mockResolvedValue('user_new');
+  const dbInsert = vi.fn(async (table: string) => {
+    if (table === 'users') return 'user_new';
+    if (table === 'organizations') return 'org_personal';
+    return `${table}_new`;
+  });
 
   return {
     auth: {
       getUserIdentity: vi.fn().mockResolvedValue({
         tokenIdentifier: 'https://auth.example/|auth0|user',
         email: 'user@example.com',
+        emailVerified: options.emailVerified ?? true,
         name: 'User',
         pictureUrl: 'https://example.com/user.png',
       }),
@@ -26,7 +37,7 @@ function makeCtx(existingUser: Record<string, unknown> | null) {
     db: {
       query: vi.fn((table: string) => {
         if (table === 'users') return queryResult(existingUser);
-        if (table === 'invites') return queryResult(null);
+        if (table === 'invites') return queryResult(options.acceptedInvite ?? null);
         if (table === 'subscriptions') return queryResult(subscription);
         throw new Error(`Unexpected table: ${table}`);
       }),
@@ -108,6 +119,53 @@ describe('auth.users.initializeUser', () => {
     await expect(handler(ctx, {})).resolves.toEqual({ userId: existingUser._id });
     expect(ctx.db.patch).not.toHaveBeenCalled();
     expect(ctx.db.get).not.toHaveBeenCalled();
+  });
+
+  it('does not reconcile an accepted invite for an existing unverified identity', async () => {
+    const existingUser = {
+      _id: 'user_existing',
+      tokenIdentifier: 'https://auth.example/|auth0|user',
+      email: 'user@example.com',
+      name: 'User',
+      picture: 'https://example.com/user.png',
+      enabled: true,
+      orgId: 'org_personal',
+    };
+    const ctx = makeCtx(existingUser, {
+      emailVerified: false,
+      acceptedInvite: {
+        _id: 'invite_accepted',
+        email: existingUser.email,
+        orgId: 'org_victim',
+        status: 'accepted',
+      },
+    });
+
+    await expect(handler(ctx, {})).resolves.toEqual({ userId: existingUser._id });
+    expect(ctx.db.query).not.toHaveBeenCalledWith('invites');
+    expect(ctx.db.patch).not.toHaveBeenCalled();
+  });
+
+  it('creates a personal organization instead of consuming an invite for a new unverified identity', async () => {
+    const ctx = makeCtx(null, {
+      emailVerified: false,
+      acceptedInvite: {
+        _id: 'invite_accepted',
+        email: 'user@example.com',
+        orgId: 'org_victim',
+        status: 'accepted',
+      },
+    });
+    vi.spyOn(rateLimiter, 'limit').mockResolvedValue({ ok: true, retryAfter: undefined });
+
+    await expect(handler(ctx, {})).resolves.toEqual({ userId: 'user_new' });
+    expect(ctx.db.query).not.toHaveBeenCalledWith('invites');
+    expect(ctx.dbInsert).toHaveBeenCalledWith(
+      'users',
+      expect.not.objectContaining({ inviteId: expect.anything() }),
+    );
+    expect(ctx.db.patch).toHaveBeenCalledWith('user_new', { orgId: 'org_personal' });
+    expect(ctx.db.patch).not.toHaveBeenCalledWith('user_new', { orgId: 'org_victim' });
   });
 
   it('rejects a disabled account in the MCP user reconciliation path', async () => {

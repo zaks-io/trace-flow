@@ -287,6 +287,7 @@ export const initializeUser = mutation({
       name: identity.name,
       picture: identity.pictureUrl,
     };
+    const canUseEmailInvitation = identity.emailVerified === true;
 
     const existingUser = await ctx.db
       .query('users')
@@ -301,7 +302,9 @@ export const initializeUser = mutation({
       }
 
       const userAfterProfile = (await ctx.db.get(existingUser._id))!;
-      await reconcileAcceptedInvite(ctx, existingUser._id, userAfterProfile, userInfo);
+      if (canUseEmailInvitation) {
+        await reconcileAcceptedInvite(ctx, existingUser._id, userAfterProfile, userInfo);
+      }
 
       const refreshed = (await ctx.db.get(existingUser._id))!;
       if (!refreshed.orgId) {
@@ -323,7 +326,9 @@ export const initializeUser = mutation({
       throws: true,
     });
 
-    const acceptedInvite = await getAcceptedInviteForEmail(ctx, userInfo.email);
+    const acceptedInvite = canUseEmailInvitation
+      ? await getAcceptedInviteForEmail(ctx, userInfo.email)
+      : null;
 
     const userId = await ctx.db.insert('users', {
       ...userInfo,

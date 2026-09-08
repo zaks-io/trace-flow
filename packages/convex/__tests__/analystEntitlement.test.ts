@@ -238,6 +238,73 @@ describe('Analyst Pro entitlement', () => {
     ).resolves.toMatchObject({ ok: false, reason: 'quota_exceeded', model: null });
   });
 
+  it('rejects provider inference after the run creator is disabled', async () => {
+    const world = await seedAnalystWorld({ tier: 'pro', status: 'active' });
+    const threadId = await insertAnalystThread(world);
+    const token = 'disabled-creator-token';
+    const runId = await world.t.run(async (ctx) =>
+      ctx.db.insert('analystSandboxRuns', {
+        analystThreadId: threadId,
+        creatorUserId: world.userId,
+        orgId: world.orgId,
+        sandboxId: 'disabled-creator-sandbox',
+        prompt: 'Analyze my usage',
+        status: 'running',
+        runTokenHash: await sha256Hex(token),
+        maxRuntimeMs: 60_000,
+        updatedAt: Date.now(),
+        startedAt: Date.now(),
+        nextSeq: 0,
+      }),
+    );
+
+    await world.t.run((ctx) => ctx.db.patch(world.userId, { enabled: false }));
+
+    await expect(
+      world.t.action(api.analystSandboxInference.authorizeSandboxInference, {
+        runId,
+        token,
+        requestedOutputTokens: 1,
+      }),
+    ).rejects.toThrow('User account is not enabled');
+
+    const run = await world.t.run((ctx) => ctx.db.get(runId));
+    expect(run?.inferenceRequestCount).toBeUndefined();
+    expect(run?.inferenceReservedOutputTokens).toBeUndefined();
+  });
+
+  it('atomically rejects an inference reservation after its creator changes organizations', async () => {
+    const world = await seedAnalystWorld({ tier: 'pro', status: 'active' });
+    const threadId = await insertAnalystThread(world);
+    const token = 'moved-creator-token';
+    const tokenHash = await sha256Hex(token);
+    const runId = await world.t.run((ctx) =>
+      ctx.db.insert('analystSandboxRuns', {
+        analystThreadId: threadId,
+        creatorUserId: world.userId,
+        orgId: world.orgId,
+        sandboxId: 'moved-creator-sandbox',
+        prompt: 'Analyze my usage',
+        status: 'running',
+        runTokenHash: tokenHash,
+        maxRuntimeMs: 60_000,
+        updatedAt: Date.now(),
+        startedAt: Date.now(),
+        nextSeq: 0,
+      }),
+    );
+
+    await world.t.run((ctx) => ctx.db.patch(world.userId, { orgId: undefined }));
+
+    await expect(
+      world.t.mutation(internal.analystSandboxStore.reserveSandboxInference, {
+        runId,
+        tokenHash,
+        requestedOutputTokens: 1,
+      }),
+    ).resolves.toEqual({ ok: false, reason: 'unauthorized', status: null });
+  });
+
   it('keeps cancellation available after the organization downgrades', async () => {
     const world = await seedAnalystWorld({ tier: 'hobby', status: 'active' });
     const threadId = await insertAnalystThread(world);

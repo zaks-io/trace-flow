@@ -80,9 +80,23 @@ jobs:
 
       - name: Verify Preview resource isolation
         run: |
-          test "$(jq -r '.env.preview.kv_namespaces[] | select(.binding == "COLLECTOR_CREDS") | .id' apps/agent-ingest/wrangler.jsonc)" = "$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID"
-          test "$(jq -r '.env.preview.kv_namespaces[] | select(.binding == "COLLECTOR_CREDS") | .id' apps/archive-api/wrangler.jsonc)" = "$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID"
-          test "$(jq -r '.env.preview.r2_buckets[] | select(.binding == "ARCHIVE_STORAGE") | .bucket_name' apps/archive-api/wrangler.jsonc)" = "$PREVIEW_ARCHIVE_BUCKET"
+          bun -e '
+            import agentIngestConfig from "./apps/agent-ingest/wrangler.jsonc";
+            import archiveApiConfig from "./apps/archive-api/wrangler.jsonc";
+
+            const expectedNamespace = process.env.PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID;
+            const expectedBucket = process.env.PREVIEW_ARCHIVE_BUCKET;
+            if (!expectedNamespace || !expectedBucket) throw new Error("Trusted Preview resources are required");
+
+            const findBinding = (items, name) => items?.find((item) => item.binding === name);
+            const ingestNamespace = findBinding(agentIngestConfig.env?.preview?.kv_namespaces, "COLLECTOR_CREDS")?.id;
+            const archiveNamespace = findBinding(archiveApiConfig.env?.preview?.kv_namespaces, "COLLECTOR_CREDS")?.id;
+            const archiveBucket = findBinding(archiveApiConfig.env?.preview?.r2_buckets, "ARCHIVE_STORAGE")?.bucket_name;
+
+            if (ingestNamespace !== expectedNamespace) throw new Error("Agent Ingest Preview namespace mismatch");
+            if (archiveNamespace !== expectedNamespace) throw new Error("Archive API Preview namespace mismatch");
+            if (archiveBucket !== expectedBucket) throw new Error("Archive API Preview bucket mismatch");
+          '
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -101,12 +115,6 @@ jobs:
       - name: Configure Archive API authorization
         run: |
           test -n "$ARCHIVE_API_SHARED_SECRET"
-          configured_collector_namespace=$(jq -r '
-            .env.preview.kv_namespaces[] |
-            select(.binding == "COLLECTOR_CREDS") |
-            .id
-          ' apps/agent-ingest/wrangler.jsonc)
-          test "$configured_collector_namespace" = "$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID"
           printf '%s' "$ARCHIVE_API_SHARED_SECRET" |
             bunx convex env set --preview-name "$BRANCH_NAME" ARCHIVE_API_SHARED_SECRET
           bunx convex env set --preview-name "$BRANCH_NAME" \
@@ -137,9 +145,23 @@ jobs:
 
       - name: Verify Preview resource isolation
         run: |
-          test "$(jq -r '.env.preview.kv_namespaces[] | select(.binding == "COLLECTOR_CREDS") | .id' apps/agent-ingest/wrangler.jsonc)" = "$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID"
-          test "$(jq -r '.env.preview.kv_namespaces[] | select(.binding == "COLLECTOR_CREDS") | .id' apps/archive-api/wrangler.jsonc)" = "$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID"
-          test "$(jq -r '.env.preview.r2_buckets[] | select(.binding == "ARCHIVE_STORAGE") | .bucket_name' apps/archive-api/wrangler.jsonc)" = "$PREVIEW_ARCHIVE_BUCKET"
+          bun -e '
+            import agentIngestConfig from "./apps/agent-ingest/wrangler.jsonc";
+            import archiveApiConfig from "./apps/archive-api/wrangler.jsonc";
+
+            const expectedNamespace = process.env.PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID;
+            const expectedBucket = process.env.PREVIEW_ARCHIVE_BUCKET;
+            if (!expectedNamespace || !expectedBucket) throw new Error("Trusted Preview resources are required");
+
+            const findBinding = (items, name) => items?.find((item) => item.binding === name);
+            const ingestNamespace = findBinding(agentIngestConfig.env?.preview?.kv_namespaces, "COLLECTOR_CREDS")?.id;
+            const archiveNamespace = findBinding(archiveApiConfig.env?.preview?.kv_namespaces, "COLLECTOR_CREDS")?.id;
+            const archiveBucket = findBinding(archiveApiConfig.env?.preview?.r2_buckets, "ARCHIVE_STORAGE")?.bucket_name;
+
+            if (ingestNamespace !== expectedNamespace) throw new Error("Agent Ingest Preview namespace mismatch");
+            if (archiveNamespace !== expectedNamespace) throw new Error("Archive API Preview namespace mismatch");
+            if (archiveBucket !== expectedBucket) throw new Error("Archive API Preview bucket mismatch");
+          '
 
       - name: Install dependencies
         run: bun install --frozen-lockfile

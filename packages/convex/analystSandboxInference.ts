@@ -1,7 +1,7 @@
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import { action } from './_generated/server';
-import { ANALYST_MODEL, requireAnalystProEntitlement } from './analyst';
+import { ANALYST_MODEL, getEnabledUserById, requireAnalystProEntitlement } from './analyst';
 import { SANDBOX_INFERENCE_MAX_OUTPUT_TOKENS_PER_REQUEST } from './analystSandboxPolicy';
 import { sha256Hex } from './analystSandboxRun';
 
@@ -21,6 +21,10 @@ export const authorizeSandboxInference = action({
       return { ok: false as const, reason: 'unauthorized' as const, status: null, model: null };
     }
 
+    const creator = await getEnabledUserById(ctx, run.creatorUserId);
+    if (creator.orgId !== run.orgId) {
+      return { ok: false as const, reason: 'unauthorized' as const, status: null, model: null };
+    }
     await requireAnalystProEntitlement(ctx, run.orgId);
     const reservation = await ctx.runMutation(
       internal.analystSandboxStore.reserveSandboxInference,

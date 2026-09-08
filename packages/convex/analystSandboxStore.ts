@@ -177,6 +177,10 @@ export const reserveSandboxInference = internalMutation({
     if (run?.runTokenHash !== args.tokenHash) {
       return { ok: false as const, reason: 'unauthorized' as const, status: null };
     }
+    const creator = await ctx.db.get(run.creatorUserId);
+    if (!creator?.enabled || !creator.orgId || creator.orgId !== run.orgId) {
+      return { ok: false as const, reason: 'unauthorized' as const, status: null };
+    }
     if (!ACTIVE_SANDBOX_RUN_STATUSES.has(run.status)) {
       return { ok: false as const, reason: 'inactive' as const, status: run.status };
     }

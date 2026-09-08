@@ -241,8 +241,47 @@ describe('preview credential boundary', () => {
       const verify = steps.find((step) => step.name === 'Verify Preview resource isolation');
       const installIndex = steps.findIndex((step) => step.name === 'Install dependencies');
       expect(steps.indexOf(verify)).toBeLessThan(installIndex);
-      expect(verify.run).toContain('$PREVIEW_ARCHIVE_BUCKET');
+      expect(verify.run).toContain('import agentIngestConfig');
+      expect(verify.run).toContain('import archiveApiConfig');
     }
+  });
+
+  test('executes the Preview resource isolation check against Wrangler JSONC', () => {
+    const verify = preview.jobs['deploy-convex'].steps.find(
+      (step) => step.name === 'Verify Preview resource isolation',
+    );
+    const result = Bun.spawnSync({
+      cmd: ['bash', '-euo', 'pipefail', '-c', verify.run],
+      cwd: new URL('../..', import.meta.url).pathname,
+      env: {
+        ...process.env,
+        PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: preview.env.PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID,
+        PREVIEW_ARCHIVE_BUCKET: preview.env.PREVIEW_ARCHIVE_BUCKET,
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    expect(result.exitCode).toBe(0);
+  });
+
+  test('fails the Preview resource isolation check on a trusted resource mismatch', () => {
+    const verify = preview.jobs['deploy-convex'].steps.find(
+      (step) => step.name === 'Verify Preview resource isolation',
+    );
+    const result = Bun.spawnSync({
+      cmd: ['bash', '-euo', 'pipefail', '-c', verify.run],
+      cwd: new URL('../..', import.meta.url).pathname,
+      env: {
+        ...process.env,
+        PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: 'wrong-namespace',
+        PREVIEW_ARCHIVE_BUCKET: preview.env.PREVIEW_ARCHIVE_BUCKET,
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    expect(result.exitCode).not.toBe(0);
   });
 });
 
