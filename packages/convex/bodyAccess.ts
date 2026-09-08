@@ -3,7 +3,8 @@ import { action, internalQuery, type ActionCtx } from './_generated/server';
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { runAdminSql, TinybirdQueryError } from '@trace-flow/tinybird-client';
+import { TinybirdQueryError } from '@trace-flow/tinybird-client';
+import { runAdminSql } from './tinybirdTracing';
 import {
   BODY_ACCESS_TOKEN_AUDIENCE,
   BODY_ACCESS_TOKEN_ISSUER,

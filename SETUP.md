@@ -112,6 +112,20 @@ Set secrets through the owning platform only. Do not commit them.
 | `archive-api`     | `ARCHIVE_API_SHARED_SECRET`, `ARCHIVE_KEY_WRAPPING_SECRET`, optional `SENTRY_DSN` |
 | `analyst-sandbox` | `ANALYST_SANDBOX_SHARED_SECRET`, `OPENROUTER_API_KEY`                             |
 
+Convex Tinybird queries also require `SENTRY_DSN` and `SENTRY_ENVIRONMENT` in the
+Convex deployment. Use `development` for Cloud-Dev, `preview` for PR previews, and
+`prod` for production. CI configures these for previews and production from the
+existing `NEXT_PUBLIC_SENTRY_DSN` GitHub variable. The Pipes API needs its own
+`SENTRY_DSN` Worker secret; browser configuration does not configure the Worker.
+
+Tinybird reads emit `db.query` spans named `tinybird.pipe <pipe>` or `tinybird.sql`,
+including response parsing. Query spans record status, returned row count, cache
+state, and available Tinybird elapsed time, rows read, and bytes read. Cache hits
+omit upstream execution statistics. SQL text, query parameters, credentials, and
+returned rows are excluded. Convex uses a separate client and scope per operation
+and flushes before returning. Search Sentry for `span.op:db.query
+span.description:tinybird.*` in the relevant environment.
+
 Archive API production configuration is deployed on merge, but Convex keeps production archive writes
 disabled until TRA-228. The required Archive API secrets are stable protected-environment values; never
 generate a new wrapping secret during a deploy.

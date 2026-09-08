@@ -1,9 +1,18 @@
+import type { Scope } from '@sentry/core';
 import { TinybirdQueryError } from './errors';
+import {
+  finishTinybirdQuerySpan,
+  recordTinybirdResponse,
+  recordTinybirdStatistics,
+  startTinybirdQuerySpan,
+} from './tracing';
 
 export interface RunAdminSqlOptions {
   baseUrl: string;
   adminToken: string;
   sql: string;
+  /** Explicit Sentry scope for runtimes where request scopes are not globally active. */
+  sentryScope?: Scope;
 }
 
 interface SqlResponse {
@@ -19,28 +28,38 @@ export async function runAdminSql({
   baseUrl,
   adminToken,
   sql,
+  sentryScope,
 }: RunAdminSqlOptions): Promise<Record<string, unknown>[]> {
-  const url = new URL(`${baseUrl}/v0/sql`);
+  const span = startTinybirdQuerySpan({ baseUrl, sentryScope });
+  let succeeded = false;
 
-  const response = await fetch(url.toString(), {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${adminToken}`,
-      'Content-Type': 'text/plain',
-    },
-    body: sql,
-  });
+  try {
+    const url = new URL(`${baseUrl}/v0/sql`);
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Content-Type': 'text/plain',
+      },
+      body: sql,
+    });
+    recordTinybirdResponse(span, response);
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new TinybirdQueryError(
-      `Tinybird admin SQL failed: ${response.status} - ${errorText}`,
-      response.status,
-    );
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new TinybirdQueryError(
+        `Tinybird admin SQL failed: ${response.status} - ${errorText}`,
+        response.status,
+      );
+    }
+
+    const body: SqlResponse = await response.json();
+    recordTinybirdStatistics(span, body);
+    succeeded = true;
+    return body.data ?? [];
+  } finally {
+    finishTinybirdQuerySpan(span, succeeded);
   }
-
-  const body: SqlResponse = await response.json();
-  return body.data ?? [];
 }
 
 /**

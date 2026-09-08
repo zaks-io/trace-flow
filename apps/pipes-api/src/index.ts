@@ -1,3 +1,4 @@
+import { fetchFromTinybird } from './tinybird';
 import * as Sentry from '@sentry/cloudflare';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { Hono, type Context } from 'hono';
@@ -239,17 +240,6 @@ function truncateAndRedact(value: string, limit: number): string {
     return redacted;
   }
   return `${redacted.slice(0, limit)}...[truncated ${redacted.length - limit} chars]`;
-}
-
-async function fetchFromTinybird(
-  apiUrl: string,
-  originalUrl: URL,
-  token: string,
-): Promise<Response> {
-  const tbUrl = new URL(`${apiUrl}${originalUrl.pathname}${originalUrl.search}`);
-  return fetch(tbUrl.toString(), {
-    headers: { Authorization: `Bearer ${token}` },
-  });
 }
 
 export default Sentry.withSentry(
