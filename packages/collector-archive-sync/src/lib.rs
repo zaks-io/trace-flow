@@ -27,7 +27,10 @@ pub use cycle::{run_archive_cycle, ArchiveCycleReport, ArchiveSnapshot};
 pub use enrollment::ArchiveEnrollmentRecord;
 pub use error::{ArchiveClientError, ArchiveSyncError, ArchiveSyncResult};
 pub use key_store::{ArchiveKeyStore, ArchiveSpoolKey, MemoryKeyStore, OsKeyStore};
-pub use policy::{policy_from_denial_reason, ArchivePolicy, ArchivePolicyParseError};
+pub use policy::{
+    policy_from_denial_reason, ArchiveAuthorizedSource, ArchiveHistoryChoice, ArchivePolicy,
+    ArchivePolicyParseError, ArchivePolicyResponse, ConfirmedArchivePolicy,
+};
 pub use scan::{archive_source_session_id, scan_snapshot, transcript_part_for};
 pub use spool::{
     cleanup_obligation_exists, finish_terminal_cleanup, ArchiveSpool, PendingArchiveRequest,

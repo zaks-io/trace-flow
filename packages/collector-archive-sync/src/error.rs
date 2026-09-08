@@ -68,6 +68,8 @@ pub enum ArchiveClientError {
     Unavailable { reason: String },
     #[error("invalid archive acknowledgement")]
     InvalidAcknowledgement,
+    #[error("invalid archive policy")]
+    InvalidPolicy,
     #[error("transport error")]
     Transport(#[from] anyhow::Error),
 }
@@ -82,6 +84,7 @@ impl ArchiveClientError {
             Self::UploadRejected { .. } => "upload_rejected",
             Self::Unavailable { .. } => "archive_unavailable",
             Self::InvalidAcknowledgement => "invalid_acknowledgement",
+            Self::InvalidPolicy => "invalid_policy",
             Self::Transport(_) => "transport",
         }
     }

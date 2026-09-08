@@ -38,6 +38,7 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
     key_store: &dyn ArchiveKeyStore,
     snapshots: &[ArchiveSnapshot],
     policy: ArchivePolicy,
+    authorized_sources: &[ArchiveSource],
     cancel: Option<&CancellationToken>,
 ) -> ArchiveCycleReport {
     let mut report = ArchiveCycleReport::default();
@@ -56,7 +57,15 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
     }
 
     if policy.uploads() {
-        replay_pending(uploader, spool, key_store, &mut report, cancel).await;
+        replay_pending(
+            uploader,
+            spool,
+            key_store,
+            authorized_sources,
+            &mut report,
+            cancel,
+        )
+        .await;
         if report.purged || report.frozen || report.halted {
             return report;
         }
@@ -66,6 +75,9 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
     }
 
     for snapshot in snapshots {
+        if !authorized_sources.contains(&snapshot.source) {
+            continue;
+        }
         if cancel.is_some_and(CancellationToken::is_cancelled) {
             break;
         }
@@ -105,6 +117,7 @@ async fn replay_pending<U: ArchiveUploader>(
     uploader: &U,
     spool: &mut ArchiveSpool,
     key_store: &dyn ArchiveKeyStore,
+    authorized_sources: &[ArchiveSource],
     report: &mut ArchiveCycleReport,
     cancel: Option<&CancellationToken>,
 ) {
@@ -133,6 +146,9 @@ async fn replay_pending<U: ArchiveUploader>(
                 record_error(report, class);
             }
             PendingLoad::Ready(record) => {
+                if !authorized_sources.contains(&record.source) {
+                    continue;
+                }
                 let part_key = (
                     record.source,
                     record.source_session_id.clone(),

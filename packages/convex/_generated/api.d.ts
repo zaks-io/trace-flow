@@ -1216,6 +1216,24 @@ export declare const api: {
         userId: Id<"users">;
       }>
     >;
+    listActiveForCurrentUser: FunctionReference<
+      "query",
+      "public",
+      {},
+      Array<{
+        _creationTime: number;
+        _id: Id<"collectorCredentials">;
+        collectorId: string;
+        expiresAt: number;
+        lastSeenAt?: number;
+        name?: string;
+        orgId: Id<"organizations">;
+        platform?: string;
+        revokedAt?: number;
+        status: "active" | "revoked";
+        userId: Id<"users">;
+      }>
+    >;
     mint: FunctionReference<
       "mutation",
       "public",
