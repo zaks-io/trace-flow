@@ -83,6 +83,8 @@ jobs:
               - 'packages/logging/**'
             archive-api:
               - 'apps/archive-api/**'
+              - 'apps/archive-api/config/wrangler-resources.test.ts'
+              - 'scripts/dev/archive-api-*.ts'
               - 'apps/agent-ingest/**'
               - 'packages/utils/**'
               - 'packages/logging/**'
@@ -678,19 +680,30 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Format check
-        run: bun prettier --check "apps/archive-api/**/*.{ts,tsx,js,jsx,json}"
+        run: bun prettier --check "apps/archive-api/**/*.{ts,tsx,js,jsx,json}" "scripts/dev/archive-api-*.ts"
 
       - name: Lint
-        run: bunx turbo run lint --filter=@trace-flow/archive-api
+        run: |
+          bunx turbo run lint --filter=@trace-flow/archive-api
+          bunx eslint apps/archive-api/config/wrangler-resources.test.ts "scripts/dev/archive-api-*.ts"
 
       - name: Type check
         run: bunx turbo run type-check --filter=@trace-flow/archive-api
 
       - name: Test
-        run: bunx turbo run test --filter=@trace-flow/archive-api
+        run: |
+          bun run archive:resources:check
+          bunx turbo run test --filter=@trace-flow/archive-api
 
       - name: Build
         run: bunx turbo run build --filter=@trace-flow/archive-api
+
+      - name: Validate Wrangler environments
+        working-directory: apps/archive-api
+        run: |
+          bunx wrangler deploy --env="" --dry-run
+          bunx wrangler deploy --env preview --dry-run
+          bunx wrangler deploy --env production --dry-run
 
   agent-consumer:
     name: Agent Consumer Worker
