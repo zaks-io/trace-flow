@@ -1095,6 +1095,7 @@ mod tests {
         let original = ArchiveEnrollmentRecord {
             status: ArchivePolicy::Enrolled.as_str().to_string(),
             authorized_sources: vec![authorization(ArchiveSource::Claude)],
+            reason: None,
         };
         original.save_record(&enrollment_path).unwrap();
         let archive = ArchiveRunConfig {
@@ -1439,6 +1440,7 @@ mod tests {
         ArchiveEnrollmentRecord {
             status: ArchivePolicy::Enrolled.as_str().to_string(),
             authorized_sources: vec![authorization(ArchiveSource::Claude)],
+            reason: None,
         }
         .save_record(&enroll)
         .unwrap();

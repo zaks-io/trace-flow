@@ -8,7 +8,7 @@ pub mod refresh;
 use tauri::{
     menu::{
         CheckMenuItem, CheckMenuItemBuilder, Menu, MenuBuilder, MenuItem, MenuItemBuilder,
-        PredefinedMenuItem,
+        PredefinedMenuItem, SubmenuBuilder,
     },
     AppHandle, Runtime,
 };
@@ -26,6 +26,11 @@ pub struct MenuHandles<R: Runtime> {
     pub status_header: MenuItem<R>,
     pub src_claude: MenuItem<R>,
     pub src_codex: MenuItem<R>,
+    pub archive_status: MenuItem<R>,
+    pub archive_claude_all: CheckMenuItem<R>,
+    pub archive_claude_new: CheckMenuItem<R>,
+    pub archive_codex_all: CheckMenuItem<R>,
+    pub archive_codex_new: CheckMenuItem<R>,
     pub action_pause: MenuItem<R>,
     pub action_update: MenuItem<R>,
     pub autostart: CheckMenuItem<R>,
@@ -60,6 +65,46 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<(Menu<R>, MenuHandle
     let action_update = action("action_update", "Update to latest").map_err(tauri_err)?;
     let quit = action("quit", "Quit Trace Flow Desktop").map_err(tauri_err)?;
 
+    let archive_status = action("open_window", "Archive: not configured").map_err(tauri_err)?;
+    let archive_claude_all = CheckMenuItemBuilder::with_id(
+        "archive_enroll:claude:all_history",
+        "Archive existing and new conversations",
+    )
+    .build(app)
+    .map_err(tauri_err)?;
+    let archive_claude_new = CheckMenuItemBuilder::with_id(
+        "archive_enroll:claude:new_only",
+        "Archive new conversations",
+    )
+    .build(app)
+    .map_err(tauri_err)?;
+    let archive_codex_all = CheckMenuItemBuilder::with_id(
+        "archive_enroll:codex:all_history",
+        "Archive existing and new conversations",
+    )
+    .build(app)
+    .map_err(tauri_err)?;
+    let archive_codex_new =
+        CheckMenuItemBuilder::with_id("archive_enroll:codex:new_only", "Archive new conversations")
+            .build(app)
+            .map_err(tauri_err)?;
+    let archive_claude = SubmenuBuilder::new(app, "Claude")
+        .item(&archive_claude_all)
+        .item(&archive_claude_new)
+        .build()
+        .map_err(tauri_err)?;
+    let archive_codex = SubmenuBuilder::new(app, "Codex")
+        .item(&archive_codex_all)
+        .item(&archive_codex_new)
+        .build()
+        .map_err(tauri_err)?;
+    let archive = SubmenuBuilder::new(app, "Archive")
+        .item(&archive_status)
+        .item(&archive_claude)
+        .item(&archive_codex)
+        .build()
+        .map_err(tauri_err)?;
+
     let sep = || PredefinedMenuItem::separator(app).map_err(tauri_err);
 
     let menu = MenuBuilder::new(app)
@@ -72,6 +117,7 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<(Menu<R>, MenuHandle
         .item(&action_reconnect)
         .item(&action_sync)
         .item(&action_pause)
+        .item(&archive)
         .item(&sep()?)
         .item(&autostart)
         .item(&open_dashboard)
@@ -86,6 +132,11 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<(Menu<R>, MenuHandle
         status_header,
         src_claude,
         src_codex,
+        archive_status,
+        archive_claude_all,
+        archive_claude_new,
+        archive_codex_all,
+        archive_codex_new,
         action_pause,
         action_update,
         autostart,

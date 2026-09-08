@@ -94,6 +94,20 @@ pub enum ArchiveHistoryChoice {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ArchiveSourceChoice {
+    pub source: ArchiveSource,
+    pub history_choice: ArchiveHistoryChoice,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ArchiveEnrollmentRequest {
+    pub authorized_sources: Vec<ArchiveSourceChoice>,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ArchiveAuthorizedSource {
     pub source: ArchiveSource,
     pub history_choice: ArchiveHistoryChoice,

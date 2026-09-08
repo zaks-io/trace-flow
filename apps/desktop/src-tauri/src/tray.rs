@@ -8,7 +8,8 @@ use crate::connector::Connector;
 use crate::engine::{EngineCommand, EngineHandle};
 use crate::error::{DesktopError, Result};
 use crate::paths::logs_dir_path;
-use crate::state::{AppStateBus, SyncStatus};
+use crate::state::{AppState, AppStateBus, SyncStatus};
+use collector_embedder::{ArchiveHistoryChoice, ArchiveSource};
 
 const TRAY_ICON_BYTES: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -33,6 +34,13 @@ pub fn build_tray<R: Runtime>(app: &AppHandle<R>, menu: Menu<R>) -> Result<()> {
 }
 
 fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
+    if id.starts_with("archive_enroll:") {
+        let bus: tauri::State<'_, AppStateBus> = app.state();
+        if let Some(command) = archive_enrollment_command(&bus.snapshot(), id) {
+            connect_then(app, command);
+        }
+        return;
+    }
     match id {
         "open_window" => show_window(app),
         // "Sync now": connect if needed, then authorize + run one incremental cycle. Routed through
@@ -52,6 +60,44 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
         "quit" => app.exit(0),
         other => tracing::debug!(menu_id = other, "unhandled menu event"),
     }
+}
+
+fn archive_enrollment_command(state: &AppState, id: &str) -> Option<EngineCommand> {
+    let (source, history_choice) = parse_archive_enrollment(id)?;
+    if state.archive.pending.is_some()
+        || state
+            .archive
+            .sources
+            .iter()
+            .any(|(authorized, _)| *authorized == source)
+    {
+        return None;
+    }
+    Some(EngineCommand::EnrollArchiveSource {
+        source,
+        history_choice,
+    })
+}
+
+fn parse_archive_enrollment(id: &str) -> Option<(ArchiveSource, ArchiveHistoryChoice)> {
+    let mut parts = id.split(':');
+    if parts.next()? != "archive_enroll" {
+        return None;
+    }
+    let source = match parts.next()? {
+        "claude" => ArchiveSource::Claude,
+        "codex" => ArchiveSource::Codex,
+        _ => return None,
+    };
+    let history_choice = match parts.next()? {
+        "all_history" => ArchiveHistoryChoice::AllHistory,
+        "new_only" => ArchiveHistoryChoice::NewOnly,
+        _ => return None,
+    };
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((source, history_choice))
 }
 
 fn update_to_latest<R: Runtime>(app: &AppHandle<R>) {
@@ -175,5 +221,32 @@ fn open_logs<R: Runtime>(app: &AppHandle<R>) {
             }
         }
         Err(err) => tracing::error!(error = %err, "failed to resolve logs dir"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn archive_menu_id_builds_command_and_suppresses_locked_sources() {
+        let state = AppState::default();
+        assert_eq!(
+            archive_enrollment_command(&state, "archive_enroll:claude:all_history"),
+            Some(EngineCommand::EnrollArchiveSource {
+                source: ArchiveSource::Claude,
+                history_choice: ArchiveHistoryChoice::AllHistory,
+            })
+        );
+
+        let mut pending = state.clone();
+        pending.archive.pending = Some(ArchiveSource::Claude);
+        assert!(
+            archive_enrollment_command(&pending, "archive_enroll:claude:all_history").is_none()
+        );
+
+        let mut enrolled = state;
+        enrolled.archive.sources = vec![(ArchiveSource::Claude, ArchiveHistoryChoice::AllHistory)];
+        assert!(archive_enrollment_command(&enrolled, "archive_enroll:claude:new_only").is_none());
     }
 }

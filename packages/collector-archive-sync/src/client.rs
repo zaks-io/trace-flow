@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::ack::ArchiveAcknowledgement;
 use crate::error::ArchiveClientError;
-use crate::policy::ArchivePolicyResponse;
+use crate::policy::{ArchiveEnrollmentRequest, ArchivePolicyResponse};
 
 const COLLECTOR_SECRET_HEADER: &str = "X-Trace-Flow-Collector-Secret";
 const ARCHIVE_SOURCE_HEADER: &str = "X-Trace-Flow-Archive-Source";
@@ -68,6 +68,30 @@ impl ArchiveClient {
             .client
             .get(&url)
             .header(COLLECTOR_SECRET_HEADER, self.config.credential.as_str())
+            .send()
+            .await
+            .map_err(|err| ArchiveClientError::Transport(anyhow!("http send failed: {err}")))?;
+        let status = response.status().as_u16();
+        let body = response
+            .text()
+            .await
+            .map_err(|_| ArchiveClientError::InvalidPolicy)?;
+        classify_policy_response(status, &body)
+    }
+
+    pub async fn enroll(
+        &self,
+        request: &ArchiveEnrollmentRequest,
+    ) -> Result<ArchivePolicyResponse, ArchiveClientError> {
+        let url = format!(
+            "{}/v1/archive/enrollments",
+            self.config.archive_url.trim_end_matches('/')
+        );
+        let response = self
+            .client
+            .post(&url)
+            .header(COLLECTOR_SECRET_HEADER, self.config.credential.as_str())
+            .json(request)
             .send()
             .await
             .map_err(|err| ArchiveClientError::Transport(anyhow!("http send failed: {err}")))?;

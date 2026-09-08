@@ -11,37 +11,20 @@ import {
   archiveStatusProjectionValidator,
   archiveSupportedSourceValidator,
 } from './validators';
-import {
-  activationOperationId,
-  appendArchiveAuditEvent,
-  enrollmentOperationId,
-} from './archiveAuditLib';
+import { activateArchiveCore, addSourceCore, enrollCollectorCore } from './archiveEnrollmentCore';
 import {
   ARCHIVE_CAP_BYTES,
   applyCollectorHeartbeat,
   assertArchiveMutationAllowed,
-  claimArchiveActivation,
-  claimContributionForUser,
-  claimEnrollmentByIdempotencyKey,
-  claimEnrollmentSlot,
-  consentSourcesMatch,
   countActiveEnrollments,
-  decideEnrollmentAction,
-  ensureArchiveStatusRow,
   getArchiveActivation,
   getArchiveStatusRow,
-  getEnrollmentByIdempotencyKey,
   getEnrollmentSlot,
   invalidateArchiveEnrollment,
   isActiveProSubscription,
   isArchiveServerEnabled,
   projectLifecycle,
-  refreshArchiveStatusCounts,
-  repairEnrollmentSlots,
   requireActiveMembership,
-  sourceAlreadyAuthorized,
-  validateAuthorizedSources,
-  validateEnrollmentIdempotencyKey,
 } from './archiveLib';
 
 async function requireCurrentOrgUser(ctx: Parameters<typeof requireEnabledUser>[0]) {
@@ -154,42 +137,11 @@ export const activate = mutation({
       throw new Error('Active Pro entitlement is required');
     }
 
-    if (existing) {
-      return { activationId: existing._id, created: false };
-    }
-
-    const now = Date.now();
-    const insertedId = await ctx.db.insert('archiveActivations', {
+    return activateArchiveCore(ctx, {
       orgId: org._id,
-      activatedByUserId: user._id,
-      activatedAt: now,
-      capBytes: ARCHIVE_CAP_BYTES,
-      status: 'active',
-    });
-    const winner = await claimArchiveActivation(ctx, org._id);
-    const activationId = winner?._id ?? insertedId;
-    if (activationId !== insertedId) {
-      return { activationId, created: false };
-    }
-    await ensureArchiveStatusRow(ctx, {
-      orgId: org._id,
-      lifecycle: 'active',
-      capBytes: ARCHIVE_CAP_BYTES,
-      now,
-    });
-    await appendArchiveAuditEvent(ctx, {
-      orgId: org._id,
-      actorKind: 'user',
       actorUserId: user._id,
-      action: 'activation',
-      outcome: 'success',
-      operationId: activationOperationId(org._id),
-      targetKind: 'activation',
-      targetId: activationId,
-      activationId,
-      now,
+      now: Date.now(),
     });
-    return { activationId, created: true };
   },
 });
 
@@ -208,136 +160,14 @@ export const enroll = mutation({
     const { user } = await requireCurrentOrgUser(ctx);
     await requireArchiveWritable(ctx, user.orgId);
     const credential = await requireBoundCollectorCredential(ctx, args.collectorCredentialId, user);
-    const sources = validateAuthorizedSources(args.authorizedSources);
-    const idempotencyKey = validateEnrollmentIdempotencyKey(args.idempotencyKey);
-    const now = Date.now();
-
-    const existingByKey = await getEnrollmentByIdempotencyKey(ctx, user.orgId, idempotencyKey);
-    const slot = await repairEnrollmentSlots(ctx, user.orgId, credential._id);
-    const current = slot ? await ctx.db.get(slot.currentEnrollmentId) : null;
-    const decision = decideEnrollmentAction({
-      existingByKey,
-      currentEnrollment: current,
-      request: {
-        userId: user._id,
-        collectorCredentialId: credential._id,
-        authorizedSources: sources,
-      },
-    });
-
-    if (decision === 'replay' && existingByKey) {
-      return {
-        enrollmentId: existingByKey._id,
-        contributionId: existingByKey.contributionId,
-        created: false,
-      };
-    }
-    if (decision === 'conflict') {
-      if (
-        existingByKey &&
-        (existingByKey.userId !== user._id ||
-          existingByKey.collectorCredentialId !== credential._id)
-      ) {
-        throw new Error('Enrollment idempotency key is already bound to another Collector');
-      }
-      throw new Error('Enrollment idempotency key does not match the original consent');
-    }
-    if (decision === 'already_enrolled') {
-      throw new Error('Collector is already enrolled');
-    }
-
-    const contribution = await claimContributionForUser(ctx, user.orgId, user._id, now);
-
-    const enrollmentId = await ctx.db.insert('archiveEnrollments', {
+    return enrollCollectorCore(ctx, {
       orgId: user.orgId,
       userId: user._id,
-      collectorCredentialId: credential._id,
-      collectorId: credential.collectorId,
-      contributionId: contribution._id,
-      idempotencyKey,
-      consentSources: sources,
-      authorizedSources: sources.map((source) => ({
-        ...source,
-        authorizedAt: now,
-      })),
-      status: 'active',
-      createdAt: now,
+      credential,
+      sources: args.authorizedSources,
+      idempotencyKey: args.idempotencyKey,
+      now: Date.now(),
     });
-
-    const claimedByKey = await claimEnrollmentByIdempotencyKey(
-      ctx,
-      user.orgId,
-      idempotencyKey,
-      enrollmentId,
-    );
-    if (!claimedByKey.created) {
-      if (
-        claimedByKey.enrollment.userId !== user._id ||
-        claimedByKey.enrollment.collectorCredentialId !== credential._id
-      ) {
-        throw new Error('Enrollment idempotency key is already bound to another Collector');
-      }
-      if (!consentSourcesMatch(claimedByKey.enrollment.consentSources, sources)) {
-        throw new Error('Enrollment idempotency key does not match the original consent');
-      }
-      await refreshArchiveStatusCounts(ctx, user.orgId, now);
-      return {
-        enrollmentId: claimedByKey.enrollment._id,
-        contributionId: claimedByKey.enrollment.contributionId,
-        created: false,
-      };
-    }
-
-    if (slot) {
-      await ctx.db.patch(slot._id, { currentEnrollmentId: enrollmentId });
-    } else {
-      const claimed = await claimEnrollmentSlot(ctx, user.orgId, credential._id, enrollmentId);
-      if (!claimed.created) {
-        const winner = await ctx.db.get(claimed.enrollmentId);
-        if (!winner) throw new Error('Enrollment not found');
-        if (winner.idempotencyKey !== idempotencyKey) {
-          await ctx.db.delete(enrollmentId);
-          throw new Error('Collector is already enrolled');
-        }
-        await refreshArchiveStatusCounts(ctx, user.orgId, now);
-        return {
-          enrollmentId: winner._id,
-          contributionId: winner.contributionId,
-          created: false,
-        };
-      }
-    }
-
-    const status = await getArchiveStatusRow(ctx, user.orgId);
-    if (status) {
-      await refreshArchiveStatusCounts(ctx, user.orgId, now);
-    } else {
-      await ensureArchiveStatusRow(ctx, {
-        orgId: user.orgId,
-        lifecycle: 'active',
-        capBytes: ARCHIVE_CAP_BYTES,
-        now,
-      });
-    }
-
-    await appendArchiveAuditEvent(ctx, {
-      orgId: user.orgId,
-      actorKind: 'user',
-      actorUserId: user._id,
-      action: 'enrollment',
-      outcome: 'success',
-      operationId: await enrollmentOperationId(user.orgId, idempotencyKey),
-      targetKind: 'enrollment',
-      targetId: enrollmentId,
-      enrollmentId,
-      contributionId: contribution._id,
-      now,
-    });
-    return {
-      enrollmentId,
-      contributionId: contribution._id,
-      created: true,
-    };
   },
 });
 
@@ -359,25 +189,12 @@ export const addAuthorizedSource = mutation({
       throw new Error('Enrollment is not active');
     }
 
-    validateAuthorizedSources([{ source: args.source, historyChoice: args.historyChoice }]);
-    if (sourceAlreadyAuthorized(enrollment.authorizedSources, args.source)) {
-      return enrollment;
-    }
-
-    const now = Date.now();
-    await ctx.db.patch(enrollment._id, {
-      authorizedSources: [
-        ...enrollment.authorizedSources,
-        {
-          source: args.source,
-          historyChoice: args.historyChoice,
-          authorizedAt: now,
-        },
-      ],
+    return addSourceCore(ctx, {
+      enrollment,
+      source: args.source,
+      historyChoice: args.historyChoice,
+      now: Date.now(),
     });
-    const updated = await ctx.db.get(enrollment._id);
-    if (!updated) throw new Error('Enrollment not found');
-    return updated;
   },
 });
 

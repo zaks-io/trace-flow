@@ -10,12 +10,13 @@ use collector_archive::{
 use collector_archive_sync::{
     acknowledgement_matches, archive_source_session_id, run_archive_cycle, transcript_part_for,
     ArchiveAcknowledgement, ArchiveBaselineTarget, ArchiveClient, ArchiveClientConfig,
-    ArchiveClientError, ArchiveEnrollmentRecord, ArchiveHistoryChoice, ArchiveHistoryGeneration,
-    ArchiveHistoryPlan, ArchiveHistoryState, ArchiveInitialImport, ArchiveKeyStore, ArchivePolicy,
-    ArchiveSnapshot, ArchiveSpool, ArchiveSpoolKey, ArchiveSyncError, ArchiveUploader,
-    ArchiveWorkClass, DeferredArchiveSnapshot, MemoryKeyStore, PendingArchiveRequest, PendingLoad,
-    ARCHIVE_CAPTURE_WINDOW_BYTES, ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE,
-    MAX_ARCHIVE_UPLOAD_BYTES, MAX_UPLOAD_OBSERVATIONS,
+    ArchiveClientError, ArchiveEnrollmentRecord, ArchiveEnrollmentRequest, ArchiveHistoryChoice,
+    ArchiveHistoryGeneration, ArchiveHistoryPlan, ArchiveHistoryState, ArchiveInitialImport,
+    ArchiveKeyStore, ArchivePolicy, ArchiveSnapshot, ArchiveSourceChoice, ArchiveSpool,
+    ArchiveSpoolKey, ArchiveSyncError, ArchiveUploader, ArchiveWorkClass, DeferredArchiveSnapshot,
+    MemoryKeyStore, PendingArchiveRequest, PendingLoad, ARCHIVE_CAPTURE_WINDOW_BYTES,
+    ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE, MAX_ARCHIVE_UPLOAD_BYTES,
+    MAX_UPLOAD_OBSERVATIONS,
 };
 use collector_contracts::AgentSource;
 use tempfile::TempDir;
@@ -868,6 +869,52 @@ async fn archive_client_posts_json_with_required_headers() {
     assert!(lowered.contains("content-type: application/json"));
     assert!(!lowered.contains("content-encoding: gzip"));
     assert!(request.contains(r#"{"source_session_id":"s"}"#));
+}
+
+#[tokio::test]
+async fn archive_client_enrolls_with_the_collector_secret_and_exact_consent() {
+    let seen = Arc::new(Mutex::new(String::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let seen_request = Arc::clone(&seen);
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut buf = vec![0u8; 8192];
+        let n = stream.read(&mut buf).await.unwrap();
+        *seen_request.lock().unwrap() = String::from_utf8_lossy(&buf[..n]).into_owned();
+        let body = r#"{"enrolled":true,"authorizedSources":[{"source":"claude","historyChoice":"all_history","authorizedAt":1770000000001}],"reason":null}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+    });
+
+    let client = ArchiveClient::new(ArchiveClientConfig::new(
+        format!("http://{addr}"),
+        "tfc_enrollment_secret",
+    ))
+    .unwrap();
+    let request = ArchiveEnrollmentRequest {
+        authorized_sources: vec![ArchiveSourceChoice {
+            source: ArchiveSource::Claude,
+            history_choice: ArchiveHistoryChoice::AllHistory,
+        }],
+        idempotency_key: "archive-enroll:request-1".to_string(),
+    };
+    let response = client.enroll(&request).await.unwrap();
+    assert!(response.enrolled);
+
+    let raw = seen.lock().unwrap().clone();
+    let lowered = raw.to_lowercase();
+    assert!(lowered.starts_with("post /v1/archive/enrollments http/1.1"));
+    assert!(lowered.contains("x-trace-flow-collector-secret: tfc_enrollment_secret"));
+    assert!(lowered.contains("content-type: application/json"));
+    assert!(raw.contains(
+        r#"{"authorizedSources":[{"source":"claude","historyChoice":"all_history"}],"idempotencyKey":"archive-enroll:request-1"}"#
+    ));
+    assert!(!format!("{request:?}").contains("tfc_enrollment_secret"));
 }
 
 struct AckingUploader {

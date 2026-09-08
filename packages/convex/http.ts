@@ -9,6 +9,7 @@ import type { HttpDeps } from './httpRoutes/deps';
 import { registerAgentIngestRoutes } from './httpRoutes/agentIngest';
 import { registerArchiveAuditRoutes } from './httpRoutes/archiveAudit';
 import { registerArchiveAuthorizeRoutes } from './httpRoutes/archiveAuthorize';
+import { registerArchiveEnrollRoutes } from './httpRoutes/archiveEnroll';
 import { registerArchiveKeyRoutes } from './httpRoutes/archiveKey';
 import { registerArchiveStatusRoutes } from './httpRoutes/archiveStatus';
 import { registerArchiveSessionIntegrityRoutes } from './httpRoutes/archiveSessionIntegrity';
@@ -47,6 +48,7 @@ export function createApp(
   registerUsageRoutes(app);
   registerAgentIngestRoutes(app);
   registerArchiveAuthorizeRoutes(app);
+  registerArchiveEnrollRoutes(app);
   registerArchiveAuditRoutes(app);
   registerArchiveKeyRoutes(app);
   registerArchiveStatusRoutes(app);

@@ -14,6 +14,8 @@ pub struct ArchiveEnrollmentRecord {
     pub status: String,
     #[serde(default)]
     pub authorized_sources: Vec<ArchiveAuthorizedSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 impl ArchiveEnrollmentRecord {
@@ -21,6 +23,7 @@ impl ArchiveEnrollmentRecord {
         Self {
             status: policy.as_str().to_string(),
             authorized_sources: Vec::new(),
+            reason: None,
         }
     }
 
@@ -42,6 +45,7 @@ impl ArchiveEnrollmentRecord {
         Self {
             status: confirmed.policy.as_str().to_string(),
             authorized_sources,
+            reason: None,
         }
     }
 

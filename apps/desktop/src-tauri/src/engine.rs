@@ -25,11 +25,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use collector_embedder::connection::Paths;
 use collector_embedder::keychain;
 use collector_embedder::sync::{self, ArchiveKeyStore, Window};
-use collector_embedder::{archive_policy, defaults};
+use collector_embedder::{
+    archive_policy, defaults, ArchiveEnrollmentRequest, ArchiveHistoryChoice, ArchiveSource,
+    ArchiveSourceChoice,
+};
 use tokio::sync::mpsc;
 
-use crate::settings::{Settings, SettingsFile};
-use crate::state::{AppStateBus, ConnectionState, SourceCounts, SyncStatus};
+use crate::settings::{ArchiveRequest, Settings, SettingsFile};
+use crate::state::{AppStateBus, ArchiveMenuState, ConnectionState, SourceCounts, SyncStatus};
 
 /// How often the engine runs an incremental cycle while resumed.
 const TICK: Duration = Duration::from_secs(5 * 60);
@@ -38,7 +41,7 @@ const TICK: Duration = Duration::from_secs(5 * 60);
 const FIRST_BACKFILL: &str = "7d";
 
 /// Commands the UI (tray menu or window) sends the engine.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EngineCommand {
     /// "Start syncing": authorize egress and run a pass immediately, then stay resumed in incremental
     /// watch mode. The first pass to reach ingest is the one-time `7d` history backfill (recorded in
@@ -53,6 +56,11 @@ pub enum EngineCommand {
     Resume,
     /// Stop all egress; the loop stays alive but does no work until resumed.
     Pause,
+    /// Authorize one Archive Source through the saved Collector Credential.
+    EnrollArchiveSource {
+        source: ArchiveSource,
+        history_choice: ArchiveHistoryChoice,
+    },
 }
 
 #[derive(Clone)]
@@ -98,6 +106,7 @@ async fn run_loop(
     });
     refresh_connection(&bus);
     refresh_sources(&bus);
+    refresh_archive(&bus);
 
     if settings.syncing {
         tracing::info!("sync authorized before relaunch; resuming");
@@ -125,12 +134,21 @@ async fn run_loop(
                         persist(&settings_file, &settings);
                         run_authorized_cycle(&bus, &mut settings).await;
                     }
+                    EngineCommand::EnrollArchiveSource { source, history_choice } => {
+                        enroll_archive_source(
+                            &bus,
+                            &settings_file,
+                            &mut settings,
+                            source,
+                            history_choice,
+                        ).await;
+                    }
                 }
                 persist(&settings_file, &settings);
             }
             _ = ticker.tick() => {
                 if settings.syncing {
-                    let before = settings;
+                    let before = settings.clone();
                     run_authorized_cycle(&bus, &mut settings).await;
                     if settings != before {
                         persist(&settings_file, &settings);
@@ -139,6 +157,164 @@ async fn run_loop(
             }
         }
     }
+}
+
+async fn enroll_archive_source(
+    bus: &AppStateBus,
+    settings_file: &SettingsFile,
+    settings: &mut Settings,
+    source: ArchiveSource,
+    history_choice: ArchiveHistoryChoice,
+) {
+    let snapshot = bus.snapshot();
+    if snapshot.archive.pending.is_some()
+        || snapshot
+            .archive
+            .sources
+            .iter()
+            .any(|(authorized, _)| *authorized == source)
+    {
+        return;
+    }
+
+    let paths = match Paths::resolve() {
+        Ok(paths) => paths,
+        Err(err) => {
+            set_archive_error(bus, format!("resolve collector paths: {err}"));
+            return;
+        }
+    };
+    let connection = match paths.load_connection() {
+        Ok(Some(connection)) => connection,
+        Ok(None) => {
+            set_archive_error(bus, "not connected".to_string());
+            return;
+        }
+        Err(err) => {
+            set_archive_error(bus, format!("connection read failed: {err}"));
+            return;
+        }
+    };
+    let request = match archive_request_for_connection(
+        settings.archive_request.as_ref(),
+        &connection.org_id,
+        &connection.collector_id,
+        source,
+        history_choice,
+        new_archive_idempotency_key,
+    ) {
+        Ok(request) => request,
+        Err(err) => {
+            set_archive_error(bus, err);
+            return;
+        }
+    };
+    settings.archive_request = Some(request.clone());
+    if let Err(err) = settings_file.save(settings) {
+        set_archive_error(bus, format!("save archive request: {err}"));
+        return;
+    }
+
+    let credential = match keychain::load(&connection.org_id) {
+        Ok(Some(credential)) => credential,
+        Ok(None) => {
+            set_archive_error(bus, "no credential - sign in again".to_string());
+            return;
+        }
+        Err(err) => {
+            set_archive_error(bus, format!("keychain read failed: {err}"));
+            return;
+        }
+    };
+    bus.update(|state| {
+        state.archive.pending = Some(source);
+        state.archive.last_error = None;
+    });
+
+    let org_id = connection.org_id.clone();
+    let enrollment_request = ArchiveEnrollmentRequest {
+        authorized_sources: vec![ArchiveSourceChoice {
+            source,
+            history_choice,
+        }],
+        idempotency_key: request.idempotency_key,
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| anyhow::anyhow!("build runtime: {err}"))?;
+        runtime.block_on(archive_policy::enroll_archive_source(
+            &paths,
+            &org_id,
+            defaults::archive_url(),
+            &credential,
+            &enrollment_request,
+        ))
+    })
+    .await;
+
+    match result {
+        Ok(Ok(enrolled)) => {
+            let run_immediately = apply_enrollment_success(settings, enrolled);
+            persist(settings_file, settings);
+            refresh_archive(bus);
+            if run_immediately {
+                run_authorized_cycle(bus, settings).await;
+            }
+        }
+        Ok(Err(err)) => set_archive_error(bus, err.to_string()),
+        Err(err) => set_archive_error(bus, format!("archive enrollment task crashed: {err}")),
+    }
+    bus.update(|state| state.archive.pending = None);
+}
+
+fn archive_request_for_connection(
+    pending: Option<&ArchiveRequest>,
+    org_id: &str,
+    collector_id: &str,
+    source: ArchiveSource,
+    history_choice: ArchiveHistoryChoice,
+    create_id: impl FnOnce() -> Result<String, String>,
+) -> Result<ArchiveRequest, String> {
+    if let Some(pending) = pending.filter(|pending| {
+        pending.org_id == org_id
+            && pending.collector_id == collector_id
+            && pending.source == source
+            && pending.history_choice == history_choice
+    }) {
+        return Ok(pending.clone());
+    }
+    Ok(ArchiveRequest {
+        org_id: org_id.to_string(),
+        collector_id: collector_id.to_string(),
+        source,
+        history_choice,
+        idempotency_key: create_id()?,
+    })
+}
+
+fn apply_enrollment_success(settings: &mut Settings, enrolled: bool) -> bool {
+    settings.archive_request = None;
+    enrolled && settings.syncing
+}
+
+fn new_archive_idempotency_key() -> Result<String, String> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|_| "create archive request id failed".to_string())?;
+    let value = bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(format!("archive-enroll:{value}"))
+}
+
+fn set_archive_error(bus: &AppStateBus, error: String) {
+    tracing::warn!(error = %error, "archive enrollment failed");
+    bus.update(|state| {
+        state.archive.pending = None;
+        state.archive.last_error = Some(error);
+    });
 }
 
 /// One authorized pass. Until the one-time history backfill has actually reached ingest, every pass
@@ -365,6 +541,7 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> Option<CycleOutcome> {
     };
 
     refresh_sources(bus);
+    refresh_archive(bus);
     outcome
 }
 
@@ -532,6 +709,40 @@ pub fn refresh_connection(bus: &AppStateBus) {
         }),
         Ok(None) => bus.update(|s| s.connection = ConnectionState::Disconnected),
         Err(err) => tracing::warn!(error = %err, "failed to read connection state"),
+    }
+}
+
+/// Reflect the local Archive policy into the menu without network access.
+pub fn refresh_archive(bus: &AppStateBus) {
+    let result = Paths::resolve().and_then(|paths| {
+        let Some(connection) = paths.load_connection()? else {
+            return Ok(ArchiveMenuState::default());
+        };
+        let record =
+            collector_embedder::archive_policy::load_archive_policy(&paths, &connection.org_id)?;
+        Ok(ArchiveMenuState {
+            enrolled: record.policy()?.captures(),
+            reason: record.reason,
+            sources: record
+                .authorized_sources
+                .into_iter()
+                .map(|source| (source.source, source.history_choice))
+                .collect(),
+            pending: None,
+            last_error: None,
+        })
+    });
+    match result {
+        Ok(archive) => bus.update(|state| {
+            let pending = state.archive.pending;
+            let last_error = state.archive.last_error.clone();
+            state.archive = ArchiveMenuState {
+                pending,
+                last_error,
+                ..archive
+            };
+        }),
+        Err(err) => set_archive_error(bus, format!("load archive enrollment: {err}")),
     }
 }
 
@@ -848,6 +1059,7 @@ mod archive_engine_tests {
         let mut settings = Settings {
             syncing: true,
             backfilled: false,
+            archive_request: None,
         };
         match (
             apply_authorized_cycle(&mut settings, &outcome),
@@ -1079,6 +1291,7 @@ mod archive_engine_tests {
         let mut settings = Settings {
             syncing: true,
             backfilled: false,
+            archive_request: None,
         };
         file.save(&settings).unwrap();
 
@@ -1169,6 +1382,7 @@ mod archive_engine_tests {
         let mut settings = Settings {
             syncing: true,
             backfilled: false,
+            archive_request: None,
         };
         file.save(&settings).unwrap();
 
@@ -1226,6 +1440,7 @@ mod archive_engine_tests {
         let mut blocked = Settings {
             syncing: true,
             backfilled: false,
+            archive_request: None,
         };
         let fatal = CycleOutcome {
             advanced: 0,
@@ -1243,5 +1458,72 @@ mod archive_engine_tests {
         }
         assert!(!blocked.backfilled);
         assert!(!fact_cycle_reached_ingest(&fatal));
+    }
+}
+
+#[cfg(test)]
+mod archive_request_tests {
+    use super::*;
+
+    fn pending_request() -> ArchiveRequest {
+        ArchiveRequest {
+            org_id: "org_1".to_string(),
+            collector_id: "collector_1".to_string(),
+            source: ArchiveSource::Claude,
+            history_choice: ArchiveHistoryChoice::AllHistory,
+            idempotency_key: "archive-enroll:original".to_string(),
+        }
+    }
+
+    #[test]
+    fn retry_reuses_the_request_only_for_the_same_saved_connection() {
+        let pending = pending_request();
+        let retry = archive_request_for_connection(
+            Some(&pending),
+            "org_1",
+            "collector_1",
+            ArchiveSource::Claude,
+            ArchiveHistoryChoice::AllHistory,
+            || panic!("same connection retry must not mint another key"),
+        )
+        .unwrap();
+        assert_eq!(retry, pending);
+
+        let replacement = archive_request_for_connection(
+            Some(&pending),
+            "org_1",
+            "collector_2",
+            ArchiveSource::Claude,
+            ArchiveHistoryChoice::AllHistory,
+            || Ok("archive-enroll:replacement".to_string()),
+        )
+        .unwrap();
+        assert_eq!(replacement.collector_id, "collector_2");
+        assert_eq!(replacement.idempotency_key, "archive-enroll:replacement");
+    }
+
+    #[test]
+    fn enrollment_success_preserves_pause_and_backfill_choices() {
+        for syncing in [false, true] {
+            let mut settings = Settings {
+                syncing,
+                backfilled: true,
+                archive_request: Some(pending_request()),
+            };
+            let run_immediately = apply_enrollment_success(&mut settings, true);
+            assert_eq!(run_immediately, syncing);
+            assert_eq!(settings.syncing, syncing);
+            assert!(settings.backfilled);
+            assert!(settings.archive_request.is_none());
+        }
+
+        let mut settings = Settings {
+            syncing: true,
+            backfilled: false,
+            archive_request: Some(pending_request()),
+        };
+        assert!(!apply_enrollment_success(&mut settings, false));
+        assert!(settings.syncing);
+        assert!(settings.archive_request.is_none());
     }
 }

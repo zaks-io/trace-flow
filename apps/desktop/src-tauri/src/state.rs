@@ -5,6 +5,7 @@
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use collector_embedder::{ArchiveHistoryChoice, ArchiveSource};
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
@@ -61,6 +62,15 @@ pub struct RecentError {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ArchiveMenuState {
+    pub enrolled: bool,
+    pub reason: Option<String>,
+    pub sources: Vec<(ArchiveSource, ArchiveHistoryChoice)>,
+    pub pending: Option<ArchiveSource>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum UpdateStatus {
     #[default]
@@ -80,6 +90,7 @@ pub struct AppState {
     pub connection: ConnectionState,
     pub sync: SyncStatus,
     pub sources: SourceCounts,
+    pub archive: ArchiveMenuState,
     pub autostart: bool,
     pub update: UpdateStatus,
     pub last_sync_at: Option<SystemTime>,

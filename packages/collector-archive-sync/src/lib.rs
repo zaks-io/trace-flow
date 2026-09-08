@@ -37,8 +37,9 @@ pub use history::{
 };
 pub use key_store::{ArchiveKeyStore, ArchiveSpoolKey, MemoryKeyStore, OsKeyStore};
 pub use policy::{
-    policy_from_denial_reason, ArchiveAuthorizedSource, ArchiveHistoryChoice, ArchivePolicy,
-    ArchivePolicyParseError, ArchivePolicyResponse, ConfirmedArchivePolicy,
+    policy_from_denial_reason, ArchiveAuthorizedSource, ArchiveEnrollmentRequest,
+    ArchiveHistoryChoice, ArchivePolicy, ArchivePolicyParseError, ArchivePolicyResponse,
+    ArchiveSourceChoice, ConfirmedArchivePolicy,
 };
 pub use scan::{
     archive_source_session_id, archive_source_session_id_from_records, parse_jsonl_records,

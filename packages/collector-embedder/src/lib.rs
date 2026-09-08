@@ -28,3 +28,7 @@ pub mod keychain;
 pub mod login;
 pub mod sources;
 pub mod sync;
+
+pub use collector_archive_sync::{
+    ArchiveEnrollmentRequest, ArchiveHistoryChoice, ArchiveSource, ArchiveSourceChoice,
+};
