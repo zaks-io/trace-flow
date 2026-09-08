@@ -178,6 +178,13 @@ async fn enroll_archive_source(
 ) {
     let snapshot = bus.snapshot();
     if archive_enrollment_is_blocked(&snapshot.archive, source) {
+        if snapshot.archive.pending == Some(source) {
+            bus.update(|state| {
+                if state.archive.pending == Some(source) {
+                    state.archive.pending = None;
+                }
+            });
+        }
         return;
     }
 
@@ -1720,6 +1727,7 @@ mod archive_engine_tests {
 #[cfg(test)]
 mod archive_request_tests {
     use super::*;
+    use tempfile::TempDir;
 
     fn pending_request() -> ArchiveRequest {
         ArchiveRequest {
@@ -1746,6 +1754,60 @@ mod archive_request_tests {
 
         state.sources = vec![(ArchiveSource::Claude, ArchiveHistoryChoice::AllHistory)];
         assert!(archive_enrollment_is_blocked(&state, ArchiveSource::Claude));
+    }
+
+    async fn assert_discarded_authorized_command_pending(
+        pending: ArchiveSource,
+        expected_pending: Option<ArchiveSource>,
+    ) {
+        let bus = AppStateBus::new();
+        bus.update(|state| {
+            state.archive.sources = vec![(ArchiveSource::Claude, ArchiveHistoryChoice::AllHistory)];
+            state.archive.pending = Some(pending);
+            state.archive.last_error = Some("keep this error".to_string());
+        });
+        let settings_dir = TempDir::new().unwrap();
+        let settings_file = SettingsFile::at(settings_dir.path());
+        let mut settings = Settings {
+            syncing: true,
+            backfilled: true,
+            archive_request: Some(pending_request()),
+        };
+        let expected_settings = settings.clone();
+
+        enroll_archive_source(
+            &bus,
+            &settings_file,
+            &mut settings,
+            None,
+            ArchiveSource::Claude,
+            ArchiveHistoryChoice::AllHistory,
+        )
+        .await;
+
+        let archive = bus.snapshot().archive;
+        assert_eq!(archive.pending, expected_pending);
+        assert_eq!(
+            archive.sources,
+            vec![(ArchiveSource::Claude, ArchiveHistoryChoice::AllHistory)]
+        );
+        assert_eq!(archive.last_error.as_deref(), Some("keep this error"));
+        assert_eq!(settings, expected_settings);
+        assert!(!settings_dir.path().join("settings.json").exists());
+    }
+
+    #[tokio::test]
+    async fn discarded_authorized_command_clears_its_matching_pending_marker() {
+        assert_discarded_authorized_command_pending(ArchiveSource::Claude, None).await;
+    }
+
+    #[tokio::test]
+    async fn discarded_command_preserves_another_sources_pending_marker() {
+        assert_discarded_authorized_command_pending(
+            ArchiveSource::Codex,
+            Some(ArchiveSource::Codex),
+        )
+        .await;
     }
 
     #[test]
