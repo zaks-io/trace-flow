@@ -1,7 +1,7 @@
 import { ArchiveContractError } from './archive-contract';
 
-export const MAX_ARCHIVE_UPLOAD_BYTES = 8 * 1024 * 1024;
-export const MAX_ARCHIVE_COMMIT_BYTES = 9 * 1024 * 1024;
+export const MAX_ARCHIVE_UPLOAD_BYTES = 16 * 1024 * 1024;
+export const MAX_ARCHIVE_COMMIT_BYTES = 17 * 1024 * 1024;
 
 export async function readBoundedJson(
   request: Request,

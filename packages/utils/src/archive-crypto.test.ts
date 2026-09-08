@@ -22,7 +22,7 @@ const TRAILING_MALFORMED_OBJECT_KEY = 'archive/chunk-\uD800';
 const TRAILING_REPLACEMENT_OBJECT_KEY = 'archive/chunk-\uFFFD';
 const PAIRED_SURROGATE_ORG_ID = 'org_\uD83D\uDE00';
 const PAIRED_SURROGATE_OBJECT_KEY = 'archive/chunk-\uD83D\uDE00';
-const MAX_ARCHIVE_CHUNK_BYTES = 1_572_864;
+const MAX_ARCHIVE_CHUNK_BYTES = 8_388_608;
 const PLAINTEXT = new TextEncoder().encode('{"records":[{"content":"private archive"}]}');
 
 type ArchiveMetadataPatch = Partial<

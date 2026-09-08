@@ -2,7 +2,8 @@ import { isArchiveCanonicalIdentifier } from '@trace-flow/types';
 
 export const ARCHIVE_FORMAT_VERSION = 1;
 export const CHAIN_HASH_VERSION = 1;
-export const MAX_CHUNK_BYTES = 1_572_864;
+export const ARCHIVE_CHUNK_TARGET_BYTES = (3 * 1024 * 1024) / 2;
+export const MAX_CHUNK_BYTES = 8 * 1024 * 1024;
 // This bounds one request's materialization. It is not a session lifetime cap.
 export const MAX_UPLOAD_OBSERVATIONS = 16_384;
 export const MAX_MANIFEST_BYTES = 8 * 1024 * 1024;
@@ -199,10 +200,12 @@ export function assertSafeInteger(value: unknown, errorClass: string): asserts v
 }
 
 export function decodeBase64Bytes(value: string): Uint8Array {
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)) {
+  let decoded: string;
+  try {
+    decoded = atob(value);
+  } catch {
     throw new ArchiveContractError('invalid_payload_encoding');
   }
-  const decoded = atob(value);
   const bytes = Uint8Array.from(decoded, (char) => char.charCodeAt(0));
   let binary = '';
   for (let offset = 0; offset < bytes.length; offset += 0x8000) {

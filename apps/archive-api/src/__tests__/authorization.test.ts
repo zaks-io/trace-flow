@@ -495,7 +495,7 @@ describe('Archive API authorization', () => {
       headers: collectorHeaders,
       body: JSON.stringify({
         source_session_id: 'session-1',
-        padding: 'x'.repeat(8 * 1024 * 1024),
+        padding: 'x'.repeat(16 * 1024 * 1024),
       }),
     });
     expect(res.status).toBe(413);
