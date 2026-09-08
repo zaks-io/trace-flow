@@ -25,15 +25,7 @@ pub async fn refresh_archive_policy(
     config.timeout = POLICY_TIMEOUT;
     let client = ArchiveClient::new(config).context("build archive policy client")?;
     let result = client.fetch_policy().await;
-    let received_policy = match result.as_ref() {
-        Ok(_) => true,
-        Err(error) => error
-            .denial_reason()
-            .and_then(policy_from_denial_reason)
-            .is_some(),
-    };
-    persist_policy_result_for_collector(paths, org_id, collector_id, result)?;
-    Ok(received_policy)
+    persist_policy_result_for_collector(paths, org_id, collector_id, result)
 }
 
 pub async fn enroll_archive_source(
@@ -84,7 +76,7 @@ fn persist_policy_result_for_collector(
     org_id: &str,
     collector_id: &str,
     result: std::result::Result<ArchivePolicyResponse, ArchiveClientError>,
-) -> Result<()> {
+) -> Result<bool> {
     let path = paths.archive_enrollment_file(org_id);
     let previous = ArchiveEnrollmentRecord::load_record(&path)
         .context("load prior archive enrollment policy")?;
@@ -100,7 +92,7 @@ fn persist_policy_result_for_collector(
             (confirmed, reason)
         }
         Err(error) => match error.denial_reason().and_then(policy_from_denial_reason) {
-            Some(_) if previous.collector_id.as_deref() != Some(collector_id) => return Ok(()),
+            Some(_) if previous.collector_id.as_deref() != Some(collector_id) => return Ok(false),
             Some(policy) => (
                 ConfirmedArchivePolicy {
                     policy,
@@ -112,7 +104,7 @@ fn persist_policy_result_for_collector(
                 && !previous.has_enrollment_footprint()
                 && !cleanup_obligation_exists(&paths.archive_spool_dir(org_id)) =>
             {
-                return Ok(())
+                return Ok(false)
             }
             None => return Err(anyhow!("archive policy refresh failed: {}", error.class())),
         },
@@ -124,7 +116,8 @@ fn persist_policy_result_for_collector(
     record.reason = reason;
     record
         .save_record(&path)
-        .context("save archive enrollment policy")
+        .context("save archive enrollment policy")?;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -132,7 +125,7 @@ fn persist_policy_result(
     paths: &Paths,
     org_id: &str,
     result: std::result::Result<ArchivePolicyResponse, ArchiveClientError>,
-) -> Result<()> {
+) -> Result<bool> {
     persist_policy_result_for_collector(paths, org_id, "collector_test", result)
 }
 
@@ -308,6 +301,93 @@ mod tests {
                 .reason
                 .as_deref(),
             Some("not_activated")
+        );
+    }
+
+    async fn assert_terminal_refresh_does_not_apply_to_another_collector(
+        stored_collector_id: Option<&str>,
+    ) {
+        let archive_url = serve_policy_response(
+            "401 Unauthorized",
+            r#"{"error":"unauthorized","reason":"expired"}"#,
+        )
+        .await;
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        let path = paths.archive_enrollment_file("org_1");
+        ArchiveEnrollmentRecord {
+            status: ArchivePolicy::Enrolled.as_str().to_string(),
+            collector_id: stored_collector_id.map(str::to_string),
+            authorized_sources: vec![ArchiveAuthorizedSource {
+                source: ArchiveSource::Claude,
+                history_choice: ArchiveHistoryChoice::AllHistory,
+                authorized_at: 1_770_000_000_002,
+            }],
+            reason: None,
+        }
+        .save_record(&path)
+        .unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        assert!(!refresh_archive_policy(
+            &paths,
+            "org_1",
+            "collector_current",
+            archive_url,
+            "tfc_test_secret",
+        )
+        .await
+        .unwrap());
+        assert_eq!(std::fs::read(path).unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn terminal_refresh_does_not_report_recovery_for_unbound_or_other_collector_policy() {
+        assert_terminal_refresh_does_not_apply_to_another_collector(None).await;
+        assert_terminal_refresh_does_not_apply_to_another_collector(Some("collector_other")).await;
+    }
+
+    #[tokio::test]
+    async fn terminal_refresh_applies_and_reports_recovery_for_matching_collector_policy() {
+        let archive_url = serve_policy_response(
+            "401 Unauthorized",
+            r#"{"error":"unauthorized","reason":"expired"}"#,
+        )
+        .await;
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        let path = paths.archive_enrollment_file("org_1");
+        ArchiveEnrollmentRecord {
+            status: ArchivePolicy::Enrolled.as_str().to_string(),
+            collector_id: Some("collector_current".to_string()),
+            authorized_sources: vec![ArchiveAuthorizedSource {
+                source: ArchiveSource::Claude,
+                history_choice: ArchiveHistoryChoice::AllHistory,
+                authorized_at: 1_770_000_000_002,
+            }],
+            reason: None,
+        }
+        .save_record(&path)
+        .unwrap();
+
+        assert!(refresh_archive_policy(
+            &paths,
+            "org_1",
+            "collector_current",
+            archive_url,
+            "tfc_test_secret",
+        )
+        .await
+        .unwrap());
+        let record = ArchiveEnrollmentRecord::load_record(&path).unwrap();
+        assert_eq!(record.policy().unwrap(), ArchivePolicy::Frozen);
+        assert_eq!(record.collector_id.as_deref(), Some("collector_current"));
+        assert_eq!(record.authorized_sources.len(), 1);
+        assert_eq!(
+            record.authorized_sources[0].authorized_at,
+            1_770_000_000_002
         );
     }
 
