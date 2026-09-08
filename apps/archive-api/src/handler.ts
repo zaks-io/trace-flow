@@ -23,9 +23,12 @@ import { MAX_ARCHIVE_UPLOAD_BYTES, readBoundedJson } from './archive-request';
 import { statusFor } from './archive-ledger-support';
 import { appendArchiveAuditEvent } from './audit';
 import { publishArchiveIntegrityStatus } from './archive-integrity-status';
+import { isRetryableDurableObjectError } from './durable-object-errors';
 
 const COLLECTOR_SECRET_HEADER = 'X-Trace-Flow-Collector-Secret';
 const ARCHIVE_SOURCE_HEADER = 'X-Trace-Flow-Archive-Source';
+const LEDGER_COMMIT_MAX_ATTEMPTS = 3;
+const LEDGER_COMMIT_RETRY_BASE_MS = 100;
 
 interface LedgerIntegrityResponse {
   error: 'integrity_error';
@@ -274,25 +277,50 @@ export async function handleUpload(c: Context<{ Bindings: ArchiveApiEnv }>): Pro
         sourceSessionId,
       ]),
     );
-    const ledgerResponse = await c.env.ARCHIVE_SESSION_LEDGER.get(ledgerId).fetch(
-      'https://archive-session-ledger/commit',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          scope: {
-            orgId: currentDecision.orgId,
-            userId: currentDecision.userId,
-            contributionId: currentDecision.contributionId,
-            source,
-            sourceSessionId,
-          },
-          upload,
-          keyVersion: wrappedKey.keyVersion,
-          wrappedKey: wrappedKey.wrappedKey,
-        }),
+    const ledgerRequestBody = JSON.stringify({
+      scope: {
+        orgId: currentDecision.orgId,
+        userId: currentDecision.userId,
+        contributionId: currentDecision.contributionId,
+        source,
+        sourceSessionId,
       },
-    );
+      upload,
+      keyVersion: wrappedKey.keyVersion,
+      wrappedKey: wrappedKey.wrappedKey,
+    });
+    let ledgerResponse: Response | undefined;
+    for (let attempt = 0; attempt < LEDGER_COMMIT_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        ledgerResponse = await c.env.ARCHIVE_SESSION_LEDGER.get(ledgerId).fetch(
+          'https://archive-session-ledger/commit',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: ledgerRequestBody,
+          },
+        );
+        break;
+      } catch (error) {
+        if (!isRetryableDurableObjectError(error)) throw error;
+        if (attempt === LEDGER_COMMIT_MAX_ATTEMPTS - 1) {
+          logger.warn('archive_api.upload_rejected', {
+            reason: 'archive_commit_failed',
+            source,
+          });
+          return new Response(
+            JSON.stringify({ error: 'upload_rejected', reason: 'archive_commit_failed' }),
+            {
+              status: 503,
+              headers: { 'Content-Type': 'application/json' },
+            },
+          );
+        }
+        const backoffMs = LEDGER_COMMIT_RETRY_BASE_MS * Math.random() * 2 ** attempt;
+        await scheduler.wait(backoffMs);
+      }
+    }
+    if (!ledgerResponse) throw new Error('archive ledger retry loop exited without a response');
     const responseBody = await ledgerResponse.text();
     if (!ledgerResponse.ok) {
       let parsedBody: unknown;
