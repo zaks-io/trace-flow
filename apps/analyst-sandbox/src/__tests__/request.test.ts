@@ -258,6 +258,14 @@ describe('analyst sandbox request boundary', () => {
         plugins: [{ id: 'web' }],
         modalities: ['text', 'audio'],
         audio: { voice: 'alloy' },
+        web_search_options: { search_context_size: 'high' },
+        provider: { order: ['expensive-provider'] },
+        reasoning: { max_tokens: 100_000 },
+        transforms: ['middle-out'],
+        n: 10,
+        extra_body: { paid_feature: true },
+        stream: true,
+        tools: [{ type: 'function', function: { name: 'query_usage' } }],
       },
       4_096,
     );
@@ -273,11 +281,23 @@ describe('analyst sandbox request boundary', () => {
       max_tokens: 4_096,
       session_id: validRunPayload.runId,
       usage: { include: true },
+      stream: true,
+      tools: [{ type: 'function', function: { name: 'query_usage' } }],
     });
-    expect(secured).not.toHaveProperty('models');
-    expect(secured).not.toHaveProperty('plugins');
-    expect(secured).not.toHaveProperty('modalities');
-    expect(secured).not.toHaveProperty('audio');
+    for (const field of [
+      'models',
+      'plugins',
+      'modalities',
+      'audio',
+      'web_search_options',
+      'provider',
+      'reasoning',
+      'transforms',
+      'n',
+      'extra_body',
+    ]) {
+      expect(secured).not.toHaveProperty(field);
+    }
   });
 
   it('rejects malformed OpenRouter chat payloads and output limits', () => {

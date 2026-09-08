@@ -129,18 +129,35 @@ export function secureOpenRouterChatCompletionsPayload(
   runId: string,
   model: string,
 ): string {
-  const payload = { ...request.payload };
-  payload.model = model;
-  payload.max_tokens = request.requestedOutputTokens;
-  delete payload.max_completion_tokens;
-  delete payload.models;
-  delete payload.plugins;
-  delete payload.transforms;
-  delete payload.modalities;
-  delete payload.audio;
-  payload.session_id = runId;
-  payload.usage = { include: true };
-  return JSON.stringify(payload);
+  const payload: Record<string, unknown> = {};
+  const safeFields = [
+    'messages',
+    'tools',
+    'tool_choice',
+    'parallel_tool_calls',
+    'stream',
+    'stream_options',
+    'temperature',
+    'top_p',
+    'stop',
+    'frequency_penalty',
+    'presence_penalty',
+    'seed',
+    'response_format',
+    'logprobs',
+    'top_logprobs',
+  ] as const;
+  for (const field of safeFields) {
+    if (request.payload[field] !== undefined) payload[field] = request.payload[field];
+  }
+
+  return JSON.stringify({
+    ...payload,
+    model,
+    max_tokens: request.requestedOutputTokens,
+    session_id: runId,
+    usage: { include: true },
+  });
 }
 
 function parseObjectArguments(value: unknown): ParseResult<Record<string, unknown>> {
