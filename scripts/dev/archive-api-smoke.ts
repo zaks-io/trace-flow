@@ -443,13 +443,23 @@ async function main(): Promise<void> {
 
     await waitForCredentialPolicy(archiveUrl, minted.secret);
     assert.equal(
-      await runConvex(deployment, 'archiveKeysInternal:getActiveVersion', {
-        orgId: primary.orgId,
-      }),
+      await runConvex<null>(
+        deployment,
+        'archiveKeysInternal:getActiveVersion',
+        { orgId: primary.orgId },
+        undefined,
+        true,
+      ),
       null,
     );
     assert.equal(
-      await runConvex(deployment, 'archiveKeysInternal:getCustody', { orgId: primary.orgId }),
+      await runConvex<null>(
+        deployment,
+        'archiveKeysInternal:getCustody',
+        { orgId: primary.orgId },
+        undefined,
+        true,
+      ),
       null,
     );
 
