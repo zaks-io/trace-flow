@@ -8,6 +8,7 @@ import * as Sentry from '@sentry/cloudflare';
 import { Hono } from 'hono';
 import type { ArchiveApiEnv } from './context';
 import { createArchiveApiSentryOptions } from './sentry';
+import { handleCollectorEnrollment } from './collector-enrollment-handler';
 import { handleCollectorPolicy } from './collector-policy-handler';
 import {
   handleDeleteArchive,
@@ -26,6 +27,7 @@ export const app = new Hono<{ Bindings: ArchiveApiEnv }>();
 app.get('/healthz', handleHealthz);
 
 app.get('/v1/archive/policy', handleCollectorPolicy);
+app.post('/v1/archive/enrollments', handleCollectorEnrollment);
 app.post('/v1/archive/uploads', handleUpload);
 
 app.get('/v1/archive/exports', handleExport);

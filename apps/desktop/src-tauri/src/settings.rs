@@ -15,19 +15,32 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use collector_embedder::{ArchiveHistoryChoice, ArchiveSource};
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 
 const FILE_NAME: &str = "settings.json";
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     /// Whether the user has authorized egress and not since paused.
     pub syncing: bool,
     /// Whether the one-time first-run history backfill has reached ingest.
     pub backfilled: bool,
+    /// Durable enrollment intent. The credential stays in the keychain.
+    pub archive_request: Option<ArchiveRequest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ArchiveRequest {
+    pub org_id: String,
+    pub collector_id: String,
+    pub source: ArchiveSource,
+    pub history_choice: ArchiveHistoryChoice,
+    pub idempotency_key: String,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +94,13 @@ mod tests {
         let settings = Settings {
             syncing: true,
             backfilled: true,
+            archive_request: Some(ArchiveRequest {
+                org_id: "org_1".to_string(),
+                collector_id: "collector_1".to_string(),
+                source: ArchiveSource::Claude,
+                history_choice: ArchiveHistoryChoice::AllHistory,
+                idempotency_key: "archive-enroll:request-1".to_string(),
+            }),
         };
         file.save(&settings).unwrap();
         assert_eq!(file.load().unwrap(), settings);
@@ -95,6 +115,7 @@ mod tests {
         let settings = file.load().unwrap();
         assert!(settings.syncing);
         assert!(!settings.backfilled);
+        assert!(settings.archive_request.is_none());
     }
 
     #[test]

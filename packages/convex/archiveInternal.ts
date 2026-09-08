@@ -8,6 +8,7 @@ import { v } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import {
   archiveLifecycleValidator,
+  archiveSourceAuthorizationInputValidator,
   archiveSessionIntegrityValidator,
   archiveSupportedSourceValidator,
   archiveWriteDenialReasonValidator,
@@ -37,6 +38,12 @@ import {
   syncArchiveLifecycleForEntitlement,
   type ArchiveSupportedSource,
   type ArchiveWriteDenialReason,
+} from './archiveLib';
+import { activateArchiveCore, addSourceCore, enrollCollectorCore } from './archiveEnrollmentCore';
+import {
+  repairEnrollmentSlots,
+  validateAuthorizedSources,
+  validateEnrollmentIdempotencyKey,
 } from './archiveLib';
 
 const archiveWriteAuthorizationResultValidator = v.union(
@@ -80,6 +87,147 @@ const archiveWriteAuthorizationWithTenancyValidator = v.union(
     reason: archiveWriteDenialReasonValidator,
   }),
 );
+
+const collectorEnrollmentResultValidator = v.union(
+  v.object({
+    enrolled: v.literal(true),
+    authorizedSources: v.array(
+      v.object({
+        source: archiveSupportedSourceValidator,
+        historyChoice: v.union(v.literal('new_only'), v.literal('all_history')),
+        authorizedAt: v.number(),
+      }),
+    ),
+    reason: v.null(),
+    orgId: v.id('organizations'),
+    userId: v.id('users'),
+    collectorId: v.string(),
+    collectorCredentialId: v.id('collectorCredentials'),
+  }),
+  v.object({
+    enrolled: v.literal(false),
+    authorizedSources: v.array(
+      v.object({
+        source: archiveSupportedSourceValidator,
+        historyChoice: v.union(v.literal('new_only'), v.literal('all_history')),
+        authorizedAt: v.number(),
+      }),
+    ),
+    reason: archiveWriteDenialReasonValidator,
+  }),
+);
+
+function enrollmentDenied(reason: ArchiveWriteDenialReason) {
+  return { enrolled: false as const, authorizedSources: [], reason };
+}
+
+export const enrollCollectorByHashedSecret = internalMutation({
+  args: {
+    hashedSecret: v.string(),
+    authorizedSources: v.array(archiveSourceAuthorizationInputValidator),
+    idempotencyKey: v.string(),
+    orgId: v.id('organizations'),
+    userId: v.id('users'),
+    collectorId: v.string(),
+    now: v.number(),
+  },
+  returns: collectorEnrollmentResultValidator,
+  handler: async (ctx, args) => {
+    const credential = await ctx.db
+      .query('collectorCredentials')
+      .withIndex('by_hashed_secret', (q) => q.eq('hashedSecret', args.hashedSecret))
+      .unique();
+    if (
+      credential?.orgId !== args.orgId ||
+      credential.userId !== args.userId ||
+      credential.collectorId !== args.collectorId
+    ) {
+      return enrollmentDenied('not_enrolled');
+    }
+    if (isCollectorCredentialExpired(credential, args.now) || credential.status !== 'active') {
+      return enrollmentDenied('credential_revoked');
+    }
+
+    const user = await ctx.db.get(credential.userId);
+    if (!user?.enabled || user.orgId !== credential.orgId) return enrollmentDenied('not_enrolled');
+    const membership = await ctx.db
+      .query('organizationMembers')
+      .withIndex('by_user_id', (q) => q.eq('userId', credential.userId))
+      .filter((q) => q.eq(q.field('orgId'), credential.orgId))
+      .first();
+    if (membership?.status !== 'active') return enrollmentDenied('not_enrolled');
+
+    if (!isArchiveServerEnabled()) return enrollmentDenied('server_disabled');
+    const org = await ctx.db.get(credential.orgId);
+    if (!org || org.deletedAt !== undefined || org.deletionStartedAt !== undefined) {
+      return enrollmentDenied('deleting');
+    }
+    let activation = await getArchiveActivation(ctx, credential.orgId);
+    if (activation?.status === 'deleting') return enrollmentDenied('deleting');
+    if (activation?.status === 'frozen') return enrollmentDenied('frozen');
+    const subscription = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_org_id', (q) => q.eq('orgId', credential.orgId))
+      .first();
+    if (!isActiveProSubscription(subscription)) return enrollmentDenied('not_pro');
+
+    if (!activation) {
+      const ownsOrganization = org.ownerId === credential.userId && membership.role === 'owner';
+      if (!ownsOrganization) return enrollmentDenied('not_activated');
+      await activateArchiveCore(ctx, {
+        orgId: credential.orgId,
+        actorUserId: credential.userId,
+        now: args.now,
+      });
+      activation = await getArchiveActivation(ctx, credential.orgId);
+      if (!activation) throw new Error('Conversation Archive activation failed');
+    }
+
+    const sources = validateAuthorizedSources(args.authorizedSources);
+    validateEnrollmentIdempotencyKey(args.idempotencyKey);
+    const slot = await repairEnrollmentSlots(ctx, credential.orgId, credential._id);
+    let enrollment = slot ? await ctx.db.get(slot.currentEnrollmentId) : null;
+    if (enrollment?.status === 'active') {
+      for (const source of sources) {
+        const existing = enrollment.authorizedSources.find((row) => row.source === source.source);
+        if (
+          existing?.historyChoice !== undefined &&
+          existing.historyChoice !== source.historyChoice
+        ) {
+          throw new Error('consent_conflict');
+        }
+        enrollment = await addSourceCore(ctx, {
+          enrollment,
+          source: source.source,
+          historyChoice: source.historyChoice,
+          now: args.now,
+        });
+      }
+    } else {
+      const result = await enrollCollectorCore(ctx, {
+        orgId: credential.orgId,
+        userId: credential.userId,
+        credential,
+        sources,
+        idempotencyKey: args.idempotencyKey,
+        now: args.now,
+      });
+      enrollment = await ctx.db.get(result.enrollmentId);
+    }
+    if (enrollment?.status !== 'active') {
+      return enrollmentDenied('enrollment_invalid');
+    }
+    return {
+      enrolled: true as const,
+      authorizedSources: enrollment.authorizedSources,
+      reason: null,
+      orgId: credential.orgId,
+      userId: credential.userId,
+      collectorId: credential.collectorId,
+      collectorCredentialId: credential._id,
+    };
+  },
+});
 
 async function authorizeArchiveWriteForCredential(
   ctx: QueryCtx,

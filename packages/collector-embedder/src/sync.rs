@@ -1094,7 +1094,9 @@ mod tests {
         let enrollment_path = state.path().join("archive-enrollment-org_1.json");
         let original = ArchiveEnrollmentRecord {
             status: ArchivePolicy::Enrolled.as_str().to_string(),
+            collector_id: None,
             authorized_sources: vec![authorization(ArchiveSource::Claude)],
+            reason: None,
         };
         original.save_record(&enrollment_path).unwrap();
         let archive = ArchiveRunConfig {
@@ -1438,7 +1440,9 @@ mod tests {
         let spool_dir = paths.archive_spool_dir("org_1");
         ArchiveEnrollmentRecord {
             status: ArchivePolicy::Enrolled.as_str().to_string(),
+            collector_id: None,
             authorized_sources: vec![authorization(ArchiveSource::Claude)],
+            reason: None,
         }
         .save_record(&enroll)
         .unwrap();

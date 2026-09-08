@@ -1,23 +1,12 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { type Preloaded, useMutation, usePreloadedQuery } from 'convex/react';
 import { api } from '@trace-flow/convex/_generated/api';
-import type { Id } from '@trace-flow/convex/_generated/dataModel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  ARCHIVE_SOURCES,
-  buildAuthorizedSources,
-  defaultArchiveConsentDraft,
-  enrollmentAttemptFor,
-  isCollectorActivelyEnrolled,
-  selectedSourceMissingHistoryChoice,
-  type ArchiveConsentDraft,
-  type ArchiveSource,
-  type EnrollmentAttempt,
-} from './archiveSetupModel';
+import type { ArchiveHistoryChoice, ArchiveSource } from './archiveSetupModel';
 
 interface ArchiveSetupProps {
   preloadedStatus: Preloaded<typeof api.archive.getStatus>;
@@ -30,25 +19,8 @@ export function ArchiveSetup({ preloadedStatus, preloadedCollectors }: ArchiveSe
   const status = usePreloadedQuery(preloadedStatus);
   const collectors = usePreloadedQuery(preloadedCollectors);
   const activate = useMutation(api.archive.activate);
-  const enroll = useMutation(api.archive.enroll);
-  const [drafts, setDrafts] = useState<Record<string, ArchiveConsentDraft>>({});
-  const attempts = useRef(new Map<string, EnrollmentAttempt>());
-  const [submitting, setSubmitting] = useState<string | null>(null);
   const [activating, setActivating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const draftFor = (id: string) => drafts[id] ?? defaultArchiveConsentDraft();
-
-  const updateDraft = (
-    id: string,
-    update: (current: ArchiveConsentDraft) => ArchiveConsentDraft,
-  ) => {
-    setDrafts((current) => ({
-      ...current,
-      [id]: update(current[id] ?? defaultArchiveConsentDraft()),
-    }));
-    setError(null);
-  };
 
   const handleActivate = async () => {
     setActivating(true);
@@ -62,42 +34,9 @@ export function ArchiveSetup({ preloadedStatus, preloadedCollectors }: ArchiveSe
     }
   };
 
-  const handleEnroll = async (collectorCredentialId: Id<'collectorCredentials'>) => {
-    const key = String(collectorCredentialId);
-    const draft = draftFor(key);
-    const missingHistoryChoice = selectedSourceMissingHistoryChoice(draft);
-    if (missingHistoryChoice) {
-      setError(`Choose conversation history for ${SOURCE_LABELS[missingHistoryChoice]}`);
-      return;
-    }
-    const authorizedSources = buildAuthorizedSources(draft);
-    if (authorizedSources.length === 0) {
-      setError('Select at least one source');
-      return;
-    }
-
-    const attempt = enrollmentAttemptFor(
-      collectorCredentialId,
-      authorizedSources,
-      attempts.current.get(key) ?? null,
-      () => crypto.randomUUID(),
-    );
-    attempts.current.set(key, attempt);
-    setSubmitting(key);
-    setError(null);
-    try {
-      await enroll({
-        collectorCredentialId,
-        authorizedSources,
-        idempotencyKey: attempt.idempotencyKey,
-      });
-      attempts.current.delete(key);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Collector enrollment failed');
-    } finally {
-      setSubmitting(null);
-    }
-  };
+  const activeCollectors = status.contributions.flatMap((contribution) =>
+    contribution.collectors.filter((collector) => collector.status === 'active'),
+  );
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
@@ -123,7 +62,7 @@ export function ArchiveSetup({ preloadedStatus, preloadedCollectors }: ArchiveSe
             </Badge>
           </div>
           <CardDescription>
-            Setup uses your website session. Desktop keeps using its existing Collector Credential.
+            Choose Sources and conversation history from the Archive menu in Trace Flow Desktop.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -133,89 +72,36 @@ export function ArchiveSetup({ preloadedStatus, preloadedCollectors }: ArchiveSe
             </Button>
           )}
 
-          {collectors.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Connect Trace Flow Desktop first, then reload this page.
-            </p>
+          {activeCollectors.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No Desktop collector is enrolled yet.</p>
           ) : (
-            collectors.map((collector) => {
-              const key = String(collector._id);
-              const enrolled = isCollectorActivelyEnrolled(status.contributions, collector._id);
-              const draft = draftFor(key);
+            activeCollectors.map((collector) => {
+              const credential = collectors.find(
+                (candidate) => candidate._id === collector.collectorCredentialId,
+              );
 
               return (
-                <section key={key} className="space-y-4 border-t pt-5 first:border-t-0 first:pt-0">
+                <section
+                  key={collector.enrollmentId}
+                  className="space-y-3 border-t pt-5 first:border-t-0 first:pt-0"
+                >
                   <div className="flex items-center justify-between gap-4">
                     <div>
-                      <p className="font-medium">{collector.name || 'Trace Flow Desktop'}</p>
-                      {collector.platform && (
-                        <p className="text-sm text-muted-foreground">{collector.platform}</p>
+                      <p className="font-medium">{credential?.name || 'Trace Flow Desktop'}</p>
+                      {credential?.platform && (
+                        <p className="text-sm text-muted-foreground">{credential.platform}</p>
                       )}
                     </div>
-                    {enrolled && <Badge>Enrolled</Badge>}
+                    <Badge>Enrolled</Badge>
                   </div>
-
-                  {!enrolled && status.lifecycle === 'active' && (
-                    <form
-                      className="space-y-5"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        void handleEnroll(collector._id);
-                      }}
-                    >
-                      {ARCHIVE_SOURCES.map((source) => (
-                        <fieldset key={source} className="space-y-3 rounded-lg border p-4">
-                          <label className="flex items-center gap-2 font-medium">
-                            <input
-                              type="checkbox"
-                              checked={draft.selected[source]}
-                              onChange={(event) =>
-                                updateDraft(key, (current) => ({
-                                  ...current,
-                                  selected: { ...current.selected, [source]: event.target.checked },
-                                }))
-                              }
-                            />
-                            {SOURCE_LABELS[source]}
-                          </label>
-
-                          {draft.selected[source] && (
-                            <div className="space-y-2 pl-6">
-                              {(
-                                [
-                                  ['all_history', 'Existing and new conversations'],
-                                  ['new_only', 'New conversations'],
-                                ] as const
-                              ).map(([choice, label]) => (
-                                <label key={choice} className="flex items-center gap-2 text-sm">
-                                  <input
-                                    type="radio"
-                                    name={`${key}-${source}-history`}
-                                    value={choice}
-                                    checked={draft.historyChoices[source] === choice}
-                                    onChange={() =>
-                                      updateDraft(key, (current) => ({
-                                        ...current,
-                                        historyChoices: {
-                                          ...current.historyChoices,
-                                          [source]: choice,
-                                        },
-                                      }))
-                                    }
-                                  />
-                                  {label}
-                                </label>
-                              ))}
-                            </div>
-                          )}
-                        </fieldset>
-                      ))}
-
-                      <Button type="submit" disabled={submitting === key}>
-                        {submitting === key ? 'Enrolling...' : 'Confirm and enroll'}
-                      </Button>
-                    </form>
-                  )}
+                  <div className="flex flex-wrap gap-2">
+                    {collector.authorizedSources.map((authorized) => (
+                      <Badge key={authorized.source} variant="secondary">
+                        {SOURCE_LABELS[authorized.source]} ·{' '}
+                        {historyChoiceLabel(authorized.historyChoice)}
+                      </Badge>
+                    ))}
+                  </div>
                 </section>
               );
             })
@@ -224,4 +110,8 @@ export function ArchiveSetup({ preloadedStatus, preloadedCollectors }: ArchiveSe
       </Card>
     </div>
   );
+}
+
+function historyChoiceLabel(choice: ArchiveHistoryChoice): string {
+  return choice === 'all_history' ? 'Existing and new conversations' : 'New conversations';
 }

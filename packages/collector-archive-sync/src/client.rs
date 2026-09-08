@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::ack::ArchiveAcknowledgement;
 use crate::error::ArchiveClientError;
-use crate::policy::ArchivePolicyResponse;
+use crate::policy::{ArchiveEnrollmentRequest, ArchivePolicyResponse};
 
 const COLLECTOR_SECRET_HEADER: &str = "X-Trace-Flow-Collector-Secret";
 const ARCHIVE_SOURCE_HEADER: &str = "X-Trace-Flow-Archive-Source";
@@ -77,6 +77,30 @@ impl ArchiveClient {
             .await
             .map_err(|_| ArchiveClientError::InvalidPolicy)?;
         classify_policy_response(status, &body)
+    }
+
+    pub async fn enroll(
+        &self,
+        request: &ArchiveEnrollmentRequest,
+    ) -> Result<ArchivePolicyResponse, ArchiveClientError> {
+        let url = format!(
+            "{}/v1/archive/enrollments",
+            self.config.archive_url.trim_end_matches('/')
+        );
+        let response = self
+            .client
+            .post(&url)
+            .header(COLLECTOR_SECRET_HEADER, self.config.credential.as_str())
+            .json(request)
+            .send()
+            .await
+            .map_err(|err| ArchiveClientError::Transport(anyhow!("http send failed: {err}")))?;
+        let status = response.status().as_u16();
+        let body = response
+            .text()
+            .await
+            .map_err(|_| ArchiveClientError::InvalidPolicy)?;
+        classify_enrollment_response(status, &body)
     }
 }
 
@@ -199,6 +223,17 @@ fn classify_policy_response(
     }
 }
 
+fn classify_enrollment_response(
+    status: u16,
+    body: &str,
+) -> Result<ArchivePolicyResponse, ArchiveClientError> {
+    match status {
+        400 => Err(ArchiveClientError::InvalidEnrollmentRequest),
+        409 => Err(ArchiveClientError::ConsentConflict),
+        _ => classify_policy_response(status, body),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,6 +280,18 @@ mod tests {
         assert!(matches!(
             classify_policy_response(200, r#"{"enrolled":true}"#),
             Err(ArchiveClientError::InvalidPolicy)
+        ));
+    }
+
+    #[test]
+    fn enrollment_errors_have_distinct_request_and_consent_classes() {
+        assert!(matches!(
+            classify_enrollment_response(400, r#"{"error":"invalid_request"}"#),
+            Err(ArchiveClientError::InvalidEnrollmentRequest)
+        ));
+        assert!(matches!(
+            classify_enrollment_response(409, r#"{"error":"consent_conflict"}"#),
+            Err(ArchiveClientError::ConsentConflict)
         ));
     }
 }

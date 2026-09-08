@@ -5239,6 +5239,7 @@ dependencies = [
  "anyhow",
  "collector-contracts",
  "collector-embedder",
+ "getrandom 0.4.2",
  "parking_lot",
  "serde",
  "serde_json",

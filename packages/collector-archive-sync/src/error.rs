@@ -60,6 +60,10 @@ pub enum ArchiveClientError {
     Forbidden { reason: String },
     #[error("invalid archive upload")]
     InvalidUpload,
+    #[error("archive enrollment request is invalid")]
+    InvalidEnrollmentRequest,
+    #[error("archive history choice conflicts with existing consent")]
+    ConsentConflict,
     #[error("archive upload too large")]
     UploadTooLarge,
     #[error("archive upload rejected")]
@@ -80,6 +84,8 @@ impl ArchiveClientError {
             Self::Unauthorized { .. } => "unauthorized",
             Self::Forbidden { .. } => "forbidden",
             Self::InvalidUpload => "invalid_upload",
+            Self::InvalidEnrollmentRequest => "invalid_request",
+            Self::ConsentConflict => "consent_conflict",
             Self::UploadTooLarge => "upload_too_large",
             Self::UploadRejected { .. } => "upload_rejected",
             Self::Unavailable { .. } => "archive_unavailable",
