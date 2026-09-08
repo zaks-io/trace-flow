@@ -132,13 +132,24 @@ fn connect_then<R: Runtime>(app: &AppHandle<R>, cmd: EngineCommand) {
         let connector: tauri::State<'_, Connector> = app.state();
         if let Err(err) = connector.ensure_connected(&bus).await {
             tracing::error!(error = %err, "tray connect failed");
+            report_archive_dispatch_failure(&bus, &cmd, "connection was not completed");
             return;
         }
         let handle: tauri::State<'_, EngineHandle> = app.state();
-        if !handle.send(cmd) {
+        if !handle.send(cmd.clone()) {
             tracing::warn!("engine gone; ignoring tray command");
+            report_archive_dispatch_failure(&bus, &cmd, "capture control is unavailable");
         }
     });
+}
+
+fn report_archive_dispatch_failure(bus: &AppStateBus, cmd: &EngineCommand, message: &str) {
+    if matches!(cmd, EngineCommand::EnrollArchiveSource { .. }) {
+        bus.update(|state| {
+            state.archive.pending = None;
+            state.archive.last_error = Some(message.to_string());
+        });
+    }
 }
 
 fn show_window<R: Runtime>(app: &AppHandle<R>) {
@@ -248,5 +259,26 @@ mod tests {
         let mut enrolled = state;
         enrolled.archive.sources = vec![(ArchiveSource::Claude, ArchiveHistoryChoice::AllHistory)];
         assert!(archive_enrollment_command(&enrolled, "archive_enroll:claude:new_only").is_none());
+    }
+
+    #[test]
+    fn failed_archive_dispatch_publishes_repaint_state() {
+        let bus = AppStateBus::new();
+        let updates = bus.subscribe();
+        let command = EngineCommand::EnrollArchiveSource {
+            source: ArchiveSource::Claude,
+            history_choice: ArchiveHistoryChoice::AllHistory,
+        };
+
+        report_archive_dispatch_failure(&bus, &command, "connection was not completed");
+
+        assert!(updates.has_changed().unwrap());
+        let archive = bus.snapshot().archive;
+        assert_eq!(archive.pending, None);
+        assert_eq!(
+            archive.last_error.as_deref(),
+            Some("connection was not completed")
+        );
+        assert!(archive.sources.is_empty());
     }
 }

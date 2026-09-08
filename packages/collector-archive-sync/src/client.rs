@@ -100,7 +100,7 @@ impl ArchiveClient {
             .text()
             .await
             .map_err(|_| ArchiveClientError::InvalidPolicy)?;
-        classify_policy_response(status, &body)
+        classify_enrollment_response(status, &body)
     }
 }
 
@@ -223,6 +223,17 @@ fn classify_policy_response(
     }
 }
 
+fn classify_enrollment_response(
+    status: u16,
+    body: &str,
+) -> Result<ArchivePolicyResponse, ArchiveClientError> {
+    match status {
+        400 => Err(ArchiveClientError::InvalidEnrollmentRequest),
+        409 => Err(ArchiveClientError::ConsentConflict),
+        _ => classify_policy_response(status, body),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,6 +280,18 @@ mod tests {
         assert!(matches!(
             classify_policy_response(200, r#"{"enrolled":true}"#),
             Err(ArchiveClientError::InvalidPolicy)
+        ));
+    }
+
+    #[test]
+    fn enrollment_errors_have_distinct_request_and_consent_classes() {
+        assert!(matches!(
+            classify_enrollment_response(400, r#"{"error":"invalid_request"}"#),
+            Err(ArchiveClientError::InvalidEnrollmentRequest)
+        ));
+        assert!(matches!(
+            classify_enrollment_response(409, r#"{"error":"consent_conflict"}"#),
+            Err(ArchiveClientError::ConsentConflict)
         ));
     }
 }

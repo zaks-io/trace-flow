@@ -259,11 +259,12 @@ async fn enroll_archive_source(
             let run_immediately = apply_enrollment_success(settings, enrolled);
             persist(settings_file, settings);
             refresh_archive(bus);
+            clear_archive_error(bus);
             if run_immediately {
                 run_authorized_cycle(bus, settings).await;
             }
         }
-        Ok(Err(err)) => set_archive_error(bus, err.to_string()),
+        Ok(Err(err)) => set_archive_command_error(bus, err),
         Err(err) => set_archive_error(bus, format!("archive enrollment task crashed: {err}")),
     }
     bus.update(|state| state.archive.pending = None);
@@ -311,10 +312,23 @@ fn new_archive_idempotency_key() -> Result<String, String> {
 
 fn set_archive_error(bus: &AppStateBus, error: String) {
     tracing::warn!(error = %error, "archive enrollment failed");
+    publish_archive_error(bus, error);
+}
+
+fn set_archive_command_error(bus: &AppStateBus, error: anyhow::Error) {
+    tracing::warn!(error = ?error, "archive enrollment failed");
+    publish_archive_error(bus, error.to_string());
+}
+
+fn publish_archive_error(bus: &AppStateBus, error: String) {
     bus.update(|state| {
         state.archive.pending = None;
         state.archive.last_error = Some(error);
     });
+}
+
+fn clear_archive_error(bus: &AppStateBus) {
+    bus.update(|state| state.archive.last_error = None);
 }
 
 /// One authorized pass. Until the one-time history backfill has actually reached ingest, every pass
@@ -401,6 +415,10 @@ struct CycleOutcome {
     /// Optional Archive enrollment/load or upload failure. Visible in status and retried next cycle,
     /// but must not block fact backfill.
     archive_setup_error: Option<String>,
+    /// True only when the Archive API returned a policy or an Archive cycle completed useful work.
+    /// A first-use unavailable response remains non-fatal for fact sync, but it is not a recovery
+    /// from a user enrollment failure.
+    archive_recovered: bool,
 }
 
 /// Run one sync pass over all sources, mirroring the result into the state bus. A failed cycle records
@@ -542,7 +560,16 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> Option<CycleOutcome> {
 
     refresh_sources(bus);
     refresh_archive(bus);
+    if let Some(outcome) = &outcome {
+        clear_archive_error_after_cycle(bus, outcome);
+    }
     outcome
+}
+
+fn clear_archive_error_after_cycle(bus: &AppStateBus, outcome: &CycleOutcome) {
+    if outcome.archive_recovered {
+        clear_archive_error(bus);
+    }
 }
 
 /// Test isolation for collector state and Archive inputs. Production leaves both `None`.
@@ -597,6 +624,7 @@ fn run_cycle_blocking(
                 first_error: None,
                 setup_error: Some(format!("build runtime: {err}")),
                 archive_setup_error: None,
+                archive_recovered: false,
             };
         }
     };
@@ -616,21 +644,22 @@ fn run_cycle_blocking(
     };
 
     let should_refresh_policy = state_dir.is_none() || archive_input.is_some();
+    let mut archive_recovered = false;
     if archive_setup_error.is_none() && should_refresh_policy {
         let archive_url = archive_input
             .as_ref()
             .map(|(url, _)| url.clone())
             .unwrap_or_else(defaults::archive_url);
         if let Ok(paths) = &paths {
-            archive_setup_error = runtime
-                .block_on(archive_policy::refresh_archive_policy(
-                    paths,
-                    &org_id,
-                    archive_url,
-                    &credential,
-                ))
-                .err()
-                .map(|err| err.to_string());
+            match runtime.block_on(archive_policy::refresh_archive_policy(
+                paths,
+                &org_id,
+                archive_url,
+                &credential,
+            )) {
+                Ok(refreshed) => archive_recovered = refreshed,
+                Err(err) => archive_setup_error = Some(err.to_string()),
+            }
         }
     }
 
@@ -668,6 +697,8 @@ fn run_cycle_blocking(
             if let Some(archive) = &outcome.archive {
                 tracing::info!(history = ?archive.history, "archive history progress");
                 failed += archive.failed;
+                archive_recovered |= archive.first_error.is_none()
+                    && (archive.uploaded > 0 || archive.captured > 0 || archive.purged);
                 if archive_setup_error.is_none() {
                     archive_setup_error = archive.first_error.clone();
                 }
@@ -678,6 +709,7 @@ fn run_cycle_blocking(
                 first_error,
                 setup_error: None,
                 archive_setup_error,
+                archive_recovered,
             }
         }
         // Setup failure (bad client config, broken cursor DB). The Display is a class, not a secret.
@@ -687,6 +719,7 @@ fn run_cycle_blocking(
             first_error: None,
             setup_error: Some(err.to_string()),
             archive_setup_error: None,
+            archive_recovered,
         },
     }
 }
@@ -795,6 +828,30 @@ mod archive_engine_tests {
             format!(r#"{{"status":"{status}","authorizedSources":{authorized_sources}}}"#),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn archive_error_clears_only_after_confirmed_archive_recovery() {
+        let bus = AppStateBus::new();
+        publish_archive_error(&bus, "service unavailable".to_string());
+        let mut outcome = CycleOutcome {
+            advanced: 1,
+            failed: 0,
+            first_error: None,
+            setup_error: None,
+            archive_setup_error: None,
+            archive_recovered: false,
+        };
+
+        clear_archive_error_after_cycle(&bus, &outcome);
+        assert_eq!(
+            bus.snapshot().archive.last_error.as_deref(),
+            Some("service unavailable")
+        );
+
+        outcome.archive_recovered = true;
+        clear_archive_error_after_cycle(&bus, &outcome);
+        assert_eq!(bus.snapshot().archive.last_error, None);
     }
 
     #[test]
@@ -1394,6 +1451,7 @@ mod archive_engine_tests {
                 first_error: None,
                 setup_error: None,
                 archive_setup_error: archive_diag.clone(),
+                archive_recovered: false,
             },
             CycleOutcome {
                 advanced: 0,
@@ -1401,6 +1459,7 @@ mod archive_engine_tests {
                 first_error: None,
                 setup_error: None,
                 archive_setup_error: archive_diag.clone(),
+                archive_recovered: false,
             },
             CycleOutcome {
                 advanced: 0,
@@ -1408,6 +1467,7 @@ mod archive_engine_tests {
                 first_error: None,
                 setup_error: None,
                 archive_setup_error: archive_diag,
+                archive_recovered: false,
             },
         ];
         let mut windows = Vec::new();
@@ -1448,6 +1508,7 @@ mod archive_engine_tests {
             first_error: None,
             setup_error: Some("open cursor store".to_string()),
             archive_setup_error: None,
+            archive_recovered: false,
         };
         match (
             apply_authorized_cycle(&mut blocked, &fatal),

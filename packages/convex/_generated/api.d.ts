@@ -785,8 +785,8 @@ export declare const api: {
         actorUserId?: Id<"users">;
         contributionId?: Id<"archiveContributions">;
         enrollmentId?: Id<"archiveEnrollments">;
-        manifestRootHash?: string;
         manifestRootCount?: number;
+        manifestRootHash?: string;
         manifestRootSetHash?: string;
         occurredAt: number;
         operationId: string;
@@ -2078,8 +2078,8 @@ export declare const internal: {
               kind: "collector_credential";
             };
         expectedOrgId?: Id<"organizations">;
-        manifestRootHash?: string;
         manifestRootCount?: number;
+        manifestRootHash?: string;
         manifestRootSetHash?: string;
         operationId: string;
         outcome: "success" | "failure";
@@ -2121,8 +2121,8 @@ export declare const internal: {
         actorUserId?: Id<"users">;
         contributionId?: Id<"archiveContributions">;
         enrollmentId?: Id<"archiveEnrollments">;
-        manifestRootHash?: string;
         manifestRootCount?: number;
+        manifestRootHash?: string;
         manifestRootSetHash?: string;
         occurredAt: number;
         operationId: string;
@@ -2247,6 +2247,53 @@ export declare const internal: {
         }
       | {
           allowed: false;
+          reason:
+            | "server_disabled"
+            | "not_activated"
+            | "not_enrolled"
+            | "enrollment_invalid"
+            | "credential_revoked"
+            | "not_pro"
+            | "frozen"
+            | "deleting"
+            | "source_unauthorized";
+        }
+    >;
+    enrollCollectorByHashedSecret: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        authorizedSources: Array<{
+          historyChoice: "new_only" | "all_history";
+          source: "claude" | "codex";
+        }>;
+        collectorId: string;
+        hashedSecret: string;
+        idempotencyKey: string;
+        now: number;
+        orgId: Id<"organizations">;
+        userId: Id<"users">;
+      },
+      | {
+          authorizedSources: Array<{
+            authorizedAt: number;
+            historyChoice: "new_only" | "all_history";
+            source: "claude" | "codex";
+          }>;
+          collectorCredentialId: Id<"collectorCredentials">;
+          collectorId: string;
+          enrolled: true;
+          orgId: Id<"organizations">;
+          reason: null;
+          userId: Id<"users">;
+        }
+      | {
+          authorizedSources: Array<{
+            authorizedAt: number;
+            historyChoice: "new_only" | "all_history";
+            source: "claude" | "codex";
+          }>;
+          enrolled: false;
           reason:
             | "server_disabled"
             | "not_activated"

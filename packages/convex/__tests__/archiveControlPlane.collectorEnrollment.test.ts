@@ -36,7 +36,7 @@ function request(
 }
 
 describe('collector-authenticated archive enrollment', () => {
-  it('serializes concurrent duplicate requests into one enrollment', async () => {
+  it('replays duplicate requests into one enrollment', async () => {
     enableArchive();
     const world = await seedWorld();
     const args = request({ orgId: world.owner.orgId, userId: world.owner._id, now: 1000 });

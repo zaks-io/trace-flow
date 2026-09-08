@@ -19,12 +19,20 @@ pub async fn refresh_archive_policy(
     org_id: &str,
     archive_url: String,
     credential: &str,
-) -> Result<()> {
+) -> Result<bool> {
     let mut config = ArchiveClientConfig::new(archive_url, credential);
     config.timeout = POLICY_TIMEOUT;
     let client = ArchiveClient::new(config).context("build archive policy client")?;
     let result = client.fetch_policy().await;
-    persist_policy_result(paths, org_id, result)
+    let received_policy = match result.as_ref() {
+        Ok(_) => true,
+        Err(error) => error
+            .denial_reason()
+            .and_then(policy_from_denial_reason)
+            .is_some(),
+    };
+    persist_policy_result(paths, org_id, result)?;
+    Ok(received_policy)
 }
 
 pub async fn enroll_archive_source(
@@ -37,10 +45,36 @@ pub async fn enroll_archive_source(
     let mut config = ArchiveClientConfig::new(archive_url, credential);
     config.timeout = POLICY_TIMEOUT;
     let client = ArchiveClient::new(config).context("build archive enrollment client")?;
-    let result = client.enroll(request).await;
-    let enrolled = result.as_ref().is_ok_and(|response| response.enrolled);
-    persist_policy_result(paths, org_id, result)?;
-    Ok(enrolled)
+    match client.enroll(request).await {
+        Ok(response) => {
+            let enrolled = response.enrolled;
+            persist_policy_result(paths, org_id, Ok(response))?;
+            Ok(enrolled)
+        }
+        Err(error) => {
+            let message = enrollment_failure_message(error.class());
+            let detail = error.to_string();
+            if error
+                .denial_reason()
+                .and_then(policy_from_denial_reason)
+                .is_some()
+            {
+                persist_policy_result(paths, org_id, Err(error))?;
+                return Err(anyhow!(detail).context(message));
+            }
+            Err(anyhow!(error).context(message))
+        }
+    }
+}
+
+fn enrollment_failure_message(class: &str) -> &'static str {
+    match class {
+        "consent_conflict" => "history choice conflicts with existing consent",
+        "invalid_request" => "request was rejected",
+        "unauthorized" | "forbidden" => "collector credential was rejected",
+        "invalid_policy" => "returned an invalid response",
+        _ => "service unavailable",
+    }
 }
 
 fn persist_policy_result(
@@ -108,42 +142,76 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    #[tokio::test]
-    async fn enrollment_response_is_persisted_and_reports_enrolled() {
+    async fn serve_policy_response(status: &str, body: &'static str) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let status = status.to_string();
         tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut request = vec![0u8; 8192];
             let _ = stream.read(&mut request).await.unwrap();
-            let body = r#"{"enrolled":true,"authorizedSources":[{"source":"claude","historyChoice":"all_history","authorizedAt":1770000000001}],"reason":null}"#;
             let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                 body.len()
             );
             stream.write_all(response.as_bytes()).await.unwrap();
         });
+        format!("http://{addr}")
+    }
+
+    fn enrollment_request(
+        history_choice: ArchiveHistoryChoice,
+        idempotency_key: &str,
+    ) -> ArchiveEnrollmentRequest {
+        ArchiveEnrollmentRequest {
+            authorized_sources: vec![ArchiveSourceChoice {
+                source: ArchiveSource::Claude,
+                history_choice,
+            }],
+            idempotency_key: idempotency_key.to_string(),
+        }
+    }
+
+    async fn assert_enrollment_failure(
+        status: &str,
+        body: &'static str,
+        request: ArchiveEnrollmentRequest,
+        message: &str,
+        detail: &str,
+    ) {
+        let archive_url = serve_policy_response(status, body).await;
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+
+        let error =
+            enroll_archive_source(&paths, "org_1", archive_url, "tfc_test_secret", &request)
+                .await
+                .unwrap_err();
+
+        assert_eq!(error.to_string(), message);
+        assert!(format!("{error:#}").contains(detail));
+        assert!(!paths.archive_enrollment_file("org_1").exists());
+    }
+
+    #[tokio::test]
+    async fn enrollment_response_is_persisted_and_reports_enrolled() {
+        let archive_url = serve_policy_response(
+            "200 OK",
+            r#"{"enrolled":true,"authorizedSources":[{"source":"claude","historyChoice":"all_history","authorizedAt":1770000000001}],"reason":null}"#,
+        )
+        .await;
 
         let dir = TempDir::new().unwrap();
         let paths = Paths::at(dir.path().to_path_buf());
         paths.ensure().unwrap();
-        let request = ArchiveEnrollmentRequest {
-            authorized_sources: vec![ArchiveSourceChoice {
-                source: ArchiveSource::Claude,
-                history_choice: ArchiveHistoryChoice::AllHistory,
-            }],
-            idempotency_key: "archive-enroll:test".to_string(),
-        };
+        let request = enrollment_request(ArchiveHistoryChoice::AllHistory, "archive-enroll:test");
 
-        assert!(enroll_archive_source(
-            &paths,
-            "org_1",
-            format!("http://{addr}"),
-            "tfc_test_secret",
-            &request,
-        )
-        .await
-        .unwrap());
+        assert!(
+            enroll_archive_source(&paths, "org_1", archive_url, "tfc_test_secret", &request,)
+                .await
+                .unwrap()
+        );
 
         let record = load_archive_policy(&paths, "org_1").unwrap();
         assert_eq!(record.policy().unwrap(), ArchivePolicy::Enrolled);
@@ -157,6 +225,79 @@ mod tests {
                 .unwrap()
                 .contains("tfc_test_secret")
         );
+    }
+
+    #[tokio::test]
+    async fn user_enrollment_keeps_first_use_unavailability_loud() {
+        assert_enrollment_failure(
+            "503 Service Unavailable",
+            r#"{"error":"archive_unavailable","reason":"policy_unavailable"}"#,
+            enrollment_request(ArchiveHistoryChoice::AllHistory, "archive-enroll:retry"),
+            "service unavailable",
+            "archive unavailable",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn background_refresh_reports_only_a_received_policy_as_recovery() {
+        let unavailable_url = serve_policy_response(
+            "503 Service Unavailable",
+            r#"{"error":"archive_unavailable","reason":"policy_unavailable"}"#,
+        )
+        .await;
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+
+        assert!(
+            !refresh_archive_policy(&paths, "org_1", unavailable_url, "tfc_test_secret")
+                .await
+                .unwrap()
+        );
+        assert!(!paths.archive_enrollment_file("org_1").exists());
+
+        let policy_url = serve_policy_response(
+            "200 OK",
+            r#"{"enrolled":false,"authorizedSources":[],"reason":"not_activated"}"#,
+        )
+        .await;
+        assert!(
+            refresh_archive_policy(&paths, "org_1", policy_url, "tfc_test_secret")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            load_archive_policy(&paths, "org_1")
+                .unwrap()
+                .reason
+                .as_deref(),
+            Some("not_activated")
+        );
+    }
+
+    #[tokio::test]
+    async fn user_enrollment_reports_consent_conflict_without_rewriting_policy() {
+        assert_enrollment_failure(
+            "409 Conflict",
+            r#"{"error":"consent_conflict","reason":"consent_conflict"}"#,
+            enrollment_request(ArchiveHistoryChoice::NewOnly, "archive-enroll:conflict"),
+            "history choice conflicts with existing consent",
+            "archive history choice conflicts",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn user_enrollment_reports_an_invalid_request_without_rewriting_policy() {
+        assert_enrollment_failure(
+            "400 Bad Request",
+            r#"{"error":"invalid_request","reason":"invalid_request"}"#,
+            enrollment_request(ArchiveHistoryChoice::AllHistory, "archive-enroll:invalid"),
+            "request was rejected",
+            "archive enrollment request is invalid",
+        )
+        .await;
     }
 
     #[test]
