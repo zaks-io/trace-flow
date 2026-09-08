@@ -223,7 +223,19 @@ function assertInventoryMetadata(
       }
     | undefined,
   object: InventoryObject,
+  allowRotatedSupersede = false,
 ): void {
+  if (
+    allowRotatedSupersede &&
+    row?.status === 'committed' &&
+    typeof row.key_version === 'number' &&
+    row.key_version > object.keyVersion
+  ) {
+    if (row.object_class !== object.objectClass || row.expires_at !== null) {
+      throw new ArchiveContractError('storage_object_metadata_mismatch');
+    }
+    return;
+  }
   if (
     row &&
     (row.object_class !== object.objectClass ||
@@ -235,7 +247,11 @@ function assertInventoryMetadata(
   }
 }
 
-function applyInventoryObject(storage: DurableObjectStorage, object: InventoryObject): boolean {
+function applyInventoryObject(
+  storage: DurableObjectStorage,
+  object: InventoryObject,
+  allowRotatedSupersede = false,
+): boolean {
   const row = [
     ...storage.sql.exec<{
       object_class: StorageBudgetObjectClass;
@@ -248,7 +264,15 @@ function applyInventoryObject(storage: DurableObjectStorage, object: InventoryOb
       object.objectKey,
     ),
   ][0];
-  assertInventoryMetadata(row, object);
+  assertInventoryMetadata(row, object, allowRotatedSupersede);
+  if (
+    allowRotatedSupersede &&
+    row?.status === 'committed' &&
+    typeof row.key_version === 'number' &&
+    row.key_version > object.keyVersion
+  ) {
+    return false;
+  }
   if (row?.key_version === null) {
     storage.sql.exec(
       'UPDATE storage_budget_objects SET key_version = ? WHERE object_key = ?',
@@ -367,7 +391,7 @@ function reconcileFinalizationPage(
         keyVersion: assertKnownKeyVersion(row.key_version),
       }));
       let changed = false;
-      for (const object of rows) changed = applyInventoryObject(storage, object) || changed;
+      for (const object of rows) changed = applyInventoryObject(storage, object, true) || changed;
       const totals = budgetTotals(storage);
       storage.sql.exec(
         'UPDATE storage_budget_state SET reserved_bytes = ?, committed_bytes = ?, mutation_version = mutation_version + ? WHERE id = 1',
