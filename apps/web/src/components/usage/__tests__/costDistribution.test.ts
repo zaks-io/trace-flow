@@ -81,6 +81,33 @@ describe('buildCostBuckets', () => {
     expect(bars[1]).toMatchObject({ lo: 0.05, hi: 4, count: 20, sum: 8 });
   });
 
+  it.each([
+    [0.000001, 0.000002],
+    [1, 1.000001],
+  ])('keeps boundaries %s and %s distinct', (lo, hi) => {
+    const bars = buildCostBuckets(
+      makeRow({
+        cost_bucket_lo: [lo],
+        cost_bucket_hi: [hi],
+        cost_bucket_count: [2],
+        cost_bucket_sum: [0.000003],
+      }),
+    );
+    expect(bars[0].label).toBe(`$${lo} to $${hi}`);
+  });
+
+  it('labels an identical-cost band with its single value', () => {
+    const bars = buildCostBuckets(
+      makeRow({
+        cost_bucket_lo: [0],
+        cost_bucket_hi: [0],
+        cost_bucket_count: [100],
+        cost_bucket_sum: [0],
+      }),
+    );
+    expect(bars[0]).toMatchObject({ label: '$0', count: 100, sum: 0 });
+  });
+
   it('returns empty when there are no buckets', () => {
     expect(buildCostBuckets(makeRow({ cost_bucket_lo: [] }))).toEqual([]);
   });

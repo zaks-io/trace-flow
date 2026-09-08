@@ -214,7 +214,7 @@ export interface TinybirdResponse<T> {
  * Per-request cost/duration distribution + cost concentration for one slice (one API key OR
  * operation OR model). Robust estimators only (median/IQR/quantileExact) per ADR 0021 — no
  * mean/stddev, which mislead on heavy-tailed cost. The concentration fields (gini, lorenz,
- * half_spend, decile buckets) answer "uniform vs fat-tailed" for this slice's requests.
+ * half_spend, logarithmic cost bands) answer "uniform vs fat-tailed" for this slice's requests.
  */
 export interface RequestStatsRow {
   request_count: number;

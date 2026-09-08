@@ -6,7 +6,7 @@ DESCRIPTION >
     and the math holds. Reports robust location/spread (median, IQR, p95/p99 via quantileExact)
     and the
     concentration SHAPE of cost across the slice's requests: bias-corrected Gini, a Lorenz
-    curve, a decile-edged equal-frequency histogram, and the smallest request count carrying
+    curve, an adaptive logarithmic cost histogram, and the smallest request count carrying
     half the slice's spend. The question this answers: is this slice's cost UNIFORM (every call
     ~the same -> fix the prompt/model) or FAT-TAILED (a few runaway calls dominate -> hunt the
     outliers). Per ADR 0021: quantileExact everywhere (deterministic, matches the agent pipes),
@@ -54,14 +54,8 @@ SQL >
 
 NODE distribution
 SQL >
-    -- Robust location/spread + the decile-edged equal-frequency histogram of cost across the
-    -- slice's requests. Histogram edges come from the data's own quantiles (not fixed dollar
-    -- tiers) so a long, skewed tail resolves into several buckets instead of one open-ended
-    -- catch-all. quantileExact (not sampling `quantile`) keeps edges exact/deterministic and
-    -- matches the p50/p95 reported here. `cost_edges` is the distinct, ascending boundary list
-    -- [min, q10..q90, max]; arrayDistinct collapses degenerate deciles (e.g. many identical
-    -- near-$0 costs) so there are AT MOST 10 buckets and never a zero-width/empty one. Bucket i
-    -- spans (edges[i] .. edges[i+1]] with the first bucket inclusive of the min.
+    -- Logarithmic bands resolve the full observed tail instead of grouping its top decile.
+    -- Sturges' count grows with sample size; the display cap bounds response size and labels.
     SELECT
         count() AS request_count,
         round(sum(cost_usd), 6) AS total_cost_usd,
@@ -83,23 +77,24 @@ SQL >
         round(max(duration_ms), 3) AS duration_max,
 
         arraySort(groupArray(cost_usd)) AS cost_vals,
-        arrayDistinct(
-            arrayConcat(
-                [arrayElement(cost_vals, 1)],
-                arrayMap(q -> round(q, 6), quantilesExact(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)(cost_usd)),
-                [arrayElement(cost_vals, length(cost_vals))]
-            )
+        arrayMin(arrayFilter(v -> v > 0, cost_vals)) AS positive_min,
+        toUInt32(least(20, ceil(log2(greatest(request_count, 1))) + 1)) AS band_count,
+        if(cost_min = cost_max,
+            [cost_min, cost_max],
+            arraySort(arrayDistinct(arrayConcat(
+                [cost_min],
+                arrayMap(i -> round(positive_min * pow(cost_max / positive_min, i / band_count), 6),
+                    range(band_count)),
+                [cost_max]
+            )))
         ) AS cost_edges
     FROM requests
     HAVING request_count > 0
 
 NODE buckets
 SQL >
-    -- Turn the per-request cost array + decile edges into drawable bars. Bucket i spans
-    -- (edges[i] .. edges[i+1]] with the first bucket inclusive of the minimum. Count and summed
-    -- magnitude are derived array-side over the collected values — no extra scan. The client
-    -- plots the SUM (where the dollars are), so equal-frequency buckets read as "which cost
-    -- ranges hold the money".
+    -- Count each request once, with exact spend totals over the original costs.
+    -- The first interval includes its lower bound; subsequent intervals exclude it.
     SELECT
         arraySlice(cost_edges, 1, length(cost_edges) - 1) AS cost_bucket_lo,
         arraySlice(cost_edges, 2, length(cost_edges) - 1) AS cost_bucket_hi,
