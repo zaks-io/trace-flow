@@ -1,7 +1,7 @@
 import { query, internalMutation, internalQuery } from '../_generated/server';
 import { v } from 'convex/values';
 import { requireAuthenticated } from '../auth/auth';
-import { getCurrentUser } from '../auth/users';
+import { getCurrentEnabledUser } from '../auth/users';
 import { internal } from '../_generated/api';
 import { TIER_CONFIG } from '@trace-flow/types';
 import { getCurrentBillingPeriod, getSubscriptionByOrgId, mutationReadCtx } from './currentPeriod';
@@ -24,7 +24,7 @@ export const getCurrentUsage = query({
   returns: usageDocValidator,
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
-    const user = await getCurrentUser(ctx);
+    const user = await getCurrentEnabledUser(ctx);
     if (!user?.orgId) return null;
     return (await getCurrentBillingPeriod(ctx, user.orgId))?.usage ?? null;
   },

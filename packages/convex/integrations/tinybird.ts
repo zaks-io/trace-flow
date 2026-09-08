@@ -3,7 +3,9 @@ import { v } from 'convex/values';
 import { SignJWT } from 'jose';
 import { runAdminSql, TinybirdQueryError } from '@trace-flow/tinybird-client';
 import { requireAuthenticated } from '../auth/auth';
-import { api, internal } from '../_generated/api';
+import { requireEnabledActionUser } from '../auth/actionUser';
+import type { Doc } from '../_generated/dataModel';
+import { internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
 import { RETENTION_DAYS } from '@trace-flow/types';
 import { analyticsKeyId } from '@trace-flow/utils';
@@ -170,15 +172,12 @@ async function signTinybirdToken(
 
 async function getUserRowSecurityParams(
   ctx: ActionCtx,
+  user: Doc<'users'>,
 ): Promise<{ apiKeyString: string; retentionDays: number; orgId: string }> {
-  const user = await ctx.runQuery(api.auth.users.getCurrentUserQuery, {});
+  await rateLimiter.limit(ctx, 'generateTinybirdJwt', { key: user._id, throws: true });
 
-  if (user) {
-    await rateLimiter.limit(ctx, 'generateTinybirdJwt', { key: user._id, throws: true });
-  }
-
-  const apiKeyString = user ? await getApiKeyString(ctx, user._id) : '';
-  const subscription = user?.orgId
+  const apiKeyString = await getApiKeyString(ctx, user._id);
+  const subscription = user.orgId
     ? await ctx.runQuery(internal.billing.subscriptions.getByOrgId, { orgId: user.orgId })
     : null;
   const tier = subscription?.tier ?? 'hobby';
@@ -186,7 +185,7 @@ async function getUserRowSecurityParams(
   return {
     apiKeyString,
     retentionDays: RETENTION_DAYS[tier],
-    orgId: user?.orgId ?? '',
+    orgId: user.orgId ?? '',
   };
 }
 
@@ -201,6 +200,7 @@ export const generateWebReadToken = action({
   }),
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
+    const user = await requireEnabledActionUser(ctx);
 
     if (!adminToken) {
       throw new Error('TINYBIRD_ADMIN_TOKEN environment variable is not set');
@@ -212,7 +212,7 @@ export const generateWebReadToken = action({
 
     const scopes = withRowSecurityParams(
       buildWebReadScopes(args.pipe),
-      await getUserRowSecurityParams(ctx),
+      await getUserRowSecurityParams(ctx, user),
     );
 
     return signTinybirdToken(scopes, {

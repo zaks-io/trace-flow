@@ -30,6 +30,7 @@ const user = {
   tokenIdentifier: 'auth0|user-123',
   email: 'owner@example.com',
   name: 'Owner',
+  enabled: true,
   orgId: 'org-123',
 };
 

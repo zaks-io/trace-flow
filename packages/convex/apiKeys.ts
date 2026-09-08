@@ -2,13 +2,32 @@ import { action, mutation, query, internalQuery, type QueryCtx } from './_genera
 import { v } from 'convex/values';
 import { requireAuthenticated } from './auth/auth';
 import { internal } from './_generated/api';
-import { getCurrentUser, requireEnabledUser } from './auth/users';
+import { getCurrentEnabledUser, requireEnabledUser } from './auth/users';
+import { requireEnabledActionUser } from './auth/actionUser';
 import { apiKeyValidator } from './validators';
 import { rateLimiter } from './rateLimits';
 import { analyticsKeyId } from '@trace-flow/utils';
+import type { Doc } from './_generated/dataModel';
+
+export function canAccessApiKey(
+  user: Pick<Doc<'users'>, '_id' | 'orgId'>,
+  apiKey: Pick<Doc<'apiKeys'>, 'userId' | 'orgId'>,
+): boolean {
+  if (apiKey.orgId) return apiKey.orgId === user.orgId;
+  return apiKey.userId === user._id;
+}
+
+export function canManageApiKey(
+  user: Pick<Doc<'users'>, '_id' | 'orgId'>,
+  apiKey: Pick<Doc<'apiKeys'>, 'userId' | 'orgId'>,
+): boolean {
+  if (apiKey.orgId && apiKey.orgId !== user.orgId) return false;
+  if (apiKey.userId) return apiKey.userId === user._id;
+  return Boolean(apiKey.orgId && apiKey.orgId === user.orgId);
+}
 
 async function listAccessibleKeys(ctx: QueryCtx) {
-  const user = await getCurrentUser(ctx);
+  const user = await getCurrentEnabledUser(ctx);
   if (!user) return [];
 
   if (user.orgId) {
@@ -23,7 +42,10 @@ async function listAccessibleKeys(ctx: QueryCtx) {
         .collect(),
     ]);
     const seen = new Set(orgKeys.map((key) => key._id));
-    return [...orgKeys, ...userKeys.filter((key) => !seen.has(key._id))];
+    return [
+      ...orgKeys,
+      ...userKeys.filter((key) => !seen.has(key._id) && canAccessApiKey(user, key)),
+    ];
   }
 
   return ctx.db
@@ -68,10 +90,13 @@ export const getByKey = query({
   returns: v.union(v.null(), apiKeyValidator),
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
-    return await ctx.db
+    const user = await getCurrentEnabledUser(ctx);
+    if (!user) return null;
+    const apiKey = await ctx.db
       .query('apiKeys')
       .filter((q) => q.eq(q.field('key'), args.key))
       .first();
+    return apiKey && canAccessApiKey(user, apiKey) ? apiKey : null;
   },
 });
 
@@ -123,7 +148,7 @@ export const update = mutation({
       throw new Error('API key not found');
     }
 
-    if (apiKey.userId && apiKey.userId !== user._id) {
+    if (!canManageApiKey(user, apiKey)) {
       throw new Error('You do not have permission to edit this API key');
     }
 
@@ -155,7 +180,7 @@ export const remove = mutation({
       throw new Error('API key not found');
     }
 
-    if (apiKey.userId && apiKey.userId !== user._id) {
+    if (!canManageApiKey(user, apiKey)) {
       throw new Error('You do not have permission to delete this API key');
     }
 
@@ -172,10 +197,14 @@ export const syncToKV = action({
   returns: v.object({ synced: v.boolean(), existed: v.boolean() }),
   handler: async (ctx, args): Promise<{ synced: boolean; existed: boolean }> => {
     await requireAuthenticated(ctx);
+    const user = await requireEnabledActionUser(ctx);
 
     const apiKey = await ctx.runQuery(internal.apiKeys.getByIdInternal, { id: args.id });
     if (!apiKey) {
       throw new Error('API key not found');
+    }
+    if (!canManageApiKey(user, apiKey)) {
+      throw new Error('You do not have permission to sync this API key');
     }
 
     const existsInKV = await ctx.runAction(internal.integrations.cloudflare.checkKeyInKV, {
@@ -210,7 +239,7 @@ export const listForUser = internalQuery({
   returns: v.array(apiKeyValidator),
   handler: async (ctx, args) => {
     const user = await ctx.db.get(args.userId);
-    if (!user) return [];
+    if (!user?.enabled) return [];
 
     if (user.orgId) {
       const orgKeys = await ctx.db
@@ -223,13 +252,14 @@ export const listForUser = internalQuery({
         .collect();
       // Include pre-org keys (orgId undefined) that the org index misses
       const seen = new Set(orgKeys.map((k) => k._id));
-      return [...orgKeys, ...userKeys.filter((k) => !seen.has(k._id))];
+      return [...orgKeys, ...userKeys.filter((k) => !seen.has(k._id) && canAccessApiKey(user, k))];
     }
 
-    return await ctx.db
+    const userKeys = await ctx.db
       .query('apiKeys')
       .withIndex('by_user_id', (q) => q.eq('userId', args.userId))
       .collect();
+    return userKeys.filter((key) => canAccessApiKey(user, key));
   },
 });
 

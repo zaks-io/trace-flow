@@ -9,6 +9,7 @@ export const MAX_PI_RUNTIME_MS = 120 * 60 * 1000;
 const MIN_PI_RUNTIME_MS = 60_000;
 export const MAX_PI_CONTROL_MESSAGE_CHARS = 8_000;
 export const MAX_PI_TAIL_LINES = 500;
+export const MAX_OPENROUTER_REQUEST_BYTES = 512 * 1024;
 const MAX_PI_TOOL_DEFINITIONS_CHARS = 100_000;
 
 export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
@@ -72,6 +73,11 @@ export interface TraceflowToolRequest {
   arguments: Record<string, unknown>;
 }
 
+export interface OpenRouterChatCompletionsRequest {
+  payload: Record<string, unknown>;
+  requestedOutputTokens: number;
+}
+
 export type ParseResult<T = ExecuteAnalysisRequest> =
   | { ok: true; request: T }
   | { ok: false; error: string };
@@ -80,6 +86,156 @@ const DATASET_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 const SANDBOX_ID_PATTERN = /^[A-Za-z0-9_-]{1,63}$/;
 const RUN_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const TOKEN_PATTERN = /^[A-Fa-f0-9]{64}$/;
+
+export function isSandboxRunToken(value: string): boolean {
+  return TOKEN_PATTERN.test(value);
+}
+
+export function parseOpenRouterChatCompletionsPath(pathname: string): string | null {
+  const match = /^\/ai-proxy\/openrouter\/([A-Za-z0-9_-]{1,128})\/api\/v1\/chat\/completions$/.exec(
+    pathname,
+  );
+  return match?.[1] ?? null;
+}
+
+interface FunctionTool {
+  type: 'function';
+  function: Record<string, unknown> & { name: string };
+}
+
+function isFunctionTool(value: unknown): value is FunctionTool {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.type !== 'function') return false;
+  const definition = candidate.function;
+  if (!definition || typeof definition !== 'object' || Array.isArray(definition)) return false;
+  const functionDefinition = definition as Record<string, unknown>;
+  return (
+    typeof functionDefinition.name === 'string' &&
+    functionDefinition.name.length > 0 &&
+    (functionDefinition.description === undefined ||
+      typeof functionDefinition.description === 'string') &&
+    (functionDefinition.parameters === undefined ||
+      (!!functionDefinition.parameters &&
+        typeof functionDefinition.parameters === 'object' &&
+        !Array.isArray(functionDefinition.parameters))) &&
+    (functionDefinition.strict === undefined || typeof functionDefinition.strict === 'boolean')
+  );
+}
+
+export function parseOpenRouterChatCompletionsRequest(
+  value: unknown,
+  maxOutputTokens: number,
+): ParseResult<OpenRouterChatCompletionsRequest> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, error: 'Payload must be an object' };
+  }
+  const payload = value as Record<string, unknown>;
+  if (!Array.isArray(payload.messages) || payload.messages.length === 0) {
+    return { ok: false, error: 'messages must be a non-empty array' };
+  }
+
+  const tools = payload.tools;
+  if (
+    tools !== undefined &&
+    (!Array.isArray(tools) || tools.some((tool) => !isFunctionTool(tool)))
+  ) {
+    return { ok: false, error: 'Only function tools are supported' };
+  }
+
+  const toolNames = new Set((tools ?? []).filter(isFunctionTool).map((tool) => tool.function.name));
+  const toolChoice = payload.tool_choice;
+  const validStringChoice =
+    toolChoice === undefined ||
+    toolChoice === 'none' ||
+    ((toolChoice === 'auto' || toolChoice === 'required') && toolNames.size > 0);
+  const validFunctionChoice = (() => {
+    if (!toolChoice || typeof toolChoice !== 'object' || Array.isArray(toolChoice)) return false;
+    const candidate = toolChoice as Record<string, unknown>;
+    const definition = candidate.function;
+    if (
+      candidate.type !== 'function' ||
+      !definition ||
+      typeof definition !== 'object' ||
+      Array.isArray(definition)
+    ) {
+      return false;
+    }
+    const name = (definition as Record<string, unknown>).name;
+    return typeof name === 'string' && toolNames.has(name);
+  })();
+  if (!validStringChoice && !validFunctionChoice) {
+    return { ok: false, error: 'Invalid tool choice' };
+  }
+
+  const requested = payload.max_completion_tokens ?? payload.max_tokens ?? maxOutputTokens;
+  if (typeof requested !== 'number' || !Number.isInteger(requested) || requested < 1) {
+    return { ok: false, error: 'Invalid output token limit' };
+  }
+
+  return {
+    ok: true,
+    request: {
+      payload,
+      requestedOutputTokens: Math.min(requested, maxOutputTokens),
+    },
+  };
+}
+
+export function secureOpenRouterChatCompletionsPayload(
+  request: OpenRouterChatCompletionsRequest,
+  runId: string,
+  model: string,
+): string {
+  const payload: Record<string, unknown> = {};
+  const safeFields = [
+    'messages',
+    'parallel_tool_calls',
+    'stream',
+    'stream_options',
+    'temperature',
+    'top_p',
+    'stop',
+    'frequency_penalty',
+    'presence_penalty',
+    'seed',
+    'response_format',
+    'logprobs',
+    'top_logprobs',
+  ] as const;
+  for (const field of safeFields) {
+    if (request.payload[field] !== undefined) payload[field] = request.payload[field];
+  }
+  if (Array.isArray(request.payload.tools)) {
+    payload.tools = request.payload.tools.filter(isFunctionTool).map((tool) => {
+      const definition = tool.function as Record<string, unknown>;
+      return {
+        type: 'function',
+        function: Object.fromEntries(
+          ['name', 'description', 'parameters', 'strict']
+            .filter((field) => definition[field] !== undefined)
+            .map((field) => [field, definition[field]]),
+        ),
+      };
+    });
+  }
+  if (typeof request.payload.tool_choice === 'string') {
+    payload.tool_choice = request.payload.tool_choice;
+  } else if (request.payload.tool_choice && typeof request.payload.tool_choice === 'object') {
+    const choice = request.payload.tool_choice as { function?: { name?: unknown } };
+    if (typeof choice.function?.name === 'string') {
+      payload.tool_choice = { type: 'function', function: { name: choice.function.name } };
+    }
+  }
+
+  return JSON.stringify({
+    ...payload,
+    model,
+    max_tokens: request.requestedOutputTokens,
+    session_id: runId,
+    usage: { include: true },
+  });
+}
 
 function parseObjectArguments(value: unknown): ParseResult<Record<string, unknown>> {
   if (value === undefined || value === null) return { ok: true, request: {} };
@@ -201,7 +357,7 @@ export function parseStartPiRunRequest(value: unknown): ParseResult<StartPiRunRe
   if (typeof payload.runId !== 'string' || !RUN_ID_PATTERN.test(payload.runId)) {
     return { ok: false, error: 'Invalid runId' };
   }
-  if (typeof payload.runToken !== 'string' || !TOKEN_PATTERN.test(payload.runToken)) {
+  if (typeof payload.runToken !== 'string' || !isSandboxRunToken(payload.runToken)) {
     return { ok: false, error: 'Invalid runToken' };
   }
   if (typeof payload.sandboxId !== 'string' || !SANDBOX_ID_PATTERN.test(payload.sandboxId)) {

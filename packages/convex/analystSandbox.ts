@@ -745,7 +745,6 @@ export const verifySandboxRunToken = action({
   args: {
     runId: v.id('analystSandboxRuns'),
     token: v.string(),
-    purpose: v.optional(v.union(v.literal('inference'), v.literal('callback'))),
   },
   handler: async (ctx, args) => {
     const tokenHash = await sha256Hex(args.token);
@@ -753,9 +752,6 @@ export const verifySandboxRunToken = action({
       runId: args.runId,
       tokenHash,
     });
-    if (run && args.purpose === 'inference') {
-      await requireAnalystProEntitlement(ctx, run.orgId);
-    }
     return { ok: Boolean(run), status: run?.status ?? null };
   },
 });

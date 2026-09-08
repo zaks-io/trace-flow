@@ -68,6 +68,7 @@
         "@cloudflare/sandbox": "0.12.1",
         "@trace-flow/convex": "workspace:*",
         "@trace-flow/pricing": "workspace:*",
+        "@trace-flow/utils": "workspace:*",
         "convex": "1.44.0",
       },
       "devDependencies": {

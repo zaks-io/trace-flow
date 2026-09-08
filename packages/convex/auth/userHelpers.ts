@@ -15,13 +15,19 @@ export async function getCurrentUser(ctx: AuthContext): Promise<Doc<'users'> | n
     .first();
 }
 
-export async function requireEnabledUser(ctx: AuthContext): Promise<Doc<'users'>> {
+/** Preserve bootstrap's null state while refusing product data to disabled accounts. */
+export async function getCurrentEnabledUser(ctx: AuthContext): Promise<Doc<'users'> | null> {
   const user = await getCurrentUser(ctx);
+  if (user && !user.enabled) {
+    throw new Error('User account is not enabled. Please contact support.');
+  }
+  return user;
+}
+
+export async function requireEnabledUser(ctx: AuthContext): Promise<Doc<'users'>> {
+  const user = await getCurrentEnabledUser(ctx);
   if (!user) {
     throw new Error('User not found. Please log in again.');
-  }
-  if (!user.enabled) {
-    throw new Error('User account is not enabled. Please contact support.');
   }
   return user;
 }

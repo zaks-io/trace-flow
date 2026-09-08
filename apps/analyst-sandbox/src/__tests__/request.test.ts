@@ -6,6 +6,8 @@ import {
   DEFAULT_PI_THINKING_LEVEL,
   MAX_PI_PROMPT_CHARS,
   MAX_PI_RUNTIME_MS,
+  parseOpenRouterChatCompletionsPath,
+  parseOpenRouterChatCompletionsRequest,
   MAX_STDOUT_CHARS,
   buildPythonScript,
   isAuthorized,
@@ -14,6 +16,7 @@ import {
   parseExecuteAnalysisRequest,
   parseStartPiRunRequest,
   parseTraceflowToolRequest,
+  secureOpenRouterChatCompletionsPayload,
   truncateOutput,
 } from '../request';
 
@@ -227,5 +230,123 @@ describe('analyst sandbox request boundary', () => {
         arguments: '["summary"]',
       }).ok,
     ).toBe(false);
+  });
+
+  it('allows only the run-scoped OpenRouter chat completions path', () => {
+    expect(
+      parseOpenRouterChatCompletionsPath(
+        `/ai-proxy/openrouter/${validRunPayload.runId}/api/v1/chat/completions`,
+      ),
+    ).toBe(validRunPayload.runId);
+    expect(
+      parseOpenRouterChatCompletionsPath(
+        `/ai-proxy/openrouter/${validRunPayload.runId}/api/v1/models`,
+      ),
+    ).toBeNull();
+    expect(
+      parseOpenRouterChatCompletionsPath('/ai-proxy/openrouter/../api/v1/chat/completions'),
+    ).toBeNull();
+  });
+
+  it('pins model and output limits while stripping optional charge surfaces', () => {
+    const parsed = parseOpenRouterChatCompletionsRequest(
+      {
+        model: 'attacker/expensive-model',
+        models: ['another/model'],
+        messages: [{ role: 'user', content: 'Analyze this.' }],
+        max_tokens: 100_000,
+        plugins: [{ id: 'web' }],
+        modalities: ['text', 'audio'],
+        audio: { voice: 'alloy' },
+        web_search_options: { search_context_size: 'high' },
+        provider: { order: ['expensive-provider'] },
+        reasoning: { max_tokens: 100_000 },
+        transforms: ['middle-out'],
+        n: 10,
+        extra_body: { paid_feature: true },
+        stream: true,
+        tools: [{ type: 'function', function: { name: 'query_usage' } }],
+        tool_choice: { type: 'function', function: { name: 'query_usage' } },
+      },
+      4_096,
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error(parsed.error);
+
+    expect(parsed.request.requestedOutputTokens).toBe(4_096);
+    const secured = JSON.parse(
+      secureOpenRouterChatCompletionsPayload(parsed.request, validRunPayload.runId, 'z-ai/glm-5.2'),
+    );
+    expect(secured).toMatchObject({
+      model: 'z-ai/glm-5.2',
+      max_tokens: 4_096,
+      session_id: validRunPayload.runId,
+      usage: { include: true },
+      stream: true,
+      tools: [{ type: 'function', function: { name: 'query_usage' } }],
+      tool_choice: { type: 'function', function: { name: 'query_usage' } },
+    });
+    for (const field of [
+      'models',
+      'plugins',
+      'modalities',
+      'audio',
+      'web_search_options',
+      'provider',
+      'reasoning',
+      'transforms',
+      'n',
+      'extra_body',
+    ]) {
+      expect(secured).not.toHaveProperty(field);
+    }
+  });
+
+  it('rejects malformed OpenRouter chat payloads and output limits', () => {
+    expect(parseOpenRouterChatCompletionsRequest({}, 4_096).ok).toBe(false);
+    expect(
+      parseOpenRouterChatCompletionsRequest(
+        { messages: [{ role: 'user', content: 'x' }], max_tokens: 0 },
+        4_096,
+      ).ok,
+    ).toBe(false);
+  });
+
+  it('rejects OpenRouter server tools and unsupported tool choices before authorization', () => {
+    const messages = [{ role: 'user', content: 'Analyze this.' }];
+    expect(
+      parseOpenRouterChatCompletionsRequest(
+        {
+          messages,
+          tools: [
+            {
+              type: 'openrouter:subagent',
+              parameters: { model: 'attacker/expensive-model', max_completion_tokens: 100_000 },
+            },
+          ],
+        },
+        4_096,
+      ),
+    ).toEqual({ ok: false, error: 'Only function tools are supported' });
+    expect(
+      parseOpenRouterChatCompletionsRequest(
+        {
+          messages,
+          tools: [{ type: 'function', function: { name: 'query_usage' } }],
+          tool_choice: { type: 'openrouter:web_search' },
+        },
+        4_096,
+      ),
+    ).toEqual({ ok: false, error: 'Invalid tool choice' });
+    expect(
+      parseOpenRouterChatCompletionsRequest(
+        {
+          messages,
+          tools: [{ type: 'function', function: { name: 'query_usage' } }],
+          tool_choice: { type: 'function', function: { name: 'missing_tool' } },
+        },
+        4_096,
+      ),
+    ).toEqual({ ok: false, error: 'Invalid tool choice' });
   });
 });

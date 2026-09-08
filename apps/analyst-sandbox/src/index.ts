@@ -5,6 +5,7 @@ import {
   type Sandbox as SandboxBinding,
 } from '@cloudflare/sandbox';
 import { getPricing } from '@trace-flow/pricing';
+import { BodySizeLimitError, readBodyWithLimit } from '@trace-flow/utils';
 import { ConvexHttpClient } from 'convex/browser';
 import type { Infer } from 'convex/values';
 import { api } from '@trace-flow/convex/_generated/api';
@@ -13,6 +14,7 @@ import type {
   sandboxRunEventInput,
   sandboxRunTerminalStatus,
 } from '@trace-flow/convex/analystSandboxSchema';
+import { SANDBOX_INFERENCE_MAX_OUTPUT_TOKENS_PER_REQUEST } from '@trace-flow/convex/analystSandboxPolicy';
 
 type SandboxRunId = Id<'analystSandboxRuns'>;
 type SandboxRunEventInput = Infer<typeof sandboxRunEventInput>;
@@ -35,6 +37,7 @@ import {
 import { buildTraceflowPythonClient } from './pythonClient';
 import {
   EXECUTION_TIMEOUT_MS,
+  MAX_OPENROUTER_REQUEST_BYTES,
   MAX_PI_TAIL_LINES,
   MAX_STDERR_CHARS,
   MAX_STDOUT_CHARS,
@@ -43,8 +46,12 @@ import {
   parseControlPiRunRequest,
   parseDestroyPiRunRequest,
   parseExecuteAnalysisRequest,
+  isSandboxRunToken,
+  parseOpenRouterChatCompletionsPath,
+  parseOpenRouterChatCompletionsRequest,
   parseStartPiRunRequest,
   parseTraceflowToolRequest,
+  secureOpenRouterChatCompletionsPayload,
   truncateOutput,
 } from './request';
 
@@ -177,6 +184,7 @@ const completeRunRef = api.analystSandbox.completeSandboxRun;
 const checkpointRunRef = api.analystSandbox.checkpointSandboxRun;
 const executeToolRef = api.analystSandbox.executeSandboxToolCall;
 const verifyRunRef = api.analystSandbox.verifySandboxRunToken;
+const authorizeInferenceRef = api.analystSandboxInference.authorizeSandboxInference;
 const SANDBOX_RPC_TIMEOUT_MS = 8_000;
 const SANDBOX_CLEANUP_TIMEOUT_MS = 5_000;
 const SANDBOX_START_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 12_000, 16_000];
@@ -440,7 +448,7 @@ async function handleWorkerRequest(
 ): Promise<Response> {
   const url = new URL(request.url);
 
-  if (url.pathname.startsWith('/ai-proxy/openrouter/')) {
+  if (parseOpenRouterChatCompletionsPath(url.pathname) !== null) {
     return handleOpenRouterProxy(request, env, url);
   }
 
@@ -480,8 +488,8 @@ export default { fetch: handleWorkerRequest };
 
 /**
  * Paths the sealed container is allowed to reach — all on this same Worker,
- * over intercepted HTTP. `/ai-proxy/openrouter/` is prefix-matched (it carries
- * the runId); the rest are exact. Anything else is denied by ContainerProxy.
+ * over intercepted HTTP. The OpenRouter path carries the runId but otherwise
+ * matches one exact endpoint; the rest are exact. Anything else is denied.
  */
 const WORKER_ROUTES = new Set([
   '/execute',
@@ -495,7 +503,7 @@ const WORKER_ROUTES = new Set([
 ]);
 
 function isWorkerRoute(pathname: string): boolean {
-  return pathname.startsWith('/ai-proxy/openrouter/') || WORKER_ROUTES.has(pathname);
+  return parseOpenRouterChatCompletionsPath(pathname) !== null || WORKER_ROUTES.has(pathname);
 }
 
 /**
@@ -882,8 +890,13 @@ async function handleTraceflowTool(request: Request, env: Env): Promise<Response
 }
 
 async function handleOpenRouterProxy(request: Request, env: Env, url: URL): Promise<Response> {
+  if (request.method !== 'POST' || url.search) {
+    return jsonResponse({ ok: false, error: 'Not found' }, { status: 404 });
+  }
   const token = bearerToken(request);
-  if (!token) return jsonResponse({ ok: false, error: 'Unauthorized' }, { status: 401 });
+  if (!token || !isSandboxRunToken(token)) {
+    return jsonResponse({ ok: false, error: 'Unauthorized' }, { status: 401 });
+  }
   if (!env.OPENROUTER_API_KEY) {
     return jsonResponse(
       { ok: false, error: 'OPENROUTER_API_KEY is not configured' },
@@ -891,51 +904,61 @@ async function handleOpenRouterProxy(request: Request, env: Env, url: URL): Prom
     );
   }
 
-  const match = /^\/ai-proxy\/openrouter\/([^/]+)\/api\/v1\/(.+)$/.exec(url.pathname);
-  const runId = match?.[1];
-  const targetPath = match?.[2];
-  if (!runId || !targetPath)
-    return jsonResponse({ ok: false, error: 'Invalid proxy path' }, { status: 404 });
+  const runId = parseOpenRouterChatCompletionsPath(url.pathname);
+  if (!runId) return jsonResponse({ ok: false, error: 'Invalid proxy path' }, { status: 404 });
 
-  const verified = (await getConvex(env).action(verifyRunRef, {
+  const declaredLength = Number(request.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_OPENROUTER_REQUEST_BYTES) {
+    return jsonResponse({ ok: false, error: 'Request body is too large' }, { status: 413 });
+  }
+
+  let rawBody: ArrayBuffer;
+  try {
+    rawBody = await readBodyWithLimit(request.body, MAX_OPENROUTER_REQUEST_BYTES);
+  } catch (error) {
+    if (error instanceof BodySizeLimitError) {
+      return jsonResponse({ ok: false, error: 'Request body is too large' }, { status: 413 });
+    }
+    throw error;
+  }
+
+  let json: unknown;
+  try {
+    json = JSON.parse(new TextDecoder().decode(rawBody));
+  } catch {
+    return jsonResponse({ ok: false, error: 'Invalid JSON payload' }, { status: 400 });
+  }
+  const parsed = parseOpenRouterChatCompletionsRequest(
+    json,
+    SANDBOX_INFERENCE_MAX_OUTPUT_TOKENS_PER_REQUEST,
+  );
+  if (!parsed.ok) return jsonResponse({ ok: false, error: parsed.error }, { status: 400 });
+
+  const authorization = (await getConvex(env).action(authorizeInferenceRef, {
     runId: runId as SandboxRunId,
     token,
-    purpose: 'inference',
+    requestedOutputTokens: parsed.request.requestedOutputTokens,
   })) as {
     ok?: boolean;
+    reason?: string;
     status?: string | null;
+    model?: string | null;
   };
-  if (!verified.ok || !['queued', 'starting', 'running'].includes(String(verified.status))) {
+  if (authorization.reason === 'quota_exceeded') {
+    return jsonResponse({ ok: false, error: 'Run inference budget exhausted' }, { status: 429 });
+  }
+  if (!authorization.ok || !authorization.model) {
     return jsonResponse({ ok: false, error: 'Unauthorized' }, { status: 401 });
   }
 
-  const headers = new Headers(request.headers);
+  const headers = new Headers({ 'content-type': 'application/json' });
   headers.set('authorization', `Bearer ${env.OPENROUTER_API_KEY}`);
   headers.set('HTTP-Referer', 'https://traceflow.dev');
   headers.set('X-Title', 'Trace Flow Analyst Pi');
-  headers.delete('host');
-  headers.delete('content-length');
 
-  let body: BodyInit | null = null;
-  if (request.method !== 'GET' && request.method !== 'HEAD') {
-    const text = await request.text();
-    body = maybeAddOpenRouterMetadata(text, runId);
-  }
-
-  return fetch(`https://openrouter.ai/api/v1/${targetPath}${url.search}`, {
-    method: request.method,
+  return fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
     headers,
-    body,
+    body: secureOpenRouterChatCompletionsPayload(parsed.request, runId, authorization.model),
   });
-}
-
-function maybeAddOpenRouterMetadata(text: string, runId: string): string {
-  try {
-    const payload = JSON.parse(text) as Record<string, unknown>;
-    payload.session_id = runId;
-    payload.usage = { include: true };
-    return JSON.stringify(payload);
-  } catch {
-    return text;
-  }
 }

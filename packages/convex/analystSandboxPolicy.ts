@@ -13,6 +13,10 @@ export const SANDBOX_LIVENESS_STALE_MS = 30_000;
 // Auto-resume a dead container up to this many times before failing loudly, so a
 // run that crashes on every start can't loop forever burning tokens and containers.
 export const SANDBOX_MAX_RESUME_ATTEMPTS = 2;
+export const SANDBOX_INFERENCE_MAX_REQUESTS = 64;
+export const SANDBOX_INFERENCE_MAX_OUTPUT_TOKENS_PER_REQUEST = 4_096;
+export const SANDBOX_INFERENCE_MAX_RESERVED_OUTPUT_TOKENS =
+  SANDBOX_INFERENCE_MAX_REQUESTS * SANDBOX_INFERENCE_MAX_OUTPUT_TOKENS_PER_REQUEST;
 
 export const ACTIVE_SANDBOX_RUN_STATUSES = new Set(['queued', 'starting', 'running']);
 

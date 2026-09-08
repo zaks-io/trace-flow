@@ -59,17 +59,28 @@ export function registerMcpCallbackRoutes(
       if (!userInfo.email) {
         return c.json({ error: 'Email is required' }, 400);
       }
+      if (userInfo.email_verified !== true) {
+        return c.json({ error: 'A verified email address is required' }, 403);
+      }
 
       const domain = process.env.AUTH0_DOMAIN;
       const tokenIdentifier = `https://${domain}/|${userInfo.sub}`;
 
       // Find or create user
-      const userId = await ctx.runMutation(internal.auth.users.findOrCreateUser, {
-        tokenIdentifier,
-        email: userInfo.email,
-        name: userInfo.name,
-        picture: userInfo.picture,
-      });
+      let userId;
+      try {
+        userId = await ctx.runMutation(internal.auth.users.findOrCreateUser, {
+          tokenIdentifier,
+          email: userInfo.email,
+          name: userInfo.name,
+          picture: userInfo.picture,
+        });
+      } catch (error) {
+        if (String(error).includes('User account is not enabled')) {
+          return c.json({ error: 'User account is not enabled' }, 403);
+        }
+        throw error;
+      }
 
       // Collector CLI device flow reuses this registered callback (Auth0 only allows /mcp/callback),
       // tagged by a `collector:` state prefix from /collector/authorize. Mint a Collector Credential

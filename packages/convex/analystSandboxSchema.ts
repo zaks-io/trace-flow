@@ -77,6 +77,9 @@ export const sandboxRunFields = {
   // Pi emits cumulative snapshots; we add only the delta so resumes/restreams don't
   // double-count. Absent = nothing applied yet.
   usageApplied: v.optional(sandboxUsageApplied),
+  // Atomic proxy budget reservations. Optional keeps existing run rows readable.
+  inferenceRequestCount: v.optional(v.number()),
+  inferenceReservedOutputTokens: v.optional(v.number()),
 };
 
 export const sandboxRunEventFields = {

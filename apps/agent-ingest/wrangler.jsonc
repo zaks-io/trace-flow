@@ -77,7 +77,7 @@
       "vars": {
         "SENTRY_ENVIRONMENT": "preview",
       },
-      "kv_namespaces": [{ "binding": "COLLECTOR_CREDS", "id": "f945ee3d71954ffabd364e3db385d3ab" }],
+      "kv_namespaces": [{ "binding": "COLLECTOR_CREDS", "id": "422b54e456c7446ea5ba4f9ef9a8c84e" }],
       "queues": {
         "producers": [{ "queue": "agent-ingest-dev", "binding": "AGENT_QUEUE" }],
       },

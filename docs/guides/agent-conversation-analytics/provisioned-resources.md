@@ -34,14 +34,20 @@ control plane, not the sole minting mechanism.
 | ----------------- | ----------------- | ---------------------------------- |
 | `COLLECTOR_CREDS` | `COLLECTOR_CREDS` | `f945ee3d71954ffabd364e3db385d3ab` |
 
+Preview uses its own namespace so reviewed code cannot read or modify Cloud-Dev credentials:
+
+| Binding           | Namespace name            | Namespace ID                       |
+| ----------------- | ------------------------- | ---------------------------------- |
+| `COLLECTOR_CREDS` | `COLLECTOR_CREDS_PREVIEW` | `422b54e456c7446ea5ba4f9ef9a8c84e` |
+
 ## Config-only (no provisioning call)
 
 - `AGENT_INGEST_LIMITER` — rate-limit binding, namespace **2006**. Declared in the agent-ingest
   worker's `wrangler.jsonc` `[[unsafe.bindings]]`; Cloudflare allocates it at deploy time, so there
   is no `wrangler` create command and no ID to record here.
-- `AGENT_INGEST_LIMITER` preview — rate-limit namespace **2010**. Preview reuses the dev
-  `COLLECTOR_CREDS` KV and `agent-ingest-dev` queue, but keeps its Worker name and rate-limit budget
-  separate from cloud-dev.
+- `AGENT_INGEST_LIMITER` preview — rate-limit namespace **2010**. Preview keeps its Worker,
+  Collector Credentials KV, and rate-limit budget separate from Cloud-Dev; it still uses the dev
+  ingest queue.
 
 ## Production resources (TRA-110)
 
@@ -85,14 +91,15 @@ Archive API reuses the Collector Credential KV for authentication and has its ow
 bucket and Durable Object namespaces. It never binds the proxy Body Object, Tinybird credentials, or
 the agent ingest queue.
 
-| Environment | Worker                           | Collector Credential KV | R2 bucket                       | Route / origin                                                 |
-| ----------- | -------------------------------- | ----------------------- | ------------------------------- | -------------------------------------------------------------- |
-| Cloud-Dev   | `trace-flow-archive-api-dev`     | dev ID above            | `trace-flow-agent-archive-dev`  | `https://trace-flow-archive-api-dev.isaac-a46.workers.dev`     |
-| Preview     | `trace-flow-archive-api-preview` | dev ID above            | `trace-flow-agent-archive-dev`  | `https://trace-flow-archive-api-preview.isaac-a46.workers.dev` |
-| Production  | `trace-flow-archive-api`         | production ID above     | `trace-flow-agent-archive-prod` | `archive.trace-flow.dev`                                       |
+| Environment | Worker                           | Collector Credential KV | R2 bucket                          | Route / origin                                                 |
+| ----------- | -------------------------------- | ----------------------- | ---------------------------------- | -------------------------------------------------------------- |
+| Cloud-Dev   | `trace-flow-archive-api-dev`     | dev ID above            | `trace-flow-agent-archive-dev`     | `https://trace-flow-archive-api-dev.isaac-a46.workers.dev`     |
+| Preview     | `trace-flow-archive-api-preview` | preview ID above        | `trace-flow-agent-archive-preview` | `https://trace-flow-archive-api-preview.isaac-a46.workers.dev` |
+| Production  | `trace-flow-archive-api`         | production ID above     | `trace-flow-agent-archive-prod`    | `archive.trace-flow.dev`                                       |
 
-Both buckets use the `us` jurisdiction. Preview shares the Cloud-Dev bucket and KV but uses a distinct
-Worker and Durable Object namespace. Production deployment is the normal merge workflow: it checks the
+All buckets use the `us` jurisdiction. Preview uses distinct KV, R2, Worker, and Durable Object
+resources. The preview workflow points its Convex deployment at the preview Collector Credentials KV
+before any preview Worker deploys. Production deployment is the normal merge workflow: it checks the
 resolved Wrangler config, creates the exact production bucket when absent, and deploys only after Convex.
 The production Worker declares `archive.trace-flow.dev` as a
 [Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/).

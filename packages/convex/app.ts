@@ -19,11 +19,12 @@ export const sessionContext = query({
     }
 
     const user = await getCurrentUser(ctx);
-    const isAdmin = user?.isAdmin === true;
+    const isEnabled = user?.enabled === true;
+    const isAdmin = isEnabled && user?.isAdmin === true;
 
     let subscription = null;
     let onboardingCompletedAt: number | undefined;
-    if (user?.orgId) {
+    if (isEnabled && user?.orgId) {
       const [sub, org] = await Promise.all([
         ctx.db
           .query('subscriptions')

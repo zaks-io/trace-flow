@@ -1,7 +1,7 @@
 import { mutation, query } from './_generated/server';
 import { v } from 'convex/values';
 import { requireAuthenticated } from './auth/auth';
-import { getCurrentUser, requireEnabledUser } from './auth/users';
+import { getCurrentEnabledUser, requireEnabledUser } from './auth/users';
 
 const alertFieldValidator = v.union(
   v.literal('duration_ms'),
@@ -29,7 +29,7 @@ const alertSeverityValidator = v.union(v.literal('info'), v.literal('warning'), 
 export const list = query({
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
-    const user = await getCurrentUser(ctx);
+    const user = await getCurrentEnabledUser(ctx);
 
     if (!user) {
       return [];
@@ -45,7 +45,7 @@ export const list = query({
 export const listEnabled = query({
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
-    const user = await getCurrentUser(ctx);
+    const user = await getCurrentEnabledUser(ctx);
 
     if (!user) {
       return [];

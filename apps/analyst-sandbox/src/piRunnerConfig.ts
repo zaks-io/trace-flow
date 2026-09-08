@@ -1,5 +1,6 @@
 import type { ModelPricing } from '@trace-flow/pricing';
 import type { StartPiRunRequest } from './request';
+import { SANDBOX_INFERENCE_MAX_OUTPUT_TOKENS_PER_REQUEST } from '@trace-flow/convex/analystSandboxPolicy';
 
 const RUNNER_PATH = '/workspace/traceflow-pi-runner.mjs';
 const REQUEST_PATH = (runId: string) => `/workspace/runs/${runId}/request.json`;
@@ -101,7 +102,7 @@ export function buildPiModelsJson(model: string, aiProxyBaseUrl: string, cost: P
               reasoning: true,
               input: ['text'],
               contextWindow: 128000,
-              maxTokens: 4096,
+              maxTokens: SANDBOX_INFERENCE_MAX_OUTPUT_TOKENS_PER_REQUEST,
               cost,
               compat: {
                 cacheControlFormat: 'anthropic',

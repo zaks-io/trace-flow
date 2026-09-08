@@ -18,7 +18,7 @@ export const resolveLoginOrg = internalQuery({
   returns: v.union(v.null(), v.object({ orgId: v.id('organizations'), orgName: v.string() })),
   handler: async (ctx, args) => {
     const user = await ctx.db.get(args.userId);
-    if (!user?.orgId) return null;
+    if (!user?.enabled || !user.orgId) return null;
     const org = await ctx.db.get(user.orgId);
     if (!org) return null;
     return { orgId: user.orgId, orgName: org.name };
@@ -44,7 +44,10 @@ export const mintForUser = internalMutation({
   }),
   handler: async (ctx, args) => {
     const user = await ctx.db.get(args.userId);
-    if (!user?.orgId) {
+    if (!user?.enabled) {
+      throw new Error('User account is not enabled. Please contact support.');
+    }
+    if (!user.orgId) {
       throw new Error('Collector Credentials require an organization');
     }
     const orgId: Id<'organizations'> = user.orgId;

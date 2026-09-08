@@ -38,6 +38,7 @@ export const getActivePolicy = query({
   returns: v.union(v.null(), policyValidator),
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
+    await requireEnabledUser(ctx);
     return await readActivePolicy(ctx);
   },
 });

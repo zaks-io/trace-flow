@@ -4,14 +4,14 @@ import { type QueryCtx, type MutationCtx } from '../_generated/server';
 import { type Doc, type Id } from '../_generated/dataModel';
 import { internal } from '../_generated/api';
 import { createOrgWithDefaultBilling, ensureOrgHasSubscription } from './organizations';
-import { getCurrentUser, requireEnabledUser } from './userHelpers';
+import { getCurrentEnabledUser, getCurrentUser, requireEnabledUser } from './userHelpers';
 import { userValidator } from '../validators';
 import { rateLimiter } from '../rateLimits';
 import { invalidateArchiveEnrollmentsForUser } from '../archiveLib';
 
 type AuthContext = QueryCtx | MutationCtx;
 
-export { getCurrentUser, requireEnabledUser };
+export { getCurrentEnabledUser, getCurrentUser, requireEnabledUser };
 
 /**
  * Extracts the Auth0 `sub` claim from Convex's tokenIdentifier.
@@ -195,7 +195,7 @@ async function reconcileAcceptedInvite(
 }
 
 export async function getCurrentUserId(ctx: AuthContext): Promise<Id<'users'> | null> {
-  const user = await getCurrentUser(ctx);
+  const user = await getCurrentEnabledUser(ctx);
   return user?._id ?? null;
 }
 
@@ -287,6 +287,7 @@ export const initializeUser = mutation({
       name: identity.name,
       picture: identity.pictureUrl,
     };
+    const canUseEmailInvitation = identity.emailVerified === true;
 
     const existingUser = await ctx.db
       .query('users')
@@ -294,16 +295,16 @@ export const initializeUser = mutation({
       .first();
 
     if (existingUser) {
+      if (!existingUser.enabled) return { userId: existingUser._id };
+
       if (hasUserDataChanged(existingUser, userInfo)) {
         await ctx.db.patch(existingUser._id, userInfo);
       }
 
-      if (!existingUser.enabled) {
-        await ctx.db.patch(existingUser._id, { enabled: true });
-      }
-
       const userAfterProfile = (await ctx.db.get(existingUser._id))!;
-      await reconcileAcceptedInvite(ctx, existingUser._id, userAfterProfile, userInfo);
+      if (canUseEmailInvitation) {
+        await reconcileAcceptedInvite(ctx, existingUser._id, userAfterProfile, userInfo);
+      }
 
       const refreshed = (await ctx.db.get(existingUser._id))!;
       if (!refreshed.orgId) {
@@ -325,7 +326,9 @@ export const initializeUser = mutation({
       throws: true,
     });
 
-    const acceptedInvite = await getAcceptedInviteForEmail(ctx, userInfo.email);
+    const acceptedInvite = canUseEmailInvitation
+      ? await getAcceptedInviteForEmail(ctx, userInfo.email)
+      : null;
 
     const userId = await ctx.db.insert('users', {
       ...userInfo,
@@ -363,7 +366,7 @@ export const getUser = query({
   args: { id: v.id('users') },
   returns: v.union(userValidator, v.null()),
   handler: async (ctx, args) => {
-    const currentUser = await getCurrentUser(ctx);
+    const currentUser = await getCurrentEnabledUser(ctx);
     if (!currentUser) throw new Error('Authentication required');
     const target = await ctx.db.get(args.id);
     if (!target) return null;
@@ -394,6 +397,10 @@ export const findOrCreateUser = internalMutation({
       .first();
 
     if (existingUser) {
+      if (!existingUser.enabled) {
+        throw new Error('User account is not enabled. Please contact support.');
+      }
+
       if (
         existingUser.email !== email ||
         existingUser.name !== args.name ||
@@ -404,9 +411,6 @@ export const findOrCreateUser = internalMutation({
           name: args.name,
           picture: args.picture,
         });
-      }
-      if (!existingUser.enabled) {
-        await ctx.db.patch(existingUser._id, { enabled: true });
       }
 
       const userInfo: UserInfo = {
@@ -484,7 +488,7 @@ export const isAdmin = query({
   args: {},
   returns: v.boolean(),
   handler: async (ctx) => {
-    const user = await getCurrentUser(ctx);
+    const user = await getCurrentEnabledUser(ctx);
     return user?.isAdmin === true;
   },
 });
@@ -493,7 +497,7 @@ export const isAdminInternal = internalQuery({
   args: {},
   returns: v.boolean(),
   handler: async (ctx) => {
-    const user = await getCurrentUser(ctx);
+    const user = await getCurrentEnabledUser(ctx);
     return user?.isAdmin === true;
   },
 });

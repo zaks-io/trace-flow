@@ -24,6 +24,7 @@ function makeIdentity(overrides: Record<string, unknown> = {}) {
   return {
     tokenIdentifier: 'token|123',
     email: 'invitee@example.com',
+    emailVerified: true,
     ...overrides,
   };
 }
@@ -31,9 +32,11 @@ function makeIdentity(overrides: Record<string, unknown> = {}) {
 function makeCtx({
   identity = makeIdentity(),
   invite = null,
+  user = null,
 }: {
   identity?: Record<string, unknown> | null;
   invite?: ReturnType<typeof makeInvite> | null;
+  user?: Record<string, unknown> | null;
 } = {}) {
   const dbPatch = vi.fn().mockResolvedValue(undefined);
   const dbInsert = vi.fn().mockResolvedValue('new_invite_id');
@@ -49,13 +52,13 @@ function makeCtx({
       patch: dbPatch,
       insert: dbInsert,
       delete: vi.fn().mockResolvedValue(undefined),
-      query: vi.fn().mockReturnValue({
+      query: vi.fn().mockImplementation((table: string) => ({
         withIndex: vi.fn().mockReturnThis(),
         filter: vi.fn().mockReturnThis(),
-        first: vi.fn().mockResolvedValue(invite),
+        first: vi.fn().mockResolvedValue(table === 'users' ? user : invite),
         collect: vi.fn().mockResolvedValue([]),
         order: vi.fn().mockReturnThis(),
-      }),
+      })),
     },
     scheduler: { runAfter: schedulerRunAfter },
     _dbPatch: dbPatch,
@@ -228,6 +231,29 @@ describe('acceptInvite handler logic', () => {
     });
 
     await expect(callAcceptInvite(ctx)).rejects.toThrow('Invite is for a different email address');
+    expect(ctx._dbPatch).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unverified matching email', async () => {
+    const invite = makeInvite();
+    const ctx = makeCtx({
+      invite,
+      identity: makeIdentity({ emailVerified: false }),
+    });
+
+    await expect(callAcceptInvite(ctx)).rejects.toThrow(
+      'A verified email address is required to accept an invite',
+    );
+    expect(ctx._dbPatch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a disabled account before accepting the invite', async () => {
+    const ctx = makeCtx({
+      invite: makeInvite(),
+      user: { _id: 'user_id', enabled: false },
+    });
+
+    await expect(callAcceptInvite(ctx)).rejects.toThrow('User account is not enabled');
     expect(ctx._dbPatch).not.toHaveBeenCalled();
   });
 

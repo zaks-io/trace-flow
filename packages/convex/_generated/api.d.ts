@@ -515,8 +515,16 @@ export declare const api: {
     verifySandboxRunToken: FunctionReference<
       "action",
       "public",
+      { runId: Id<"analystSandboxRuns">; token: string },
+      any
+    >;
+  };
+  analystSandboxInference: {
+    authorizeSandboxInference: FunctionReference<
+      "action",
+      "public",
       {
-        purpose?: "inference" | "callback";
+        requestedOutputTokens: number;
         runId: Id<"analystSandboxRuns">;
         token: string;
       },
@@ -1964,6 +1972,16 @@ export declare const internal: {
         now: number;
         runId: Id<"analystSandboxRuns">;
         userId: Id<"users">;
+      },
+      any
+    >;
+    reserveSandboxInference: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        requestedOutputTokens: number;
+        runId: Id<"analystSandboxRuns">;
+        tokenHash: string;
       },
       any
     >;
