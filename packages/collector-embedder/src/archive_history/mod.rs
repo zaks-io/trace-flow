@@ -77,9 +77,10 @@ pub fn prepare(
         } else {
             loaded.expect("checked present generation")
         };
+        let mut state_changed = reset;
         if !reset && authorization.history_choice == ArchiveHistoryChoice::AllHistory {
             for candidate in &candidates {
-                state.register(target_from(candidate));
+                state_changed |= state.register(target_from(candidate));
             }
         }
         if !reset && authorization.history_choice == ArchiveHistoryChoice::NewOnly {
@@ -88,13 +89,11 @@ pub fn prepare(
                     .started_at
                     .is_some_and(|started| started <= authorization.authorized_at)
                 {
-                    state.register(target_from(candidate));
+                    state_changed |= state.register(target_from(candidate));
                 }
             }
         }
-        if (reset || loaded_state_changed(spool, &state))
-            && spool.commit_history_state(&state).is_err()
-        {
+        if state_changed && spool.commit_history_state(&state).is_err() {
             prepared
                 .errors
                 .push("archive_history_uncommitted".to_string());
@@ -129,7 +128,11 @@ pub fn prepare(
                 continue;
             }
             if is_live {
-                live_sessions.push((candidate.source, candidate.session.clone()));
+                live_sessions.push((
+                    candidate.source,
+                    candidate.session.clone(),
+                    candidate.activity_rank_ms,
+                ));
             }
             scheduled.push(candidate);
         }
@@ -141,14 +144,6 @@ pub fn prepare(
         .with_present_parts(present_parts)
         .with_failed_sources(failed_sources);
     prepared
-}
-
-fn loaded_state_changed(spool: &ArchiveSpool, state: &ArchiveHistoryState) -> bool {
-    spool
-        .history_state(state.generation.source)
-        .ok()
-        .flatten()
-        .is_none_or(|loaded| loaded != *state)
 }
 
 fn discover(home: &Path, source: ArchiveSource, errors: &mut Vec<String>) -> Vec<Candidate> {
@@ -188,11 +183,15 @@ fn append_snapshots(
     state: &ArchiveHistoryState,
     mut candidates: Vec<Candidate>,
     prepared: &mut PreparedArchiveHistory,
-    live_sessions: &[(ArchiveSource, String)],
+    live_sessions: &[(ArchiveSource, String, i64)],
 ) {
     candidates.sort_by(|left, right| {
-        let left_live = live_sessions.contains(&(left.source, left.session.clone()));
-        let right_live = live_sessions.contains(&(right.source, right.session.clone()));
+        let left_live = live_sessions
+            .iter()
+            .any(|(source, session, _)| *source == left.source && session == &left.session);
+        let right_live = live_sessions
+            .iter()
+            .any(|(source, session, _)| *source == right.source && session == &right.session);
         right_live
             .cmp(&left_live)
             .then_with(|| right.activity_rank_ms.cmp(&left.activity_rank_ms))
@@ -202,7 +201,9 @@ fn append_snapshots(
     let mut baseline_parts = 0usize;
     let mut baseline_bytes = 0u64;
     for candidate in candidates {
-        let class = if live_sessions.contains(&(candidate.source, candidate.session.clone())) {
+        let class = if live_sessions.iter().any(|(source, session, _)| {
+            *source == candidate.source && session == &candidate.session
+        }) {
             ArchiveWorkClass::Live
         } else {
             ArchiveWorkClass::Baseline
@@ -216,11 +217,14 @@ fn append_snapshots(
         }) {
             continue;
         }
-        if class == ArchiveWorkClass::Baseline
-            && (baseline_parts >= ARCHIVE_BASELINE_PARTS_PER_CYCLE
-                || baseline_bytes >= ARCHIVE_BASELINE_READ_BUDGET_BYTES)
-        {
-            continue;
+        if class == ArchiveWorkClass::Baseline {
+            let exceeds_read_budget =
+                baseline_bytes.saturating_add(candidate.size) > ARCHIVE_BASELINE_READ_BUDGET_BYTES;
+            if baseline_parts >= ARCHIVE_BASELINE_PARTS_PER_CYCLE
+                || (baseline_parts > 0 && exceeds_read_budget)
+            {
+                continue;
+            }
         }
         let copies_match = candidate
             .copies
@@ -244,7 +248,11 @@ fn append_snapshots(
             baseline_parts += 1;
             baseline_bytes = baseline_bytes.saturating_add(candidate.size);
         }
-        let activity_rank_ms = state.rank_of_session(&candidate.session);
+        let activity_rank_ms = if class == ArchiveWorkClass::Live {
+            Some(candidate.activity_rank_ms)
+        } else {
+            state.rank_of_session(&candidate.session)
+        };
         prepared.snapshots.push(ArchiveSnapshot {
             source: candidate.source,
             source_session_id: candidate.session,

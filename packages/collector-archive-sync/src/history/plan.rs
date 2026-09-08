@@ -8,10 +8,40 @@ pub enum ArchiveWorkClass {
     Baseline,
 }
 
+#[cfg(test)]
+mod tests {
+    use crate::history::ArchiveHistoryGeneration;
+    use crate::policy::ArchiveHistoryChoice;
+
+    use super::*;
+
+    #[test]
+    fn new_only_pending_requires_current_positive_session_proof() {
+        let state = ArchiveHistoryState::new(
+            ArchiveHistoryGeneration {
+                source: ArchiveSource::Codex,
+                history_choice: ArchiveHistoryChoice::NewOnly,
+                authorized_at: 10,
+            },
+            10,
+            Vec::new(),
+        );
+        let pending_only = ArchiveHistoryPlan::new(vec![state.clone()]);
+        assert!(!pending_only.permits(ArchiveSource::Codex, "new-session"));
+
+        let proven = ArchiveHistoryPlan::new(vec![state]).with_live_sessions(vec![(
+            ArchiveSource::Codex,
+            "new-session".to_string(),
+            20,
+        )]);
+        assert!(proven.permits(ArchiveSource::Codex, "new-session"));
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ArchiveHistoryPlan {
     states: Vec<ArchiveHistoryState>,
-    live_sessions: Vec<(ArchiveSource, String)>,
+    live_sessions: Vec<(ArchiveSource, String, i64)>,
     present_parts: Vec<(ArchiveSource, String, String)>,
     failed_sources: Vec<ArchiveSource>,
 }
@@ -58,7 +88,7 @@ impl ArchiveHistoryPlan {
             })
     }
 
-    pub fn with_live_sessions(mut self, live_sessions: Vec<(ArchiveSource, String)>) -> Self {
+    pub fn with_live_sessions(mut self, live_sessions: Vec<(ArchiveSource, String, i64)>) -> Self {
         self.live_sessions = live_sessions;
         self
     }
@@ -78,15 +108,21 @@ impl ArchiveHistoryPlan {
     }
 
     pub fn permits(&self, source: ArchiveSource, source_session_id: &str) -> bool {
-        self.state(source)
-            .is_some_and(|state| !state.excludes_session(source_session_id))
+        self.state(source).is_some_and(|state| {
+            !state.excludes_session(source_session_id)
+                && (state.generation.history_choice
+                    == crate::policy::ArchiveHistoryChoice::AllHistory
+                    || self.live_sessions.iter().any(|(live_source, session, _)| {
+                        *live_source == source && session == source_session_id
+                    }))
+        })
     }
 
     pub fn class_for(&self, source: ArchiveSource, source_session_id: &str) -> ArchiveWorkClass {
         if self
             .live_sessions
             .iter()
-            .any(|(candidate_source, candidate_session)| {
+            .any(|(candidate_source, candidate_session, _)| {
                 *candidate_source == source && candidate_session == source_session_id
             })
         {
@@ -103,7 +139,15 @@ impl ArchiveHistoryPlan {
     }
 
     pub fn rank_of(&self, source: ArchiveSource, source_session_id: &str) -> Option<i64> {
-        self.state(source)
-            .and_then(|state| state.rank_of_session(source_session_id))
+        self.live_sessions
+            .iter()
+            .find(|(live_source, session, _)| {
+                *live_source == source && session == source_session_id
+            })
+            .map(|(_, _, rank)| *rank)
+            .or_else(|| {
+                self.state(source)
+                    .and_then(|state| state.rank_of_session(source_session_id))
+            })
     }
 }

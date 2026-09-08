@@ -102,6 +102,7 @@ fn all_history_keeps_new_session_priority_after_restart() {
         second.plan.class_for(ArchiveSource::Codex, "new"),
         ArchiveWorkClass::Live
     );
+    assert!(second.plan.rank_of(ArchiveSource::Codex, "new").is_some());
     assert_eq!(
         second.plan.class_for(ArchiveSource::Codex, "old"),
         ArchiveWorkClass::Baseline

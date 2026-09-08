@@ -31,6 +31,10 @@ pub(crate) fn history_reports(
             }
             let mut completed = 0u32;
             for target in state.targets() {
+                if target.registered_complete_byte_offset == 0 {
+                    completed += 1;
+                    continue;
+                }
                 if let Ok(Some(progress)) = spool.progress_part(
                     state.generation.source,
                     &target.source_session_id,
@@ -46,15 +50,13 @@ pub(crate) fn history_reports(
                     snapshot.source == state.generation.source
                         && snapshot.source_session_id == target.source_session_id
                         && snapshot.source_transcript_part_id == target.source_transcript_part_id
-                }) {
-                    if !plan.part_is_present(
-                        state.generation.source,
-                        &target.source_session_id,
-                        &target.source_transcript_part_id,
-                    ) {
-                        report.failed += 1;
-                        record_error(report, "archive_history_missing_baseline");
-                    }
+                }) && !plan.part_is_present(
+                    state.generation.source,
+                    &target.source_session_id,
+                    &target.source_transcript_part_id,
+                ) {
+                    report.failed += 1;
+                    record_error(report, "archive_history_missing_baseline");
                 }
             }
             ArchiveSourceHistoryReport {

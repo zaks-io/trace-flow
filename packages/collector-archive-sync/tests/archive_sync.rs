@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 
 use collector_archive::{
@@ -13,8 +14,8 @@ use collector_archive_sync::{
     ArchiveHistoryPlan, ArchiveHistoryState, ArchiveInitialImport, ArchiveKeyStore, ArchivePolicy,
     ArchiveSnapshot, ArchiveSpool, ArchiveSpoolKey, ArchiveSyncError, ArchiveUploader,
     ArchiveWorkClass, DeferredArchiveSnapshot, MemoryKeyStore, PendingArchiveRequest, PendingLoad,
-    ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE, MAX_ARCHIVE_UPLOAD_BYTES,
-    MAX_UPLOAD_OBSERVATIONS,
+    ARCHIVE_CAPTURE_WINDOW_BYTES, ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE,
+    MAX_ARCHIVE_UPLOAD_BYTES, MAX_UPLOAD_OBSERVATIONS,
 };
 use collector_contracts::AgentSource;
 use tempfile::TempDir;
@@ -2073,12 +2074,21 @@ async fn current_new_only_authority_retains_excluded_pending() {
 }
 
 #[tokio::test]
-async fn deferred_snapshot_is_loaded_only_when_its_part_runs() {
+async fn deferred_oversized_snapshot_makes_bounded_progress() {
     let dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();
     let mut spool = ArchiveSpool::open(dir.path().join("spool"), "org_1", &keys).unwrap();
     let path = dir.path().join("claude.jsonl");
-    fs::write(&path, CLAUDE).unwrap();
+    let mut prefix = Vec::new();
+    while prefix.len() <= ARCHIVE_CAPTURE_WINDOW_BYTES as usize + CLAUDE.len() {
+        prefix.extend_from_slice(CLAUDE);
+    }
+    fs::write(&path, prefix).unwrap();
+    let registered_size = 1024 * 1024 * 1024 + 1;
+    let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+    file.set_len(registered_size).unwrap();
+    file.seek(SeekFrom::End(-1)).unwrap();
+    file.write_all(b"\n").unwrap();
     let mut deferred = snapshot(ArchiveSource::Claude, CLAUDE, 10);
     deferred.bytes.clear();
     deferred.deferred_file = Some(DeferredArchiveSnapshot {
@@ -2092,7 +2102,7 @@ async fn deferred_snapshot_is_loaded_only_when_its_part_runs() {
         &uploader,
         &mut spool,
         &keys,
-        &[deferred],
+        std::slice::from_ref(&deferred),
         ArchivePolicy::Enrolled,
         &plan_for(&[ArchiveSource::Claude]),
         None,
@@ -2100,7 +2110,13 @@ async fn deferred_snapshot_is_loaded_only_when_its_part_runs() {
     .await;
 
     assert_eq!(report.failed, 0);
-    assert_eq!(report.uploaded, 1);
+    assert!(report.uploaded > 0);
+    let progress = spool
+        .progress(ArchiveSource::Claude, &deferred.source_session_id)
+        .unwrap()
+        .unwrap();
+    assert!(progress.last_complete_byte_offset > 0);
+    assert!(progress.last_complete_byte_offset < registered_size);
 }
 
 #[tokio::test]
@@ -2159,6 +2175,7 @@ async fn live_session_runs_before_baseline_after_plan_rebuild() {
     let plan = ArchiveHistoryPlan::new(vec![state]).with_live_sessions(vec![(
         ArchiveSource::Claude,
         live.source_session_id.clone(),
+        11,
     )]);
     let uploader = AckingUploader::new();
 
