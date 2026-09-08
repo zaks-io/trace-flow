@@ -1,7 +1,8 @@
 import { action, internalAction, type ActionCtx } from '../_generated/server';
 import { v } from 'convex/values';
 import { SignJWT } from 'jose';
-import { runAdminSql, TinybirdQueryError } from '@trace-flow/tinybird-client';
+import { TinybirdQueryError } from '@trace-flow/tinybird-client';
+import { runAdminSql } from '../tinybirdTracing';
 import { requireAuthenticated } from '../auth/auth';
 import { requireEnabledActionUser } from '../auth/actionUser';
 import type { Doc } from '../_generated/dataModel';

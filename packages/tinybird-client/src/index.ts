@@ -2,6 +2,12 @@ export { fetchPipe } from './fetchPipe';
 export type { FetchPipeOptions, PipeParam } from './fetchPipe';
 export { runAdminSql, runAdminSqlNoResult } from './runAdminSql';
 export type { RunAdminSqlOptions } from './runAdminSql';
+export {
+  recordTinybirdResponse,
+  recordTinybirdStatistics,
+  startTinybirdQuerySpan,
+} from './tracing';
+export type { StartTinybirdQuerySpanOptions } from './tracing';
 export { classifyTinybirdInsertFailure, insertRows, shouldRetryTinybirdInsert } from './insertRows';
 export type { TinybirdInsertFailureClassification } from './insertRows';
 export { TinybirdAuthError, TinybirdQueryError, TinybirdInsertError } from './errors';

@@ -122,12 +122,7 @@ export async function getUsageSummary(
     retentionDays,
   );
   const { hours, pipeParams } = buildPipeParams(params);
-  const data = await queryPipe<UsageSummaryRow>(
-    ctx.tinybirdBaseUrl,
-    token,
-    'llm_usage_summary',
-    pipeParams,
-  );
+  const data = await queryPipe<UsageSummaryRow>(ctx, token, 'llm_usage_summary', pipeParams);
   const row = data[0];
 
   const result = {
@@ -167,12 +162,7 @@ export async function listOperationUsage(
   const { hours, pipeParams } = buildPipeParams(params);
   pipeParams.limit = clampAnalyticsLimit(params.limit);
 
-  const rows = await queryPipe<OperationUsageRow>(
-    ctx.tinybirdBaseUrl,
-    token,
-    'operations_leaderboard',
-    pipeParams,
-  );
+  const rows = await queryPipe<OperationUsageRow>(ctx, token, 'operations_leaderboard', pipeParams);
 
   const result = {
     window: { hours },
@@ -211,12 +201,7 @@ export async function listModelUsage(
   );
   const { hours, pipeParams } = buildPipeParams(params);
   pipeParams.limit = clampAnalyticsLimit(params.limit);
-  const rows = await queryPipe<ModelUsageRow>(
-    ctx.tinybirdBaseUrl,
-    token,
-    'llm_usage_by_model',
-    pipeParams,
-  );
+  const rows = await queryPipe<ModelUsageRow>(ctx, token, 'llm_usage_by_model', pipeParams);
 
   const result = {
     window: { hours },

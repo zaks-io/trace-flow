@@ -10,7 +10,7 @@ import { internal } from '../_generated/api';
 import { CostAlertEmail } from '@trace-flow/emails';
 import type { Id } from '../_generated/dataModel';
 import { RETENTION_DAYS } from '@trace-flow/types';
-import { fetchPipe as fetchPipeShared } from '@trace-flow/tinybird-client';
+import { fetchPipe as fetchPipeShared } from '../tinybirdTracing';
 import { sendCostAlertWebhookNotification } from './costAlertWebhookDelivery';
 import { analyticsKeyId } from '@trace-flow/utils';
 

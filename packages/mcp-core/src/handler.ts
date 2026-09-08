@@ -70,6 +70,7 @@ export async function dispatchToolCall(
   params: ToolCallParams,
   protocolVersion?: string,
   surface: TraceFlowToolSurface = 'mcp',
+  sentryScope?: ToolCtx['sentryScope'],
 ): Promise<JsonRpcResponse> {
   if (!params || typeof params !== 'object' || typeof params.name !== 'string' || !params.name) {
     return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, 'Missing tool name');
@@ -130,7 +131,12 @@ export async function dispatchToolCall(
 
     const { retentionDays } = userContext;
 
-    const ctx: ToolCtx = { mintToken: backend.mintToken, tinybirdBaseUrl, protocolVersion };
+    const ctx: ToolCtx = {
+      mintToken: backend.mintToken,
+      tinybirdBaseUrl,
+      protocolVersion,
+      sentryScope,
+    };
     const args = params.arguments ?? {};
     const result = await handler(ctx, keyIds, args, retentionDays);
     return createSuccessResponse(id, result);

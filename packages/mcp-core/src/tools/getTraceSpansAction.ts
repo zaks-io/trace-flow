@@ -98,12 +98,7 @@ export async function getTraceSpans(
     detailParams.order = 'desc';
   }
 
-  const data = await queryPipe<SpanRowWithCount>(
-    ctx.tinybirdBaseUrl,
-    token,
-    'mcp_trace_detail',
-    detailParams,
-  );
+  const data = await queryPipe<SpanRowWithCount>(ctx, token, 'mcp_trace_detail', detailParams);
 
   const firstRow = data[0];
   if (!firstRow) {
