@@ -1,19 +1,24 @@
-# Fixtures: fixtures/otel_trace_spans.ndjson, materialized into llm_request_facts.
+# Fixtures: fixtures/otel_trace_spans.ndjson, materialized into llm_request_facts and then
+# into the llm_usage_{hourly,daily,monthly} rollups the pipe reads.
 # key_drift has 3 baseline requests on 2026-05-26 with output/input=0.5 and
 # input/request=100, then 3 current requests on 2026-05-27 with output/input=1.0 and
 # input/request=200. key_sparse has only 1 baseline request so it must surface
 # state=insufficient_data while still returning bounded current/baseline values.
+#
+# The current window is 32 days starting 2026-05-27 (baseline: the 32 days before it) so
+# the pipe reads llm_usage_daily. llm_usage_hourly carries a 90-day TTL, which has already
+# expired these fixed-date fixture rows, so a sub-30-day window would read an empty tier.
 
 - name: token_ratio_drift_previous_window
   description: compares current output/input and input/request ratios to the previous equal window
   expected_http_status: 200
-  parameters: api_keys=sha256:5b71a800042ed186e2beb523fbfdb258f021641a03cae3e5134681ad32a7af8e&api_key_filter=sha256:5b71a800042ed186e2beb523fbfdb258f021641a03cae3e5134681ad32a7af8e&provider=openai&model=gpt-4.1&operation_name=chat&baggage_operation=summarize&baggage_user_id=drift-user&start_time_ns=1779840000000000000&end_time_ns=1779926399999999999&retention_days=3650
+  parameters: api_keys=sha256:5b71a800042ed186e2beb523fbfdb258f021641a03cae3e5134681ad32a7af8e&api_key_filter=sha256:5b71a800042ed186e2beb523fbfdb258f021641a03cae3e5134681ad32a7af8e&provider=openai&model=gpt-4.1&operation_name=chat&baggage_operation=summarize&baggage_user_id=drift-user&start_time_ns=1779840000000000000&end_time_ns=1782604799999999999&retention_days=3650
   expected_result: |
     {"api_key":"sha256:5b71a800042ed186e2beb523fbfdb258f021641a03cae3e5134681ad32a7af8e","provider":"openai","model":"gpt-4.1","operation_name":"chat","baggage_operation":"summarize","baggage_user_id":"drift-user","request_count":3,"input_tokens":600,"output_tokens":600,"baseline_request_count":3,"baseline_input_tokens":300,"baseline_output_tokens":150,"current_output_input_ratio":1,"baseline_output_input_ratio":0.5,"output_input_ratio_delta":0.5,"output_input_ratio_percent_delta":100,"current_input_tokens_per_request":200,"baseline_input_tokens_per_request":100,"input_tokens_per_request_delta":100,"input_tokens_per_request_percent_delta":100,"state":"ok"}
 
 - name: token_ratio_drift_sparse_baseline
   description: returns an explicit insufficient_data state when the matching baseline has too few requests
   expected_http_status: 200
-  parameters: api_keys=sha256:ef1e77f816298beb905b83e987613370b5b98b548badc6ef65f6e567f7309fa8&api_key_filter=sha256:ef1e77f816298beb905b83e987613370b5b98b548badc6ef65f6e567f7309fa8&provider=anthropic&model=claude-3-5-haiku&operation_name=chat&baggage_operation=classify&baggage_user_id=sparse-user&start_time_ns=1779840000000000000&end_time_ns=1779926399999999999&retention_days=3650
+  parameters: api_keys=sha256:ef1e77f816298beb905b83e987613370b5b98b548badc6ef65f6e567f7309fa8&api_key_filter=sha256:ef1e77f816298beb905b83e987613370b5b98b548badc6ef65f6e567f7309fa8&provider=anthropic&model=claude-3-5-haiku&operation_name=chat&baggage_operation=classify&baggage_user_id=sparse-user&start_time_ns=1779840000000000000&end_time_ns=1782604799999999999&retention_days=3650
   expected_result: |
     {"api_key":"sha256:ef1e77f816298beb905b83e987613370b5b98b548badc6ef65f6e567f7309fa8","provider":"anthropic","model":"claude-3-5-haiku","operation_name":"chat","baggage_operation":"classify","baggage_user_id":"sparse-user","request_count":1,"input_tokens":120,"output_tokens":60,"baseline_request_count":1,"baseline_input_tokens":100,"baseline_output_tokens":25,"current_output_input_ratio":0.5,"baseline_output_input_ratio":0.25,"output_input_ratio_delta":0.25,"output_input_ratio_percent_delta":100,"current_input_tokens_per_request":120,"baseline_input_tokens_per_request":100,"input_tokens_per_request_delta":20,"input_tokens_per_request_percent_delta":20,"state":"insufficient_data"}
