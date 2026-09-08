@@ -1,26 +1,31 @@
 import { describe, expect, it, vi } from 'vitest';
-import { env as workerEnv, runInDurableObject } from 'cloudflare:test';
+import { createWorkerLogger } from '@trace-flow/logging';
+import { runInDurableObject } from 'cloudflare:test';
 import {
   ARCHIVE_STORAGE_CAP_BYTES,
   type StorageBudget,
   type StorageBudgetObject,
 } from '../archive-storage-budget';
-import type { ArchiveApiEnv } from '../context';
-import { verifyOrPutImmutableObject } from '../archive-r2';
+import { archiveKeyVersionMetadata, verifyOrPutImmutableObject } from '../archive-r2';
 import { verifyObjectsAndReleaseDefinitivelyUnwritten } from '../archive-ledger-intent-recovery';
 import { archiveObjectKey, archiveOrganizationPrefix } from '../archive-storage-key';
-import type { ArchiveScope } from '../archive-contract';
+import type { ArchiveApiEnv } from '../context';
 import { reconcileBudgetInventoryPage } from '../archive-storage-budget-reconciliation';
 import { rebaseStatusAfterConflict, reserveBudgetStorage } from '../archive-storage-budget-ledger';
+import { budget, inventoryKeys, runtimeEnv, scope } from './storage-budget-fixture';
 
-const runtimeEnv = workerEnv as unknown as Pick<
+const reconciliationLogger = createWorkerLogger({
+  service: 'archive-api-test',
+  request: new Request('https://archive.test/storage-reconciliation'),
+  emitToConsole: false,
+});
+const reconciliationEnv = runtimeEnv as unknown as Pick<
   ArchiveApiEnv,
-  'ARCHIVE_STORAGE' | 'STORAGE_BUDGET'
+  | 'ARCHIVE_STORAGE'
+  | 'CONVEX_SITE_URL'
+  | 'ARCHIVE_API_SHARED_SECRET'
+  | 'ARCHIVE_KEY_WRAPPING_SECRET'
 >;
-
-function budget(orgId: string): DurableObjectStub<StorageBudget> {
-  return runtimeEnv.STORAGE_BUDGET.getByName(orgId);
-}
 
 function object(
   objectKey: string,
@@ -30,29 +35,17 @@ function object(
   return { objectKey, objectClass, bytes, expiresAt: null };
 }
 
-function scope(orgId: string): ArchiveScope {
-  return {
-    orgId,
-    userId: `user-${crypto.randomUUID()}`,
-    contributionId: `contribution-${crypto.randomUUID()}`,
-    source: 'claude',
-    sourceSessionId: `session-${crypto.randomUUID()}`,
-  };
-}
-
-async function inventoryKeys(currentScope: ArchiveScope): Promise<string[]> {
-  return [
-    await archiveObjectKey(currentScope, 'chunks', `sha256:${'a'.repeat(64)}`),
-    await archiveObjectKey(currentScope, 'manifests', `sha256:${'b'.repeat(64)}`),
-    await archiveObjectKey(currentScope, 'chunks', `sha256:${'c'.repeat(64)}`),
-  ];
-}
-
 async function finishReconciliation(stub: DurableObjectStub<StorageBudget>, orgId: string) {
   let result = await stub.reconcileArchiveInventory({ orgId, limit: 1 });
   while (!result.complete) {
     result = await stub.reconcileArchiveInventory({ orgId, limit: 1 });
   }
+}
+
+async function putInventoryObject(key: string, body: string, keyVersion = 1): Promise<void> {
+  await runtimeEnv.ARCHIVE_STORAGE.put(key, body, {
+    customMetadata: archiveKeyVersionMetadata(keyVersion),
+  });
 }
 
 describe('StorageBudget Durable Object', () => {
@@ -178,7 +171,7 @@ describe('StorageBudget Durable Object', () => {
       'manifests',
       `sha256:${'d'.repeat(64)}`,
     );
-    await runtimeEnv.ARCHIVE_STORAGE.put(existingKey, '12345678');
+    await putInventoryObject(existingKey, '12345678');
     const existing = object(existingKey, 8, 'agent_archive_manifest');
     const rejected = await stub.reserveStorage({
       orgId,
@@ -210,7 +203,7 @@ describe('StorageBudget Durable Object', () => {
       'manifests',
       `sha256:${'e'.repeat(64)}`,
     );
-    await runtimeEnv.ARCHIVE_STORAGE.put(discoveredKey, '12345678');
+    await putInventoryObject(discoveredKey, '12345678');
     const discovered = object(discoveredKey, 8, 'agent_archive_manifest');
     const failedProbe = object(
       await archiveObjectKey(currentScope, 'chunks', `sha256:${'9'.repeat(64)}`),
@@ -264,6 +257,7 @@ describe('StorageBudget Durable Object', () => {
         key: objectKey,
         body: 'payload-bytes',
         objectClass: 'chunk',
+        keyVersion: 1,
       }),
     ).rejects.toThrow('put_result_ambiguous');
     expect(await runtimeEnv.ARCHIVE_STORAGE.head(objectKey)).not.toBeNull();
@@ -314,12 +308,14 @@ describe('StorageBudget Durable Object', () => {
           key: planned.objectKey,
           body: String(index).repeat(planned.bytes),
           objectClass: 'chunk' as const,
+          keyVersion: 1,
         })),
         (unwritten) =>
           stub.releaseStorage({
             orgId,
             objects: unwritten.map((item) => object(item.key, item.body.length)),
           }),
+        () => {},
       ),
     ).rejects.toThrow('read_before_put_failed');
     expect(putCalls).toBe(0);
@@ -348,13 +344,18 @@ describe('StorageBudget Durable Object', () => {
       key: item.objectKey,
       body: String.fromCharCode(97 + index).repeat(item.bytes),
       objectClass: 'chunk' as const,
+      keyVersion: 1,
     }));
     await expect(
-      verifyObjectsAndReleaseDefinitivelyUnwritten(partialBucket, planned, (unwritten) =>
-        stub.releaseStorage({
-          orgId,
-          objects: unwritten.map((item) => object(item.key, item.body.length)),
-        }),
+      verifyObjectsAndReleaseDefinitivelyUnwritten(
+        partialBucket,
+        planned,
+        (unwritten) =>
+          stub.releaseStorage({
+            orgId,
+            objects: unwritten.map((item) => object(item.key, item.body.length)),
+          }),
+        () => {},
       ),
     ).rejects.toThrow('partial_put_ambiguous');
     expect(await runtimeEnv.ARCHIVE_STORAGE.head(attempted[0]!.objectKey)).not.toBeNull();
@@ -372,7 +373,7 @@ describe('StorageBudget Durable Object', () => {
     const orgId = currentScope.orgId;
     const stub = budget(orgId);
     const key = await archiveObjectKey(currentScope, 'chunks', `sha256:${'a'.repeat(64)}`);
-    await runtimeEnv.ARCHIVE_STORAGE.put(key, 'final-page');
+    await putInventoryObject(key, 'final-page');
 
     await expect(stub.reconcileArchiveInventory({ orgId, limit: 1000 })).resolves.toMatchObject({
       complete: false,
@@ -395,9 +396,9 @@ describe('StorageBudget Durable Object', () => {
     const orgId = currentScope.orgId;
     const stub = budget(orgId);
     const key = await archiveObjectKey(currentScope, 'chunks', `sha256:${'e'.repeat(64)}`);
-    await runtimeEnv.ARCHIVE_STORAGE.put(key, '12345678');
+    await putInventoryObject(key, '12345678');
     const secondKey = await archiveObjectKey(currentScope, 'manifests', `sha256:${'f'.repeat(64)}`);
-    await runtimeEnv.ARCHIVE_STORAGE.put(secondKey, 'second');
+    await putInventoryObject(secondKey, 'second');
 
     await expect(stub.reconcileArchiveInventory({ orgId, limit: 1 })).resolves.toMatchObject({
       complete: false,
@@ -425,7 +426,7 @@ describe('StorageBudget Durable Object', () => {
       'manifests',
       `sha256:${'f'.repeat(64)}`,
     );
-    await runtimeEnv.ARCHIVE_STORAGE.put(discoveredKey, '12345678');
+    await putInventoryObject(discoveredKey, '12345678');
     await runtimeEnv.ARCHIVE_STORAGE.put(`${prefix}/unknown`, 'unknown');
 
     const reconciliationError = await runInDurableObject(stub, async (instance: StorageBudget) => {
@@ -480,7 +481,7 @@ describe('StorageBudget Durable Object', () => {
       'manifests',
       `sha256:${'7'.repeat(64)}`,
     );
-    await runtimeEnv.ARCHIVE_STORAGE.put(discoveredKey, '12345678');
+    await putInventoryObject(discoveredKey, '12345678');
     const mismatched = object(discoveredKey, 7, 'agent_archive_manifest');
     const mismatch = await runInDurableObject(stub, async (_instance, state) => {
       try {
@@ -603,7 +604,10 @@ describe('StorageBudget Durable Object', () => {
 
     await expect(
       runInDurableObject(stub, (_instance, state) =>
-        reconcileBudgetInventoryPage(state.storage, runtimeEnv, { orgId, forceStart: false }),
+        reconcileBudgetInventoryPage(state.storage, reconciliationEnv, reconciliationLogger, {
+          orgId,
+          forceStart: false,
+        }),
       ),
     ).resolves.toMatchObject({ complete: true });
   });
@@ -658,7 +662,7 @@ describe('StorageBudget Durable Object', () => {
         releaseFirst();
         await expect(manual).resolves.toEqual({ complete: true, generation: 1 });
         await alarm;
-        expect(calls).toBe(2);
+        expect(calls).toBe(1);
         const reconciliation = [
           ...state.storage.sql.exec<{ active_generation: number | null }>(
             'SELECT active_generation FROM storage_budget_reconciliation WHERE id = 1',
@@ -690,7 +694,7 @@ describe('StorageBudget Durable Object', () => {
       for (let index = 0; index < stagedCount; index += 1) {
         const objectKey = `${prefix}/contributions/${'a'.repeat(64)}/sessions/claude/${'b'.repeat(64)}/chunks/${index.toString(16).padStart(64, '0')}`;
         state.storage.sql.exec(
-          "INSERT INTO storage_budget_reconciliation_objects (generation, object_key, object_class, bytes) VALUES (?, ?, 'agent_archive_chunk', 1)",
+          "INSERT INTO storage_budget_reconciliation_objects (generation, object_key, object_class, bytes, key_version) VALUES (?, ?, 'agent_archive_chunk', 1, 1)",
           generation,
           objectKey,
         );
@@ -822,9 +826,9 @@ describe('StorageBudget Durable Object', () => {
     const orgId = currentScope.orgId;
     const stub = budget(orgId);
     const keys = await inventoryKeys(currentScope);
-    await runtimeEnv.ARCHIVE_STORAGE.put(keys[0]!, 'chunk');
-    await runtimeEnv.ARCHIVE_STORAGE.put(keys[1]!, 'manifest');
-    await runtimeEnv.ARCHIVE_STORAGE.put(keys[2]!, 'third');
+    await putInventoryObject(keys[0]!, 'chunk');
+    await putInventoryObject(keys[1]!, 'manifest');
+    await putInventoryObject(keys[2]!, 'third');
 
     const firstPage = await stub.reconcileArchiveInventory({ orgId, limit: 1 });
     expect(firstPage.complete).toBe(false);
@@ -878,7 +882,11 @@ describe('StorageBudget Durable Object', () => {
                 throw new Error('inventory_connection_lost');
               },
             } as unknown as R2Bucket,
+            CONVEX_SITE_URL: reconciliationEnv.CONVEX_SITE_URL,
+            ARCHIVE_API_SHARED_SECRET: reconciliationEnv.ARCHIVE_API_SHARED_SECRET,
+            ARCHIVE_KEY_WRAPPING_SECRET: reconciliationEnv.ARCHIVE_KEY_WRAPPING_SECRET,
           },
+          reconciliationLogger,
           { orgId },
         );
         return null;

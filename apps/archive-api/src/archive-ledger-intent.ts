@@ -161,6 +161,16 @@ export function readPendingIntent(storage: DurableObjectStorage): PendingIntent 
   return row ? readIntent(storage, row.intent_hash) : null;
 }
 
+export function hasPendingIntent(storage: DurableObjectStorage): boolean {
+  return (
+    [
+      ...storage.sql.exec<{ intent_hash: string }>(
+        "SELECT intent_hash FROM pending_intents WHERE status IN ('building', 'ready', 'write_authorized') LIMIT 1",
+      ),
+    ].length > 0
+  );
+}
+
 export function writeIntent(storage: DurableObjectStorage, intent: PendingIntent): void {
   if (!intent.commit || !intent.stateHash || !intent.stateAuthentication) {
     throw new ArchiveContractError('pending_intent_corrupt');
@@ -229,18 +239,29 @@ export function markIntentWriteAuthorized(storage: DurableObjectStorage, intentH
   });
 }
 
-export function discardPendingIntent(storage: DurableObjectStorage, intentHash: string): void {
-  storage.transactionSync(() => {
+export function discardPendingIntent(
+  storage: DurableObjectStorage,
+  intentHash: string,
+  mode: 'unreserved_only' | 'proven_unwritten',
+  beforeDelete?: () => void,
+): boolean {
+  const statuses =
+    mode === 'proven_unwritten'
+      ? "('building', 'ready', 'write_authorized')"
+      : "('building', 'ready')";
+  return storage.transactionSync(() => {
     const deletable = [
       ...storage.sql.exec<{ intent_hash: string }>(
-        "SELECT intent_hash FROM pending_intents WHERE intent_hash = ? AND status IN ('building', 'ready')",
+        `SELECT intent_hash FROM pending_intents WHERE intent_hash = ? AND status IN ${statuses}`,
         intentHash,
       ),
     ][0];
-    if (!deletable) return;
+    if (!deletable) return false;
+    beforeDelete?.();
     storage.sql.exec('DELETE FROM pending_intents WHERE intent_hash = ?', intentHash);
     storage.sql.exec('DELETE FROM pending_intent_parts WHERE intent_hash = ?', intentHash);
     storage.sql.exec('DELETE FROM pending_intent_metadata WHERE intent_hash = ?', intentHash);
+    return true;
   });
 }
 
@@ -249,8 +270,10 @@ export function commitIntent(
   intentHash: string,
   state: LedgerCommit,
   acknowledgement: ArchiveAcknowledgement,
+  beforeCommit?: () => void,
 ): void {
   storage.transactionSync(() => {
+    beforeCommit?.();
     persistLedgerCommit(storage, state);
     storage.sql.exec('DELETE FROM pending_intent_parts WHERE intent_hash = ?', intentHash);
     storage.sql.exec('DELETE FROM pending_intent_metadata WHERE intent_hash = ?', intentHash);

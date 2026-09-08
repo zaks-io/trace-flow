@@ -79,6 +79,33 @@ export const runtimeEnv = workerEnv as unknown as {
 };
 const wrappedKeys = new Map<string, string>();
 
+export async function archiveKeyHttpResponse(
+  pathname: string,
+  onVersionedKey: () => Response | Promise<Response> = async () => {
+    throw new Error('archive key version endpoint must not be reached');
+  },
+): Promise<Response | null> {
+  if (pathname === '/archive-api/key/active') {
+    return new Response(JSON.stringify({ error: 'Archive key unavailable' }), { status: 404 });
+  }
+  if (pathname === '/archive-api/key') {
+    return await onVersionedKey();
+  }
+  return null;
+}
+
+export async function fallbackArchiveKeyHttp(
+  pathname: string,
+  orgId: string,
+): Promise<Response | null> {
+  return archiveKeyHttpResponse(pathname, async () =>
+    Response.json({
+      wrappedKey: await archiveKey(orgId),
+      keyVersion: KEY_VERSION,
+    }),
+  );
+}
+
 export function partFor(source: ArchiveSource): string {
   return source === 'claude' ? 'claude:part:parent' : 'codex:part:primary';
 }

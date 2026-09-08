@@ -14,6 +14,8 @@ import {
   handleDeleteContribution,
   handleExport,
   handleHealthz,
+  handleRotateKey,
+  handleRotationHealth,
   handleUpload,
 } from './handler';
 export { ArchiveSessionLedger } from './archive-ledger';
@@ -31,5 +33,8 @@ app.post('/v1/archive/exports', handleExport);
 
 app.delete('/v1/archive/contributions/:contributionId', handleDeleteContribution);
 app.delete('/v1/archive', handleDeleteArchive);
+
+app.post('/v1/archive/key-rotations', handleRotateKey);
+app.get('/v1/archive/key-rotations/:orgId', handleRotationHealth);
 
 export default Sentry.withSentry(createArchiveApiSentryOptions, app);
