@@ -6,9 +6,27 @@ import {
 } from '@trace-flow/utils';
 import type { ArchiveApiEnv } from './context';
 import { ArchiveContractError } from './archive-contract';
-import type { ArchiveWrappedKey } from './enrollment';
+import type { ArchiveWrappedKey, ArchiveWriteDenialReason } from './enrollment';
 
 const POLICY_TIMEOUT_MS = 5000;
+const INITIALIZE_DENIAL_REASONS = new Set<ArchiveWriteDenialReason>([
+  'server_disabled',
+  'not_activated',
+  'not_enrolled',
+  'enrollment_invalid',
+  'credential_revoked',
+  'not_pro',
+  'frozen',
+  'deleting',
+  'source_unauthorized',
+]);
+
+export class ArchiveKeyAuthorizationError extends Error {
+  constructor(readonly reason: ArchiveWriteDenialReason) {
+    super(reason);
+    this.name = 'ArchiveKeyAuthorizationError';
+  }
+}
 
 export interface ArchiveActiveKey extends ArchiveWrappedKey {
   activationId?: string;
@@ -53,6 +71,12 @@ function isWrappedKey(value: unknown, expectedVersion?: number): value is Archiv
     Number.isSafeInteger(record.keyVersion) &&
     record.keyVersion >= 1 &&
     (expectedVersion === undefined || record.keyVersion === expectedVersion)
+  );
+}
+
+function isInitializeDenialReason(value: unknown): value is ArchiveWriteDenialReason {
+  return (
+    typeof value === 'string' && INITIALIZE_DENIAL_REASONS.has(value as ArchiveWriteDenialReason)
   );
 }
 
@@ -155,6 +179,10 @@ export async function resolveArchiveWrappedKeyForUpload(
       '/archive-api/key/initialize',
       { ...input, wrappedKey: candidate },
     );
+    if (status === 403 && isInitializeDenialReason(payload.reason)) {
+      logger.warn('archive_api.key_initialize_denied', { reason: payload.reason });
+      throw new ArchiveKeyAuthorizationError(payload.reason);
+    }
     if (status >= 400 || !isWrappedKey(payload)) {
       logger.error('archive_api.key_initialize_failed', undefined, { status });
       throw new ArchiveContractError('key_unavailable');
@@ -165,7 +193,9 @@ export async function resolveArchiveWrappedKeyForUpload(
     });
     return { keyVersion: payload.keyVersion, wrappedKey: payload.wrappedKey };
   } catch (error) {
-    if (error instanceof ArchiveContractError) throw error;
+    if (error instanceof ArchiveContractError || error instanceof ArchiveKeyAuthorizationError) {
+      throw error;
+    }
     logger.error('archive_api.key_initialize_error', error);
     throw new ArchiveContractError('key_unavailable');
   }

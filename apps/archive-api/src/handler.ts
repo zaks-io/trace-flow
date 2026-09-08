@@ -11,6 +11,7 @@ import {
   isArchiveSupportedSource,
 } from './enrollment';
 import {
+  ArchiveKeyAuthorizationError,
   markArchiveKeyRotationFailed,
   resolveArchiveWrappedKeyForUpload,
 } from './archive-key-client';
@@ -271,7 +272,10 @@ export async function handleUpload(c: Context<{ Bindings: ArchiveApiEnv }>): Pro
         },
         logger,
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof ArchiveKeyAuthorizationError) {
+        return c.json({ error: 'forbidden', reason: error.reason }, 403);
+      }
       return c.json({ error: 'archive_unavailable', reason: 'key_unavailable' }, 503);
     }
 
