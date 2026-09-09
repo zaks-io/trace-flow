@@ -19,6 +19,11 @@ check "published SQL must not use FINAL" \
 check "Tinybird datasources must not use ReplacingMergeTree" \
   rg -n 'ENGINE "ReplacingMergeTree"' datasources
 
+if ! rg -q 'LIMIT \{\{ Int32\(limit, 10\) \}\}' pipes/llm_usage_by_model.pipe; then
+  printf 'Tinybird cost contract failed: llm_usage_by_model must honor the requested limit\n' >&2
+  failed=1
+fi
+
 bash scripts/verify-tinybird-copy-policy.sh
 
 declare -a roots=()
