@@ -23,6 +23,7 @@ function hiddenInput(name: string, value: string | undefined): string {
 }
 
 export function renderMcpConsentPage(params: {
+  issuer: string;
   clientId: string;
   clientName?: string;
   responseType: string | null;
@@ -36,6 +37,7 @@ export function renderMcpConsentPage(params: {
   const redirectUrl = new URL(params.redirectUri);
   redirectUrl.searchParams.set('error', 'access_denied');
   redirectUrl.searchParams.set('error_description', 'User denied MCP authorization');
+  redirectUrl.searchParams.set('iss', params.issuer);
   if (params.clientState) redirectUrl.searchParams.set('state', params.clientState);
 
   const trimmedClientName = params.clientName?.trim();
@@ -129,6 +131,7 @@ export function renderMcpConsentPage(params: {
 
 export function consentMatchesRequest(
   consent: oauthModule.ConsentPayload | null,
+  consentNonce: string | undefined,
   request: {
     clientId: string;
     clientState: string;
@@ -141,6 +144,8 @@ export function consentMatchesRequest(
 ): boolean {
   return (
     consent !== null &&
+    consentNonce !== undefined &&
+    consent.consentNonce === consentNonce &&
     consent.clientId === request.clientId &&
     consent.clientState === request.clientState &&
     consent.redirectUri === request.redirectUri &&

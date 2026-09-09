@@ -74,7 +74,7 @@ describe('exchangeAuth0Code', () => {
     );
   });
 
-  it('throws on non-200 response with error details', async () => {
+  it('throws on non-200 response without copying the provider body', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
@@ -82,7 +82,7 @@ describe('exchangeAuth0Code', () => {
     });
 
     await expect(exchangeAuth0Code('invalid-code', 'https://example.com/callback')).rejects.toThrow(
-      'Auth0 token exchange failed: 401 - Invalid authorization code',
+      'Auth0 token exchange failed with status 401',
     );
   });
 });
@@ -138,7 +138,7 @@ describe('refreshAuth0Token', () => {
     });
 
     await expect(refreshAuth0Token('invalid-refresh-token')).rejects.toThrow(
-      'Auth0 token refresh failed: 400 - Invalid refresh token',
+      'Auth0 token refresh failed with status 400',
     );
   });
 });
@@ -193,7 +193,7 @@ describe('getAuth0UserInfo', () => {
     });
 
     await expect(getAuth0UserInfo('invalid-token')).rejects.toThrow(
-      'Auth0 userinfo failed: 401 - Unauthorized',
+      'Auth0 userinfo failed with status 401',
     );
   });
 });
@@ -209,6 +209,7 @@ describe('signState', () => {
 
   it('generates valid JWT string', async () => {
     const payload: StatePayload = {
+      consentNonce: 'browser-nonce',
       clientState: 'client-state-123',
       redirectUri: 'https://example.com/callback',
     };
@@ -254,6 +255,7 @@ describe('verifyState', () => {
 
   it('returns payload for valid token', async () => {
     const payload: StatePayload = {
+      consentNonce: 'browser-nonce',
       clientState: 'client-state-123',
       redirectUri: 'https://example.com/callback',
     };
@@ -263,6 +265,7 @@ describe('verifyState', () => {
 
     expect(result).toMatchObject({
       tokenUse: 'mcp_state',
+      consentNonce: 'browser-nonce',
       clientState: 'client-state-123',
       redirectUri: 'https://example.com/callback',
     });
@@ -288,6 +291,7 @@ describe('verifyState', () => {
 
   it('rejects consent tokens as state tokens', async () => {
     const token = await signConsent({
+      consentNonce: 'browser-nonce',
       clientState: 'client-state',
       clientId: 'client-1',
       redirectUri: 'https://example.com/callback',
@@ -317,6 +321,7 @@ describe('MCP consent tokens', () => {
 
   it('signs and verifies consent payloads', async () => {
     const token = await signConsent({
+      consentNonce: 'browser-nonce',
       clientState: 'client-state',
       clientId: 'client-1',
       redirectUri: 'https://example.com/callback',
@@ -328,6 +333,7 @@ describe('MCP consent tokens', () => {
 
     await expect(verifyConsent(token)).resolves.toEqual({
       tokenUse: 'mcp_consent',
+      consentNonce: 'browser-nonce',
       clientState: 'client-state',
       clientId: 'client-1',
       redirectUri: 'https://example.com/callback',
@@ -349,6 +355,7 @@ describe('MCP consent tokens', () => {
 
   it('returns null for tampered consent tokens', async () => {
     const token = await signConsent({
+      consentNonce: 'browser-nonce',
       clientState: 'client-state',
       clientId: 'client-1',
       redirectUri: 'https://example.com/callback',

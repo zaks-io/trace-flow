@@ -1,9 +1,11 @@
 import type { HonoWithConvex } from 'convex-helpers/server/hono';
+import { getCookie } from 'hono/cookie';
 import type { ActionCtx } from '../_generated/server';
 import { internal } from '../_generated/api';
 import type { HttpDeps } from './deps';
 import { isLoopbackRedirect } from './redirectUris';
 import { getRequestLogger } from './shared';
+import { MCP_CONSENT_COOKIE, serializeMcpConsentCookie } from './mcpConsentCookie';
 
 export function registerMcpCallbackRoutes(
   app: HonoWithConvex<ActionCtx>,
@@ -36,6 +38,15 @@ export function registerMcpCallbackRoutes(
         return c.json({ error: 'Invalid or expired state' }, 400);
       }
 
+      const isCollectorLogin = statePayload.clientState.startsWith('collector:');
+      if (
+        !isCollectorLogin &&
+        (!statePayload.consentNonce ||
+          getCookie(c, MCP_CONSENT_COOKIE) !== statePayload.consentNonce)
+      ) {
+        return c.json({ error: 'Invalid or expired state' }, 400);
+      }
+
       const callbackUrl = new URL('/mcp/callback', url.origin).toString();
 
       // Exchange code for Auth0 tokens
@@ -44,7 +55,7 @@ export function registerMcpCallbackRoutes(
         auth0Tokens = await oauth.exchangeAuth0Code(code, callbackUrl);
       } catch (err) {
         logger.error('convex.auth0_token_exchange_failed', err);
-        return c.json({ error: 'Auth0 token exchange failed', details: String(err) }, 500);
+        return c.json({ error: 'Auth0 token exchange failed' }, 500);
       }
 
       // Get user info from Auth0
@@ -53,7 +64,7 @@ export function registerMcpCallbackRoutes(
         userInfo = await oauth.getAuth0UserInfo(auth0Tokens.access_token);
       } catch (err) {
         logger.error('convex.auth0_userinfo_failed', err);
-        return c.json({ error: 'Failed to get user info', details: String(err) }, 500);
+        return c.json({ error: 'Failed to get user info' }, 500);
       }
 
       if (!userInfo.email) {
@@ -87,7 +98,7 @@ export function registerMcpCallbackRoutes(
       // and hand the one-time secret back to the CLI's loopback listener instead of running the MCP
       // auth-code path. The redirect target is re-validated as loopback so the secret can only reach
       // 127.0.0.1.
-      if (statePayload.clientState.startsWith('collector:')) {
+      if (isCollectorLogin) {
         if (!isLoopbackRedirect(statePayload.redirectUri)) {
           logger.warn('convex.collector_login_bad_redirect');
           await logger.flush();
@@ -145,6 +156,7 @@ export function registerMcpCallbackRoutes(
       // Redirect back to client with authorization code
       const redirectUrl = new URL(statePayload.redirectUri);
       redirectUrl.searchParams.set('code', authCode);
+      redirectUrl.searchParams.set('iss', url.origin);
       if (statePayload.clientState) {
         redirectUrl.searchParams.set('state', statePayload.clientState);
       }
@@ -157,12 +169,13 @@ export function registerMcpCallbackRoutes(
           Location: redirectUrl.toString(),
           'Content-Length': '0',
           'Cache-Control': 'no-store, no-cache, must-revalidate',
+          'Set-Cookie': serializeMcpConsentCookie('', 0),
         },
       });
     } catch (err) {
       logger.error('convex.oauth_callback_failed', err);
       await logger.flush();
-      return c.json({ error: 'OAuth callback failed', details: String(err) }, 500);
+      return c.json({ error: 'OAuth callback failed' }, 500);
     }
   });
 }

@@ -119,11 +119,10 @@ export function createWorkerBackend(userId: string, config: WorkerBackendConfig)
       scopes: TinybirdScope[],
       apiKeyIds: string[],
       _retentionDays: number,
-      ttlSeconds?: number,
     ): Promise<string> => {
       // retentionDays is re-derived server-side from the user's tier; the worker
       // is untrusted and doesn't supply it.
-      const res = await post('/mcp-backend/mint', { userId, scopes, apiKeyIds, ttlSeconds });
+      const res = await post('/mcp-backend/mint', { userId, scopes, apiKeyIds });
       if (!res.ok) throw new McpBackendError('mint failed', res.status);
       const body = await parseJsonResponse(res, 'mint response malformed');
       if (!isRecord(body) || typeof body.token !== 'string') {

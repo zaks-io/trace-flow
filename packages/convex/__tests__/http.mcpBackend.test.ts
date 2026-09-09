@@ -76,6 +76,23 @@ describe('convex/http.ts MCP backend routes', () => {
       expect(await res.json()).toEqual({ error: 'Content-Type must be application/json' });
     });
 
+    it('rejects malformed backend JSON before querying', async () => {
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/mcp-backend/context',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SECRET}` },
+          body: 'not-json',
+        },
+        ctx,
+      );
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'Invalid JSON' });
+      expect(ctx.runQuery).not.toHaveBeenCalled();
+    });
+
     it('returns public key metadata + context, never raw keys', async () => {
       stubBackendQueries({
         keys: [

@@ -301,7 +301,6 @@ export const generateTokenInternal = internalAction({
     analyticsKeyIds: v.array(v.string()),
     retentionDays: v.optional(v.number()),
     orgId: v.optional(v.string()),
-    ttl: v.optional(v.number()),
   },
   returns: v.string(),
   handler: async (_, args) => {
@@ -317,7 +316,7 @@ export const generateTokenInternal = internalAction({
     });
 
     const result = await signTinybirdToken(scopesWithApiKeys, {
-      ttlSeconds: args.ttl ?? 600,
+      ttlSeconds: 600,
       name: `mcp_jwt_${Date.now()}`,
     });
     return result.token;

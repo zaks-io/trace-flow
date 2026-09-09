@@ -4,6 +4,7 @@ import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { JWKS_PATH, MCP_ACCESS_TOKEN_ALG, MCP_ACCESS_TOKEN_KID } from '@trace-flow/mcp-core';
 
 const CONNECT_ORIGIN = 'https://connect.test';
+const signingKeyPair = generateKeyPair(MCP_ACCESS_TOKEN_ALG, { extractable: true });
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -13,9 +14,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 async function signedAuthHeader(resourceUrl = 'http://localhost/mcp'): Promise<string> {
-  const { privateKey, publicKey } = await generateKeyPair(MCP_ACCESS_TOKEN_ALG, {
-    extractable: true,
-  });
+  const { privateKey, publicKey } = await signingKeyPair;
   const jwk = {
     ...(await exportJWK(publicKey)),
     kid: MCP_ACCESS_TOKEN_KID,
@@ -84,6 +83,60 @@ describe('MCP worker auth discovery', () => {
       'Bearer resource_metadata="http://localhost/.well-known/oauth-protected-resource"',
     );
     expect(await res.json()).toEqual({ error: 'Missing or invalid Authorization header' });
+  });
+
+  it('rejects a cross-origin browser request before authentication', async () => {
+    const res = await SELF.fetch('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        Origin: 'https://evil.example',
+        'cf-connecting-ip': '203.0.113.10',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
+    });
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'Forbidden origin' });
+  });
+
+  it('accepts a same-origin browser request', async () => {
+    const res = await SELF.fetch('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        Origin: 'http://localhost',
+        'cf-connecting-ip': '203.0.113.10',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
+    });
+
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 413 for an oversized authenticated MCP request', async () => {
+    const authorization = await signedAuthHeader();
+    const res = await SELF.fetch('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        Authorization: authorization,
+        'cf-connecting-ip': '203.0.113.10',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'ping',
+        padding: 'x'.repeat(256 * 1024),
+      }),
+    });
+
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({
+      jsonrpc: '2.0',
+      id: null,
+      error: { code: -32600, message: 'Request body is too large' },
+    });
   });
 
   it('401s missing GET auth with a protected-resource challenge', async () => {
@@ -189,6 +242,19 @@ describe('MCP worker auth discovery', () => {
     expect(fetchSpy).toHaveBeenCalledOnce();
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ access_token: 'access-1' });
+  });
+
+  it('rejects an oversized token request without proxying it', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const res = await SELF.fetch('http://localhost/mcp/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `grant_type=authorization_code&code=${'x'.repeat(16 * 1024)}`,
+    });
+
+    expect(res.status).toBe(413);
+    await expect(res.json()).resolves.toMatchObject({ error: 'invalid_request' });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('preserves a client-supplied resource on form token exchange', async () => {

@@ -57,11 +57,12 @@ export function createMockDeps(): HttpDeps {
 
 export const acceptedConsent = {
   tokenUse: 'mcp_consent' as const,
+  consentNonce: 'browser-nonce',
   clientState: 'client-state',
   clientId: 'client-1',
   redirectUri: 'https://example.com/callback',
-  resource: 'https://mcp.example.com/mcp',
-  codeChallenge: 'challenge123',
+  resource: 'https://mcp.trace-flow.dev/mcp',
+  codeChallenge: '0123456789012345678901234567890123456789012',
   codeChallengeMethod: 'S256',
   responseType: 'code',
 };

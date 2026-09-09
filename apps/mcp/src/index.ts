@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/cloudflare';
+import { BodySizeLimitError, readRequestBodyWithLimit } from '@trace-flow/utils';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -54,6 +55,26 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 const OAUTH_METADATA_PATH = '/.well-known/oauth-authorization-server';
 const MCP_SSE_HEARTBEAT_MS = 15_000;
+const MCP_REQUEST_MAX_BYTES = 256 * 1024;
+const OAUTH_TOKEN_REQUEST_MAX_BYTES = 16 * 1024;
+
+function hasValidMcpOrigin(request: Request): boolean {
+  const origin = request.headers.get('origin');
+  if (origin === null) return true;
+
+  try {
+    return new URL(origin).origin === new URL(request.url).origin;
+  } catch {
+    return false;
+  }
+}
+
+app.use('/mcp', async (c, next) => {
+  if (!hasValidMcpOrigin(c.req.raw)) {
+    return jsonResponse({ error: 'Forbidden origin' }, 403);
+  }
+  await next();
+});
 
 app.use(
   '*',
@@ -137,15 +158,21 @@ async function proxyToken(c: { req: { raw: Request }; env: Env }): Promise<Respo
 
   const contentType = headers.get('content-type')?.toLowerCase() ?? '';
   if (!contentType || contentType.startsWith('application/x-www-form-urlencoded')) {
-    let body: URLSearchParams;
-    if (contentType) {
-      body = new URLSearchParams();
-      for (const [key, value] of await c.req.raw.formData()) {
-        if (typeof value === 'string') body.append(key, value);
+    let bodyText: string;
+    try {
+      bodyText = new TextDecoder().decode(
+        await readRequestBodyWithLimit(c.req.raw, OAUTH_TOKEN_REQUEST_MAX_BYTES),
+      );
+    } catch (error) {
+      if (error instanceof BodySizeLimitError) {
+        return jsonResponse(
+          { error: 'invalid_request', error_description: 'Request body is too large' },
+          413,
+        );
       }
-    } else {
-      body = new URLSearchParams(await c.req.raw.text());
+      throw error;
     }
+    const body = new URLSearchParams(bodyText);
     if (!body.has('resource')) body.set('resource', mcpResourceUrl(c.req.raw));
     headers.set('content-type', 'application/x-www-form-urlencoded');
     return fetch(url, { method: 'POST', headers, body: body.toString() });
@@ -321,8 +348,15 @@ app.post('/mcp', async (c) => {
 
   let message: JsonRpcMessage;
   try {
-    message = await c.req.json<JsonRpcMessage>();
-  } catch {
+    const body = await readRequestBodyWithLimit(c.req.raw, MCP_REQUEST_MAX_BYTES);
+    message = JSON.parse(new TextDecoder().decode(body)) as JsonRpcMessage;
+  } catch (error) {
+    if (error instanceof BodySizeLimitError) {
+      return c.json(
+        createErrorResponse(null, JsonRpcErrorCode.InvalidRequest, 'Request body is too large'),
+        413,
+      );
+    }
     return c.json(
       {
         jsonrpc: '2.0',

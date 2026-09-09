@@ -2,16 +2,14 @@ import type { HonoWithConvex } from 'convex-helpers/server/hono';
 import type { ActionCtx } from '../_generated/server';
 import { internal } from '../_generated/api';
 import type { HttpDeps } from './deps';
+import { BodySizeLimitError } from '@trace-flow/utils';
 import { canonicalizeMcpResource } from './redirectUris';
 import { getRequestLogger } from './shared';
+import { readBoundedText } from './requestBody';
+import { isAllowedMcpOAuthHost } from './mcpOAuthHost';
+import { isValidCodeVerifier } from './mcpPkce';
 
-function bodyString(
-  body: Record<string, string | File | (string | File)[]>,
-  key: string,
-): string | undefined {
-  const value = body[key];
-  return typeof value === 'string' ? value : undefined;
-}
+const TOKEN_REQUEST_MAX_BYTES = 16 * 1024;
 
 export function registerMcpTokenRoutes(
   app: HonoWithConvex<ActionCtx>,
@@ -19,21 +17,37 @@ export function registerMcpTokenRoutes(
 ): void {
   // OAuth: Token endpoint (for authorization code and refresh)
   app.post('/mcp/token', async (c) => {
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
+    if (!isAllowedMcpOAuthHost(c.req.raw)) {
+      return c.json({ error: 'forbidden_host' }, 403);
+    }
     const ctx = c.env;
     const logger = getRequestLogger(c.req.raw, {
       operation: 'mcp_token',
     });
 
     try {
-      const body = await c.req.parseBody();
-      const grantType = body.grant_type;
+      const contentType = c.req.header('Content-Type')?.toLowerCase() ?? '';
+      if (!contentType.startsWith('application/x-www-form-urlencoded')) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'Content-Type must be application/x-www-form-urlencoded',
+          },
+          415,
+        );
+      }
+
+      const body = new URLSearchParams(await readBoundedText(c.req.raw, TOKEN_REQUEST_MAX_BYTES));
+      const grantType = body.get('grant_type');
 
       if (grantType === 'authorization_code') {
-        const code = bodyString(body, 'code');
-        const clientId = bodyString(body, 'client_id');
-        const redirectUri = bodyString(body, 'redirect_uri');
-        const resource = bodyString(body, 'resource');
-        const codeVerifier = bodyString(body, 'code_verifier');
+        const code = body.get('code') ?? undefined;
+        const clientId = body.get('client_id') ?? undefined;
+        const redirectUri = body.get('redirect_uri') ?? undefined;
+        const resource = body.get('resource') ?? undefined;
+        const codeVerifier = body.get('code_verifier') ?? undefined;
 
         if (!code) {
           return c.json({ error: 'invalid_request', error_description: 'code is required' }, 400);
@@ -56,7 +70,10 @@ export function registerMcpTokenRoutes(
         const canonicalResource = resource ? canonicalizeMcpResource(resource) : null;
         if (!canonicalResource) {
           return c.json(
-            { error: 'invalid_request', error_description: 'resource is required' },
+            {
+              error: 'invalid_request',
+              error_description: 'resource must identify a Trace Flow MCP endpoint',
+            },
             400,
           );
         }
@@ -64,6 +81,15 @@ export function registerMcpTokenRoutes(
         if (!codeVerifier) {
           return c.json(
             { error: 'invalid_request', error_description: 'code_verifier is required' },
+            400,
+          );
+        }
+        if (!isValidCodeVerifier(codeVerifier)) {
+          return c.json(
+            {
+              error: 'invalid_request',
+              error_description: 'code_verifier must be a valid PKCE verifier',
+            },
             400,
           );
         }
@@ -97,9 +123,9 @@ export function registerMcpTokenRoutes(
       }
 
       if (grantType === 'refresh_token') {
-        const refreshTokenId = bodyString(body, 'refresh_token');
-        const clientId = bodyString(body, 'client_id');
-        const resource = bodyString(body, 'resource');
+        const refreshTokenId = body.get('refresh_token') ?? undefined;
+        const clientId = body.get('client_id') ?? undefined;
+        const resource = body.get('resource') ?? undefined;
 
         if (!refreshTokenId) {
           return c.json(
@@ -118,7 +144,10 @@ export function registerMcpTokenRoutes(
         const canonicalResource = resource ? canonicalizeMcpResource(resource) : null;
         if (!canonicalResource) {
           return c.json(
-            { error: 'invalid_request', error_description: 'resource is required' },
+            {
+              error: 'invalid_request',
+              error_description: 'resource must identify a Trace Flow MCP endpoint',
+            },
             400,
           );
         }
@@ -190,6 +219,12 @@ export function registerMcpTokenRoutes(
         400,
       );
     } catch (err) {
+      if (err instanceof BodySizeLimitError) {
+        return c.json(
+          { error: 'invalid_request', error_description: 'Request body is too large' },
+          413,
+        );
+      }
       logger.error('convex.mcp_token_failed', err);
       await logger.flush();
       return c.json({ error: 'server_error', error_description: 'Internal server error' }, 500);
