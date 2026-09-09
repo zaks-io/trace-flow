@@ -58,6 +58,18 @@ function decodeRootKey(rootKeyBase64: string): Uint8Array {
   return keyBytes;
 }
 
+/**
+ * Validates a root key without deriving anything. Workers only see bindings per
+ * request, so this is what a gateway runs before serving traffic: a malformed
+ * secret must fail every request up front, not the durability gate mid-stream.
+ */
+export function assertBodyEncryptionRootKey(rootKeyBase64: string | undefined): void {
+  if (!rootKeyBase64) {
+    throw new Error('Body encryption root key is required');
+  }
+  decodeRootKey(rootKeyBase64);
+}
+
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }

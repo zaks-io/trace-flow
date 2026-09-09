@@ -219,6 +219,11 @@ jobs:
           command: deploy --env production --var CONVEX_SITE_URL:${{ needs.deploy-convex.outputs.convex_site_url }}
           packageManager: bun
 
+      # The proxy refuses every request with 503 when its secrets fail startup validation.
+      # A bad BODY_ENCRYPTION_ROOT_KEY otherwise only surfaces as truncated response bodies.
+      - name: Verify Proxy Worker health
+        run: curl --fail --silent --show-error --retry 5 --retry-delay 5 https://gateway.trace-flow.dev/healthz
+
   # Schema must land before any consumer ships, or a consumer can write rows in the new shape while the
   # live workspace still has the old schema -> inserts rejected into _quarantine. Both
   # consumers `needs:` this job. A no-op (no schema diff) is a clean exit; `tb --cloud deploy` reports
