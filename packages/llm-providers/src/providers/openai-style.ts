@@ -131,11 +131,22 @@ const PROMPT_TOKENS_PATTERN = /"prompt_tokens"\s*:\s*(\d{1,20})(?!\d)/;
 const COMPLETION_TOKENS_PATTERN = /"completion_tokens"\s*:\s*(\d{1,20})(?!\d)/;
 const CACHED_TOKENS_PATTERN = /"cached_tokens"\s*:\s*(\d{1,20})(?!\d)/;
 const CACHE_WRITE_TOKENS_PATTERN = /"cache_write_tokens"\s*:\s*(\d{1,20})(?!\d)/;
+const USAGE_MARKER_PATTERN = /"usage"\s*:/;
 const UPSTREAM_COST_PATTERN =
-  /"usage"[\s\S]*?"cost"\s*:\s*([+-]?(?:\d{1,20}(?:\.\d{1,20})?|\.\d{1,20})(?:[eE][+-]?\d{1,3})?)(?![0-9.eE+-])/;
+  /"cost"\s*:\s*([+-]?(?:\d{1,20}(?:\.\d{1,20})?|\.\d{1,20})(?:[eE][+-]?\d{1,3})?)(?![0-9.eE+-])/g;
 
 function runRegex(pattern: RegExp, data: string): RegExpExecArray | null {
   return pattern.exec(data);
+}
+
+function extractUpstreamCost(data: string): number | undefined {
+  const usageMatch = runRegex(USAGE_MARKER_PATTERN, data);
+  if (!usageMatch) return undefined;
+
+  UPSTREAM_COST_PATTERN.lastIndex = usageMatch.index + usageMatch[0].length;
+  const costMatch = UPSTREAM_COST_PATTERN.exec(data);
+  UPSTREAM_COST_PATTERN.lastIndex = 0;
+  return costMatch?.[1] ? parseFloat(costMatch[1]) : undefined;
 }
 
 function extractOpenAIStyleMetadata(
@@ -235,8 +246,8 @@ function extractOpenAIStyleUsage(data: string, includeCost = false): RawTokenUsa
   if (reasoningMatch?.[1]) usage.reasoning_tokens = parseInt(reasoningMatch[1], 10);
 
   if (includeCost) {
-    const costMatch = runRegex(UPSTREAM_COST_PATTERN, data);
-    if (costMatch?.[1]) usage.cost = parseFloat(costMatch[1]);
+    const cost = extractUpstreamCost(data);
+    if (cost !== undefined) usage.cost = cost;
   }
 
   return usage;
