@@ -44,3 +44,19 @@ export async function readBodyWithLimit(
   }
   return result.buffer;
 }
+
+/** Rejects declared oversized requests before reading, then enforces the same limit while streaming. */
+export async function readRequestBodyWithLimit(
+  request: Request,
+  maxBytes: number,
+): Promise<ArrayBuffer> {
+  const contentLength = request.headers.get('content-length');
+  if (contentLength !== null) {
+    const declaredBytes = Number(contentLength);
+    if (Number.isFinite(declaredBytes) && declaredBytes > maxBytes) {
+      throw new BodySizeLimitError(maxBytes, declaredBytes);
+    }
+  }
+
+  return readBodyWithLimit(request.body, maxBytes);
+}

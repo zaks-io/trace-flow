@@ -1,8 +1,33 @@
 import type { HonoWithConvex } from 'convex-helpers/server/hono';
 import type { ActionCtx } from '../_generated/server';
 import type { Id } from '../_generated/dataModel';
+import { BodySizeLimitError } from '@trace-flow/utils';
 import { createMcpBackend } from '../mcp/backend';
 import { getRequestLogger, hasValidBearerSecret, isJsonContentType } from './shared';
+import { readBoundedJson } from './requestBody';
+
+const BACKEND_REQUEST_MAX_BYTES = 64 * 1024;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function readBackendJson(c: { req: { raw: Request } }): Promise<unknown> {
+  try {
+    return await readBoundedJson(c.req.raw, BACKEND_REQUEST_MAX_BYTES);
+  } catch (error) {
+    if (error instanceof BodySizeLimitError) {
+      return new Response(JSON.stringify({ error: 'Request body is too large' }), {
+        status: 413,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
 
 export function registerMcpBackendRoutes(app: HonoWithConvex<ActionCtx>): void {
   // MCP backend: the dedicated MCP worker (mcp.trace-flow.dev) calls these
@@ -20,7 +45,11 @@ export function registerMcpBackendRoutes(app: HonoWithConvex<ActionCtx>): void {
       return c.json({ error: 'Content-Type must be application/json' }, 415);
     }
 
-    const body = await c.req.json<{ userId: string }>();
+    const body = await readBackendJson(c);
+    if (body instanceof Response) return body;
+    if (!isRecord(body) || typeof body.userId !== 'string' || body.userId === '') {
+      return c.json({ error: 'userId is required' }, 400);
+    }
     const backend = createMcpBackend(ctx, body.userId as Id<'users'>);
     const userContext = await backend.getUserContext();
     if (!userContext) {
@@ -49,12 +78,22 @@ export function registerMcpBackendRoutes(app: HonoWithConvex<ActionCtx>): void {
       return c.json({ error: 'Content-Type must be application/json' }, 415);
     }
 
-    const body = await c.req.json<{
-      userId: string;
-      scopes: { type: string; resource: string }[];
-      apiKeyIds: string[];
-      ttlSeconds?: number;
-    }>();
+    const body = await readBackendJson(c);
+    if (body instanceof Response) return body;
+    if (
+      !isRecord(body) ||
+      typeof body.userId !== 'string' ||
+      body.userId === '' ||
+      !Array.isArray(body.scopes) ||
+      !body.scopes.every(
+        (scope) =>
+          isRecord(scope) && typeof scope.type === 'string' && typeof scope.resource === 'string',
+      ) ||
+      !Array.isArray(body.apiKeyIds) ||
+      !body.apiKeyIds.every((id) => typeof id === 'string')
+    ) {
+      return c.json({ error: 'Invalid request body' }, 400);
+    }
     const logger = getRequestLogger(c.req.raw, { operation: 'mcp_backend_mint' });
 
     const userId = body.userId as Id<'users'>;
@@ -87,10 +126,9 @@ export function registerMcpBackendRoutes(app: HonoWithConvex<ActionCtx>): void {
     let token: string;
     try {
       token = await backend.mintToken(
-        body.scopes,
+        body.scopes as { type: string; resource: string }[],
         resolved.keyIds,
         userContext.retentionDays,
-        body.ttlSeconds,
       );
     } catch (error) {
       logger.error('convex.mcp_backend_mint_failed', error);

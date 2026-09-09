@@ -3416,7 +3416,6 @@ export declare const internal: {
           orgId?: string;
           retentionDays?: number;
           scopes: Array<{ resource: string; type: string }>;
-          ttl?: number;
         },
         string
       >;
@@ -3434,7 +3433,7 @@ export declare const internal: {
         "mutation",
         "internal",
         { clientId: string; clientName?: string; redirectUris: Array<string> },
-        any
+        { ok: true } | { ok: false; retryAfter: number }
       >;
     };
     tokens: {

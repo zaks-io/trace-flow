@@ -18,7 +18,6 @@ export type TokenMinter = (
   scopes: TinybirdScope[],
   apiKeyIds: string[],
   retentionDays: number,
-  ttlSeconds?: number,
 ) => Promise<string>;
 
 /**

@@ -1,8 +1,12 @@
 import type { HonoWithConvex } from 'convex-helpers/server/hono';
 import type { ActionCtx } from '../_generated/server';
+import { getCookie } from 'hono/cookie';
 import { internal } from '../_generated/api';
 import type { HttpDeps } from './deps';
 import { consentMatchesRequest, renderMcpConsentPage } from './mcpConsentPage';
+import { MCP_CONSENT_COOKIE, serializeMcpConsentCookie } from './mcpConsentCookie';
+import { isAllowedMcpOAuthHost } from './mcpOAuthHost';
+import { isValidS256Challenge } from './mcpPkce';
 import { canonicalizeMcpResource } from './redirectUris';
 
 export function registerMcpAuthorizeRoutes(
@@ -11,6 +15,9 @@ export function registerMcpAuthorizeRoutes(
 ): void {
   // OAuth: Start authorization flow
   app.get('/mcp/authorize', async (c) => {
+    if (!isAllowedMcpOAuthHost(c.req.raw)) {
+      return c.json({ error: 'forbidden_host' }, 403);
+    }
     const ctx = c.env;
     const url = new URL(c.req.url);
     const responseType = url.searchParams.get('response_type');
@@ -49,7 +56,13 @@ export function registerMcpAuthorizeRoutes(
 
     const canonicalResource = resource ? canonicalizeMcpResource(resource) : null;
     if (!canonicalResource) {
-      return c.json({ error: 'invalid_request', error_description: 'resource is required' }, 400);
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'resource must identify a Trace Flow MCP endpoint',
+        },
+        400,
+      );
     }
 
     if (!codeChallenge || codeChallengeMethod !== 'S256') {
@@ -57,6 +70,15 @@ export function registerMcpAuthorizeRoutes(
         {
           error: 'invalid_request',
           error_description: 'PKCE code_challenge_method must be S256',
+        },
+        400,
+      );
+    }
+    if (!isValidS256Challenge(codeChallenge)) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'code_challenge must be a valid S256 PKCE challenge',
         },
         400,
       );
@@ -73,9 +95,12 @@ export function registerMcpAuthorizeRoutes(
     };
     const consentToken = url.searchParams.get('consent_token');
     const consent = consentToken ? await oauth.verifyConsent(consentToken) : null;
+    const consentNonce = getCookie(c, MCP_CONSENT_COOKIE);
 
-    if (!consentMatchesRequest(consent, authorizeRequest)) {
+    if (!consentMatchesRequest(consent, consentNonce, authorizeRequest)) {
+      const nextConsentNonce = crypto.randomUUID();
       const nextConsentToken = await oauth.signConsent({
+        consentNonce: nextConsentNonce,
         clientId,
         clientState,
         redirectUri,
@@ -88,6 +113,7 @@ export function registerMcpAuthorizeRoutes(
       return new Response(
         renderMcpConsentPage({
           clientId,
+          issuer: url.origin,
           clientName: client.clientName,
           responseType,
           clientState,
@@ -103,8 +129,11 @@ export function registerMcpAuthorizeRoutes(
             'Content-Type': 'text/html; charset=utf-8',
             'Cache-Control': 'no-store, no-cache, must-revalidate',
             'Content-Security-Policy':
-              "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
+              "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
             'Referrer-Policy': 'no-referrer',
+            'X-Content-Type-Options': 'nosniff',
+            'X-Frame-Options': 'DENY',
+            'Set-Cookie': serializeMcpConsentCookie(nextConsentNonce),
           },
         },
       );
@@ -113,6 +142,7 @@ export function registerMcpAuthorizeRoutes(
     const callbackUrl = new URL('/mcp/callback', url.origin).toString();
 
     const state = await oauth.signState({
+      consentNonce,
       clientState,
       clientId,
       redirectUri,
@@ -145,6 +175,11 @@ export function registerMcpAuthorizeRoutes(
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Content-Security-Policy':
+          "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
+        'Referrer-Policy': 'no-referrer',
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY',
       },
     });
   });

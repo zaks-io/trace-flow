@@ -34,7 +34,7 @@ export function createMcpBackend(ctx: ActionCtx, userId: Id<'users'>): McpBacken
   };
 
   return {
-    mintToken: async (scopes, apiKeyIds, retentionDays, ttlSeconds) => {
+    mintToken: async (scopes, apiKeyIds, retentionDays) => {
       const keys = await getKeys();
       const now = Date.now();
       const ids = new Set(apiKeyIds);
@@ -49,7 +49,6 @@ export function createMcpBackend(ctx: ActionCtx, userId: Id<'users'>): McpBacken
         analyticsKeyIds,
         retentionDays,
         orgId: user?.orgId,
-        ttl: ttlSeconds,
       });
     },
     listApiKeys: () => unexpiredMeta(),

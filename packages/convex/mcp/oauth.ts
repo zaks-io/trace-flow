@@ -21,6 +21,7 @@ export interface Auth0UserInfo {
 
 export interface StatePayload {
   tokenUse?: 'mcp_state';
+  consentNonce?: string;
   clientState: string;
   clientId?: string;
   redirectUri: string;
@@ -31,6 +32,7 @@ export interface StatePayload {
 
 export interface ConsentPayload {
   tokenUse: 'mcp_consent';
+  consentNonce: string;
   clientState: string;
   clientId: string;
   redirectUri: string;
@@ -87,8 +89,7 @@ async function requestAuth0Token(
   });
 
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Auth0 token ${failureLabel} failed: ${response.status} - ${text}`);
+    throw new Error(`Auth0 token ${failureLabel} failed with status ${response.status}`);
   }
 
   return response.json();
@@ -132,8 +133,7 @@ export async function getAuth0UserInfo(accessToken: string): Promise<Auth0UserIn
   });
 
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Auth0 userinfo failed: ${response.status} - ${text}`);
+    throw new Error(`Auth0 userinfo failed with status ${response.status}`);
   }
 
   return response.json();
@@ -181,10 +181,11 @@ export async function verifyState(token: string): Promise<StatePayload | null> {
   const secretKey = new TextEncoder().encode(secret);
 
   try {
-    const { payload } = await jwtVerify(token, secretKey);
+    const { payload } = await jwtVerify(token, secretKey, { algorithms: ['HS256'] });
     if (!isStatePayload(payload)) return null;
     return {
       ...(payload.tokenUse === undefined ? {} : { tokenUse: payload.tokenUse }),
+      ...(payload.consentNonce === undefined ? {} : { consentNonce: payload.consentNonce }),
       clientState: payload.clientState,
       ...(payload.clientId === undefined ? {} : { clientId: payload.clientId }),
       redirectUri: payload.redirectUri,
@@ -204,6 +205,7 @@ function isStatePayload(payload: unknown): payload is StatePayload {
   const value = payload as Partial<StatePayload>;
   return (
     (value.tokenUse === undefined || value.tokenUse === 'mcp_state') &&
+    (value.consentNonce === undefined || typeof value.consentNonce === 'string') &&
     typeof value.clientState === 'string' &&
     (value.clientId === undefined || typeof value.clientId === 'string') &&
     typeof value.redirectUri === 'string' &&
@@ -218,6 +220,7 @@ function isConsentPayload(payload: unknown): payload is ConsentPayload {
   const value = payload as Partial<ConsentPayload>;
   return (
     value.tokenUse === 'mcp_consent' &&
+    typeof value.consentNonce === 'string' &&
     typeof value.clientState === 'string' &&
     typeof value.clientId === 'string' &&
     typeof value.redirectUri === 'string' &&
@@ -238,10 +241,11 @@ export async function verifyConsent(token: string): Promise<ConsentPayload | nul
   const secretKey = new TextEncoder().encode(secret);
 
   try {
-    const { payload } = await jwtVerify(token, secretKey);
+    const { payload } = await jwtVerify(token, secretKey, { algorithms: ['HS256'] });
     if (!isConsentPayload(payload)) return null;
     return {
       tokenUse: payload.tokenUse,
+      consentNonce: payload.consentNonce,
       clientState: payload.clientState,
       clientId: payload.clientId,
       redirectUri: payload.redirectUri,

@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/cloudflare';
+import { BodySizeLimitError, readRequestBodyWithLimit } from '@trace-flow/utils';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -38,6 +39,7 @@ interface Env {
   MCP_BACKEND_SHARED_SECRET: string;
   MCP_SESSION_SECRET: string;
   MCP_LIMITER: RateLimit;
+  MCP_REGISTRATION_LIMITER: RateLimit;
   AXIOM_TOKEN?: string;
   AXIOM_DATASET?: string;
   AXIOM_DOMAIN?: string;
@@ -54,6 +56,26 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 const OAUTH_METADATA_PATH = '/.well-known/oauth-authorization-server';
 const MCP_SSE_HEARTBEAT_MS = 15_000;
+const MCP_REQUEST_MAX_BYTES = 256 * 1024;
+const OAUTH_TOKEN_REQUEST_MAX_BYTES = 16 * 1024;
+
+function hasValidMcpOrigin(request: Request): boolean {
+  const origin = request.headers.get('origin');
+  if (origin === null) return true;
+
+  try {
+    return new URL(origin).origin === new URL(request.url).origin;
+  } catch {
+    return false;
+  }
+}
+
+app.use('/mcp', async (c, next) => {
+  if (!hasValidMcpOrigin(c.req.raw)) {
+    return jsonResponse({ error: 'Forbidden origin' }, 403);
+  }
+  await next();
+});
 
 app.use(
   '*',
@@ -136,22 +158,35 @@ async function proxyToken(c: { req: { raw: Request }; env: Env }): Promise<Respo
   headers.delete('content-length');
 
   const contentType = headers.get('content-type')?.toLowerCase() ?? '';
-  if (!contentType || contentType.startsWith('application/x-www-form-urlencoded')) {
-    let body: URLSearchParams;
-    if (contentType) {
-      body = new URLSearchParams();
-      for (const [key, value] of await c.req.raw.formData()) {
-        if (typeof value === 'string') body.append(key, value);
-      }
-    } else {
-      body = new URLSearchParams(await c.req.raw.text());
-    }
-    if (!body.has('resource')) body.set('resource', mcpResourceUrl(c.req.raw));
-    headers.set('content-type', 'application/x-www-form-urlencoded');
-    return fetch(url, { method: 'POST', headers, body: body.toString() });
+  const mediaType = contentType.split(';', 1)[0]?.trim();
+  if (contentType && mediaType !== 'application/x-www-form-urlencoded') {
+    return jsonResponse(
+      {
+        error: 'invalid_request',
+        error_description: 'Content-Type must be application/x-www-form-urlencoded',
+      },
+      415,
+    );
   }
 
-  return fetch(new Request(url, c.req.raw));
+  let bodyText: string;
+  try {
+    bodyText = new TextDecoder().decode(
+      await readRequestBodyWithLimit(c.req.raw, OAUTH_TOKEN_REQUEST_MAX_BYTES),
+    );
+  } catch (error) {
+    if (error instanceof BodySizeLimitError) {
+      return jsonResponse(
+        { error: 'invalid_request', error_description: 'Request body is too large' },
+        413,
+      );
+    }
+    throw error;
+  }
+  const body = new URLSearchParams(bodyText);
+  if (!body.has('resource')) body.set('resource', mcpResourceUrl(c.req.raw));
+  headers.set('content-type', 'application/x-www-form-urlencoded');
+  return fetch(url, { method: 'POST', headers, body: body.toString() });
 }
 
 /** Bearer access-token auth shared by POST and DELETE. */
@@ -196,25 +231,36 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function enforceIpRateLimit(
+  c: {
+    req: { raw: Request };
+    get(key: 'logger'): Logger;
+  },
+  limiter: RateLimit,
+  surface: 'registration' | 'rpc',
+): Promise<Response | null> {
+  const logger = c.get('logger');
+  const clientIp = getClientIp(c.req.raw);
+  if (!clientIp) {
+    logger.warn('mcp.client_ip_missing', { surface });
+    return jsonResponse({ error: 'Missing client IP' }, 400);
+  }
+
+  const limit = await limiter.limit({ key: clientIp });
+  if (!limit.success) {
+    logger.warn('mcp.rate_limited', { keyClass: 'ip', surface });
+    return jsonResponse({ error: 'Too many requests' }, 429, { 'Retry-After': '60' });
+  }
+
+  return null;
+}
+
 async function enforceMcpRateLimit(c: {
   req: { raw: Request };
   env: Env;
   get(key: 'logger'): Logger;
 }): Promise<Response | null> {
-  const logger = c.get('logger');
-  const clientIp = getClientIp(c.req.raw);
-  if (!clientIp) {
-    logger.warn('mcp.client_ip_missing');
-    return jsonResponse({ error: 'Missing client IP' }, 400);
-  }
-
-  const limit = await c.env.MCP_LIMITER.limit({ key: clientIp });
-  if (!limit.success) {
-    logger.warn('mcp.rate_limited', { keyClass: 'ip' });
-    return jsonResponse({ error: 'Too many requests' }, 429, { 'Retry-After': '60' });
-  }
-
-  return null;
+  return enforceIpRateLimit(c, c.env.MCP_LIMITER, 'rpc');
 }
 
 function mcpSseResponse(c: {
@@ -289,7 +335,15 @@ app.get(
 );
 
 app.get(OAUTH_METADATA_PATH, (c) => proxyConnect(c, OAUTH_METADATA_PATH));
-app.post('/mcp/register', (c) => proxyConnect(c, '/mcp/register'));
+app.post('/mcp/register', async (c) => {
+  const rateLimitError = await enforceIpRateLimit(
+    c,
+    c.env.MCP_REGISTRATION_LIMITER,
+    'registration',
+  );
+  if (rateLimitError) return rateLimitError;
+  return proxyConnect(c, '/mcp/register');
+});
 app.post('/mcp/token', (c) => proxyToken(c));
 app.get('/mcp/authorize', (c) => {
   const source = new URL(c.req.url);
@@ -321,8 +375,15 @@ app.post('/mcp', async (c) => {
 
   let message: JsonRpcMessage;
   try {
-    message = await c.req.json<JsonRpcMessage>();
-  } catch {
+    const body = await readRequestBodyWithLimit(c.req.raw, MCP_REQUEST_MAX_BYTES);
+    message = JSON.parse(new TextDecoder().decode(body)) as JsonRpcMessage;
+  } catch (error) {
+    if (error instanceof BodySizeLimitError) {
+      return c.json(
+        createErrorResponse(null, JsonRpcErrorCode.InvalidRequest, 'Request body is too large'),
+        413,
+      );
+    }
     return c.json(
       {
         jsonrpc: '2.0',
