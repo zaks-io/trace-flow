@@ -676,7 +676,7 @@ describe('convex/http.ts OAuth routes', () => {
         'http://localhost/mcp/token',
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
           body: 'grant_type=authorization_code&code=auth-code&client_id=client-1&redirect_uri=https://example.com/callback&resource=https://mcp.trace-flow.dev/mcp&code_verifier=0123456789012345678901234567890123456789012',
         },
         ctx,
@@ -988,6 +988,24 @@ describe('convex/http.ts OAuth routes', () => {
   });
 
   describe('POST /mcp/token - unsupported grant', () => {
+    it('rejects a media type that only prefixes the form media type', async () => {
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/mcp/token',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencodedx' },
+          body: 'grant_type=client_credentials',
+        },
+        ctx,
+      );
+
+      expect(res.status).toBe(415);
+      expect((await res.json()).error_description).toBe(
+        'Content-Type must be application/x-www-form-urlencoded',
+      );
+    });
+
     it('returns 400 for unsupported grant_type', async () => {
       const app = createApp(deps);
 

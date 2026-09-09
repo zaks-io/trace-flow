@@ -158,7 +158,8 @@ async function proxyToken(c: { req: { raw: Request }; env: Env }): Promise<Respo
   headers.delete('content-length');
 
   const contentType = headers.get('content-type')?.toLowerCase() ?? '';
-  if (contentType && !contentType.startsWith('application/x-www-form-urlencoded')) {
+  const mediaType = contentType.split(';', 1)[0]?.trim();
+  if (contentType && mediaType !== 'application/x-www-form-urlencoded') {
     return jsonResponse(
       {
         error: 'invalid_request',

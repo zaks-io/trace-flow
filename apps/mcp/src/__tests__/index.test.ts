@@ -284,7 +284,7 @@ describe('MCP worker auth discovery', () => {
 
     const res = await SELF.fetch('http://localhost/mcp/token', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
       body: 'grant_type=authorization_code&code=code-1',
     });
 
@@ -306,21 +306,24 @@ describe('MCP worker auth discovery', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('rejects unsupported token content types without proxying them', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    const res = await SELF.fetch('http://localhost/mcp/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ grant_type: 'authorization_code', code: 'code-1' }),
-    });
+  it.each(['application/json', 'application/x-www-form-urlencodedx'])(
+    'rejects unsupported token content type %s without proxying it',
+    async (contentType) => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      const res = await SELF.fetch('http://localhost/mcp/token', {
+        method: 'POST',
+        headers: { 'Content-Type': contentType },
+        body: JSON.stringify({ grant_type: 'authorization_code', code: 'code-1' }),
+      });
 
-    expect(res.status).toBe(415);
-    await expect(res.json()).resolves.toEqual({
-      error: 'invalid_request',
-      error_description: 'Content-Type must be application/x-www-form-urlencoded',
-    });
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
+      expect(res.status).toBe(415);
+      await expect(res.json()).resolves.toEqual({
+        error: 'invalid_request',
+        error_description: 'Content-Type must be application/x-www-form-urlencoded',
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it('preserves a client-supplied resource on form token exchange', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {

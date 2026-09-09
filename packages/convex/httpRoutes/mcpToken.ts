@@ -29,7 +29,8 @@ export function registerMcpTokenRoutes(
 
     try {
       const contentType = c.req.header('Content-Type')?.toLowerCase() ?? '';
-      if (!contentType.startsWith('application/x-www-form-urlencoded')) {
+      const mediaType = contentType.split(';', 1)[0]?.trim();
+      if (mediaType !== 'application/x-www-form-urlencoded') {
         return c.json(
           {
             error: 'invalid_request',
