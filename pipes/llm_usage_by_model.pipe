@@ -190,6 +190,6 @@ SQL >
     )
     GROUP BY model
     ORDER BY total_cost_usd DESC
-    LIMIT 10
+    LIMIT {{ Int32(limit, 10) }}
 
 TYPE ENDPOINT
