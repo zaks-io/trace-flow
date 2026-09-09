@@ -131,18 +131,19 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
       bodyText = decoder.decode(buf);
     }
 
-    let envelope: AgentIngestEnvelope;
+    let parsedEnvelope: unknown;
     try {
-      envelope = JSON.parse(bodyText) as AgentIngestEnvelope;
+      parsedEnvelope = JSON.parse(bodyText) as unknown;
     } catch (err) {
       logger.warn('agent_ingest.invalid_json', { message: String(err) });
       return c.json({ error: 'invalid_envelope' }, 400);
     }
-    const shapeError = validateEnvelopeShape(envelope);
+    const shapeError = validateEnvelopeShape(parsedEnvelope);
     if (shapeError) {
       logger.warn('agent_ingest.invalid_envelope', { missing: shapeError });
       return c.json({ error: 'invalid_envelope' }, 400);
     }
+    const envelope = parsedEnvelope as AgentIngestEnvelope;
     const { batch, facts } = envelope;
 
     const policy = await getCompatibilityPolicy(c.env, logger);

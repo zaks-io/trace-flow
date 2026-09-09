@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as Sentry from '@sentry/cloudflare';
 import { microdollarsToDollars, type ModelPricing } from '@trace-flow/pricing';
-import type { AgentSource } from '@trace-flow/types';
+import { AGENT_INGEST_LIMITS, type AgentSource } from '@trace-flow/types';
 import { processAgentBatch } from '../consumer';
 
 // withSentry initializes the client in the deployed Worker; here we mock the capture surface so the
@@ -221,6 +221,56 @@ describe('processAgentBatch', () => {
 
     expect(bad.retry).toHaveBeenCalledOnce();
     expect(bad.ack).not.toHaveBeenCalled();
+    expect(tb.inserts).toHaveLength(0);
+  });
+
+  it.each([
+    [
+      'missing tool_name',
+      () => {
+        const fact = toolEventFact() as unknown as Record<string, unknown>;
+        delete fact.tool_name;
+        return fact;
+      },
+    ],
+    [
+      'missing repo_relative_paths',
+      () => {
+        const fact = toolEventFact() as unknown as Record<string, unknown>;
+        delete fact.repo_relative_paths;
+        return fact;
+      },
+    ],
+    ['invalid enum', () => toolEventFact({ status: 'not-a-status' as never })],
+    ['negative count', () => toolEventFact({ source_block_index: -1 })],
+    ['unsafe count', () => toolEventFact({ source_block_index: Number.MAX_SAFE_INTEGER + 1 })],
+    [
+      'oversized string',
+      () => toolEventFact({ tool_name: 'x'.repeat(AGENT_INGEST_LIMITS.maxFactStringBytes + 1) }),
+    ],
+    [
+      'oversized nested array',
+      () =>
+        toolEventFact({
+          repo_relative_paths: Array.from(
+            { length: AGENT_INGEST_LIMITS.maxRepoRelativePaths + 1 },
+            (_, index) => `src/file-${index}.ts`,
+          ),
+        }),
+    ],
+  ])('routes a %s fact to the DLQ path before pricing or Tinybird', async (_label, makeFact) => {
+    tb = mockTinybird();
+    const { kv, get } = makeKv({ [PRICING_KEY]: PRICING });
+    const fact = makeFact();
+    const msg = stubMessage(
+      queueMessage({ facts: { ...emptyQueueFacts(), tool_events: [fact as never] } }),
+    );
+
+    await processAgentBatch(batchOf([msg]), makeEnv(kv));
+
+    expect(msg.retry).toHaveBeenCalledOnce();
+    expect(msg.ack).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
     expect(tb.inserts).toHaveLength(0);
   });
 
