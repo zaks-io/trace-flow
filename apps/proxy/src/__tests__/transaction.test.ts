@@ -163,19 +163,20 @@ describe('buildTransaction', () => {
     expect(txn.inputMessages?.[0]?.role).toBe('user');
   });
 
-  it('logs and continues when a provider throws on the request body', () => {
+  it('logs no payload details and continues when a provider throws on the request body', () => {
     const error = vi.fn();
     const logger: Logger = { ...noopLogger, error };
     const provider = getProvider('openai');
     const spy = vi.spyOn(provider, 'parseRequestBody').mockImplementation(() => {
-      throw new Error('boom');
+      throw new Error('request-body-canary-7d3a');
     });
     try {
       const txn = buildTransaction(
         makeDrained({ providerId: 'openai', requestBody: '{}' }),
         logger,
       );
-      expect(error).toHaveBeenCalledWith('proxy.request_body_parse_failed', expect.any(Error));
+      expect(error).toHaveBeenCalledWith('proxy.request_body_parse_failed');
+      expect(JSON.stringify(error.mock.calls)).not.toContain('request-body-canary-7d3a');
       expect(txn.inputMessages).toBeUndefined();
     } finally {
       spy.mockRestore();

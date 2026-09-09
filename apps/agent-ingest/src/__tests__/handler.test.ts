@@ -232,10 +232,23 @@ describe('POST /v1/ingest', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  it('400s malformed JSON', async () => {
+  it('400s malformed JSON without logging body fragments', async () => {
+    const canary = 'agent-ingest-json-canary-7d3a';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { env } = makeEnv({ creds: await validCredEntries() });
-    const res = await post(env, 'not json', authHeaders);
+    const res = await post(env, `not json ${canary}`, authHeaders);
     expect(res.status).toBe(400);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(canary);
+  });
+
+  it('does not log attacker-controlled unknown field names', async () => {
+    const canary = 'agent-ingest-field-canary-7d3a';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { env } = makeEnv({ creds: await validCredEntries() });
+    const res = await post(env, JSON.stringify({ ...envelope(), [canary]: true }), authHeaders);
+
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(canary);
   });
 
   it('202s a gzip-encoded body (the Collector gzips and sends Content-Encoding: gzip)', async () => {

@@ -248,8 +248,8 @@ export function buildTransaction(drained: DrainedCapture, logger: Logger): Trans
   if (requestBody) {
     try {
       inputMessages = provider.parseRequestBody(requestBody) ?? undefined;
-    } catch (err) {
-      logger.error('proxy.request_body_parse_failed', err);
+    } catch {
+      logger.error('proxy.request_body_parse_failed');
     }
   }
 
@@ -378,7 +378,6 @@ export async function persistTransaction(
         ? transaction.firstTokenReceived - transaction.requestSent
         : 0,
       isSse: transaction.isSSE,
-      model: transaction.responseMetadata?.model,
       totalTokens: transaction.tokens?.totalTokens ?? 0,
       r2Stored: omitBody ? 'skipped' : 'pending_delivery',
     });
