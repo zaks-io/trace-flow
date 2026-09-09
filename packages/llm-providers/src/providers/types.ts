@@ -1,6 +1,6 @@
 import type {
   InputMessage,
-  LLMResponseMetadata,
+  LLMResponseMetadataSummary,
   LLMTokenUsage,
   SSEStreamData,
 } from '@trace-flow/types';
@@ -45,7 +45,7 @@ export interface Provider {
   parseResponseMetadata(
     body: string,
     ctx?: ResponseMetadataContext,
-  ): Partial<LLMResponseMetadata> | undefined;
+  ): LLMResponseMetadataSummary | undefined;
   parseResponseTokenUsage(body: string): LLMTokenUsage | undefined;
 
   handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStreamData): void;

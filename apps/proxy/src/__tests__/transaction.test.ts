@@ -319,6 +319,59 @@ describe('buildTransaction', () => {
     expect(drained.responseBody).toContain('message_start');
   });
 
+  it('bounds SSE state after the capture cap while forwarding the full response', async () => {
+    const provider = getProvider('openai');
+    const event = 'data: {"choices":[{"delta":{"content":"x"}}]}\n\n';
+    const eventCount = 5_005;
+    const responseBody = event.repeat(eventCount);
+    const encodedEvent = new TextEncoder().encode(event);
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          for (let index = 0; index < eventCount; index++) {
+            controller.enqueue(encodedEvent);
+          }
+          controller.close();
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    );
+    const forwarded = {
+      validated: {
+        requestId: 'req-many-sse-events',
+        traceId: 'trace-many-sse-events',
+        traceFlags: 1,
+        traceState: '',
+        baggage: {},
+        apiKey: 'tf-test',
+        keyData: { orgId: 'org-1' },
+        route: { provider },
+      },
+      response,
+      streamToCapture: null,
+      targetUrl: 'https://api.openai.com/v1/chat/completions',
+      requestStart: 0,
+      requestSent: 0,
+      responseReceived: 0,
+    } as unknown as ForwardedExchange;
+    const attached = attachCapture(forwarded);
+    const clientText = new Response(attached.readable).text();
+
+    const drained = await drainCapture(attached);
+    attached.capture.release();
+    const [forwardedText] = await Promise.all([clientText, attached.pipePromise]);
+
+    expect(drained.isTruncated).toBe(true);
+    expect(forwardedText).toBe(responseBody);
+    expect(attached.sseStreamData.messages).toHaveLength(1);
+    expect(attached.sseStreamData.messages[0]?.events.length).toBeLessThanOrEqual(512);
+    expect(
+      attached.sseStreamData.messages[0]?.events.every(
+        (eventSummary) => eventSummary.data === undefined,
+      ),
+    ).toBe(true);
+  });
+
   it('releases skipped responses even when analytics throws', async () => {
     const provider = getProvider('openai');
     const route = { provider } as Parameters<typeof recordSkippedExchange>[2]['route'];

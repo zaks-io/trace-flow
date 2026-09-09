@@ -2,9 +2,8 @@ import type {
   AnthropicContentBlock,
   InputMessage,
   InputContentBlock,
-  LLMResponseMetadata,
+  LLMResponseMetadataSummary,
   LLMTokenUsage,
-  SSEEvent,
   SSEMessage,
   SSEStreamData,
 } from '@trace-flow/types';
@@ -13,6 +12,15 @@ import { parseTokenUsage } from '../parseTokenUsage';
 import { PROVIDER_SCHEMAS } from '../schemas';
 import type { RawTokenUsage } from '../types';
 import type { ParsedSSEEvent, Provider } from './types';
+import {
+  addSSEMessage,
+  appendSSEContentBlock,
+  appendSSEEvent,
+  appendSSEMetadata,
+  boundedSSEMetadataValue,
+  isBoundedSSEEventData,
+  reportSSEHandlerFailure,
+} from './sse-state';
 
 interface AnthropicRequestBody {
   model?: string;
@@ -74,8 +82,8 @@ function parseAnthropicRequestBody(body: string): InputMessage[] | null {
     }
 
     return inputMessages;
-  } catch (error) {
-    console.warn('Error parsing Anthropic request body:', error);
+  } catch {
+    console.warn('Provider request body parse failed');
     return null;
   }
 }
@@ -102,22 +110,26 @@ const THINKING_DELTA_TEXT_PATTERN = /"thinking"\s*:\s*"((?:[^"\\]|\\.)*)"/;
 
 function extractMetadata(
   data: string,
-  existing: Partial<LLMResponseMetadata> = {},
-): Partial<LLMResponseMetadata> {
-  const metadata: Partial<LLMResponseMetadata> = { ...existing };
+  existing: LLMResponseMetadataSummary = {},
+): LLMResponseMetadataSummary {
+  const metadata: LLMResponseMetadataSummary = { ...existing };
 
   const idMatch = ID_PATTERN.exec(data);
-  if (idMatch && !metadata.id) metadata.id = idMatch[1];
+  const id = boundedSSEMetadataValue(idMatch?.[1]);
+  if (id && !metadata.id) metadata.id = id;
 
   const modelMatch = MODEL_PATTERN.exec(data);
-  if (modelMatch && !metadata.model) metadata.model = modelMatch[1];
+  const model = boundedSSEMetadataValue(modelMatch?.[1]);
+  if (model && !metadata.model) metadata.model = model;
 
   const stopReasonMatch = STOP_REASON_PATTERN.exec(data);
-  if (stopReasonMatch && !metadata.stopReason) metadata.stopReason = stopReasonMatch[1] ?? null;
+  const stopReason = boundedSSEMetadataValue(stopReasonMatch?.[1]);
+  if (stopReason && !metadata.stopReason) metadata.stopReason = stopReason;
 
   const stopSequenceMatch = STOP_SEQUENCE_PATTERN.exec(data);
-  if (stopSequenceMatch && !metadata.stopSequence) {
-    metadata.stopSequence = stopSequenceMatch[1] ?? null;
+  const stopSequence = boundedSSEMetadataValue(stopSequenceMatch?.[1]);
+  if (stopSequence && !metadata.stopSequence) {
+    metadata.stopSequence = stopSequence;
   }
 
   return metadata;
@@ -175,8 +187,8 @@ function parseContentBlockStart(
   if (result.type === 'tool_use') {
     const idMatch = TOOL_USE_ID_PATTERN.exec(data);
     const nameMatch = TOOL_USE_NAME_PATTERN.exec(data);
-    if (idMatch?.[1]) result.toolUseId = idMatch[1];
-    if (nameMatch?.[1]) result.toolName = nameMatch[1];
+    result.toolUseId = boundedSSEMetadataValue(idMatch?.[1]);
+    result.toolName = boundedSSEMetadataValue(nameMatch?.[1]);
   }
 
   return result;
@@ -193,51 +205,42 @@ function handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStre
     if (!eventType) return;
 
     if (event.data && event.data.trim().length > 0) {
+      if (!isBoundedSSEEventData(event.data)) return;
       try {
         JSON.parse(event.data);
-      } catch (parseError) {
-        console.error('Error parsing SSE event:', {
-          error: parseError,
-          eventType,
-          timestamp,
-        });
+      } catch {
         return;
       }
     }
-
-    const sseEvent: SSEEvent = { type: eventType, timestamp, data: event.data };
 
     if (eventType === 'message_start') {
       const metadata = extractMetadata(event.data);
       const usage = event.data ? extractUsage(event.data) : undefined;
       const newMessage: SSEMessage = {
         messageStart: timestamp,
-        events: [sseEvent],
+        events: [],
         metadata,
         usage: usage && hasUsageData(usage) ? usage : undefined,
       };
-      state.messages.push(newMessage);
+      appendSSEEvent(newMessage, eventType, timestamp);
+      addSSEMessage(state, newMessage);
       return;
     }
 
     const current = state.messages[state.messages.length - 1];
-    if (!current) {
-      console.warn('Received SSE event before message_start:', eventType);
-      return;
-    }
+    if (!current) return;
 
-    current.events.push(sseEvent);
+    appendSSEEvent(current, eventType, timestamp);
 
     if (event.data) {
       const eventMetadata = extractMetadata(event.data, current.metadata);
-      current.metadata = { ...current.metadata, ...eventMetadata };
+      appendSSEMetadata(current, eventMetadata);
     }
 
     if (eventType === 'content_block_start' && event.data) {
       const blockInfo = parseContentBlockStart(event.data);
       if (blockInfo) {
-        current.contentBlocks ??= [];
-        current.contentBlocks.push({ ...blockInfo, startTimestamp: timestamp });
+        appendSSEContentBlock(current, { ...blockInfo, startTimestamp: timestamp });
       }
     }
 
@@ -279,12 +282,8 @@ function handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStre
         current.usage = hasUsageData(merged) ? merged : undefined;
       }
     }
-  } catch (e) {
-    console.error('Error parsing SSE event:', {
-      error: e,
-      eventType: event.event,
-      timestamp,
-    });
+  } catch {
+    reportSSEHandlerFailure(state);
   }
 }
 

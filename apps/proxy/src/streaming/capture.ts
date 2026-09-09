@@ -145,7 +145,10 @@ export function createResponseCapture(onChunk?: (chunk: Uint8Array, isFirst: boo
         }
       }
 
-      if (onChunk) {
+      // Once the retained response reaches its cap, stop feeding parser state as well. The
+      // client path still receives every byte through the transform, but parser buffers and
+      // provider aggregates must not grow with an unbounded tail.
+      if (onChunk && !truncated) {
         onChunk(chunk, isFirst);
       }
     },

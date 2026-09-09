@@ -1,7 +1,7 @@
 import type {
   InputMessage,
   InputContentBlock,
-  LLMResponseMetadata,
+  LLMResponseMetadataSummary,
   LLMTokenUsage,
   SSEStreamData,
 } from '@trace-flow/types';
@@ -11,6 +11,14 @@ import { parseTokenUsage } from '../parseTokenUsage';
 import { PROVIDER_SCHEMAS } from '../schemas';
 import type { RawTokenUsage } from '../types';
 import type { ParsedSSEEvent, Provider } from './types';
+import {
+  addSSEMessage,
+  appendSSEEvent,
+  appendSSEMetadata,
+  boundedSSEMetadataValue,
+  isBoundedSSEEventData,
+  reportSSEHandlerFailure,
+} from './sse-state';
 
 interface GoogleRequestBody {
   contents?: {
@@ -95,18 +103,21 @@ const THOUGHTS_TOKEN_COUNT_PATTERN = /"thoughtsTokenCount"\s*:\s*(\d+)/;
 
 function extractMetadata(
   data: string,
-  existing: Partial<LLMResponseMetadata> = {},
-): Partial<LLMResponseMetadata> {
-  const metadata: Partial<LLMResponseMetadata> = { ...existing };
+  existing: LLMResponseMetadataSummary = {},
+): LLMResponseMetadataSummary {
+  const metadata: LLMResponseMetadataSummary = { ...existing };
 
   const responseIdMatch = RESPONSE_ID_PATTERN.exec(data);
-  if (responseIdMatch && !metadata.id) metadata.id = responseIdMatch[1];
+  const responseId = boundedSSEMetadataValue(responseIdMatch?.[1]);
+  if (responseId && !metadata.id) metadata.id = responseId;
 
   const modelVersionMatch = MODEL_VERSION_PATTERN.exec(data);
-  if (modelVersionMatch && !metadata.model) metadata.model = modelVersionMatch[1];
+  const modelVersion = boundedSSEMetadataValue(modelVersionMatch?.[1]);
+  if (modelVersion && !metadata.model) metadata.model = modelVersion;
 
   const finishReasonMatch = FINISH_REASON_PATTERN.exec(data);
-  if (finishReasonMatch && !metadata.finishReason) metadata.finishReason = finishReasonMatch[1];
+  const finishReason = boundedSSEMetadataValue(finishReasonMatch?.[1]);
+  if (finishReason && !metadata.finishReason) metadata.finishReason = finishReason;
 
   return metadata;
 }
@@ -153,6 +164,8 @@ function handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStre
     if (event.event) return;
     if (!event.data || event.data.trim().length === 0) return;
 
+    if (!isBoundedSSEEventData(event.data)) return;
+
     try {
       JSON.parse(event.data);
     } catch {
@@ -161,27 +174,23 @@ function handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStre
 
     if (state.messages.length === 0) {
       const metadata = extractMetadata(event.data);
-      state.messages.push({ messageStart: timestamp, events: [], metadata });
+      addSSEMessage(state, { messageStart: timestamp, events: [], metadata });
     }
 
     const current = state.messages[state.messages.length - 1];
     if (!current) return;
 
-    current.events.push({ type: 'content_block_delta', timestamp, data: event.data });
+    appendSSEEvent(current, 'content_block_delta', timestamp);
 
     const eventMetadata = extractMetadata(event.data, current.metadata);
-    current.metadata = { ...current.metadata, ...eventMetadata };
+    appendSSEMetadata(current, eventMetadata);
 
     const extracted = extractUsage(event.data);
     if (hasUsageData(extracted)) {
       current.usage = { ...current.usage, ...extracted };
     }
-  } catch (e) {
-    console.error('Error parsing SSE event:', {
-      error: e,
-      eventType: event.event,
-      timestamp,
-    });
+  } catch {
+    reportSSEHandlerFailure(state);
   }
 }
 

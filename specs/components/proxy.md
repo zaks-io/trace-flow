@@ -68,6 +68,10 @@ For Server-Sent Events (SSE) responses (`Content-Type: text/event-stream`), the 
 - Token usage accumulated across events
 - Per-block timing for Gantt chart visualization
 
+The delivery envelope retains only bounded event identity/timing summaries, aggregate usage, and
+metadata presence flags. Raw SSE event data, refusal text, and reasoning text remain in the
+encrypted Body Object with the response body.
+
 ## R2 Storage
 
 Request and response bodies are encrypted together inside the pending delivery envelope. Proxy
@@ -86,8 +90,9 @@ missing.
 ## Queue Message Structure
 
 After capture, the proxy enqueues `TraceDeliveryMessage`: a version marker, the R2 envelope key, and
-optional Sentry trace context. Request metadata, tokens, errors, SSE data, W3C context, and the optional
-encrypted Body Object remain in the referenced envelope.
+optional Sentry trace context. Request metadata, tokens, errors, bounded SSE timing summaries, W3C
+context, and the optional encrypted Body Object remain in the referenced envelope. Raw SSE event
+data and response reasoning/refusal text are never part of its plaintext message.
 
 ## W3C Trace Context Support
 

@@ -5,7 +5,7 @@ import type {
   LLMTiming,
   LLMTokenUsage,
   LLMError,
-  LLMResponseMetadata,
+  LLMResponseMetadataSummary,
   InputMessage,
   ToolExecution,
 } from './llm';
@@ -32,7 +32,7 @@ export interface QueueMessage {
   /** gen_ai.operation.name per OTel GenAI semantic conventions */
   operationName?: string;
   sseStreamData?: SSEStreamData;
-  responseMetadata?: Partial<LLMResponseMetadata>;
+  responseMetadata?: LLMResponseMetadataSummary;
   receivedAt: number;
   inputMessages?: InputMessage[];
   toolExecutions?: ToolExecution[];

@@ -106,9 +106,9 @@ describe('createQueueMessage', () => {
           messageStart: 1150,
           messageStop: 1480,
           events: [
-            { type: 'message_start', timestamp: 1150, data: '{}' },
-            { type: 'content_block_delta', timestamp: 1250, data: '{}' },
-            { type: 'message_stop', timestamp: 1480, data: '{}' },
+            { type: 'message_start', timestamp: 1150 },
+            { type: 'content_block_delta', timestamp: 1250 },
+            { type: 'message_stop', timestamp: 1480 },
           ],
           usage: {
             input_tokens: 100,
@@ -126,6 +126,37 @@ describe('createQueueMessage', () => {
     const result = createQueueMessage(params);
 
     expect(result.sseStreamData).toEqual(sseStreamData);
+  });
+
+  it('strips raw SSE data and reasoning/refusal text from queue metadata', () => {
+    const canary = 'sse-queue-canary-7f5f8b';
+    const rawSseStreamData = {
+      messages: [
+        {
+          messageStart: 1,
+          events: [{ type: 'content_block_delta', timestamp: 2, data: canary }],
+          metadata: { refusal: canary, reasoning: canary },
+        },
+      ],
+    } as unknown as Parameters<typeof createQueueMessage>[0]['sseStreamData'];
+    const result = createQueueMessage({
+      ...baseParams,
+      sseStreamData: rawSseStreamData,
+      responseMetadata: { refusal: canary, reasoning: canary },
+    });
+
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain(canary);
+    expect(result.sseStreamData?.messages[0]?.events[0]).toEqual({
+      type: 'content_block_delta',
+      timestamp: 2,
+    });
+    expect(result.responseMetadata).toMatchObject({
+      hasRefusal: true,
+      hasReasoning: true,
+    });
+    expect(result.responseMetadata).not.toHaveProperty('refusal');
+    expect(result.responseMetadata).not.toHaveProperty('reasoning');
   });
 
   it('should exclude SSE stream data when messages array is empty', () => {
@@ -146,16 +177,16 @@ describe('createQueueMessage', () => {
           messageStart: 1150,
           messageStop: 1480,
           events: [
-            { type: 'message_start', timestamp: 1150, data: '{}' },
-            { type: 'message_stop', timestamp: 1480, data: '{}' },
+            { type: 'message_start', timestamp: 1150 },
+            { type: 'message_stop', timestamp: 1480 },
           ],
         },
         {
           messageStart: 2000,
           messageStop: 2300,
           events: [
-            { type: 'message_start', timestamp: 2000, data: '{}' },
-            { type: 'message_stop', timestamp: 2300, data: '{}' },
+            { type: 'message_start', timestamp: 2000 },
+            { type: 'message_stop', timestamp: 2300 },
           ],
         },
       ],

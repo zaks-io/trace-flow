@@ -1,16 +1,23 @@
 import type {
   InputMessage,
   InputContentBlock,
-  LLMResponseMetadata,
+  LLMResponseMetadataSummary,
   LLMTokenUsage,
   SSEStreamData,
   SSEMessage,
-  SSEEvent,
 } from '@trace-flow/types';
 import { createTokenAccumulator } from '../accumulator';
 import { parseTokenUsage } from '../parseTokenUsage';
 import type { ProviderId, RawTokenUsage } from '../types';
 import type { ParsedSSEEvent } from './types';
+import {
+  addSSEMessage,
+  appendSSEEvent,
+  appendSSEMetadata,
+  boundedSSEMetadataValue,
+  isBoundedSSEEventData,
+  reportSSEHandlerFailure,
+} from './sse-state';
 
 type OpenAIContentPart =
   | { type: 'text'; text?: string }
@@ -124,18 +131,21 @@ function runRegex(pattern: RegExp, data: string): RegExpExecArray | null {
 
 function extractOpenAIStyleMetadata(
   data: string,
-  existing: Partial<LLMResponseMetadata> = {},
-): Partial<LLMResponseMetadata> {
-  const metadata: Partial<LLMResponseMetadata> = { ...existing };
+  existing: LLMResponseMetadataSummary = {},
+): LLMResponseMetadataSummary {
+  const metadata: LLMResponseMetadataSummary = { ...existing };
 
   const idMatch = runRegex(ID_PATTERN, data);
-  if (idMatch && !metadata.id) metadata.id = idMatch[1];
+  const id = boundedSSEMetadataValue(idMatch?.[1]);
+  if (id && !metadata.id) metadata.id = id;
 
   const modelMatch = runRegex(MODEL_PATTERN, data);
-  if (modelMatch && !metadata.model) metadata.model = modelMatch[1];
+  const model = boundedSSEMetadataValue(modelMatch?.[1]);
+  if (model && !metadata.model) metadata.model = model;
 
   const objectMatch = runRegex(OBJECT_PATTERN, data);
-  if (objectMatch && !metadata.object) metadata.object = objectMatch[1];
+  const object = boundedSSEMetadataValue(objectMatch?.[1]);
+  if (object && !metadata.object) metadata.object = object;
 
   const createdMatch = runRegex(CREATED_PATTERN, data);
   if (createdMatch?.[1] && !metadata.created) metadata.created = parseInt(createdMatch[1], 10);
@@ -146,18 +156,21 @@ function extractOpenAIStyleMetadata(
   }
 
   const finishReasonMatch = runRegex(FINISH_REASON_PATTERN, data);
-  if (finishReasonMatch && !metadata.finishReason) metadata.finishReason = finishReasonMatch[1];
+  const finishReason = boundedSSEMetadataValue(finishReasonMatch?.[1]);
+  if (finishReason && !metadata.finishReason) metadata.finishReason = finishReason;
 
   if (RESPONSES_API_MARKER.test(data)) {
     const statusMatch = runRegex(RESPONSE_STATUS_PATTERN, data);
-    if (statusMatch?.[1] && TERMINAL_RESPONSE_STATUSES.has(statusMatch[1])) {
-      metadata.finishReason = statusMatch[1];
+    const status = boundedSSEMetadataValue(statusMatch?.[1]);
+    if (status && TERMINAL_RESPONSE_STATUSES.has(status)) {
+      metadata.finishReason = status;
     }
   }
 
   const nativeFinishReasonMatch = runRegex(NATIVE_FINISH_REASON_PATTERN, data);
-  if (nativeFinishReasonMatch && !metadata.nativeFinishReason) {
-    metadata.nativeFinishReason = nativeFinishReasonMatch[1];
+  const nativeFinishReason = boundedSSEMetadataValue(nativeFinishReasonMatch?.[1]);
+  if (nativeFinishReason && !metadata.nativeFinishReason) {
+    metadata.nativeFinishReason = nativeFinishReason;
   }
 
   const reasoningTokensMatch = runRegex(REASONING_TOKENS_PATTERN, data);
@@ -170,13 +183,21 @@ function extractOpenAIStyleMetadata(
   }
 
   const refusalMatch = runRegex(REFUSAL_PATTERN, data);
-  if (refusalMatch && metadata.refusal === undefined) {
-    metadata.refusal = refusalMatch[1] ?? null;
+  if (refusalMatch) {
+    if (refusalMatch[1] !== undefined) {
+      metadata.hasRefusal = true;
+    } else {
+      metadata.hasRefusal ??= false;
+    }
   }
 
   const reasoningMatch = runRegex(REASONING_PATTERN, data);
-  if (reasoningMatch && metadata.reasoning === undefined) {
-    metadata.reasoning = reasoningMatch[1] ?? null;
+  if (reasoningMatch) {
+    if (reasoningMatch[1] !== undefined) {
+      metadata.hasReasoning = true;
+    } else {
+      metadata.hasReasoning ??= false;
+    }
   }
 
   return metadata;
@@ -259,6 +280,7 @@ export function handleOpenAIStyleSSEEvent(
       if (!event.data || event.data.trim().length === 0) return;
 
       try {
+        if (!isBoundedSSEEventData(event.data)) return;
         JSON.parse(event.data);
       } catch {
         return;
@@ -266,16 +288,16 @@ export function handleOpenAIStyleSSEEvent(
 
       if (state.messages.length === 0) {
         const metadata = extractOpenAIStyleMetadata(event.data);
-        state.messages.push({ messageStart: timestamp, events: [], metadata });
+        addSSEMessage(state, { messageStart: timestamp, events: [], metadata });
       }
 
       const current = state.messages[state.messages.length - 1];
       if (!current) return;
 
-      current.events.push({ type: 'content_block_delta', timestamp, data: event.data });
+      appendSSEEvent(current, 'content_block_delta', timestamp);
 
       const eventMetadata = extractOpenAIStyleMetadata(event.data, current.metadata);
-      current.metadata = { ...current.metadata, ...eventMetadata };
+      appendSSEMetadata(current, eventMetadata);
 
       const extracted = extractOpenAIStyleUsage(event.data, includeCost);
       if (hasUsageData(extracted)) {
@@ -285,44 +307,36 @@ export function handleOpenAIStyleSSEEvent(
     }
 
     if (event.data && event.data.trim().length > 0) {
+      if (!isBoundedSSEEventData(event.data)) return;
       try {
         JSON.parse(event.data);
-      } catch (parseError) {
-        console.error('Error parsing SSE event:', {
-          error: parseError,
-          eventType,
-          timestamp,
-        });
+      } catch {
         return;
       }
     }
-
-    const sseEvent: SSEEvent = { type: eventType, timestamp, data: event.data };
 
     if (eventType === 'response.created') {
       const metadata = extractOpenAIStyleMetadata(event.data);
       const usage = event.data ? extractOpenAIStyleUsage(event.data, includeCost) : undefined;
       const newMessage: SSEMessage = {
         messageStart: timestamp,
-        events: [sseEvent],
+        events: [],
         metadata,
         usage: usage && hasUsageData(usage) ? usage : undefined,
       };
-      state.messages.push(newMessage);
+      appendSSEEvent(newMessage, eventType, timestamp);
+      addSSEMessage(state, newMessage);
       return;
     }
 
     const current = state.messages[state.messages.length - 1];
-    if (!current) {
-      console.warn('Received SSE event before response.created:', eventType);
-      return;
-    }
+    if (!current) return;
 
-    current.events.push(sseEvent);
+    appendSSEEvent(current, eventType, timestamp);
 
     if (event.data) {
       const eventMetadata = extractOpenAIStyleMetadata(event.data, current.metadata);
-      current.metadata = { ...current.metadata, ...eventMetadata };
+      appendSSEMetadata(current, eventMetadata);
     }
 
     const isTerminal =
@@ -338,18 +352,14 @@ export function handleOpenAIStyleSSEEvent(
         current.usage = hasUsageData(merged) ? merged : undefined;
       }
     }
-  } catch (e) {
-    console.error('Error parsing SSE event:', {
-      error: e,
-      eventType: event.event,
-      timestamp,
-    });
+  } catch {
+    reportSSEHandlerFailure(state);
   }
 }
 
 export function parseOpenAIStyleResponseMetadata(
   body: string,
-): Partial<LLMResponseMetadata> | undefined {
+): LLMResponseMetadataSummary | undefined {
   const metadata = extractOpenAIStyleMetadata(body);
   return Object.keys(metadata).length > 0 ? metadata : undefined;
 }
