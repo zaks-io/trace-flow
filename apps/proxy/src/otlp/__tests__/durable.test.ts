@@ -5,6 +5,7 @@ import { analyticsKeyId } from '@trace-flow/utils';
 import { app } from '../../index';
 import { _clearUsageCache } from '../../usage';
 import type { OTLPExportTraceServiceRequest } from '../types';
+import { Writer, WIRE_LEN } from '../wire';
 
 const API_KEY = 'otlp-durable-test-key';
 
@@ -17,6 +18,11 @@ function makeEnv(options?: { storageError?: Error; usageError?: Error }) {
         storedValue = value;
         return { key: 'stored' };
       });
+  const usageGet = vi.fn(() => ({
+    fetch: options?.usageError
+      ? vi.fn().mockRejectedValue(options.usageError)
+      : vi.fn().mockResolvedValue(Response.json({ allowed: true })),
+  }));
   const env = {
     REQUEST_QUEUE: { send: queueSend },
     STORAGE: { put: storagePut },
@@ -38,11 +44,7 @@ function makeEnv(options?: { storageError?: Error; usageError?: Error }) {
     },
     USAGE_TRACKER: {
       idFromName: vi.fn(() => 'id'),
-      get: vi.fn(() => ({
-        fetch: options?.usageError
-          ? vi.fn().mockRejectedValue(options.usageError)
-          : vi.fn().mockResolvedValue(Response.json({ allowed: true })),
-      })),
+      get: usageGet,
     },
     ORG_LIMITER: { limit: vi.fn().mockResolvedValue({ success: true }) },
     IP_LIMITER: { limit: vi.fn().mockResolvedValue({ success: true }) },
@@ -51,7 +53,7 @@ function makeEnv(options?: { storageError?: Error; usageError?: Error }) {
     USAGE_SYNC_SECRET: 'test',
     TRACE_DELIVERY_NAMESPACE: 'dev',
   } as unknown as ProxyEnv;
-  return { env, queueSend, storagePut, getStoredValue: () => storedValue };
+  return { env, queueSend, storagePut, usageGet, getStoredValue: () => storedValue };
 }
 
 function otlpBody(attributeValue = 'value'): OTLPExportTraceServiceRequest {
@@ -78,21 +80,37 @@ function otlpBody(attributeValue = 'value'): OTLPExportTraceServiceRequest {
 }
 
 async function postOTLP(env: ProxyEnv, body: unknown) {
+  return postRawOTLP(env, JSON.stringify(body), 'application/json');
+}
+
+async function postRawOTLP(env: ProxyEnv, body: BodyInit, contentType: string) {
   const ctx = createExecutionContext();
   const response = await app.request(
     '/v1/traces',
     {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': contentType,
         'X-Trace-Flow-Api-Key': API_KEY,
       },
-      body: JSON.stringify(body),
+      body,
     },
     env,
     ctx,
   );
   return { response, ctx };
+}
+
+function compactSpanFlood(): Uint8Array {
+  const top = new Writer();
+  top.tag(1, WIRE_LEN).message((resource) => {
+    resource.tag(2, WIRE_LEN).message((scope) => {
+      for (let index = 0; index < 5_001; index += 1) {
+        scope.tag(2, WIRE_LEN).message(() => undefined);
+      }
+    });
+  });
+  return top.toUint8Array();
 }
 
 describe('OTLP durable acceptance', () => {
@@ -161,7 +179,7 @@ describe('OTLP durable acceptance', () => {
     await waitOnExecutionContext(ctx);
   });
 
-  it('logs OTLP attribute keys without logging their values', async () => {
+  it('logs only OTLP counts, never supplied names, keys, or values', async () => {
     const secretValue = 'customer-secret-value-that-must-not-be-logged';
     const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     const { env } = makeEnv();
@@ -170,7 +188,32 @@ describe('OTLP durable acceptance', () => {
     expect(response.status).toBe(200);
     await waitOnExecutionContext(ctx);
     const logs = info.mock.calls.flat().join('\n');
-    expect(logs).toContain('large.value');
+    expect(logs).toContain('"spanCount":1');
+    expect(logs).not.toContain('durable-test');
+    expect(logs).not.toContain('large.value');
     expect(logs).not.toContain(secretValue);
+  });
+
+  it('does not log malformed JSON fragments', async () => {
+    const canary = 'UNTRUSTED_JSON_CANARY';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { env } = makeEnv();
+    const { response, ctx } = await postRawOTLP(env, `{"secret":"${canary}"`, 'application/json');
+
+    expect(response.status).toBe(400);
+    await waitOnExecutionContext(ctx);
+    expect(warn.mock.calls.flat().join('\n')).not.toContain(canary);
+  });
+
+  it('rejects compact protobuf span floods before recording or storage', async () => {
+    const { env, usageGet, storagePut, queueSend } = makeEnv();
+    const { response, ctx } = await postRawOTLP(env, compactSpanFlood(), 'application/x-protobuf');
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: { code: 413 } });
+    expect(usageGet).not.toHaveBeenCalled();
+    expect(storagePut).not.toHaveBeenCalled();
+    expect(queueSend).not.toHaveBeenCalled();
+    await waitOnExecutionContext(ctx);
   });
 });

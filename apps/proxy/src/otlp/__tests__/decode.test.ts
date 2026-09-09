@@ -165,6 +165,31 @@ function encodeRequest(resourceSpans: ResourceSpansInput[]): Uint8Array {
   return top.toUint8Array();
 }
 
+function encodeRepeatedSpanFields(field: 9 | 11 | 13, count: number): Uint8Array {
+  const top = new Writer();
+  top.tag(1, WIRE_LEN).message((resource) => {
+    resource.tag(2, WIRE_LEN).message((scope) => {
+      scope.tag(2, WIRE_LEN).message((span) => {
+        for (let index = 0; index < count; index += 1) {
+          span.tag(field, WIRE_LEN).message(() => undefined);
+        }
+      });
+    });
+  });
+  return top.toUint8Array();
+}
+
+function expectDecodeTooLarge(bytes: Uint8Array, message: RegExp): void {
+  try {
+    decodeOTLPProtobuf(bytes);
+    throw new Error('expected protobuf decoder to reject the payload');
+  } catch (error) {
+    expect(error).toBeInstanceOf(OTLPProtoDecodeError);
+    expect(error).toMatchObject({ status: 413 });
+    expect((error as Error).message).toMatch(message);
+  }
+}
+
 describe('decodeOTLPProtobuf', () => {
   const traceIdHex = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4';
   const spanIdHex = '1234567890abcdef';
@@ -474,9 +499,142 @@ describe('readOTLPBody', () => {
 });
 
 describe('decoder hardening', () => {
+  it('rejects compact repeated spans before materializing them', () => {
+    const top = new Writer();
+    top.tag(1, WIRE_LEN).message((resource) => {
+      resource.tag(2, WIRE_LEN).message((scope) => {
+        for (let index = 0; index < 5_001; index += 1) {
+          scope.tag(2, WIRE_LEN).message(() => undefined);
+        }
+      });
+    });
+
+    const bytes = top.toUint8Array();
+    expect(bytes.byteLength).toBeLessThan(11_000);
+    expectDecodeTooLarge(bytes, /spans exceeds the 5000-item limit/);
+  });
+
+  it('rejects resource and scope collections during decoding', () => {
+    expectDecodeTooLarge(
+      encodeRequest(Array.from({ length: 1_025 }, () => ({ scopes: [] }))),
+      /resourceSpans exceeds the 1024-item limit/,
+    );
+    expectDecodeTooLarge(
+      encodeRequest([{ scopes: Array.from({ length: 4_097 }, () => ({ spans: [] })) }]),
+      /scopeSpans exceeds the 4096-item limit/,
+    );
+  });
+
+  it.each([
+    ['attributes', 9],
+    ['events', 11],
+    ['links', 13],
+  ] as const)('rejects excess span %s fields during decoding', (label, field) => {
+    expectDecodeTooLarge(encodeRepeatedSpanFields(field, 257), new RegExp(`Span ${label}`));
+  });
+
+  it('rejects aggregate repeated fields before cumulative materialization', () => {
+    const top = new Writer();
+    top.tag(1, WIRE_LEN).message((resource) => {
+      resource.tag(2, WIRE_LEN).message((scope) => {
+        for (let spanIndex = 0; spanIndex < 196; spanIndex += 1) {
+          scope.tag(2, WIRE_LEN).message((span) => {
+            for (let attributeIndex = 0; attributeIndex < 256; attributeIndex += 1) {
+              span.tag(9, WIRE_LEN).message(() => undefined);
+            }
+          });
+        }
+      });
+    });
+
+    const bytes = top.toUint8Array();
+    expect(bytes.byteLength).toBeLessThan(110_000);
+    expectDecodeTooLarge(bytes, /50000-item decode limit/);
+  });
+
+  it('rejects excess nested values during decoding', () => {
+    const bytes = encodeRequest([
+      {
+        scopes: [
+          {
+            spans: [
+              {
+                traceIdHex: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4',
+                spanIdHex: '1234567890abcdef',
+                name: 'nested-values',
+                startNano: 1n,
+                endNano: 2n,
+                attributes: [
+                  {
+                    key: 'nested',
+                    value: {
+                      arrayValue: Array.from({ length: 257 }, () => ({ stringValue: '' })),
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    expectDecodeTooLarge(bytes, /AnyValue\.arrayValue exceeds the 256-item limit/);
+  });
+
+  it('rejects oversized strings and byte values before decoding them', () => {
+    expectDecodeTooLarge(
+      encodeRequest([
+        {
+          scopes: [
+            {
+              spans: [
+                {
+                  traceIdHex: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4',
+                  spanIdHex: '1234567890abcdef',
+                  name: 'x'.repeat(64 * 1_024 + 1),
+                  startNano: 1n,
+                  endNano: 2n,
+                },
+              ],
+            },
+          ],
+        },
+      ]),
+      /length-delimited field exceeds the 65536-byte limit/,
+    );
+
+    expectDecodeTooLarge(
+      encodeRequest([
+        {
+          scopes: [
+            {
+              spans: [
+                {
+                  traceIdHex: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4',
+                  spanIdHex: '1234567890abcdef',
+                  name: 'bytes',
+                  startNano: 1n,
+                  endNano: 2n,
+                  attributes: [
+                    {
+                      key: 'payload',
+                      value: { bytesValue: new Uint8Array(192 * 1_024 + 1) },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ]),
+      /length-delimited field exceeds the 196608-byte limit/,
+    );
+  });
+
   it('rejects deeply nested kvlistValue to prevent stack exhaustion', () => {
     // Wrap a 200-deep chain of KeyValueList → KeyValue → AnyValue(kvlist) …
-    // around one span. Cap is 32, so this should reject.
+    // around one span. The runtime cap is 8, so this should reject.
     const DEPTH = 200;
     const inner = new Writer();
     // innermost AnyValue is a plain string

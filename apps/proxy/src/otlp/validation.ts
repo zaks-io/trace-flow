@@ -1,16 +1,6 @@
 import type { OTLPAnyValue, OTLPExportTraceServiceRequest, OTLPKeyValue } from './types';
+import { OTLP_LIMITS } from './limits';
 
-const MAX_RESOURCE_SPANS = 1_024;
-const MAX_SCOPE_SPANS = 4_096;
-const MAX_SPANS = 5_000;
-const MAX_ATTRIBUTES = 256;
-const MAX_EVENTS = 256;
-const MAX_LINKS = 256;
-const MAX_NESTED_VALUES = 256;
-const MAX_ATTRIBUTE_DEPTH = 8;
-const MAX_KEY_BYTES = 1_024;
-const MAX_NAME_BYTES = 64 * 1_024;
-const MAX_VALUE_BYTES = 256 * 1_024;
 const ESTIMATED_FIXED_BYTES_PER_TRACE = 2_048;
 
 /**
@@ -18,7 +8,7 @@ const ESTIMATED_FIXED_BYTES_PER_TRACE = 2_048;
  * Keeping the projected envelope at or below the request cap prevents shared resource attributes
  * from expanding a small OTLP export into an isolate-sized allocation.
  */
-const MAX_TRANSFORMED_TRACE_BYTES = 10 * 1_024 * 1_024;
+const MAX_TRANSFORMED_TRACE_BYTES = OTLP_LIMITS.transformedTraceBytes;
 
 export interface ValidationResult {
   valid: boolean;
@@ -64,14 +54,14 @@ function validateAnyValue(
   depth: number,
 ): ValidationResult | undefined {
   if (!isObject(value)) return invalid(`${label} must be an object`);
-  if (depth > MAX_ATTRIBUTE_DEPTH) {
+  if (depth > OTLP_LIMITS.attributeDepth) {
     return tooLarge(`${label} exceeds the maximum nesting depth`);
   }
 
   const anyValue = value as OTLPAnyValue;
   for (const key of ['stringValue', 'bytesValue'] as const) {
     if (anyValue[key] !== undefined) {
-      const error = validateBoundedString(anyValue[key], `${label}.${key}`, MAX_VALUE_BYTES);
+      const error = validateBoundedString(anyValue[key], `${label}.${key}`, OTLP_LIMITS.valueBytes);
       if (error) return error;
     }
   }
@@ -88,7 +78,11 @@ function validateAnyValue(
       return invalid(`${label}.intValue must be a safe integer or decimal string`);
     }
 
-    const sizeError = validateBoundedString(normalized, `${label}.intValue`, MAX_VALUE_BYTES);
+    const sizeError = validateBoundedString(
+      normalized,
+      `${label}.intValue`,
+      OTLP_LIMITS.valueBytes,
+    );
     if (sizeError) return sizeError;
     if (!/^-?\d+$/.test(normalized)) {
       return invalid(`${label}.intValue must be an integer`);
@@ -116,8 +110,8 @@ function validateAnyValue(
     if (!isObject(anyValue.arrayValue) || !Array.isArray(anyValue.arrayValue.values)) {
       return invalid(`${label}.arrayValue.values must be an array`);
     }
-    if (anyValue.arrayValue.values.length > MAX_NESTED_VALUES) {
-      return tooLarge(`${label}.arrayValue exceeds the ${MAX_NESTED_VALUES}-value limit`);
+    if (anyValue.arrayValue.values.length > OTLP_LIMITS.nestedValues) {
+      return tooLarge(`${label}.arrayValue exceeds the ${OTLP_LIMITS.nestedValues}-value limit`);
     }
     for (const [index, nested] of anyValue.arrayValue.values.entries()) {
       const error = validateAnyValue(nested, `${label}.arrayValue.values[${index}]`, depth + 1);
@@ -132,7 +126,7 @@ function validateAnyValue(
       anyValue.kvlistValue.values,
       `${label}.kvlistValue.values`,
       depth + 1,
-      MAX_NESTED_VALUES,
+      OTLP_LIMITS.nestedValues,
     );
     if (error) return error;
   }
@@ -143,7 +137,7 @@ function validateAttributes(
   attributes: unknown,
   label: string,
   depth = 0,
-  maxAttributes = MAX_ATTRIBUTES,
+  maxAttributes = OTLP_LIMITS.attributes,
 ): ValidationResult | undefined {
   if (attributes === undefined) return undefined;
   if (!Array.isArray(attributes)) return invalid(`${label} must be an array`);
@@ -156,7 +150,7 @@ function validateAttributes(
     const keyError = validateBoundedString(
       (attribute as unknown as OTLPKeyValue).key,
       `${label}[${index}].key`,
-      MAX_KEY_BYTES,
+      OTLP_LIMITS.keyBytes,
       true,
     );
     if (keyError) return keyError;
@@ -183,15 +177,19 @@ function validateSpan(span: unknown, spanIndex: number): ValidationResult | unde
   if (!isObject(span)) return invalid(`Span ${spanIndex} must be an object`);
 
   for (const [field, limit] of [
-    ['traceId', MAX_KEY_BYTES],
-    ['spanId', MAX_KEY_BYTES],
-    ['name', MAX_NAME_BYTES],
+    ['traceId', OTLP_LIMITS.keyBytes],
+    ['spanId', OTLP_LIMITS.keyBytes],
+    ['name', OTLP_LIMITS.nameBytes],
   ] as const) {
     const error = validateBoundedString(span[field], `Span ${spanIndex}: ${field}`, limit, true);
     if (error) return error;
   }
   for (const field of ['parentSpanId', 'traceState'] as const) {
-    const error = validateBoundedString(span[field], `Span ${spanIndex}: ${field}`, MAX_KEY_BYTES);
+    const error = validateBoundedString(
+      span[field],
+      `Span ${spanIndex}: ${field}`,
+      OTLP_LIMITS.keyBytes,
+    );
     if (error) return error;
   }
 
@@ -211,7 +209,7 @@ function validateSpan(span: unknown, spanIndex: number): ValidationResult | unde
     const messageError = validateBoundedString(
       span.status.message,
       `Span ${spanIndex}: status.message`,
-      MAX_VALUE_BYTES,
+      OTLP_LIMITS.valueBytes,
     );
     if (messageError) return messageError;
     if (
@@ -224,8 +222,8 @@ function validateSpan(span: unknown, spanIndex: number): ValidationResult | unde
 
   if (span.events !== undefined) {
     if (!Array.isArray(span.events)) return invalid(`Span ${spanIndex}: events must be an array`);
-    if (span.events.length > MAX_EVENTS) {
-      return tooLarge(`Span ${spanIndex}: events exceeds the ${MAX_EVENTS}-event limit`);
+    if (span.events.length > OTLP_LIMITS.events) {
+      return tooLarge(`Span ${spanIndex}: events exceeds the ${OTLP_LIMITS.events}-event limit`);
     }
     for (const [eventIndex, event] of span.events.entries()) {
       if (!isObject(event))
@@ -233,7 +231,7 @@ function validateSpan(span: unknown, spanIndex: number): ValidationResult | unde
       const nameError = validateBoundedString(
         event.name,
         `Span ${spanIndex}: event ${eventIndex} name`,
-        MAX_NAME_BYTES,
+        OTLP_LIMITS.nameBytes,
         true,
       );
       if (nameError) return nameError;
@@ -254,8 +252,8 @@ function validateSpan(span: unknown, spanIndex: number): ValidationResult | unde
 
   if (span.links !== undefined) {
     if (!Array.isArray(span.links)) return invalid(`Span ${spanIndex}: links must be an array`);
-    if (span.links.length > MAX_LINKS) {
-      return tooLarge(`Span ${spanIndex}: links exceeds the ${MAX_LINKS}-link limit`);
+    if (span.links.length > OTLP_LIMITS.links) {
+      return tooLarge(`Span ${spanIndex}: links exceeds the ${OTLP_LIMITS.links}-link limit`);
     }
     for (const [linkIndex, link] of span.links.entries()) {
       if (!isObject(link)) return invalid(`Span ${spanIndex}: link ${linkIndex} must be an object`);
@@ -263,7 +261,7 @@ function validateSpan(span: unknown, spanIndex: number): ValidationResult | unde
         const idError = validateBoundedString(
           link[field],
           `Span ${spanIndex}: link ${linkIndex} ${field}`,
-          MAX_KEY_BYTES,
+          OTLP_LIMITS.keyBytes,
           true,
         );
         if (idError) return idError;
@@ -271,7 +269,7 @@ function validateSpan(span: unknown, spanIndex: number): ValidationResult | unde
       const traceStateError = validateBoundedString(
         link.traceState,
         `Span ${spanIndex}: link ${linkIndex} traceState`,
-        MAX_KEY_BYTES,
+        OTLP_LIMITS.keyBytes,
       );
       if (traceStateError) return traceStateError;
       const linkAttributeError = validateAttributes(
@@ -289,8 +287,8 @@ export function validateOTLPRequest(request: unknown): ValidationResult {
   if (!isObject(request)) return invalid('Request body must be an object');
   const req = request as unknown as OTLPExportTraceServiceRequest;
   if (!Array.isArray(req.resourceSpans)) return invalid('resourceSpans must be an array');
-  if (req.resourceSpans.length > MAX_RESOURCE_SPANS) {
-    return tooLarge(`resourceSpans exceeds the ${MAX_RESOURCE_SPANS}-item limit`);
+  if (req.resourceSpans.length > OTLP_LIMITS.resourceSpans) {
+    return tooLarge(`resourceSpans exceeds the ${OTLP_LIMITS.resourceSpans}-item limit`);
   }
 
   let scopeSpanCount = 0;
@@ -314,8 +312,8 @@ export function validateOTLPRequest(request: unknown): ValidationResult {
     }
 
     scopeSpanCount += resourceSpan.scopeSpans.length;
-    if (scopeSpanCount > MAX_SCOPE_SPANS) {
-      return tooLarge(`scopeSpans exceeds the ${MAX_SCOPE_SPANS}-item limit`);
+    if (scopeSpanCount > OTLP_LIMITS.scopeSpans) {
+      return tooLarge(`scopeSpans exceeds the ${OTLP_LIMITS.scopeSpans}-item limit`);
     }
     const resourceBytes = resourceAttributes ? jsonByteLength(resourceAttributes) : 0;
 
@@ -334,7 +332,7 @@ export function validateOTLPRequest(request: unknown): ValidationResult {
         const scopeFieldError = validateBoundedString(
           scopeSpan.scope?.[field],
           `resourceSpans[${resourceIndex}].scopeSpans[${scopeIndex}].scope.${field}`,
-          MAX_NAME_BYTES,
+          OTLP_LIMITS.nameBytes,
         );
         if (scopeFieldError) return scopeFieldError;
       }
@@ -351,7 +349,9 @@ export function validateOTLPRequest(request: unknown): ValidationResult {
 
       for (const span of scopeSpan.spans) {
         spanCount += 1;
-        if (spanCount > MAX_SPANS) return tooLarge(`spans exceeds the ${MAX_SPANS}-item limit`);
+        if (spanCount > OTLP_LIMITS.spans) {
+          return tooLarge(`spans exceeds the ${OTLP_LIMITS.spans}-item limit`);
+        }
         const spanError = validateSpan(span, spanCount);
         if (spanError) return spanError;
 
