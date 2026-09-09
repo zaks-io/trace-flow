@@ -200,13 +200,62 @@ describe('MCP worker auth discovery', () => {
 
     const res = await SELF.fetch('http://localhost/mcp/register', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'cf-connecting-ip': '203.0.113.20',
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({ client_name: 'Claude Code' }),
     });
 
     expect(fetchSpy).toHaveBeenCalledOnce();
     expect(res.status).toBe(201);
     expect(await res.json()).toEqual({ client_id: 'client-1' });
+  });
+
+  it('rejects registration without a Cloudflare client IP before proxying', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const res = await SELF.fetch('http://localhost/mcp/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_name: 'Claude Code' }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Missing client IP' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('rate-limits registration per Cloudflare client IP', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () => jsonResponse({ client_id: 'client-1' }, 201));
+    const request = () =>
+      SELF.fetch('http://localhost/mcp/register', {
+        method: 'POST',
+        headers: {
+          'cf-connecting-ip': '198.51.100.42',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ client_name: 'Claude Code' }),
+      });
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      expect((await request()).status).toBe(201);
+    }
+    const limited = await request();
+    const otherClient = await SELF.fetch('http://localhost/mcp/register', {
+      method: 'POST',
+      headers: {
+        'cf-connecting-ip': '198.51.100.43',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ client_name: 'Claude Code' }),
+    });
+
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get('Retry-After')).toBe('60');
+    expect(otherClient.status).toBe(201);
+    expect(fetchSpy).toHaveBeenCalledTimes(11);
   });
 
   it('redirects authorization requests to Connect', async () => {
@@ -254,6 +303,22 @@ describe('MCP worker auth discovery', () => {
 
     expect(res.status).toBe(413);
     await expect(res.json()).resolves.toMatchObject({ error: 'invalid_request' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects unsupported token content types without proxying them', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const res = await SELF.fetch('http://localhost/mcp/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'authorization_code', code: 'code-1' }),
+    });
+
+    expect(res.status).toBe(415);
+    await expect(res.json()).resolves.toEqual({
+      error: 'invalid_request',
+      error_description: 'Content-Type must be application/x-www-form-urlencoded',
+    });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

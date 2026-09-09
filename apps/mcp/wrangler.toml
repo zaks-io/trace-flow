@@ -33,6 +33,14 @@ name = "MCP_LIMITER"
 namespace_id = "2007"
 simple = { limit = 120, period = 60 }
 
+# Dynamic client registration creates permanent rows. Ten registrations per
+# minute per edge client leaves ample retry room while preserving the global
+# Convex write budget for other clients.
+[[ratelimits]]
+name = "MCP_REGISTRATION_LIMITER"
+namespace_id = "2015"
+simple = { limit = 10, period = 60 }
+
 [env.production]
 name = "trace-flow-mcp"
 workers_dev = false
@@ -65,6 +73,11 @@ name = "MCP_LIMITER"
 namespace_id = "2009"
 simple = { limit = 120, period = 60 }
 
+[[env.production.ratelimits]]
+name = "MCP_REGISTRATION_LIMITER"
+namespace_id = "2017"
+simple = { limit = 10, period = 60 }
+
 [env.preview]
 name = "trace-flow-mcp-preview"
 
@@ -84,3 +97,8 @@ AXIOM_DATASET = "cloudflare"
 name = "MCP_LIMITER"
 namespace_id = "2008"
 simple = { limit = 120, period = 60 }
+
+[[env.preview.ratelimits]]
+name = "MCP_REGISTRATION_LIMITER"
+namespace_id = "2016"
+simple = { limit = 10, period = 60 }
