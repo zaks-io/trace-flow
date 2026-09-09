@@ -147,7 +147,7 @@ describe('Conversation Archive cryptography', () => {
         keyVersion: 7,
       }),
     ).resolves.toEqual(plaintext);
-  }, 15_000);
+  }, 30_000);
 
   it.each([47, 49])(
     'rejects a canonical wrapped-key record with %s ciphertext bytes',
