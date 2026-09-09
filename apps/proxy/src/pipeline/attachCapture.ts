@@ -1,7 +1,7 @@
 import type { SSEStreamData } from '@trace-flow/types';
 import type { EventSourceParser } from 'eventsource-parser';
 import { createResponseCapture } from '../streaming/capture';
-import { createSSEParser } from '../streaming/sse';
+import { createSSEParser, MAX_SSE_FEED_SLICE_SIZE } from '../streaming/sse';
 import type { ForwardedExchange } from './forwardToUpstream';
 
 /**
@@ -38,8 +38,10 @@ export function attachCapture(forwarded: ForwardedExchange): AttachedCapture {
 
   const capture = createResponseCapture((chunk) => {
     if (isSSE && parser) {
-      const text = decoder.decode(chunk, { stream: true });
-      parser.feed(text);
+      for (let offset = 0; offset < chunk.length; offset += MAX_SSE_FEED_SLICE_SIZE) {
+        const slice = chunk.subarray(offset, offset + MAX_SSE_FEED_SLICE_SIZE);
+        parser.feed(decoder.decode(slice, { stream: true }));
+      }
     }
   });
 

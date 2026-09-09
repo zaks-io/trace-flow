@@ -1,5 +1,8 @@
 import { getCurrentTimestamp } from '@trace-flow/utils';
 
+export const MAX_RESPONSE_CAPTURE_SIZE = 20 * 1024 * 1024;
+export const MAX_RESPONSE_CAPTURE_CHUNKS = 5000;
+
 /**
  * Consumes a ReadableStream and returns its entire contents as a string.
  * Used to capture request bodies after they've been tee'd for proxying.
@@ -82,8 +85,6 @@ export function createResponseCapture(onChunk?: (chunk: Uint8Array, isFirst: boo
   release: () => void;
   fail: (error: unknown) => void;
 } {
-  const MAX_RESPONSE_SIZE = 20 * 1024 * 1024;
-  const MAX_CHUNKS = 5000;
   const capturedChunks: Uint8Array[] = [];
   let totalSize = 0;
   let capturedSize = 0;
@@ -130,8 +131,8 @@ export function createResponseCapture(onChunk?: (chunk: Uint8Array, isFirst: boo
 
       if (!truncated) {
         if (
-          capturedSize + chunk.length <= MAX_RESPONSE_SIZE &&
-          capturedChunks.length < MAX_CHUNKS
+          capturedSize + chunk.length <= MAX_RESPONSE_CAPTURE_SIZE &&
+          capturedChunks.length < MAX_RESPONSE_CAPTURE_CHUNKS
         ) {
           capturedChunks.push(chunk);
           capturedSize += chunk.length;
@@ -140,15 +141,14 @@ export function createResponseCapture(onChunk?: (chunk: Uint8Array, isFirst: boo
           console.warn('Response capture truncated:', {
             totalSize,
             chunks: capturedChunks.length,
-            maxSize: MAX_RESPONSE_SIZE,
+            maxSize: MAX_RESPONSE_CAPTURE_SIZE,
           });
         }
       }
 
-      // Once the retained response reaches its cap, stop feeding parser state as well. The
-      // client path still receives every byte through the transform, but parser buffers and
-      // provider aggregates must not grow with an unbounded tail.
-      if (onChunk && !truncated) {
+      // Retained response bytes and streaming summary state have separate bounds. The parser
+      // keeps receiving chunks so terminal usage can arrive after body retention truncates.
+      if (onChunk) {
         onChunk(chunk, isFirst);
       }
     },

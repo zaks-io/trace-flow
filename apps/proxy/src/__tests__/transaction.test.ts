@@ -320,18 +320,24 @@ describe('buildTransaction', () => {
     expect(drained.responseBody).toContain('message_start');
   });
 
-  it('bounds SSE state after the capture cap while forwarding the full response', async () => {
+  it('keeps terminal SSE accounting after the capture cap while forwarding the full response', async () => {
     const provider = getProvider('openai');
-    const event = 'data: {"choices":[{"delta":{"content":"x"}}]}\n\n';
-    const eventCount = 5_005;
-    const responseBody = event.repeat(eventCount);
+    const event = 'data: {"choices":[{"delta":{"content":"CAPTURE_RAW_CANARY"}}]}\n\n';
+    const eventCount = 5_001;
+    const usageEvent =
+      'data: {"choices":[],"usage":{"prompt_tokens":89,"completion_tokens":55}}\n\n';
+    const doneEvent = 'data: [DONE]\n\n';
+    const responseBody = `${event.repeat(eventCount)}${usageEvent}${doneEvent}`;
     const encodedEvent = new TextEncoder().encode(event);
+    const encoder = new TextEncoder();
     const response = new Response(
       new ReadableStream({
         start(controller) {
           for (let index = 0; index < eventCount; index++) {
             controller.enqueue(encodedEvent);
           }
+          controller.enqueue(encoder.encode(usageEvent));
+          controller.enqueue(encoder.encode(doneEvent));
           controller.close();
         },
       }),
@@ -364,13 +370,21 @@ describe('buildTransaction', () => {
 
     expect(drained.isTruncated).toBe(true);
     expect(forwardedText).toBe(responseBody);
+    expect(drained.responseBody).toBe(event.repeat(5_000));
+    expect(attached.capture.getCapturedChunks()).toHaveLength(5_000);
     expect(attached.sseStreamData.messages).toHaveLength(1);
     expect(attached.sseStreamData.messages[0]?.events.length).toBeLessThanOrEqual(512);
+    expect(attached.sseStreamData.messages[0]?.messageStop).toEqual(expect.any(Number));
+    expect(provider.aggregateSSETokens(attached.sseStreamData)).toMatchObject({
+      promptTokens: 89,
+      completionTokens: 55,
+    });
     expect(
       attached.sseStreamData.messages[0]?.events.every(
         (eventSummary) => eventSummary.data === undefined,
       ),
     ).toBe(true);
+    expect(JSON.stringify(attached.sseStreamData)).not.toContain('CAPTURE_RAW_CANARY');
   });
 
   it('releases skipped responses even when analytics throws', async () => {
