@@ -365,6 +365,59 @@ describe('decodeOTLPProtobuf', () => {
     expect(() => decodeOTLPProtobuf(garbage)).toThrow(OTLPProtoDecodeError);
   });
 
+  it.each([
+    ['trace ID', { traceIdHex: 'ab'.repeat(17) }],
+    ['span ID', { spanIdHex: 'ab'.repeat(9) }],
+    ['parent span ID', { parentSpanIdHex: 'ab'.repeat(9) }],
+  ])('rejects an oversized protobuf %s before hex encoding', (_name, patch) => {
+    const bytes = encodeRequest([
+      {
+        scopes: [
+          {
+            spans: [
+              {
+                traceIdHex,
+                spanIdHex,
+                name: 'oversized-identifier',
+                startNano: 1n,
+                endNano: 2n,
+                ...patch,
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    expectDecodeTooLarge(bytes, /length-delimited field exceeds/);
+  });
+
+  it.each([
+    ['trace ID', { traceIdHex: 'ab'.repeat(17), spanIdHex }],
+    ['span ID', { traceIdHex, spanIdHex: 'ab'.repeat(9) }],
+  ])('rejects an oversized protobuf link %s before hex encoding', (_name, link) => {
+    const bytes = encodeRequest([
+      {
+        scopes: [
+          {
+            spans: [
+              {
+                traceIdHex,
+                spanIdHex,
+                name: 'oversized-link-identifier',
+                startNano: 1n,
+                endNano: 2n,
+                links: [link],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    expectDecodeTooLarge(bytes, /length-delimited field exceeds/);
+  });
+
   it('preserves unknown fields by skipping them', () => {
     // A real OTEL SDK may emit newer fields we do not model yet. Unknown
     // field numbers on recognised wire types should be skipped silently.

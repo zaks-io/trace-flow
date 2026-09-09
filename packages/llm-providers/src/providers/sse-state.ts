@@ -15,14 +15,18 @@ export const MAX_SSE_EVENT_DATA_LENGTH = 64 * 1024;
 const UTF8_ENCODER = new TextEncoder();
 const REPORTED_SSE_FAILURES = new WeakSet<SSEStreamData>();
 
+function utf8ByteLengthWithin(value: string, limit: number): boolean {
+  if (value.length > limit) return false;
+  if (value.length * 3 <= limit) return true;
+  return UTF8_ENCODER.encode(value).byteLength <= limit;
+}
+
 export function isBoundedSSEEventData(data: string): boolean {
-  return UTF8_ENCODER.encode(data).byteLength <= MAX_SSE_EVENT_DATA_LENGTH;
+  return utf8ByteLengthWithin(data, MAX_SSE_EVENT_DATA_LENGTH);
 }
 
 export function boundedSSEMetadataValue(value: string | undefined): string | undefined {
-  return value && UTF8_ENCODER.encode(value).byteLength <= MAX_SSE_METADATA_VALUE_LENGTH
-    ? value
-    : undefined;
+  return value && utf8ByteLengthWithin(value, MAX_SSE_METADATA_VALUE_LENGTH) ? value : undefined;
 }
 
 export function reportSSEHandlerFailure(streamData: SSEStreamData): void {

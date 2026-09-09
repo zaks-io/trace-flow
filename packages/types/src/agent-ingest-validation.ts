@@ -57,8 +57,10 @@ function validateStringArray(
   if (!Array.isArray(value) || value.length > spec.maxItems) return false;
   let totalBytes = 0;
   for (const item of value) {
-    if (typeof item !== 'string' || !validString(item, spec.itemMaxBytes)) return false;
-    totalBytes += encoder.encode(item).byteLength;
+    if (typeof item !== 'string') return false;
+    const itemBytes = encoder.encode(item).byteLength;
+    if (itemBytes > spec.itemMaxBytes) return false;
+    totalBytes += itemBytes;
     if (totalBytes > spec.maxTotalBytes) return false;
   }
   return true;

@@ -8,6 +8,8 @@ export const OTLP_LIMITS = {
   links: 256,
   nestedValues: 256,
   attributeDepth: 8,
+  traceIdBytes: 16,
+  spanIdBytes: 8,
   keyBytes: 1_024,
   nameBytes: 64 * 1_024,
   valueBytes: 256 * 1_024,

@@ -38,6 +38,14 @@ interface OTLPRejection {
   errorMessage: string;
 }
 
+interface OTLPInputFailure {
+  errorClass: 'client' | 'internal';
+  event: string;
+  status: 400 | 413 | 500;
+  message: string;
+  data?: Record<string, unknown>;
+}
+
 function otlpRejectionFor(reason: TracingDecision['reason']): OTLPRejection {
   switch (reason) {
     case 'suspended':
@@ -62,6 +70,43 @@ function classifyContentType(contentType: string | undefined): ParsedContentType
   if (contentType.includes(JSON_CONTENT_TYPE)) return 'json';
   if (contentType.includes(PROTOBUF_CONTENT_TYPE)) return 'protobuf';
   return 'unsupported';
+}
+
+function classifyInputFailure(
+  error: unknown,
+  contentType: Exclude<ParsedContentType, 'unsupported'>,
+): OTLPInputFailure {
+  if (error instanceof BodySizeLimitError) {
+    return {
+      errorClass: 'client',
+      event: 'otlp.request_too_large',
+      status: 413,
+      message: `Request body exceeds ${MAX_REQUEST_SIZE / (1024 * 1024)}MB limit`,
+      data: { actualBytes: error.receivedBytes },
+    };
+  }
+  if (error instanceof OTLPProtoDecodeError) {
+    return {
+      errorClass: 'client',
+      event: contentType === 'protobuf' ? 'otlp.protobuf_decode_failed' : 'otlp.json_parse_failed',
+      status: error.status,
+      message: error.message,
+    };
+  }
+  if (error instanceof SyntaxError && contentType === 'json') {
+    return {
+      errorClass: 'client',
+      event: 'otlp.json_parse_failed',
+      status: 400,
+      message: 'Invalid JSON in request body',
+    };
+  }
+  return {
+    errorClass: 'internal',
+    event: 'otlp.input_internal_failed',
+    status: 500,
+    message: 'Failed to process request body',
+  };
 }
 
 /**
@@ -185,31 +230,18 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
       body = JSON.parse(new TextDecoder().decode(decompressed)) as OTLPExportTraceServiceRequest;
     }
   } catch (err) {
-    if (err instanceof BodySizeLimitError) {
-      orgLogger.warn('otlp.request_too_large', { actualBytes: err.receivedBytes });
-      c.executionCtx.waitUntil(orgLogger.flush());
-      return c.json(
-        {
-          error: {
-            code: 413,
-            message: `Request body exceeds ${MAX_REQUEST_SIZE / (1024 * 1024)}MB limit`,
-          },
-        },
-        413,
-      );
+    const failure = classifyInputFailure(err, contentType);
+    const logData = {
+      compressed: contentEncoding !== undefined,
+      ...failure.data,
+    };
+    if (failure.errorClass === 'client') {
+      orgLogger.warn(failure.event, logData);
+    } else {
+      orgLogger.error(failure.event, err, logData);
     }
-    const event =
-      contentType === 'protobuf' ? 'otlp.protobuf_decode_failed' : 'otlp.json_parse_failed';
-    orgLogger.warn(event, { compressed: contentEncoding !== undefined });
     c.executionCtx.waitUntil(orgLogger.flush());
-    const message =
-      err instanceof OTLPProtoDecodeError
-        ? err.message
-        : contentType === 'protobuf'
-          ? 'Invalid protobuf payload'
-          : 'Invalid JSON in request body';
-    const status = err instanceof OTLPProtoDecodeError ? err.status : 400;
-    return c.json({ error: { code: status, message } }, status);
+    return c.json({ error: { code: failure.status, message: failure.message } }, failure.status);
   }
 
   const validation = validateOTLPRequest(body);

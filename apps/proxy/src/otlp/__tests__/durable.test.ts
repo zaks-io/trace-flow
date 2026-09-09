@@ -83,7 +83,12 @@ async function postOTLP(env: ProxyEnv, body: unknown) {
   return postRawOTLP(env, JSON.stringify(body), 'application/json');
 }
 
-async function postRawOTLP(env: ProxyEnv, body: BodyInit, contentType: string) {
+async function postRawOTLP(
+  env: ProxyEnv,
+  body: BodyInit,
+  contentType: string,
+  contentEncoding?: string,
+) {
   const ctx = createExecutionContext();
   const response = await app.request(
     '/v1/traces',
@@ -92,6 +97,7 @@ async function postRawOTLP(env: ProxyEnv, body: BodyInit, contentType: string) {
       headers: {
         'Content-Type': contentType,
         'X-Trace-Flow-Api-Key': API_KEY,
+        ...(contentEncoding ? { 'Content-Encoding': contentEncoding } : {}),
       },
       body,
     },
@@ -115,7 +121,10 @@ function compactSpanFlood(): Uint8Array {
 
 describe('OTLP durable acceptance', () => {
   beforeEach(() => _clearUsageCache());
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
 
   it('returns retryable 503 when the initial outbox write fails', async () => {
     const { env, queueSend } = makeEnv({ storageError: new Error('R2 unavailable') });
@@ -167,7 +176,7 @@ describe('OTLP durable acceptance', () => {
     };
     body.resourceSpans[0]!.scopeSpans[0]!.spans = Array.from({ length: 100 }, (_, index) => ({
       ...body.resourceSpans[0]!.scopeSpans[0]!.spans[0]!,
-      spanId: index.toString(16).padStart(16, '0'),
+      spanId: (index + 1).toString(16).padStart(16, '0'),
     }));
 
     const { response, ctx } = await postOTLP(env, body);
@@ -203,6 +212,32 @@ describe('OTLP durable acceptance', () => {
     expect(response.status).toBe(400);
     await waitOnExecutionContext(ctx);
     expect(warn.mock.calls.flat().join('\n')).not.toContain(canary);
+  });
+
+  it('classifies unexpected body-processing failures as internal errors', async () => {
+    vi.stubGlobal(
+      'DecompressionStream',
+      class {
+        constructor() {
+          throw new Error('decompression runtime unavailable');
+        }
+      },
+    );
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { env } = makeEnv();
+    const { response, ctx } = await postRawOTLP(
+      env,
+      new Uint8Array([1, 2, 3]),
+      'application/json',
+      'gzip',
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: { code: 500, message: 'Failed to process request body' },
+    });
+    await waitOnExecutionContext(ctx);
+    expect(errorLog.mock.calls.flat().join('\n')).toContain('otlp.input_internal_failed');
   });
 
   it('rejects compact protobuf span floods before recording or storage', async () => {

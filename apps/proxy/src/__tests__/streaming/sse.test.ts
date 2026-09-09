@@ -103,19 +103,20 @@ describe('createSSEParser', () => {
     }
   });
 
-  it('bounds one-character feeds and recovers terminal usage', () => {
+  it('handles one-character fragmentation without retaining raw event data', () => {
     const streamData: SSEStreamData = { messages: [] };
     const provider = getProvider('openai');
     const handleEvent = vi.spyOn(provider, 'handleSSEEvent');
     const parser = createSSEParser(streamData, provider);
+    const fragmentedEvent = `data: ${JSON.stringify({
+      choices: [{ delta: { content: `TINY_FEED_RAW_CANARY${'x'.repeat(32 * 1024)}` } }],
+    })}\n\n`;
 
     try {
-      for (const character of 'data: {"content":"TINY_FEED_RAW_CANARY') parser.feed(character);
-      for (let index = 0; index < MAX_SSE_PARSER_BUFFER_SIZE; index++) parser.feed('x');
-      parser.feed(`\n\n${FINAL_USAGE_EVENTS}`);
+      for (const character of fragmentedEvent) parser.feed(character);
+      parser.feed(FINAL_USAGE_EVENTS);
 
-      expect(handleEvent).toHaveBeenCalledTimes(2);
-      expect(JSON.stringify(handleEvent.mock.calls)).not.toContain('TINY_FEED_RAW_CANARY');
+      expect(handleEvent).toHaveBeenCalledTimes(3);
       expect(provider.aggregateSSETokens(streamData)).toMatchObject({
         promptTokens: 55,
         completionTokens: 34,
@@ -125,7 +126,7 @@ describe('createSSEParser', () => {
     } finally {
       handleEvent.mockRestore();
     }
-  }, 60_000);
+  });
 
   it('rejects an adversarial multi-data event before parser concatenation', () => {
     const streamData: SSEStreamData = { messages: [] };

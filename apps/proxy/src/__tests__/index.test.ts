@@ -764,15 +764,15 @@ describe('Proxy Worker Integration', () => {
               {
                 spans: [
                   {
-                    traceId: 'abc123',
-                    spanId: 'span1',
+                    traceId: '0123456789abcdef0123456789abcdef',
+                    spanId: '0123456789abcdef',
                     name: 'test-span',
                     startTimeUnixNano: '1000000000',
                     endTimeUnixNano: '2000000000',
                   },
                   {
-                    traceId: 'abc123',
-                    spanId: 'span2',
+                    traceId: '0123456789abcdef0123456789abcdef',
+                    spanId: 'fedcba9876543210',
                     name: 'test-span-2',
                     startTimeUnixNano: '1000000000',
                     endTimeUnixNano: '2000000000',

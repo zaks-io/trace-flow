@@ -353,11 +353,11 @@ function decodeLink(r: Reader, budget: DecodeBudget): OTLPSpanLink {
     switch (field) {
       case 1:
         if (!expect(r, wire, WIRE_LEN)) break;
-        link.traceId = bytesToHex(r.bytes(OTLP_LIMITS.keyBytes / 2));
+        link.traceId = bytesToHex(r.bytes(OTLP_LIMITS.traceIdBytes));
         break;
       case 2:
         if (!expect(r, wire, WIRE_LEN)) break;
-        link.spanId = bytesToHex(r.bytes(OTLP_LIMITS.keyBytes / 2));
+        link.spanId = bytesToHex(r.bytes(OTLP_LIMITS.spanIdBytes));
         break;
       case 3:
         if (!expect(r, wire, WIRE_LEN)) break;
@@ -408,11 +408,11 @@ function decodeSpan(r: Reader, budget: DecodeBudget): OTLPSpan {
     switch (field) {
       case 1:
         if (!expect(r, wire, WIRE_LEN)) break;
-        span.traceId = bytesToHex(r.bytes(OTLP_LIMITS.keyBytes / 2));
+        span.traceId = bytesToHex(r.bytes(OTLP_LIMITS.traceIdBytes));
         break;
       case 2:
         if (!expect(r, wire, WIRE_LEN)) break;
-        span.spanId = bytesToHex(r.bytes(OTLP_LIMITS.keyBytes / 2));
+        span.spanId = bytesToHex(r.bytes(OTLP_LIMITS.spanIdBytes));
         break;
       case 3:
         if (!expect(r, wire, WIRE_LEN)) break;
@@ -420,7 +420,7 @@ function decodeSpan(r: Reader, budget: DecodeBudget): OTLPSpan {
         break;
       case 4:
         if (!expect(r, wire, WIRE_LEN)) break;
-        span.parentSpanId = bytesToHex(r.bytes(OTLP_LIMITS.keyBytes / 2));
+        span.parentSpanId = bytesToHex(r.bytes(OTLP_LIMITS.spanIdBytes));
         break;
       case 5:
         if (!expect(r, wire, WIRE_LEN)) break;
@@ -572,7 +572,7 @@ export function decodeOTLPProtobuf(buffer: Uint8Array): OTLPExportTraceServiceRe
     if (err instanceof WireReadError) {
       throw new OTLPProtoDecodeError(`Malformed OTLP protobuf: ${err.message}`, err);
     }
-    throw new OTLPProtoDecodeError('Failed to decode OTLP protobuf', err);
+    throw err;
   }
   return { resourceSpans };
 }
@@ -616,6 +616,10 @@ export async function readOTLPBody(
       }
       chunks.push(value);
     }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    if (error instanceof OTLPProtoDecodeError) throw error;
+    throw new OTLPProtoDecodeError('Invalid compressed payload', error);
   } finally {
     reader.releaseLock();
   }

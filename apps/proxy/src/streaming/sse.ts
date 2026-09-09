@@ -6,8 +6,8 @@ import { createSSEInputGuard, MAX_SSE_INCOMPLETE_EVENT_CHARS } from './sseInputG
 
 /**
  * eventsource-parser documents maxBufferSize as the bound for partial lines
- * and multi-line events. Match the retained response ceiling so every event
- * inside the existing capture budget remains eligible for summary extraction.
+ * and multi-line events. Keep it below the retained response ceiling because
+ * the guard, parser, and response capture can hold the same event concurrently.
  */
 export const MAX_SSE_PARSER_BUFFER_SIZE = MAX_SSE_INCOMPLETE_EVENT_CHARS;
 export const MAX_SSE_FEED_SLICE_SIZE = 64 * 1024;

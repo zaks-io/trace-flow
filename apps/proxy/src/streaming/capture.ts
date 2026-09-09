@@ -1,6 +1,6 @@
 import { getCurrentTimestamp } from '@trace-flow/utils';
 
-export const MAX_RESPONSE_CAPTURE_SIZE = 20 * 1024 * 1024;
+const MAX_RESPONSE_CAPTURE_SIZE = 20 * 1024 * 1024;
 const MAX_RESPONSE_CAPTURE_CHUNKS = 5000;
 
 /**

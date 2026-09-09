@@ -48,6 +48,26 @@ function validateBoundedString(
   return undefined;
 }
 
+function validateIdentifier(
+  value: unknown,
+  label: string,
+  byteLength: number,
+  required = true,
+): ValidationResult | undefined {
+  if ((value === undefined || value === '') && !required) return undefined;
+  if (typeof value !== 'string' || value.length === 0) {
+    return invalid(`${label} is required and must be a string`);
+  }
+  const hexLength = byteLength * 2;
+  if (value.length > hexLength) {
+    return tooLarge(`${label} exceeds the ${byteLength}-byte identifier limit`);
+  }
+  if (value.length !== hexLength || !/^[0-9a-f]+$/i.test(value) || /^0+$/.test(value)) {
+    return invalid(`${label} must be a non-zero ${byteLength}-byte hex identifier`);
+  }
+  return undefined;
+}
+
 function validateAnyValue(
   value: unknown,
   label: string,
@@ -176,22 +196,38 @@ function normalizedUint64(value: unknown): string | undefined {
 function validateSpan(span: unknown, spanIndex: number): ValidationResult | undefined {
   if (!isObject(span)) return invalid(`Span ${spanIndex} must be an object`);
 
-  for (const [field, limit] of [
-    ['traceId', OTLP_LIMITS.keyBytes],
-    ['spanId', OTLP_LIMITS.keyBytes],
-    ['name', OTLP_LIMITS.nameBytes],
-  ] as const) {
-    const error = validateBoundedString(span[field], `Span ${spanIndex}: ${field}`, limit, true);
-    if (error) return error;
-  }
-  for (const field of ['parentSpanId', 'traceState'] as const) {
-    const error = validateBoundedString(
-      span[field],
-      `Span ${spanIndex}: ${field}`,
-      OTLP_LIMITS.keyBytes,
-    );
-    if (error) return error;
-  }
+  const traceIdError = validateIdentifier(
+    span.traceId,
+    `Span ${spanIndex}: traceId`,
+    OTLP_LIMITS.traceIdBytes,
+  );
+  if (traceIdError) return traceIdError;
+  const spanIdError = validateIdentifier(
+    span.spanId,
+    `Span ${spanIndex}: spanId`,
+    OTLP_LIMITS.spanIdBytes,
+  );
+  if (spanIdError) return spanIdError;
+  const parentSpanIdError = validateIdentifier(
+    span.parentSpanId,
+    `Span ${spanIndex}: parentSpanId`,
+    OTLP_LIMITS.spanIdBytes,
+    false,
+  );
+  if (parentSpanIdError) return parentSpanIdError;
+  const nameError = validateBoundedString(
+    span.name,
+    `Span ${spanIndex}: name`,
+    OTLP_LIMITS.nameBytes,
+    true,
+  );
+  if (nameError) return nameError;
+  const traceStateError = validateBoundedString(
+    span.traceState,
+    `Span ${spanIndex}: traceState`,
+    OTLP_LIMITS.keyBytes,
+  );
+  if (traceStateError) return traceStateError;
 
   for (const field of ['startTimeUnixNano', 'endTimeUnixNano'] as const) {
     const normalized = normalizedUint64(span[field]);
@@ -257,15 +293,18 @@ function validateSpan(span: unknown, spanIndex: number): ValidationResult | unde
     }
     for (const [linkIndex, link] of span.links.entries()) {
       if (!isObject(link)) return invalid(`Span ${spanIndex}: link ${linkIndex} must be an object`);
-      for (const field of ['traceId', 'spanId'] as const) {
-        const idError = validateBoundedString(
-          link[field],
-          `Span ${spanIndex}: link ${linkIndex} ${field}`,
-          OTLP_LIMITS.keyBytes,
-          true,
-        );
-        if (idError) return idError;
-      }
+      const linkTraceIdError = validateIdentifier(
+        link.traceId,
+        `Span ${spanIndex}: link ${linkIndex} traceId`,
+        OTLP_LIMITS.traceIdBytes,
+      );
+      if (linkTraceIdError) return linkTraceIdError;
+      const linkSpanIdError = validateIdentifier(
+        link.spanId,
+        `Span ${spanIndex}: link ${linkIndex} spanId`,
+        OTLP_LIMITS.spanIdBytes,
+      );
+      if (linkSpanIdError) return linkSpanIdError;
       const traceStateError = validateBoundedString(
         link.traceState,
         `Span ${spanIndex}: link ${linkIndex} traceState`,
