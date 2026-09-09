@@ -247,6 +247,10 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
       )
     `);
     this.ensureColumn('fact_repairs', 'data', 'TEXT');
+    this.ctx.storage.sql.exec(
+      `CREATE INDEX IF NOT EXISTS idx_fact_repairs_lookup
+       ON fact_repairs(category, fact_id, old_hash, new_hash)`,
+    );
     this.ctx.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS pending_facts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
