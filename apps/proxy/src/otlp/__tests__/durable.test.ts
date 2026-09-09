@@ -50,6 +50,7 @@ function makeEnv(options?: { storageError?: Error; usageError?: Error }) {
     CONVEX_SITE_URL: 'https://example.convex.site',
     USAGE_SYNC_SECRET: 'test',
     TRACE_DELIVERY_NAMESPACE: 'dev',
+    BODY_ENCRYPTION_ROOT_KEY: 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=',
   } as unknown as ProxyEnv;
   return { env, queueSend, storagePut, getStoredValue: () => storedValue };
 }

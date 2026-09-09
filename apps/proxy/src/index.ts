@@ -20,6 +20,7 @@ import { validateRequest } from './pipeline/validateRequest';
 import { forwardToUpstream, UpstreamFetchError } from './pipeline/forwardToUpstream';
 import { attachCapture } from './pipeline/attachCapture';
 import { respond } from './pipeline/respond';
+import { startupConfigGuard } from './startup';
 import { sweepTraceDeliveries } from './delivery';
 import {
   buildTransaction,
@@ -37,6 +38,8 @@ app.use('*', async (c, next) => {
   await next();
   applySecurityHeaders(c.res.headers);
 });
+
+app.use('*', startupConfigGuard);
 
 app.openAPIRegistry.registerComponent('securitySchemes', 'apiKey', {
   type: 'apiKey',
