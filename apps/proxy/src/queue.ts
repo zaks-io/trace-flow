@@ -5,12 +5,14 @@ import type {
   LLMError,
   SSEStreamData,
   LLMResponseMetadata,
+  LLMResponseMetadataSummary,
   InputMessage,
   ToolExecution,
   SubscriptionTier,
   SentryTraceContext,
 } from '@trace-flow/types';
 import { extractProviderFromUrl } from '@trace-flow/utils';
+import { sanitizeResponseMetadata, sanitizeSSEStreamData } from './queue-boundary';
 
 /**
  * Constructs a queue message for async processing by the consumer worker.
@@ -47,7 +49,7 @@ export function createQueueMessage(params: {
   error: LLMError | undefined;
   truncated?: boolean;
   sseStreamData?: SSEStreamData;
-  responseMetadata?: Partial<LLMResponseMetadata>;
+  responseMetadata?: Partial<LLMResponseMetadata> | LLMResponseMetadataSummary;
   receivedAt: number;
   inputMessages?: InputMessage[];
   toolExecutions?: ToolExecution[];
@@ -86,6 +88,9 @@ export function createQueueMessage(params: {
   } = params;
 
   const provider = extractProviderFromUrl(targetUrl);
+  const safeResponseMetadata = responseMetadata
+    ? sanitizeResponseMetadata(responseMetadata)
+    : undefined;
 
   const timing: LLMTiming = {
     requestStart,
@@ -96,7 +101,7 @@ export function createQueueMessage(params: {
   };
 
   // Use model from response metadata if available, otherwise default to 'unknown'
-  const model = responseMetadata?.model ?? 'unknown';
+  const model = safeResponseMetadata?.model ?? 'unknown';
 
   const queueMessage: QueueMessage = {
     requestId,
@@ -128,11 +133,11 @@ export function createQueueMessage(params: {
   }
 
   if (sseStreamData && sseStreamData.messages.length > 0) {
-    queueMessage.sseStreamData = sseStreamData;
+    queueMessage.sseStreamData = sanitizeSSEStreamData(sseStreamData);
   }
 
-  if (responseMetadata) {
-    queueMessage.responseMetadata = responseMetadata;
+  if (safeResponseMetadata && Object.keys(safeResponseMetadata).length > 0) {
+    queueMessage.responseMetadata = safeResponseMetadata;
   }
 
   if (parentSpanId) {

@@ -30,6 +30,16 @@ export class WireReadError extends Error {
   }
 }
 
+export class WireSizeLimitError extends WireReadError {
+  constructor(
+    readonly receivedBytes: number,
+    readonly maxBytes: number,
+  ) {
+    super(`length-delimited field exceeds the ${maxBytes}-byte limit`);
+    this.name = 'WireSizeLimitError';
+  }
+}
+
 export class Reader {
   private pos = 0;
 
@@ -134,8 +144,11 @@ export class Reader {
     return v;
   }
 
-  bytes(): Uint8Array {
+  bytes(maxBytes?: number): Uint8Array {
     const len = this.varintNumber();
+    if (maxBytes !== undefined && len > maxBytes) {
+      throw new WireSizeLimitError(len, maxBytes);
+    }
     if (this.pos + len > this.buf.length) {
       throw new WireReadError('unexpected EOF reading bytes');
     }
@@ -144,8 +157,8 @@ export class Reader {
     return out;
   }
 
-  string(): string {
-    return textDecoder.decode(this.bytes());
+  string(maxBytes?: number): string {
+    return textDecoder.decode(this.bytes(maxBytes));
   }
 
   /** Returns a Reader scoped to the next length-delimited sub-message. */

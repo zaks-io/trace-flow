@@ -50,6 +50,21 @@ export interface LLMResponseMetadata {
   reasoningTokens?: number;
 }
 
+/**
+ * Metadata that may cross the plaintext trace-delivery boundary.
+ *
+ * Provider response bodies remain available in the encrypted Body Object, but
+ * reasoning and refusal text do not belong in the delivery envelope. The
+ * summary keeps only their bounded presence flags for downstream attributes.
+ */
+export type LLMResponseMetadataSummary = Omit<
+  Partial<LLMResponseMetadata>,
+  'refusal' | 'reasoning'
+> & {
+  hasRefusal?: boolean;
+  hasReasoning?: boolean;
+};
+
 export interface LLMError {
   type?: string;
   message?: string;

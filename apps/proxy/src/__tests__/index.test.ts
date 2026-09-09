@@ -48,7 +48,11 @@ function mockUpstream(
 }
 
 async function decryptStoredBodiesObject(object: R2ObjectBody): Promise<StoredBodiesPayload> {
-  const parsed: unknown = JSON.parse(await object.text());
+  return decryptStoredBodiesEnvelope(await object.text());
+}
+
+async function decryptStoredBodiesEnvelope(serialized: string): Promise<StoredBodiesPayload> {
+  const parsed: unknown = JSON.parse(serialized);
   if (!isTraceDeliveryEnvelope(parsed) || !parsed.body) {
     throw new Error('Expected trace delivery with encrypted bodies');
   }
@@ -649,7 +653,21 @@ describe('Proxy Worker Integration', () => {
 
       const secretEmail = 'stream-leak@example.com';
       const requestEmail = 'sse-request-pii@example.com';
-      const sseBody = `data: {"choices":[{"delta":{"content":"${secretEmail}"}}]}\n\ndata: [DONE]\n\n`;
+      const eventCanary = 'sse-envelope-event-canary-8d7e';
+      const reasoningCanary = 'sse-envelope-reasoning-canary-4c2a';
+      const refusalCanary = 'sse-envelope-refusal-canary-91bf';
+      const sseBody =
+        `data: ${JSON.stringify({
+          choices: [
+            {
+              delta: {
+                content: `${secretEmail} ${eventCanary}`,
+                reasoning: reasoningCanary,
+                refusal: refusalCanary,
+              },
+            },
+          ],
+        })}\n\n` + 'data: [DONE]\n\n';
 
       const keysBefore = new Set(
         (await env.STORAGE.list({ prefix: 'trace-deliveries/' })).objects.map((o) => o.key),
@@ -683,6 +701,7 @@ describe('Proxy Worker Integration', () => {
       expect(res.headers.get('Content-Type')).toContain('text/event-stream');
       const text = await res.text();
       expect(text).toContain(secretEmail);
+      expect(text).toContain(eventCanary);
 
       await waitForAsyncOps();
 
@@ -692,12 +711,30 @@ describe('Proxy Worker Integration', () => {
 
       const obj = await env.STORAGE.get(newKey);
       if (!obj) throw new Error('expected the new R2 bodies object to exist');
-      const stored = await decryptStoredBodiesObject(obj);
+      const serializedEnvelope = await obj.text();
+      expect(serializedEnvelope).not.toContain(secretEmail);
+      expect(serializedEnvelope).not.toContain(eventCanary);
+      expect(serializedEnvelope).not.toContain(reasoningCanary);
+      expect(serializedEnvelope).not.toContain(refusalCanary);
+
+      const envelope = JSON.parse(serializedEnvelope) as TraceDeliveryEnvelope;
+      expect(envelope.message).toMatchObject({
+        responseMetadata: { hasReasoning: true, hasRefusal: true },
+      });
+      if (!('responseMetadata' in envelope.message)) {
+        throw new Error('Expected LLM response metadata');
+      }
+      expect(envelope.message.responseMetadata).not.toHaveProperty('reasoning');
+      expect(envelope.message.responseMetadata).not.toHaveProperty('refusal');
+      const stored = await decryptStoredBodiesEnvelope(serializedEnvelope);
 
       expect(stored.requestBody).not.toContain(requestEmail);
       expect(stored.requestBody).toContain('[REDACTED]');
       expect(stored.responseBody).not.toContain(secretEmail);
       expect(stored.responseBody).toContain('[REDACTED]');
+      expect(stored.responseBody).toContain(eventCanary);
+      expect(stored.responseBody).toContain(reasoningCanary);
+      expect(stored.responseBody).toContain(refusalCanary);
     });
   });
 
@@ -727,15 +764,15 @@ describe('Proxy Worker Integration', () => {
               {
                 spans: [
                   {
-                    traceId: 'abc123',
-                    spanId: 'span1',
+                    traceId: '0123456789abcdef0123456789abcdef',
+                    spanId: '0123456789abcdef',
                     name: 'test-span',
                     startTimeUnixNano: '1000000000',
                     endTimeUnixNano: '2000000000',
                   },
                   {
-                    traceId: 'abc123',
-                    spanId: 'span2',
+                    traceId: '0123456789abcdef0123456789abcdef',
+                    spanId: 'fedcba9876543210',
                     name: 'test-span-2',
                     startTimeUnixNano: '1000000000',
                     endTimeUnixNano: '2000000000',

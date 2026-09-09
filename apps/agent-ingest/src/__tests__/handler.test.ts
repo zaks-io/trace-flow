@@ -6,6 +6,7 @@ import type {
   AgentMessageFact,
   AgentToolEventFact,
 } from '@trace-flow/types';
+import { AGENT_INGEST_LIMITS } from '@trace-flow/types';
 import { app } from '../index';
 import { __resetPolicyCache, type CompatibilityPolicy } from '../policy';
 import type { AgentIngestEnv } from '../context';
@@ -231,10 +232,23 @@ describe('POST /v1/ingest', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  it('400s malformed JSON', async () => {
+  it('400s malformed JSON without logging body fragments', async () => {
+    const canary = 'agent-ingest-json-canary-7d3a';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { env } = makeEnv({ creds: await validCredEntries() });
-    const res = await post(env, 'not json', authHeaders);
+    const res = await post(env, `not json ${canary}`, authHeaders);
     expect(res.status).toBe(400);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(canary);
+  });
+
+  it('does not log attacker-controlled unknown field names', async () => {
+    const canary = 'agent-ingest-field-canary-7d3a';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { env } = makeEnv({ creds: await validCredEntries() });
+    const res = await post(env, JSON.stringify({ ...envelope(), [canary]: true }), authHeaders);
+
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(canary);
   });
 
   it('202s a gzip-encoded body (the Collector gzips and sends Content-Encoding: gzip)', async () => {
@@ -290,6 +304,112 @@ describe('POST /v1/ingest', () => {
     const res = await post(env, JSON.stringify(bad), authHeaders);
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: 'invalid_envelope' });
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it('400s a fact missing a required tool field before policy, claims, or queueing', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    const missingToolName = structuredClone(toolEventFact()) as unknown as Record<string, unknown>;
+    delete missingToolName.tool_name;
+    const missingPaths = structuredClone(toolEventFact()) as unknown as Record<string, unknown>;
+    delete missingPaths.repo_relative_paths;
+
+    for (const tool of [missingToolName, missingPaths]) {
+      const res = await post(
+        env,
+        JSON.stringify(
+          envelope({
+            facts: facts({
+              tool_events: [tool as unknown as AgentToolEventFact],
+              file_events: [],
+              capability_snapshots: [],
+              pull_request_links: [],
+            }),
+          }),
+        ),
+        authHeaders,
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ error: 'invalid_envelope' });
+    }
+
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(claimResponder).toBeNull();
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'source',
+      () => {
+        const bad = envelope();
+        (bad.batch as unknown as Record<string, unknown>).source = 'rogue';
+        return bad;
+      },
+    ],
+    [
+      'role',
+      () => envelope({ facts: facts({ messages: [messageFact({ role: 'rogue' as never })] }) }),
+    ],
+    [
+      'boolean',
+      () => envelope({ facts: facts({ messages: [messageFact({ is_sidechain: 1 as never })] }) }),
+    ],
+  ])('400s an invalid %s enum or boolean before stateful work', async (_label, makeBad) => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    const body = makeBad();
+    const res = await post(env, JSON.stringify(body), authHeaders);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'invalid_envelope' });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(claimResponder).toBeNull();
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['negative token count', () => ({ input_tokens: -1 })],
+    ['unsafe turn index', () => ({ turn_index: Number.MAX_SAFE_INTEGER + 1 })],
+    [
+      'oversized UTF-8 model label',
+      () => ({ model: '😀'.repeat(Math.ceil(AGENT_INGEST_LIMITS.maxFactStringBytes / 4) + 1) }),
+    ],
+  ])('400s %s before policy, ownership, or queueing', async (_label, patch) => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    const bad = envelope({
+      facts: facts({ messages: [messageFact(patch())] }),
+    });
+    const res = await post(env, JSON.stringify(bad), authHeaders);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'invalid_envelope' });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(claimResponder).toBeNull();
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it('400s an oversized nested repo path array before policy, ownership, or queueing', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    const badTool = toolEventFact({
+      repo_relative_paths: Array.from(
+        { length: AGENT_INGEST_LIMITS.maxRepoRelativePaths + 1 },
+        (_, index) => `src/file-${index}.ts`,
+      ),
+    });
+    const bad = envelope({
+      facts: facts({
+        tool_events: [badTool],
+        file_events: [],
+        capability_snapshots: [],
+        pull_request_links: [],
+      }),
+    });
+    const res = await post(env, JSON.stringify(bad), authHeaders);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'invalid_envelope' });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(claimResponder).toBeNull();
     expect(queueSend).not.toHaveBeenCalled();
   });
 

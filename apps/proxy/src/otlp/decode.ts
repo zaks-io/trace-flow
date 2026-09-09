@@ -1,4 +1,12 @@
-import { Reader, WIRE_FIXED64, WIRE_LEN, WIRE_VARINT, WireReadError } from './wire';
+import {
+  Reader,
+  WIRE_FIXED64,
+  WIRE_LEN,
+  WIRE_VARINT,
+  WireReadError,
+  WireSizeLimitError,
+} from './wire';
+import { OTLP_LIMITS } from './limits';
 import type {
   OTLPAnyValue,
   OTLPExportTraceServiceRequest,
@@ -23,17 +31,55 @@ import type {
  * cap on decompressed size to defuse gzip/deflate bombs.
  */
 
-/** Max nesting depth for AnyValue/KeyValue/kvlist/array recursion. */
-const MAX_VALUE_DEPTH = 32;
+interface DecodeBudget {
+  resourceSpans: number;
+  scopeSpans: number;
+  spans: number;
+  decodedItems: number;
+}
 
 export class OTLPProtoDecodeError extends Error {
   constructor(
     message: string,
     readonly cause?: unknown,
+    readonly status: 400 | 413 = 400,
   ) {
     super(message);
     this.name = 'OTLPProtoDecodeError';
   }
+}
+
+function budgetExceeded(message: string): never {
+  throw new OTLPProtoDecodeError(message, undefined, 413);
+}
+
+function consumeGlobalBudget(
+  budget: DecodeBudget,
+  key: Exclude<keyof DecodeBudget, 'decodedItems'>,
+  max: number,
+  label: string,
+): void {
+  if (budget[key] >= max) budgetExceeded(`${label} exceeds the ${max}-item limit`);
+  consumeDecodedItem(budget);
+  budget[key] += 1;
+}
+
+function consumeDecodedItem(budget: DecodeBudget): void {
+  if (budget.decodedItems >= OTLP_LIMITS.decodedItems) {
+    budgetExceeded(`OTLP payload exceeds the ${OTLP_LIMITS.decodedItems}-item decode limit`);
+  }
+  budget.decodedItems += 1;
+}
+
+function consumeCollectionBudget(
+  budget: DecodeBudget,
+  current: number,
+  max: number,
+  label: string,
+): number {
+  if (current >= max) budgetExceeded(`${label} exceeds the ${max}-item limit`);
+  consumeDecodedItem(budget);
+  return current + 1;
 }
 
 function bytesToHex(bytes: Uint8Array): string {
@@ -70,17 +116,15 @@ function expect(r: Reader, wire: number, expected: number): boolean {
   return false;
 }
 
-function decodeAnyValue(r: Reader, depth: number): OTLPAnyValue {
-  if (depth > MAX_VALUE_DEPTH) {
-    throw new WireReadError('AnyValue nesting too deep');
-  }
+function decodeAnyValue(r: Reader, depth: number, budget: DecodeBudget): OTLPAnyValue {
+  if (depth > OTLP_LIMITS.attributeDepth) budgetExceeded('AnyValue nesting too deep');
   const value: OTLPAnyValue = {};
   while (!r.eof()) {
     const { field, wire } = r.tag();
     switch (field) {
       case 1:
         if (!expect(r, wire, WIRE_LEN)) break;
-        value.stringValue = r.string();
+        value.stringValue = r.string(OTLP_LIMITS.valueBytes);
         break;
       case 2:
         if (!expect(r, wire, WIRE_VARINT)) break;
@@ -101,7 +145,13 @@ function decodeAnyValue(r: Reader, depth: number): OTLPAnyValue {
         while (!sub.eof()) {
           const { field: f, wire: w } = sub.tag();
           if (f === 1 && w === WIRE_LEN) {
-            values.push(decodeAnyValue(sub.subReader(), depth + 1));
+            consumeCollectionBudget(
+              budget,
+              values.length,
+              OTLP_LIMITS.nestedValues,
+              'AnyValue.arrayValue',
+            );
+            values.push(decodeAnyValue(sub.subReader(), depth + 1, budget));
           } else {
             sub.skip(w);
           }
@@ -116,7 +166,13 @@ function decodeAnyValue(r: Reader, depth: number): OTLPAnyValue {
         while (!sub.eof()) {
           const { field: f, wire: w } = sub.tag();
           if (f === 1 && w === WIRE_LEN) {
-            values.push(decodeKeyValue(sub.subReader(), depth + 1));
+            consumeCollectionBudget(
+              budget,
+              values.length,
+              OTLP_LIMITS.nestedValues,
+              'AnyValue.kvlistValue',
+            );
+            values.push(decodeKeyValue(sub.subReader(), depth + 1, budget));
           } else {
             sub.skip(w);
           }
@@ -126,7 +182,7 @@ function decodeAnyValue(r: Reader, depth: number): OTLPAnyValue {
       }
       case 7: {
         if (!expect(r, wire, WIRE_LEN)) break;
-        value.bytesValue = bytesToBase64(r.bytes());
+        value.bytesValue = bytesToBase64(r.bytes(OTLP_LIMITS.bytesValueRawBytes));
         break;
       }
       default:
@@ -136,7 +192,7 @@ function decodeAnyValue(r: Reader, depth: number): OTLPAnyValue {
   return value;
 }
 
-function decodeKeyValue(r: Reader, depth: number): OTLPKeyValue {
+function decodeKeyValue(r: Reader, depth: number, budget: DecodeBudget): OTLPKeyValue {
   let key = '';
   let value: OTLPAnyValue = {};
   while (!r.eof()) {
@@ -144,11 +200,11 @@ function decodeKeyValue(r: Reader, depth: number): OTLPKeyValue {
     switch (field) {
       case 1:
         if (!expect(r, wire, WIRE_LEN)) break;
-        key = r.string();
+        key = r.string(OTLP_LIMITS.keyBytes);
         break;
       case 2:
         if (!expect(r, wire, WIRE_LEN)) break;
-        value = decodeAnyValue(r.subReader(), depth + 1);
+        value = decodeAnyValue(r.subReader(), depth, budget);
         break;
       default:
         r.skip(wire);
@@ -157,15 +213,22 @@ function decodeKeyValue(r: Reader, depth: number): OTLPKeyValue {
   return { key, value };
 }
 
-function decodeResource(r: Reader): OTLPResource {
+function decodeResource(r: Reader, budget: DecodeBudget): OTLPResource {
   const attributes: OTLPKeyValue[] = [];
+  let attributeCount = 0;
   let droppedAttributesCount: number | undefined;
   while (!r.eof()) {
     const { field, wire } = r.tag();
     switch (field) {
       case 1:
         if (!expect(r, wire, WIRE_LEN)) break;
-        attributes.push(decodeKeyValue(r.subReader(), 1));
+        attributeCount = consumeCollectionBudget(
+          budget,
+          attributeCount,
+          OTLP_LIMITS.attributes,
+          'Resource attributes',
+        );
+        attributes.push(decodeKeyValue(r.subReader(), 0, budget));
         break;
       case 2:
         if (!expect(r, wire, WIRE_VARINT)) break;
@@ -187,23 +250,30 @@ interface DecodedScope {
   droppedAttributesCount?: number;
 }
 
-function decodeScope(r: Reader): DecodedScope {
+function decodeScope(r: Reader, budget: DecodeBudget): DecodedScope {
   const scope: DecodedScope = {};
   const attributes: OTLPKeyValue[] = [];
+  let attributeCount = 0;
   while (!r.eof()) {
     const { field, wire } = r.tag();
     switch (field) {
       case 1:
         if (!expect(r, wire, WIRE_LEN)) break;
-        scope.name = r.string();
+        scope.name = r.string(OTLP_LIMITS.nameBytes);
         break;
       case 2:
         if (!expect(r, wire, WIRE_LEN)) break;
-        scope.version = r.string();
+        scope.version = r.string(OTLP_LIMITS.nameBytes);
         break;
       case 3:
         if (!expect(r, wire, WIRE_LEN)) break;
-        attributes.push(decodeKeyValue(r.subReader(), 1));
+        attributeCount = consumeCollectionBudget(
+          budget,
+          attributeCount,
+          OTLP_LIMITS.attributes,
+          'Scope attributes',
+        );
+        attributes.push(decodeKeyValue(r.subReader(), 0, budget));
         break;
       case 4:
         if (!expect(r, wire, WIRE_VARINT)) break;
@@ -224,7 +294,7 @@ function decodeStatus(r: Reader): OTLPStatus {
     switch (field) {
       case 2:
         if (!expect(r, wire, WIRE_LEN)) break;
-        status.message = r.string();
+        status.message = r.string(OTLP_LIMITS.valueBytes);
         break;
       case 3:
         if (!expect(r, wire, WIRE_VARINT)) break;
@@ -237,9 +307,10 @@ function decodeStatus(r: Reader): OTLPStatus {
   return status;
 }
 
-function decodeEvent(r: Reader): OTLPSpanEvent {
+function decodeEvent(r: Reader, budget: DecodeBudget): OTLPSpanEvent {
   const event: OTLPSpanEvent = { name: '' };
   const attributes: OTLPKeyValue[] = [];
+  let attributeCount = 0;
   while (!r.eof()) {
     const { field, wire } = r.tag();
     switch (field) {
@@ -249,11 +320,17 @@ function decodeEvent(r: Reader): OTLPSpanEvent {
         break;
       case 2:
         if (!expect(r, wire, WIRE_LEN)) break;
-        event.name = r.string();
+        event.name = r.string(OTLP_LIMITS.nameBytes);
         break;
       case 3:
         if (!expect(r, wire, WIRE_LEN)) break;
-        attributes.push(decodeKeyValue(r.subReader(), 1));
+        attributeCount = consumeCollectionBudget(
+          budget,
+          attributeCount,
+          OTLP_LIMITS.attributes,
+          'Event attributes',
+        );
+        attributes.push(decodeKeyValue(r.subReader(), 0, budget));
         break;
       case 4:
         if (!expect(r, wire, WIRE_VARINT)) break;
@@ -267,27 +344,34 @@ function decodeEvent(r: Reader): OTLPSpanEvent {
   return event;
 }
 
-function decodeLink(r: Reader): OTLPSpanLink {
+function decodeLink(r: Reader, budget: DecodeBudget): OTLPSpanLink {
   const link: OTLPSpanLink = { traceId: '', spanId: '' };
   const attributes: OTLPKeyValue[] = [];
+  let attributeCount = 0;
   while (!r.eof()) {
     const { field, wire } = r.tag();
     switch (field) {
       case 1:
         if (!expect(r, wire, WIRE_LEN)) break;
-        link.traceId = bytesToHex(r.bytes());
+        link.traceId = bytesToHex(r.bytes(OTLP_LIMITS.traceIdBytes));
         break;
       case 2:
         if (!expect(r, wire, WIRE_LEN)) break;
-        link.spanId = bytesToHex(r.bytes());
+        link.spanId = bytesToHex(r.bytes(OTLP_LIMITS.spanIdBytes));
         break;
       case 3:
         if (!expect(r, wire, WIRE_LEN)) break;
-        link.traceState = r.string();
+        link.traceState = r.string(OTLP_LIMITS.keyBytes);
         break;
       case 4:
         if (!expect(r, wire, WIRE_LEN)) break;
-        attributes.push(decodeKeyValue(r.subReader(), 1));
+        attributeCount = consumeCollectionBudget(
+          budget,
+          attributeCount,
+          OTLP_LIMITS.attributes,
+          'Link attributes',
+        );
+        attributes.push(decodeKeyValue(r.subReader(), 0, budget));
         break;
       case 5:
         if (!expect(r, wire, WIRE_VARINT)) break;
@@ -305,7 +389,7 @@ function decodeLink(r: Reader): OTLPSpanLink {
   return link;
 }
 
-function decodeSpan(r: Reader): OTLPSpan {
+function decodeSpan(r: Reader, budget: DecodeBudget): OTLPSpan {
   const span: OTLPSpan = {
     traceId: '',
     spanId: '',
@@ -316,28 +400,31 @@ function decodeSpan(r: Reader): OTLPSpan {
   const attributes: OTLPKeyValue[] = [];
   const events: OTLPSpanEvent[] = [];
   const links: OTLPSpanLink[] = [];
+  let attributeCount = 0;
+  let eventCount = 0;
+  let linkCount = 0;
   while (!r.eof()) {
     const { field, wire } = r.tag();
     switch (field) {
       case 1:
         if (!expect(r, wire, WIRE_LEN)) break;
-        span.traceId = bytesToHex(r.bytes());
+        span.traceId = bytesToHex(r.bytes(OTLP_LIMITS.traceIdBytes));
         break;
       case 2:
         if (!expect(r, wire, WIRE_LEN)) break;
-        span.spanId = bytesToHex(r.bytes());
+        span.spanId = bytesToHex(r.bytes(OTLP_LIMITS.spanIdBytes));
         break;
       case 3:
         if (!expect(r, wire, WIRE_LEN)) break;
-        span.traceState = r.string();
+        span.traceState = r.string(OTLP_LIMITS.keyBytes);
         break;
       case 4:
         if (!expect(r, wire, WIRE_LEN)) break;
-        span.parentSpanId = bytesToHex(r.bytes());
+        span.parentSpanId = bytesToHex(r.bytes(OTLP_LIMITS.spanIdBytes));
         break;
       case 5:
         if (!expect(r, wire, WIRE_LEN)) break;
-        span.name = r.string();
+        span.name = r.string(OTLP_LIMITS.nameBytes);
         break;
       case 6:
         if (!expect(r, wire, WIRE_VARINT)) break;
@@ -353,7 +440,13 @@ function decodeSpan(r: Reader): OTLPSpan {
         break;
       case 9:
         if (!expect(r, wire, WIRE_LEN)) break;
-        attributes.push(decodeKeyValue(r.subReader(), 1));
+        attributeCount = consumeCollectionBudget(
+          budget,
+          attributeCount,
+          OTLP_LIMITS.attributes,
+          'Span attributes',
+        );
+        attributes.push(decodeKeyValue(r.subReader(), 0, budget));
         break;
       case 10:
         if (!expect(r, wire, WIRE_VARINT)) break;
@@ -361,7 +454,8 @@ function decodeSpan(r: Reader): OTLPSpan {
         break;
       case 11:
         if (!expect(r, wire, WIRE_LEN)) break;
-        events.push(decodeEvent(r.subReader()));
+        eventCount = consumeCollectionBudget(budget, eventCount, OTLP_LIMITS.events, 'Span events');
+        events.push(decodeEvent(r.subReader(), budget));
         break;
       case 12:
         if (!expect(r, wire, WIRE_VARINT)) break;
@@ -369,7 +463,8 @@ function decodeSpan(r: Reader): OTLPSpan {
         break;
       case 13:
         if (!expect(r, wire, WIRE_LEN)) break;
-        links.push(decodeLink(r.subReader()));
+        linkCount = consumeCollectionBudget(budget, linkCount, OTLP_LIMITS.links, 'Span links');
+        links.push(decodeLink(r.subReader(), budget));
         break;
       case 14:
         if (!expect(r, wire, WIRE_VARINT)) break;
@@ -399,7 +494,7 @@ interface DecodedScopeSpans {
   schemaUrl?: string;
 }
 
-function decodeScopeSpans(r: Reader): DecodedScopeSpans {
+function decodeScopeSpans(r: Reader, budget: DecodeBudget): DecodedScopeSpans {
   const spans: OTLPSpan[] = [];
   const out: DecodedScopeSpans = { spans };
   while (!r.eof()) {
@@ -407,15 +502,16 @@ function decodeScopeSpans(r: Reader): DecodedScopeSpans {
     switch (field) {
       case 1:
         if (!expect(r, wire, WIRE_LEN)) break;
-        out.scope = decodeScope(r.subReader());
+        out.scope = decodeScope(r.subReader(), budget);
         break;
       case 2:
         if (!expect(r, wire, WIRE_LEN)) break;
-        spans.push(decodeSpan(r.subReader()));
+        consumeGlobalBudget(budget, 'spans', OTLP_LIMITS.spans, 'spans');
+        spans.push(decodeSpan(r.subReader(), budget));
         break;
       case 3:
         if (!expect(r, wire, WIRE_LEN)) break;
-        out.schemaUrl = r.string();
+        out.schemaUrl = r.string(OTLP_LIMITS.valueBytes);
         break;
       default:
         r.skip(wire);
@@ -424,22 +520,23 @@ function decodeScopeSpans(r: Reader): DecodedScopeSpans {
   return out;
 }
 
-function decodeResourceSpans(r: Reader): OTLPResourceSpans {
+function decodeResourceSpans(r: Reader, budget: DecodeBudget): OTLPResourceSpans {
   const rs: OTLPResourceSpans = { scopeSpans: [] };
   while (!r.eof()) {
     const { field, wire } = r.tag();
     switch (field) {
       case 1:
         if (!expect(r, wire, WIRE_LEN)) break;
-        rs.resource = decodeResource(r.subReader());
+        rs.resource = decodeResource(r.subReader(), budget);
         break;
       case 2:
         if (!expect(r, wire, WIRE_LEN)) break;
-        rs.scopeSpans.push(decodeScopeSpans(r.subReader()));
+        consumeGlobalBudget(budget, 'scopeSpans', OTLP_LIMITS.scopeSpans, 'scopeSpans');
+        rs.scopeSpans.push(decodeScopeSpans(r.subReader(), budget));
         break;
       case 3:
         if (!expect(r, wire, WIRE_LEN)) break;
-        rs.schemaUrl = r.string();
+        rs.schemaUrl = r.string(OTLP_LIMITS.valueBytes);
         break;
       default:
         r.skip(wire);
@@ -450,21 +547,32 @@ function decodeResourceSpans(r: Reader): OTLPResourceSpans {
 
 export function decodeOTLPProtobuf(buffer: Uint8Array): OTLPExportTraceServiceRequest {
   const resourceSpans: OTLPResourceSpans[] = [];
+  const budget: DecodeBudget = {
+    resourceSpans: 0,
+    scopeSpans: 0,
+    spans: 0,
+    decodedItems: 0,
+  };
   try {
     const r = new Reader(buffer);
     while (!r.eof()) {
       const { field, wire } = r.tag();
       if (field === 1 && wire === WIRE_LEN) {
-        resourceSpans.push(decodeResourceSpans(r.subReader()));
+        consumeGlobalBudget(budget, 'resourceSpans', OTLP_LIMITS.resourceSpans, 'resourceSpans');
+        resourceSpans.push(decodeResourceSpans(r.subReader(), budget));
       } else {
         r.skip(wire);
       }
     }
   } catch (err) {
+    if (err instanceof OTLPProtoDecodeError) throw err;
+    if (err instanceof WireSizeLimitError) {
+      throw new OTLPProtoDecodeError(err.message, err, 413);
+    }
     if (err instanceof WireReadError) {
       throw new OTLPProtoDecodeError(`Malformed OTLP protobuf: ${err.message}`, err);
     }
-    throw new OTLPProtoDecodeError('Failed to decode OTLP protobuf', err);
+    throw err;
   }
   return { resourceSpans };
 }
@@ -508,6 +616,10 @@ export async function readOTLPBody(
       }
       chunks.push(value);
     }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    if (error instanceof OTLPProtoDecodeError) throw error;
+    throw new OTLPProtoDecodeError('Invalid compressed payload', error);
   } finally {
     reader.releaseLock();
   }

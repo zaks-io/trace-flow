@@ -2,9 +2,8 @@ import type {
   AnthropicContentBlock,
   InputMessage,
   InputContentBlock,
-  LLMResponseMetadata,
+  LLMResponseMetadataSummary,
   LLMTokenUsage,
-  SSEEvent,
   SSEMessage,
   SSEStreamData,
 } from '@trace-flow/types';
@@ -13,6 +12,15 @@ import { parseTokenUsage } from '../parseTokenUsage';
 import { PROVIDER_SCHEMAS } from '../schemas';
 import type { RawTokenUsage } from '../types';
 import type { ParsedSSEEvent, Provider } from './types';
+import {
+  addSSEMessage,
+  appendSSEContentBlock,
+  appendSSEEvent,
+  appendSSEMetadata,
+  boundedSSEMetadataValue,
+  isBoundedSSEEventData,
+  reportSSEHandlerFailure,
+} from './sse-state';
 
 interface AnthropicRequestBody {
   model?: string;
@@ -74,50 +82,53 @@ function parseAnthropicRequestBody(body: string): InputMessage[] | null {
     }
 
     return inputMessages;
-  } catch (error) {
-    console.warn('Error parsing Anthropic request body:', error);
+  } catch {
+    console.warn('Provider request body parse failed');
     return null;
   }
 }
 
-const ID_PATTERN = /"id"\s*:\s*"([^"]+)"/;
-const MODEL_PATTERN = /"model"\s*:\s*"([^"]+)"/;
-const STOP_REASON_PATTERN = /"stop_reason"\s*:\s*(?:null|"([^"]+)")/;
-const STOP_SEQUENCE_PATTERN = /"stop_sequence"\s*:\s*(?:null|"([^"]+)")/;
+const ID_PATTERN = /"id"\s*:\s*"([^"]{1,256})"/;
+const MODEL_PATTERN = /"model"\s*:\s*"([^"]{1,256})"/;
+const STOP_REASON_PATTERN = /"stop_reason"\s*:\s*(?:null|"([^"]{1,256})")/;
+const STOP_SEQUENCE_PATTERN = /"stop_sequence"\s*:\s*(?:null|"([^"]{1,256})")/;
 
-const INPUT_TOKENS_PATTERN = /"input_tokens"\s*:\s*(\d+)/;
-const OUTPUT_TOKENS_PATTERN = /"output_tokens"\s*:\s*(\d+)/;
-const CACHE_CREATION_PATTERN = /"cache_creation_input_tokens"\s*:\s*(\d+)/;
-const CACHE_READ_PATTERN = /"cache_read_input_tokens"\s*:\s*(\d+)/;
-const EPHEMERAL_5M_PATTERN = /"ephemeral_5m_input_tokens"\s*:\s*(\d+)/;
-const EPHEMERAL_1H_PATTERN = /"ephemeral_1h_input_tokens"\s*:\s*(\d+)/;
+const INPUT_TOKENS_PATTERN = /"input_tokens"\s*:\s*(\d{1,20})(?!\d)/;
+const OUTPUT_TOKENS_PATTERN = /"output_tokens"\s*:\s*(\d{1,20})(?!\d)/;
+const CACHE_CREATION_PATTERN = /"cache_creation_input_tokens"\s*:\s*(\d{1,20})(?!\d)/;
+const CACHE_READ_PATTERN = /"cache_read_input_tokens"\s*:\s*(\d{1,20})(?!\d)/;
+const EPHEMERAL_5M_PATTERN = /"ephemeral_5m_input_tokens"\s*:\s*(\d{1,20})(?!\d)/;
+const EPHEMERAL_1H_PATTERN = /"ephemeral_1h_input_tokens"\s*:\s*(\d{1,20})(?!\d)/;
 
-const CONTENT_BLOCK_INDEX_PATTERN = /"index"\s*:\s*(\d+)/;
+const CONTENT_BLOCK_INDEX_PATTERN = /"index"\s*:\s*(\d{1,20})(?!\d)/;
 const CONTENT_BLOCK_TYPE_PATTERN =
   /"content_block"\s*:\s*\{[^}]*"type"\s*:\s*"(text|tool_use|thinking)"/;
-const TOOL_USE_ID_PATTERN = /"content_block"\s*:\s*\{[^}]*"id"\s*:\s*"([^"]+)"/;
-const TOOL_USE_NAME_PATTERN = /"content_block"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"/;
-const THINKING_DELTA_TYPE_PATTERN = /"type"\s*:\s*"thinking_delta"/;
-const THINKING_DELTA_TEXT_PATTERN = /"thinking"\s*:\s*"((?:[^"\\]|\\.)*)"/;
+const TOOL_USE_ID_PATTERN = /"content_block"\s*:\s*\{[^}]*"id"\s*:\s*"([^"]{1,256})"/;
+const TOOL_USE_NAME_PATTERN = /"content_block"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]{1,256})"/;
+const OVERSIZED_ANTHROPIC_EVENT_TYPES = new Set(['message_start', 'message_delta', 'message_stop']);
 
 function extractMetadata(
   data: string,
-  existing: Partial<LLMResponseMetadata> = {},
-): Partial<LLMResponseMetadata> {
-  const metadata: Partial<LLMResponseMetadata> = { ...existing };
+  existing: LLMResponseMetadataSummary = {},
+): LLMResponseMetadataSummary {
+  const metadata: LLMResponseMetadataSummary = { ...existing };
 
   const idMatch = ID_PATTERN.exec(data);
-  if (idMatch && !metadata.id) metadata.id = idMatch[1];
+  const id = boundedSSEMetadataValue(idMatch?.[1]);
+  if (id && !metadata.id) metadata.id = id;
 
   const modelMatch = MODEL_PATTERN.exec(data);
-  if (modelMatch && !metadata.model) metadata.model = modelMatch[1];
+  const model = boundedSSEMetadataValue(modelMatch?.[1]);
+  if (model && !metadata.model) metadata.model = model;
 
   const stopReasonMatch = STOP_REASON_PATTERN.exec(data);
-  if (stopReasonMatch && !metadata.stopReason) metadata.stopReason = stopReasonMatch[1] ?? null;
+  const stopReason = boundedSSEMetadataValue(stopReasonMatch?.[1]);
+  if (stopReason && !metadata.stopReason) metadata.stopReason = stopReason;
 
   const stopSequenceMatch = STOP_SEQUENCE_PATTERN.exec(data);
-  if (stopSequenceMatch && !metadata.stopSequence) {
-    metadata.stopSequence = stopSequenceMatch[1] ?? null;
+  const stopSequence = boundedSSEMetadataValue(stopSequenceMatch?.[1]);
+  if (stopSequence && !metadata.stopSequence) {
+    metadata.stopSequence = stopSequence;
   }
 
   return metadata;
@@ -175,8 +186,8 @@ function parseContentBlockStart(
   if (result.type === 'tool_use') {
     const idMatch = TOOL_USE_ID_PATTERN.exec(data);
     const nameMatch = TOOL_USE_NAME_PATTERN.exec(data);
-    if (idMatch?.[1]) result.toolUseId = idMatch[1];
-    if (nameMatch?.[1]) result.toolName = nameMatch[1];
+    result.toolUseId = boundedSSEMetadataValue(idMatch?.[1]);
+    result.toolName = boundedSSEMetadataValue(nameMatch?.[1]);
   }
 
   return result;
@@ -187,76 +198,79 @@ function parseContentBlockStopIndex(data: string): number | null {
   return match?.[1] ? parseInt(match[1], 10) : null;
 }
 
+function parseThinkingDelta(data: unknown): { index: number; textLength: number } | null {
+  if (!data || typeof data !== 'object') return null;
+
+  const candidate = data as {
+    index?: unknown;
+    delta?: { type?: unknown; thinking?: unknown };
+  };
+  if (
+    !Number.isInteger(candidate.index) ||
+    candidate.delta?.type !== 'thinking_delta' ||
+    typeof candidate.delta.thinking !== 'string'
+  ) {
+    return null;
+  }
+
+  return { index: candidate.index as number, textLength: candidate.delta.thinking.length };
+}
+
 function handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStreamData): void {
   try {
     const eventType = event.event;
     if (!eventType) return;
 
+    let parsedEventData: unknown;
     if (event.data && event.data.trim().length > 0) {
-      try {
-        JSON.parse(event.data);
-      } catch (parseError) {
-        console.error('Error parsing SSE event:', {
-          error: parseError,
-          eventType,
-          timestamp,
-        });
+      if (isBoundedSSEEventData(event.data)) {
+        try {
+          parsedEventData = JSON.parse(event.data);
+        } catch {
+          return;
+        }
+      } else if (!OVERSIZED_ANTHROPIC_EVENT_TYPES.has(eventType)) {
         return;
       }
     }
-
-    const sseEvent: SSEEvent = { type: eventType, timestamp, data: event.data };
 
     if (eventType === 'message_start') {
       const metadata = extractMetadata(event.data);
       const usage = event.data ? extractUsage(event.data) : undefined;
       const newMessage: SSEMessage = {
         messageStart: timestamp,
-        events: [sseEvent],
+        events: [],
         metadata,
         usage: usage && hasUsageData(usage) ? usage : undefined,
       };
-      state.messages.push(newMessage);
+      appendSSEEvent(newMessage, eventType, timestamp);
+      addSSEMessage(state, newMessage);
       return;
     }
 
     const current = state.messages[state.messages.length - 1];
-    if (!current) {
-      console.warn('Received SSE event before message_start:', eventType);
-      return;
-    }
+    if (!current) return;
 
-    current.events.push(sseEvent);
+    appendSSEEvent(current, eventType, timestamp);
 
     if (event.data) {
       const eventMetadata = extractMetadata(event.data, current.metadata);
-      current.metadata = { ...current.metadata, ...eventMetadata };
+      appendSSEMetadata(current, eventMetadata);
     }
 
     if (eventType === 'content_block_start' && event.data) {
       const blockInfo = parseContentBlockStart(event.data);
       if (blockInfo) {
-        current.contentBlocks ??= [];
-        current.contentBlocks.push({ ...blockInfo, startTimestamp: timestamp });
+        appendSSEContentBlock(current, { ...blockInfo, startTimestamp: timestamp });
       }
     }
 
-    if (eventType === 'content_block_delta' && event.data && current.contentBlocks) {
-      if (THINKING_DELTA_TYPE_PATTERN.test(event.data)) {
-        const indexMatch = CONTENT_BLOCK_INDEX_PATTERN.exec(event.data);
-        const textMatch = THINKING_DELTA_TEXT_PATTERN.exec(event.data);
-        if (indexMatch?.[1] && textMatch?.[1]) {
-          const blockIndex = parseInt(indexMatch[1], 10);
-          const block = current.contentBlocks.find((b) => b.index === blockIndex);
-          if (block) {
-            let decodedLength: number;
-            try {
-              decodedLength = (JSON.parse(`"${textMatch[1]}"`) as string).length;
-            } catch {
-              decodedLength = textMatch[1].length;
-            }
-            block.thinkingTextLength = (block.thinkingTextLength ?? 0) + decodedLength;
-          }
+    if (eventType === 'content_block_delta' && current.contentBlocks) {
+      const thinkingDelta = parseThinkingDelta(parsedEventData);
+      if (thinkingDelta) {
+        const block = current.contentBlocks.find((item) => item.index === thinkingDelta.index);
+        if (block) {
+          block.thinkingTextLength = (block.thinkingTextLength ?? 0) + thinkingDelta.textLength;
         }
       }
     }
@@ -279,12 +293,8 @@ function handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStre
         current.usage = hasUsageData(merged) ? merged : undefined;
       }
     }
-  } catch (e) {
-    console.error('Error parsing SSE event:', {
-      error: e,
-      eventType: event.event,
-      timestamp,
-    });
+  } catch {
+    reportSSEHandlerFailure(state);
   }
 }
 

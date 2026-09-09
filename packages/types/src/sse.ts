@@ -1,8 +1,9 @@
-import type { LLMResponseMetadata } from './llm';
+import type { LLMResponseMetadataSummary } from './llm';
 
 export interface SSEEvent {
   type: string;
   timestamp: number;
+  /** Legacy input compatibility; producer summaries never persist event data. */
   data?: string;
 }
 
@@ -42,7 +43,7 @@ export interface SSEMessage {
     total_token_count?: number;
     thoughts_token_count?: number;
   };
-  metadata?: Partial<LLMResponseMetadata>;
+  metadata?: LLMResponseMetadataSummary;
   contentBlocks?: AnthropicContentBlock[];
 }
 

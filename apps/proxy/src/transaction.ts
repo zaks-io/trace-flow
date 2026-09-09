@@ -1,7 +1,7 @@
 import type {
   InputMessage,
   LLMError,
-  LLMResponseMetadata,
+  LLMResponseMetadataSummary,
   LLMTokenUsage,
   SSEStreamData,
   SubscriptionTier,
@@ -69,7 +69,7 @@ export interface Transaction {
 
   tokens: LLMTokenUsage | undefined;
   error: LLMError | undefined;
-  responseMetadata: Partial<LLMResponseMetadata> | undefined;
+  responseMetadata: LLMResponseMetadataSummary | undefined;
   inputMessages: InputMessage[] | undefined;
   sseStreamData: SSEStreamData | undefined;
 
@@ -234,7 +234,7 @@ export function buildTransaction(drained: DrainedCapture, logger: Logger): Trans
       ? parseError(responseBody, response.status)
       : undefined;
 
-  let responseMetadata: Partial<LLMResponseMetadata> | undefined;
+  let responseMetadata: LLMResponseMetadataSummary | undefined;
   if (!drained.streamError && response.status < 400) {
     if (isSSE && sseStreamData.messages.length > 0) {
       const lastMessage = sseStreamData.messages[sseStreamData.messages.length - 1];
@@ -248,8 +248,8 @@ export function buildTransaction(drained: DrainedCapture, logger: Logger): Trans
   if (requestBody) {
     try {
       inputMessages = provider.parseRequestBody(requestBody) ?? undefined;
-    } catch (err) {
-      logger.error('proxy.request_body_parse_failed', err);
+    } catch {
+      logger.error('proxy.request_body_parse_failed');
     }
   }
 
@@ -378,7 +378,6 @@ export async function persistTransaction(
         ? transaction.firstTokenReceived - transaction.requestSent
         : 0,
       isSse: transaction.isSSE,
-      model: transaction.responseMetadata?.model,
       totalTokens: transaction.tokens?.totalTokens ?? 0,
       r2Stored: omitBody ? 'skipped' : 'pending_delivery',
     });

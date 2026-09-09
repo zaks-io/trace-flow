@@ -1,5 +1,5 @@
 import * as Sentry from '@sentry/cloudflare';
-import type { AgentIngestQueueMessage } from '@trace-flow/types';
+import { isAgentIngestQueueMessage, type AgentIngestQueueMessage } from '@trace-flow/types';
 import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import { continueQueueTrace, groupBySentryTrace } from '@trace-flow/utils/sentry-tracing';
 import type { AgentConsumerEnv } from './context';
@@ -26,36 +26,11 @@ type Logger = ReturnType<typeof createLogger>;
 type WriteMode = 'clean' | 'legacy' | 'dual';
 
 /**
- * Structural guard — the named "malformed message → DLQ" trigger. The producer is our own worker, so
- * a failing guard means contract drift or a foreign message: dead-letter rather than drop. It checks
- * the scalar fields `accumulateMessage` dereferences (source, parser_version, tenancy ids), not just
- * the container shape, so contract drift surfaces here instead of as an opaque mapping error.
+ * Full queue-contract guard and the named "malformed message → DLQ" trigger. The producer is our own
+ * worker, so a failing guard means contract drift or a foreign message: dead-letter rather than drop.
  */
 export function isQueueMessage(body: unknown): body is AgentIngestQueueMessage {
-  if (typeof body !== 'object' || body === null) {
-    return false;
-  }
-  const m = body as Record<string, unknown>;
-  if (m.type !== 'agent' || typeof m.enqueued_at !== 'number') {
-    return false;
-  }
-  if (!isNonEmptyString(m.source) || !isNonEmptyString(m.parser_version)) {
-    return false;
-  }
-  if (!isTenancy(m.tenancy)) {
-    return false;
-  }
-  const facts = m.facts;
-  if (typeof facts !== 'object' || facts === null) {
-    return false;
-  }
-  const f = facts as Record<string, unknown>;
-  return CATEGORIES.every((category) => {
-    if (category === 'review_unit_attributions') {
-      return f[category] === undefined || Array.isArray(f[category]);
-    }
-    return Array.isArray(f[category]);
-  });
+  return isAgentIngestQueueMessage(body);
 }
 
 export async function processAgentRecoveryPayload(
@@ -78,20 +53,6 @@ export async function processAgentRecoveryPayload(
   } finally {
     await logger.flush();
   }
-}
-
-const TENANCY_FIELDS = ['org_id', 'user_id', 'collector_id', 'collector_credential_id'] as const;
-
-function isTenancy(value: unknown): boolean {
-  if (typeof value !== 'object' || value === null) {
-    return false;
-  }
-  const t = value as Record<string, unknown>;
-  return TENANCY_FIELDS.every((field) => isNonEmptyString(t[field]));
-}
-
-function isNonEmptyString(value: unknown): boolean {
-  return typeof value === 'string' && value.length > 0;
 }
 
 /** Maps one well-formed message's facts into the row accumulator, pricing each Agent Message. */

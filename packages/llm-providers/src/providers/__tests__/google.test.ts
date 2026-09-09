@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { SSEStreamData } from '@trace-flow/types';
 import { google } from '../google';
+import { MAX_SSE_EVENT_DATA_LENGTH } from '../sse-state';
 
 describe('google provider — quirks', () => {
   describe('lastMatchOnly cumulative usageMetadata', () => {
@@ -43,6 +44,60 @@ describe('google provider — quirks', () => {
       expect(tokens?.promptTokens).toBe(5);
       expect(tokens?.completionTokens).toBe(7);
       expect(tokens?.totalTokens).toBe(12);
+    });
+
+    it('keeps the latest usage and finish reason from oversized frames', () => {
+      const state: SSEStreamData = { messages: [] };
+      const canary = `GOOGLE_RAW_CANARY${'x'.repeat(MAX_SSE_EVENT_DATA_LENGTH)}`;
+
+      google.handleSSEEvent(
+        {
+          data: JSON.stringify({
+            candidates: [
+              {
+                content: { parts: [{ inlineData: { data: canary } }] },
+                finishReason: 'MAX_TOKENS',
+              },
+            ],
+            usageMetadata: {
+              promptTokenCount: 80,
+              candidatesTokenCount: 20,
+              totalTokenCount: 100,
+            },
+          }),
+        },
+        1000,
+        state,
+      );
+      google.handleSSEEvent(
+        {
+          data: JSON.stringify({
+            candidates: [
+              {
+                content: { parts: [{ inlineData: { data: canary } }] },
+                finishReason: 'STOP',
+              },
+            ],
+            usageMetadata: {
+              promptTokenCount: 80,
+              candidatesTokenCount: 25,
+              cachedContentTokenCount: 30,
+              totalTokenCount: 105,
+            },
+          }),
+        },
+        1010,
+        state,
+      );
+
+      expect(state.messages[0]?.metadata?.finishReason).toBe('STOP');
+      expect(google.aggregateSSETokens(state)).toMatchObject({
+        promptTokens: 80,
+        completionTokens: 25,
+        cacheReadTokens: 30,
+        totalTokens: 105,
+      });
+      expect(JSON.stringify(state)).not.toContain('GOOGLE_RAW_CANARY');
     });
   });
 

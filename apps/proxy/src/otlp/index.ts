@@ -33,18 +33,17 @@ interface Env {
 const MAX_REQUEST_SIZE = 10 * 1024 * 1024; // 10MB, pre- and post-decompression
 const JSON_CONTENT_TYPE = 'application/json';
 const PROTOBUF_CONTENT_TYPE = 'application/x-protobuf';
-const LOG_VALUE_MAX_CHARS = 256;
-const LOG_KEY_MAX_CHARS = 128;
-const LOG_MAX_SCOPE_NAMES = 10;
-const LOG_MAX_SPAN_NAMES = 10;
-const LOG_MAX_ATTR_KEYS = 50;
-// Keys we refuse to include in logs because downstream consumers (and JSON
-// serializers) treat them as object-shape metadata.
-const LOG_FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
-
 interface OTLPRejection {
   logReason: string;
   errorMessage: string;
+}
+
+interface OTLPInputFailure {
+  errorClass: 'client' | 'internal';
+  event: string;
+  status: 400 | 413 | 500;
+  message: string;
+  data?: Record<string, unknown>;
 }
 
 function otlpRejectionFor(reason: TracingDecision['reason']): OTLPRejection {
@@ -73,19 +72,48 @@ function classifyContentType(contentType: string | undefined): ParsedContentType
   return 'unsupported';
 }
 
-function truncate(s: string, max: number): string {
-  return s.length > max ? `${s.slice(0, max)}…` : s;
-}
-
-function sanitizeLogKey(key: string): string | null {
-  if (LOG_FORBIDDEN_KEYS.has(key)) return null;
-  return truncate(key, LOG_KEY_MAX_CHARS);
+function classifyInputFailure(
+  error: unknown,
+  contentType: Exclude<ParsedContentType, 'unsupported'>,
+): OTLPInputFailure {
+  if (error instanceof BodySizeLimitError) {
+    return {
+      errorClass: 'client',
+      event: 'otlp.request_too_large',
+      status: 413,
+      message: `Request body exceeds ${MAX_REQUEST_SIZE / (1024 * 1024)}MB limit`,
+      data: { actualBytes: error.receivedBytes },
+    };
+  }
+  if (error instanceof OTLPProtoDecodeError) {
+    return {
+      errorClass: 'client',
+      event: contentType === 'protobuf' ? 'otlp.protobuf_decode_failed' : 'otlp.json_parse_failed',
+      status: error.status,
+      message: error.message,
+    };
+  }
+  if (error instanceof SyntaxError && contentType === 'json') {
+    return {
+      errorClass: 'client',
+      event: 'otlp.json_parse_failed',
+      status: 400,
+      message: 'Invalid JSON in request body',
+    };
+  }
+  return {
+    errorClass: 'internal',
+    event: 'otlp.input_internal_failed',
+    status: 500,
+    message: 'Failed to process request body',
+  };
 }
 
 /**
- * Emits bounded structural metadata after auth and usage gating. Attribute values never enter logs.
+ * Emits counts after auth and usage gating. OTLP names and keys are supplied by the client and may
+ * contain customer payloads, so none of them cross the logging boundary.
  */
-function logPayloadSample(
+function logPayloadSummary(
   logger: Logger,
   body: OTLPExportTraceServiceRequest,
   encoding: ParsedContentType,
@@ -93,28 +121,10 @@ function logPayloadSample(
 ): void {
   const resourceSpanCount = body.resourceSpans.length;
   let spanCount = 0;
-  const scopeNames = new Set<string>();
-  const spanNames: string[] = [];
-  const attributeKeys = new Set<string>();
 
   for (const rs of body.resourceSpans) {
     for (const ss of rs.scopeSpans) {
-      if (ss.scope?.name && scopeNames.size < LOG_MAX_SCOPE_NAMES) {
-        scopeNames.add(truncate(ss.scope.name, LOG_KEY_MAX_CHARS));
-      }
-      for (const span of ss.spans) {
-        spanCount++;
-        if (spanNames.length < LOG_MAX_SPAN_NAMES) {
-          spanNames.push(truncate(span.name, LOG_VALUE_MAX_CHARS));
-        }
-        if (span.attributes) {
-          for (const attr of span.attributes) {
-            if (attributeKeys.size >= LOG_MAX_ATTR_KEYS) break;
-            const k = sanitizeLogKey(attr.key);
-            if (k) attributeKeys.add(k);
-          }
-        }
-      }
+      spanCount += ss.spans.length;
     }
   }
 
@@ -123,9 +133,6 @@ function logPayloadSample(
     bytes,
     resourceSpanCount,
     spanCount,
-    scopeNames: [...scopeNames],
-    spanNamesSample: spanNames,
-    attributeKeys: [...attributeKeys],
   });
 }
 
@@ -177,7 +184,9 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
   const rawContentType = c.req.header('Content-Type');
   const contentType = classifyContentType(rawContentType);
   if (contentType === 'unsupported') {
-    orgLogger.warn('otlp.unsupported_content_type', { contentType: rawContentType });
+    orgLogger.warn('otlp.unsupported_content_type', {
+      contentTypePresent: rawContentType !== undefined,
+    });
     c.executionCtx.waitUntil(orgLogger.flush());
     return c.json(
       {
@@ -221,30 +230,18 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
       body = JSON.parse(new TextDecoder().decode(decompressed)) as OTLPExportTraceServiceRequest;
     }
   } catch (err) {
-    if (err instanceof BodySizeLimitError) {
-      orgLogger.warn('otlp.request_too_large', { actualBytes: err.receivedBytes });
-      c.executionCtx.waitUntil(orgLogger.flush());
-      return c.json(
-        {
-          error: {
-            code: 413,
-            message: `Request body exceeds ${MAX_REQUEST_SIZE / (1024 * 1024)}MB limit`,
-          },
-        },
-        413,
-      );
+    const failure = classifyInputFailure(err, contentType);
+    const logData = {
+      compressed: contentEncoding !== undefined,
+      ...failure.data,
+    };
+    if (failure.errorClass === 'client') {
+      orgLogger.warn(failure.event, logData);
+    } else {
+      orgLogger.error(failure.event, err, logData);
     }
-    const event =
-      contentType === 'protobuf' ? 'otlp.protobuf_decode_failed' : 'otlp.json_parse_failed';
-    orgLogger.error(event, err, { contentEncoding });
     c.executionCtx.waitUntil(orgLogger.flush());
-    const message =
-      err instanceof OTLPProtoDecodeError
-        ? err.message
-        : contentType === 'protobuf'
-          ? 'Invalid protobuf payload'
-          : 'Invalid JSON in request body';
-    return c.json({ error: { code: 400, message } }, 400);
+    return c.json({ error: { code: failure.status, message: failure.message } }, failure.status);
   }
 
   const validation = validateOTLPRequest(body);
@@ -319,7 +316,7 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
   applyTierToTraces(traces, receivedAtNano, decision.tier);
 
   // Sample only on the success path — rejected tenants don't cost us log volume.
-  logPayloadSample(orgLogger, body, contentType, decodedBytes);
+  logPayloadSummary(orgLogger, body, contentType, decodedBytes);
 
   const message: OTLPQueueMessage = {
     type: 'otlp',

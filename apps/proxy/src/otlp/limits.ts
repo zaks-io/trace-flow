@@ -1,0 +1,18 @@
+export const OTLP_LIMITS = {
+  resourceSpans: 1_024,
+  scopeSpans: 4_096,
+  spans: 5_000,
+  decodedItems: 50_000,
+  attributes: 256,
+  events: 256,
+  links: 256,
+  nestedValues: 256,
+  attributeDepth: 8,
+  traceIdBytes: 16,
+  spanIdBytes: 8,
+  keyBytes: 1_024,
+  nameBytes: 64 * 1_024,
+  valueBytes: 256 * 1_024,
+  bytesValueRawBytes: 192 * 1_024,
+  transformedTraceBytes: 10 * 1_024 * 1_024,
+} as const;

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { SSEStreamData } from '@trace-flow/types';
 import { openai } from '../openai';
+import { MAX_SSE_EVENT_DATA_LENGTH } from '../sse-state';
 
 describe('openai provider — quirks', () => {
   describe('Responses API status → finishReason mapping', () => {
@@ -64,6 +65,66 @@ describe('openai provider — quirks', () => {
       expect(tokens?.promptTokens).toBe(10);
       expect(tokens?.completionTokens).toBe(5);
     });
+
+    it('scans an oversized terminal event without retaining its output', () => {
+      const state: SSEStreamData = { messages: [] };
+      openai.handleSSEEvent(
+        {
+          event: 'response.created',
+          data: JSON.stringify({
+            type: 'response.created',
+            response: { id: 'resp_large', object: 'response' },
+          }),
+        },
+        1000,
+        state,
+      );
+
+      const canary = `OPENAI_RESPONSES_RAW_CANARY${'x'.repeat(MAX_SSE_EVENT_DATA_LENGTH)}`;
+      openai.handleSSEEvent(
+        {
+          event: 'response.completed',
+          data: JSON.stringify({
+            type: 'response.completed',
+            response: {
+              output: [{ content: [{ type: 'output_text', text: canary }] }],
+              status: 'completed',
+              usage: { input_tokens: 144, output_tokens: 55 },
+            },
+          }),
+        },
+        1100,
+        state,
+      );
+
+      expect(state.messages[0]?.metadata?.finishReason).toBe('completed');
+      expect(state.messages[0]?.messageStop).toBe(1100);
+      expect(openai.aggregateSSETokens(state)).toMatchObject({
+        promptTokens: 144,
+        completionTokens: 55,
+      });
+      expect(JSON.stringify(state)).not.toContain('OPENAI_RESPONSES_RAW_CANARY');
+    });
+
+    it('ignores oversized non-summary Responses API events', () => {
+      const state: SSEStreamData = { messages: [] };
+      const canary = `OPENAI_DELTA_RAW_CANARY${'x'.repeat(MAX_SSE_EVENT_DATA_LENGTH)}`;
+
+      openai.handleSSEEvent(
+        {
+          event: 'response.output_text.delta',
+          data: JSON.stringify({
+            type: 'response.output_text.delta',
+            delta: canary,
+            usage: { input_tokens: 999, output_tokens: 999 },
+          }),
+        },
+        1000,
+        state,
+      );
+
+      expect(state.messages).toEqual([]);
+    });
   });
 
   describe('Chat Completions [DONE] terminator', () => {
@@ -83,6 +144,36 @@ describe('openai provider — quirks', () => {
       );
       openai.handleSSEEvent({ data: '[DONE]' }, 1100, state);
       expect(state.messages[0]?.messageStop).toBe(1100);
+    });
+
+    it('scans final usage from an oversized chat frame', () => {
+      const state: SSEStreamData = { messages: [] };
+      openai.handleSSEEvent(
+        { data: JSON.stringify({ id: 'chat_large', choices: [{ delta: { content: 'hi' } }] }) },
+        1000,
+        state,
+      );
+
+      const canary = `OPENAI_CHAT_RAW_CANARY${'x'.repeat(MAX_SSE_EVENT_DATA_LENGTH)}`;
+      openai.handleSSEEvent(
+        {
+          data: JSON.stringify({
+            choices: [{ delta: { content: canary }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 89, completion_tokens: 13 },
+          }),
+        },
+        1050,
+        state,
+      );
+      openai.handleSSEEvent({ data: '[DONE]' }, 1100, state);
+
+      expect(state.messages[0]?.metadata?.finishReason).toBe('stop');
+      expect(state.messages[0]?.messageStop).toBe(1100);
+      expect(openai.aggregateSSETokens(state)).toMatchObject({
+        promptTokens: 89,
+        completionTokens: 13,
+      });
+      expect(JSON.stringify(state)).not.toContain('OPENAI_CHAT_RAW_CANARY');
     });
   });
 
@@ -165,6 +256,38 @@ describe('openai provider — quirks', () => {
         }),
       );
       expect(tokens?.cacheReadTokens).toBe(80);
+    });
+  });
+
+  describe('bounded scalar scanning', () => {
+    it('does not retain overlong metadata or text-valued refusal and reasoning fields', () => {
+      const canary = 'OPENAI_SCALAR_RAW_CANARY';
+      const metadata = openai.parseResponseMetadata(
+        JSON.stringify({
+          id: 'i'.repeat(257),
+          model: '😀'.repeat(65),
+          refusal: `${canary}${'r'.repeat(300)}`,
+          reasoning: `${canary}${'t'.repeat(300)}`,
+        }),
+      );
+
+      expect(metadata).toEqual({ hasRefusal: true, hasReasoning: true });
+      expect(JSON.stringify(metadata)).not.toContain(canary);
+    });
+
+    it('does not accept token counters longer than 20 digits', () => {
+      const state: SSEStreamData = { messages: [] };
+      openai.handleSSEEvent(
+        {
+          data:
+            '{"choices":[],"usage":{"prompt_tokens":123456789012345678901,' +
+            '"completion_tokens":123456789012345678901}}',
+        },
+        1000,
+        state,
+      );
+
+      expect(openai.aggregateSSETokens(state)).toBeUndefined();
     });
   });
 });

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { SSEStreamData } from '@trace-flow/types';
 import { anthropic } from '../anthropic';
+import { MAX_SSE_EVENT_DATA_LENGTH } from '../sse-state';
 
 describe('anthropic provider — quirks', () => {
   describe('thinking-delta length accumulation', () => {
@@ -153,6 +154,60 @@ describe('anthropic provider — quirks', () => {
       );
       anthropic.handleSSEEvent({ event: 'message_stop', data: '{}' }, 5, state);
       expect(state.messages[0]?.messageStop).toBe(5);
+    });
+
+    it('scans usage and stop metadata from oversized summary events', () => {
+      const state: SSEStreamData = { messages: [] };
+      const canary = `ANTHROPIC_RAW_CANARY${'x'.repeat(MAX_SSE_EVENT_DATA_LENGTH)}`;
+
+      anthropic.handleSSEEvent(
+        {
+          event: 'message_start',
+          data: JSON.stringify({
+            message: {
+              irrelevant: canary,
+              id: 'msg_large',
+              model: 'claude-opus-4-7',
+              usage: {
+                input_tokens: 120,
+                cache_creation_input_tokens: 20,
+                cache_read_input_tokens: 30,
+              },
+            },
+          }),
+        },
+        1000,
+        state,
+      );
+      anthropic.handleSSEEvent(
+        {
+          event: 'message_delta',
+          data: JSON.stringify({
+            irrelevant: canary,
+            delta: { stop_reason: 'end_turn', stop_sequence: null },
+            usage: { output_tokens: 45 },
+          }),
+        },
+        1050,
+        state,
+      );
+      anthropic.handleSSEEvent({ event: 'message_stop', data: '{}' }, 1100, state);
+
+      expect(state.messages[0]?.usage).toMatchObject({
+        input_tokens: 120,
+        cache_creation_input_tokens: 20,
+        cache_read_input_tokens: 30,
+        output_tokens: 45,
+      });
+      expect(state.messages[0]?.metadata?.stopReason).toBe('end_turn');
+      expect(state.messages[0]?.messageStop).toBe(1100);
+      expect(anthropic.aggregateSSETokens(state)).toMatchObject({
+        promptTokens: 170,
+        completionTokens: 45,
+        cacheReadTokens: 30,
+        cacheCreationTokens: 20,
+      });
+      expect(JSON.stringify(state)).not.toContain('ANTHROPIC_RAW_CANARY');
     });
   });
 });
