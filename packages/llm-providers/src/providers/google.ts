@@ -91,15 +91,15 @@ function parseGoogleRequestBody(body: string): InputMessage[] | null {
   }
 }
 
-const RESPONSE_ID_PATTERN = /"responseId"\s*:\s*"([^"]+)"/;
-const MODEL_VERSION_PATTERN = /"modelVersion"\s*:\s*"([^"]+)"/;
-const FINISH_REASON_PATTERN = /"finishReason"\s*:\s*"([^"]+)"/;
+const RESPONSE_ID_PATTERN = /"responseId"\s*:\s*"([^"]{1,256})"/;
+const MODEL_VERSION_PATTERN = /"modelVersion"\s*:\s*"([^"]{1,256})"/;
+const FINISH_REASON_PATTERN = /"finishReason"\s*:\s*"([^"]{1,256})"/;
 
-const PROMPT_TOKEN_COUNT_PATTERN = /"promptTokenCount"\s*:\s*(\d+)/;
-const CANDIDATES_TOKEN_COUNT_PATTERN = /"candidatesTokenCount"\s*:\s*(\d+)/;
-const CACHED_CONTENT_TOKEN_COUNT_PATTERN = /"cachedContentTokenCount"\s*:\s*(\d+)/;
-const TOTAL_TOKEN_COUNT_PATTERN = /"totalTokenCount"\s*:\s*(\d+)/;
-const THOUGHTS_TOKEN_COUNT_PATTERN = /"thoughtsTokenCount"\s*:\s*(\d+)/;
+const PROMPT_TOKEN_COUNT_PATTERN = /"promptTokenCount"\s*:\s*(\d{1,20})(?!\d)/;
+const CANDIDATES_TOKEN_COUNT_PATTERN = /"candidatesTokenCount"\s*:\s*(\d{1,20})(?!\d)/;
+const CACHED_CONTENT_TOKEN_COUNT_PATTERN = /"cachedContentTokenCount"\s*:\s*(\d{1,20})(?!\d)/;
+const TOTAL_TOKEN_COUNT_PATTERN = /"totalTokenCount"\s*:\s*(\d{1,20})(?!\d)/;
+const THOUGHTS_TOKEN_COUNT_PATTERN = /"thoughtsTokenCount"\s*:\s*(\d{1,20})(?!\d)/;
 
 function extractMetadata(
   data: string,
@@ -117,7 +117,7 @@ function extractMetadata(
 
   const finishReasonMatch = FINISH_REASON_PATTERN.exec(data);
   const finishReason = boundedSSEMetadataValue(finishReasonMatch?.[1]);
-  if (finishReason && !metadata.finishReason) metadata.finishReason = finishReason;
+  if (finishReason) metadata.finishReason = finishReason;
 
   return metadata;
 }
@@ -164,12 +164,12 @@ function handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStre
     if (event.event) return;
     if (!event.data || event.data.trim().length === 0) return;
 
-    if (!isBoundedSSEEventData(event.data)) return;
-
-    try {
-      JSON.parse(event.data);
-    } catch {
-      return;
+    if (isBoundedSSEEventData(event.data)) {
+      try {
+        JSON.parse(event.data);
+      } catch {
+        return;
+      }
     }
 
     if (state.messages.length === 0) {

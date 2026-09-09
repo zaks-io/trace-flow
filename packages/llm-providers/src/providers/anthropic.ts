@@ -88,25 +88,24 @@ function parseAnthropicRequestBody(body: string): InputMessage[] | null {
   }
 }
 
-const ID_PATTERN = /"id"\s*:\s*"([^"]+)"/;
-const MODEL_PATTERN = /"model"\s*:\s*"([^"]+)"/;
-const STOP_REASON_PATTERN = /"stop_reason"\s*:\s*(?:null|"([^"]+)")/;
-const STOP_SEQUENCE_PATTERN = /"stop_sequence"\s*:\s*(?:null|"([^"]+)")/;
+const ID_PATTERN = /"id"\s*:\s*"([^"]{1,256})"/;
+const MODEL_PATTERN = /"model"\s*:\s*"([^"]{1,256})"/;
+const STOP_REASON_PATTERN = /"stop_reason"\s*:\s*(?:null|"([^"]{1,256})")/;
+const STOP_SEQUENCE_PATTERN = /"stop_sequence"\s*:\s*(?:null|"([^"]{1,256})")/;
 
-const INPUT_TOKENS_PATTERN = /"input_tokens"\s*:\s*(\d+)/;
-const OUTPUT_TOKENS_PATTERN = /"output_tokens"\s*:\s*(\d+)/;
-const CACHE_CREATION_PATTERN = /"cache_creation_input_tokens"\s*:\s*(\d+)/;
-const CACHE_READ_PATTERN = /"cache_read_input_tokens"\s*:\s*(\d+)/;
-const EPHEMERAL_5M_PATTERN = /"ephemeral_5m_input_tokens"\s*:\s*(\d+)/;
-const EPHEMERAL_1H_PATTERN = /"ephemeral_1h_input_tokens"\s*:\s*(\d+)/;
+const INPUT_TOKENS_PATTERN = /"input_tokens"\s*:\s*(\d{1,20})(?!\d)/;
+const OUTPUT_TOKENS_PATTERN = /"output_tokens"\s*:\s*(\d{1,20})(?!\d)/;
+const CACHE_CREATION_PATTERN = /"cache_creation_input_tokens"\s*:\s*(\d{1,20})(?!\d)/;
+const CACHE_READ_PATTERN = /"cache_read_input_tokens"\s*:\s*(\d{1,20})(?!\d)/;
+const EPHEMERAL_5M_PATTERN = /"ephemeral_5m_input_tokens"\s*:\s*(\d{1,20})(?!\d)/;
+const EPHEMERAL_1H_PATTERN = /"ephemeral_1h_input_tokens"\s*:\s*(\d{1,20})(?!\d)/;
 
-const CONTENT_BLOCK_INDEX_PATTERN = /"index"\s*:\s*(\d+)/;
+const CONTENT_BLOCK_INDEX_PATTERN = /"index"\s*:\s*(\d{1,20})(?!\d)/;
 const CONTENT_BLOCK_TYPE_PATTERN =
   /"content_block"\s*:\s*\{[^}]*"type"\s*:\s*"(text|tool_use|thinking)"/;
-const TOOL_USE_ID_PATTERN = /"content_block"\s*:\s*\{[^}]*"id"\s*:\s*"([^"]+)"/;
-const TOOL_USE_NAME_PATTERN = /"content_block"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"/;
-const THINKING_DELTA_TYPE_PATTERN = /"type"\s*:\s*"thinking_delta"/;
-const THINKING_DELTA_TEXT_PATTERN = /"thinking"\s*:\s*"((?:[^"\\]|\\.)*)"/;
+const TOOL_USE_ID_PATTERN = /"content_block"\s*:\s*\{[^}]*"id"\s*:\s*"([^"]{1,256})"/;
+const TOOL_USE_NAME_PATTERN = /"content_block"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]{1,256})"/;
+const OVERSIZED_ANTHROPIC_EVENT_TYPES = new Set(['message_start', 'message_delta', 'message_stop']);
 
 function extractMetadata(
   data: string,
@@ -199,16 +198,38 @@ function parseContentBlockStopIndex(data: string): number | null {
   return match?.[1] ? parseInt(match[1], 10) : null;
 }
 
+function parseThinkingDelta(data: unknown): { index: number; textLength: number } | null {
+  if (!data || typeof data !== 'object') return null;
+
+  const candidate = data as {
+    index?: unknown;
+    delta?: { type?: unknown; thinking?: unknown };
+  };
+  if (
+    !Number.isInteger(candidate.index) ||
+    candidate.delta?.type !== 'thinking_delta' ||
+    typeof candidate.delta.thinking !== 'string'
+  ) {
+    return null;
+  }
+
+  return { index: candidate.index as number, textLength: candidate.delta.thinking.length };
+}
+
 function handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStreamData): void {
   try {
     const eventType = event.event;
     if (!eventType) return;
 
+    let parsedEventData: unknown;
     if (event.data && event.data.trim().length > 0) {
-      if (!isBoundedSSEEventData(event.data)) return;
-      try {
-        JSON.parse(event.data);
-      } catch {
+      if (isBoundedSSEEventData(event.data)) {
+        try {
+          parsedEventData = JSON.parse(event.data);
+        } catch {
+          return;
+        }
+      } else if (!OVERSIZED_ANTHROPIC_EVENT_TYPES.has(eventType)) {
         return;
       }
     }
@@ -244,22 +265,12 @@ function handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStre
       }
     }
 
-    if (eventType === 'content_block_delta' && event.data && current.contentBlocks) {
-      if (THINKING_DELTA_TYPE_PATTERN.test(event.data)) {
-        const indexMatch = CONTENT_BLOCK_INDEX_PATTERN.exec(event.data);
-        const textMatch = THINKING_DELTA_TEXT_PATTERN.exec(event.data);
-        if (indexMatch?.[1] && textMatch?.[1]) {
-          const blockIndex = parseInt(indexMatch[1], 10);
-          const block = current.contentBlocks.find((b) => b.index === blockIndex);
-          if (block) {
-            let decodedLength: number;
-            try {
-              decodedLength = (JSON.parse(`"${textMatch[1]}"`) as string).length;
-            } catch {
-              decodedLength = textMatch[1].length;
-            }
-            block.thinkingTextLength = (block.thinkingTextLength ?? 0) + decodedLength;
-          }
+    if (eventType === 'content_block_delta' && current.contentBlocks) {
+      const thinkingDelta = parseThinkingDelta(parsedEventData);
+      if (thinkingDelta) {
+        const block = current.contentBlocks.find((item) => item.index === thinkingDelta.index);
+        if (block) {
+          block.thinkingTextLength = (block.thinkingTextLength ?? 0) + thinkingDelta.textLength;
         }
       }
     }

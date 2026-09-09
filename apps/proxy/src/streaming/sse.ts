@@ -1,6 +1,6 @@
 import { createParser, type EventSourceParser } from 'eventsource-parser';
 import { getCurrentTimestamp } from '@trace-flow/utils';
-import { MAX_SSE_RETAINED_EVENTS, type Provider } from '@trace-flow/llm-providers';
+import type { Provider } from '@trace-flow/llm-providers';
 import type { SSEStreamData } from '@trace-flow/types';
 
 /**
@@ -10,13 +10,8 @@ import type { SSEStreamData } from '@trace-flow/types';
  * live behind the Provider seam — this file just routes.
  */
 export function createSSEParser(streamData: SSEStreamData, provider: Provider): EventSourceParser {
-  let dispatchedEvents = 0;
-
   return createParser({
     onEvent(event) {
-      if (dispatchedEvents >= MAX_SSE_RETAINED_EVENTS) return;
-      dispatchedEvents++;
-
       const timestamp = getCurrentTimestamp();
       provider.handleSSEEvent(event, timestamp, streamData);
     },

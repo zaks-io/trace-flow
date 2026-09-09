@@ -102,28 +102,37 @@ export function parseOpenAIStyleRequestBody(body: string): InputMessage[] | null
   }
 }
 
-const ID_PATTERN = /"id"\s*:\s*"([^"]+)"/;
-const MODEL_PATTERN = /"model"\s*:\s*"([^"]+)"/;
-const OBJECT_PATTERN = /"object"\s*:\s*"([^"]+)"/;
-const CREATED_PATTERN = /"created"\s*:\s*(\d+)/;
-const CREATED_AT_PATTERN = /"created_at"\s*:\s*(\d+)/;
-const FINISH_REASON_PATTERN = /"finish_reason"\s*:\s*"([^"]+)"/;
-const NATIVE_FINISH_REASON_PATTERN = /"native_finish_reason"\s*:\s*"([^"]+)"/;
-const RESPONSE_STATUS_PATTERN = /"status"\s*:\s*"([^"]+)"/;
+const ID_PATTERN = /"id"\s*:\s*"([^"]{1,256})"/;
+const MODEL_PATTERN = /"model"\s*:\s*"([^"]{1,256})"/;
+const OBJECT_PATTERN = /"object"\s*:\s*"([^"]{1,256})"/;
+const CREATED_PATTERN = /"created"\s*:\s*(\d{1,20})(?!\d)/;
+const CREATED_AT_PATTERN = /"created_at"\s*:\s*(\d{1,20})(?!\d)/;
+const FINISH_REASON_PATTERN = /"finish_reason"\s*:\s*"([^"]{1,256})"/;
+const NATIVE_FINISH_REASON_PATTERN = /"native_finish_reason"\s*:\s*"([^"]{1,256})"/;
+const RESPONSE_STATUS_PATTERN = /"status"\s*:\s*"([^"]{1,256})"/;
 const RESPONSES_API_MARKER = /"object"\s*:\s*"response"|"type"\s*:\s*"response\./;
 const TERMINAL_RESPONSE_STATUSES = new Set(['completed', 'failed', 'incomplete', 'cancelled']);
-const REASONING_TOKENS_PATTERN = /"reasoning_tokens"\s*:\s*(\d+)/;
+const OVERSIZED_RESPONSES_EVENT_TYPES = new Set([
+  'response.created',
+  'response.completed',
+  'response.failed',
+  'response.incomplete',
+]);
+const REASONING_TOKENS_PATTERN = /"reasoning_tokens"\s*:\s*(\d{1,20})(?!\d)/;
 const HAS_LOGPROBS_PATTERN = /"logprobs"\s*:\s*(?:null|{)/;
-const REFUSAL_PATTERN = /"refusal"\s*:\s*(?:null|"([^"]*)")/;
-const REASONING_PATTERN = /"reasoning"\s*:\s*(?:null|"([^"]*)")/;
+const REFUSAL_STRING_PATTERN = /"refusal"\s*:\s*"/;
+const REFUSAL_NULL_PATTERN = /"refusal"\s*:\s*null/;
+const REASONING_STRING_PATTERN = /"reasoning"\s*:\s*"/;
+const REASONING_NULL_PATTERN = /"reasoning"\s*:\s*null/;
 
-const INPUT_TOKENS_PATTERN = /"input_tokens"\s*:\s*(\d+)/;
-const OUTPUT_TOKENS_PATTERN = /"output_tokens"\s*:\s*(\d+)/;
-const PROMPT_TOKENS_PATTERN = /"prompt_tokens"\s*:\s*(\d+)/;
-const COMPLETION_TOKENS_PATTERN = /"completion_tokens"\s*:\s*(\d+)/;
-const CACHED_TOKENS_PATTERN = /"cached_tokens"\s*:\s*(\d+)/;
-const CACHE_WRITE_TOKENS_PATTERN = /"cache_write_tokens"\s*:\s*(\d+)/;
-const UPSTREAM_COST_PATTERN = /"usage"[\s\S]*?"cost"\s*:\s*([0-9.eE+-]+)/;
+const INPUT_TOKENS_PATTERN = /"input_tokens"\s*:\s*(\d{1,20})(?!\d)/;
+const OUTPUT_TOKENS_PATTERN = /"output_tokens"\s*:\s*(\d{1,20})(?!\d)/;
+const PROMPT_TOKENS_PATTERN = /"prompt_tokens"\s*:\s*(\d{1,20})(?!\d)/;
+const COMPLETION_TOKENS_PATTERN = /"completion_tokens"\s*:\s*(\d{1,20})(?!\d)/;
+const CACHED_TOKENS_PATTERN = /"cached_tokens"\s*:\s*(\d{1,20})(?!\d)/;
+const CACHE_WRITE_TOKENS_PATTERN = /"cache_write_tokens"\s*:\s*(\d{1,20})(?!\d)/;
+const UPSTREAM_COST_PATTERN =
+  /"usage"[\s\S]*?"cost"\s*:\s*([+-]?(?:\d{1,20}(?:\.\d{1,20})?|\.\d{1,20})(?:[eE][+-]?\d{1,3})?)(?![0-9.eE+-])/;
 
 function runRegex(pattern: RegExp, data: string): RegExpExecArray | null {
   return pattern.exec(data);
@@ -182,22 +191,16 @@ function extractOpenAIStyleMetadata(
     metadata.hasLogprobs = true;
   }
 
-  const refusalMatch = runRegex(REFUSAL_PATTERN, data);
-  if (refusalMatch) {
-    if (refusalMatch[1] !== undefined) {
-      metadata.hasRefusal = true;
-    } else {
-      metadata.hasRefusal ??= false;
-    }
+  if (REFUSAL_STRING_PATTERN.test(data)) {
+    metadata.hasRefusal = true;
+  } else if (REFUSAL_NULL_PATTERN.test(data)) {
+    metadata.hasRefusal ??= false;
   }
 
-  const reasoningMatch = runRegex(REASONING_PATTERN, data);
-  if (reasoningMatch) {
-    if (reasoningMatch[1] !== undefined) {
-      metadata.hasReasoning = true;
-    } else {
-      metadata.hasReasoning ??= false;
-    }
+  if (REASONING_STRING_PATTERN.test(data)) {
+    metadata.hasReasoning = true;
+  } else if (REASONING_NULL_PATTERN.test(data)) {
+    metadata.hasReasoning ??= false;
   }
 
   return metadata;
@@ -279,11 +282,12 @@ export function handleOpenAIStyleSSEEvent(
 
       if (!event.data || event.data.trim().length === 0) return;
 
-      try {
-        if (!isBoundedSSEEventData(event.data)) return;
-        JSON.parse(event.data);
-      } catch {
-        return;
+      if (isBoundedSSEEventData(event.data)) {
+        try {
+          JSON.parse(event.data);
+        } catch {
+          return;
+        }
       }
 
       if (state.messages.length === 0) {
@@ -307,10 +311,13 @@ export function handleOpenAIStyleSSEEvent(
     }
 
     if (event.data && event.data.trim().length > 0) {
-      if (!isBoundedSSEEventData(event.data)) return;
-      try {
-        JSON.parse(event.data);
-      } catch {
+      if (isBoundedSSEEventData(event.data)) {
+        try {
+          JSON.parse(event.data);
+        } catch {
+          return;
+        }
+      } else if (!OVERSIZED_RESPONSES_EVENT_TYPES.has(eventType)) {
         return;
       }
     }
