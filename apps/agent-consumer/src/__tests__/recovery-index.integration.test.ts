@@ -92,3 +92,96 @@ it('indexes existing recovery records without deleting duplicate repairs and bou
     ).toBe(10_002);
   });
 });
+
+it('counts blocked recovery rows from the bounded recovery-items side of the join', async () => {
+  const batcher = env.AGENT_FACT_BATCHER.get(env.AGENT_FACT_BATCHER.newUniqueId());
+  await runInDurableObject(batcher, (_instance: AgentFactBatcherInstance, state) => {
+    const sql = state.storage.sql;
+    sql.exec(`
+      WITH RECURSIVE rows(n) AS (
+        SELECT 1 UNION ALL SELECT n + 1 FROM rows WHERE n < 77910
+      )
+      INSERT INTO recovery_records
+        (kind, state, classification, target, target_key, dedupe_key, payload, outcome, created_at_ms)
+      SELECT 'repair', 'blocked', 'changed', NULL, NULL, 'repair-' || n, '', '', 0 FROM rows
+    `);
+    const measured = {
+      cursor: { rowsRead: -1 } as { readonly rowsRead: number },
+    };
+    let blockedRowsQuery: string | undefined;
+    const measuredSql = new Proxy(sql, {
+      get(target, property, receiver) {
+        if (property === 'exec') {
+          const exec = target.exec.bind(target);
+          return (query: string, ...args: unknown[]) => {
+            const cursor = exec(query, ...args);
+            if (query.includes('FROM recovery_items AS i')) {
+              measured.cursor = cursor;
+              blockedRowsQuery = query;
+            }
+            return cursor;
+          };
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const measuredStorage: DurableObjectStorage = new Proxy(state.storage, {
+      get(target, property, receiver) {
+        if (property === 'sql') return measuredSql;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const recovery = new TinybirdRecoveryStore(measuredStorage);
+    const countBlocked = () => {
+      measured.cursor = { rowsRead: -1 };
+      const count = recovery.countBlockedRows();
+      const rowsRead = measured.cursor.rowsRead;
+      if (rowsRead < 0) throw new Error('countBlockedRows did not execute its rows query');
+      return { count, rowsRead };
+    };
+
+    expect(countBlocked()).toEqual({ count: 0, rowsRead: 1 });
+
+    sql.exec(`
+      INSERT INTO recovery_records
+        (kind, state, classification, target, target_key, payload, outcome, created_at_ms)
+      VALUES ('tinybird_insert', 'blocked', 'uncertain', 'facts', 'pending_facts:messages', '', '', 1)
+    `);
+    const blockedId = sql.exec<{ id: number }>('SELECT last_insert_rowid() AS id').one().id;
+    sql.exec(
+      `INSERT INTO recovery_items (recovery_id, row_id, target_key) VALUES (?, 1, ?)`,
+      blockedId,
+      'pending_facts:messages',
+    );
+    expect(countBlocked()).toEqual({ count: 1, rowsRead: 2 });
+
+    sql.exec(`
+      INSERT INTO recovery_records
+        (kind, state, classification, target, target_key, payload, outcome, created_at_ms)
+      VALUES
+        ('tinybird_insert', 'in_flight', NULL, 'facts', 'pending_facts:messages', '', '', 2),
+        ('tinybird_insert', 'resolved', 'uncertain', 'facts', 'pending_facts:messages', '', '', 3)
+    `);
+    const resolvedId = sql.exec<{ id: number }>('SELECT last_insert_rowid() AS id').one().id;
+    const inFlightId = resolvedId - 1;
+    sql.exec(
+      `INSERT INTO recovery_items (recovery_id, row_id, target_key) VALUES
+         (?, 2, ?), (?, 3, ?), (?, 4, ?)`,
+      blockedId,
+      'pending_facts:messages',
+      inFlightId,
+      'pending_facts:messages',
+      resolvedId,
+      'pending_facts:messages',
+    );
+
+    expect(countBlocked()).toEqual({ count: 2, rowsRead: 6 });
+    if (!blockedRowsQuery) throw new Error('countBlockedRows did not expose its rows query');
+    const plan = sql
+      .exec<{ detail: string }>(`EXPLAIN QUERY PLAN ${blockedRowsQuery}`)
+      .toArray()
+      .map((row) => row.detail)
+      .join('\n');
+    expect(plan).toContain('SCAN i');
+  });
+});

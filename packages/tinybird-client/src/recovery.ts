@@ -324,8 +324,9 @@ export class TinybirdRecoveryStore {
   countBlockedRows(): number {
     return this.storage.sql
       .exec<{ count: number }>(
+        // Repair records have no items, so drive this count from items instead of probing every repair.
         `SELECT COUNT(*) AS count FROM recovery_items AS i
-       JOIN recovery_records AS r ON r.id = i.recovery_id WHERE r.state = 'blocked'`,
+       CROSS JOIN recovery_records AS r ON r.id = i.recovery_id WHERE r.state = 'blocked'`,
       )
       .one().count;
   }
