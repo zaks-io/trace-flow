@@ -576,6 +576,7 @@ jobs:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     if: always()
     needs:
+      - ci
       - deploy-convex
       - deploy-web
       - deploy-proxy
