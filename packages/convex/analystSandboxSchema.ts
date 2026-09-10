@@ -80,6 +80,13 @@ export const sandboxRunFields = {
   // Atomic proxy budget reservations. Optional keeps existing run rows readable.
   inferenceRequestCount: v.optional(v.number()),
   inferenceReservedOutputTokens: v.optional(v.number()),
+  checkpointCount: v.optional(v.number()),
+  checkpointReservation: v.optional(v.number()),
+  completionAttemptCount: v.optional(v.number()),
+  completionReservation: v.optional(v.number()),
+  completionReservationStatus: v.optional(sandboxRunTerminalStatus),
+  completionReservedAt: v.optional(v.number()),
+  pendingBackupCleanupIds: v.optional(v.array(v.string())),
 };
 
 export const sandboxRunEventFields = {

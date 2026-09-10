@@ -18,3 +18,9 @@
     {"tool_name":"Bash","command_family":"git","current_count":5,"prior_count":2,"count_delta":3,"current_failures":1,"prior_failures":0,"failure_delta":1}
     {"tool_name":"Bash","command_family":"npm","current_count":5,"prior_count":2,"count_delta":3,"current_failures":3,"prior_failures":1,"failure_delta":2}
     {"tool_name":"Read","command_family":"grep","current_count":1,"prior_count":0,"count_delta":1,"current_failures":1,"prior_failures":0,"failure_delta":1}
+
+- name: expired_visibility_window
+  description: explicit historical time bounds cannot expose fixtures outside the signed seven-day visibility window
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=7
+  expected_result: ''

@@ -6,6 +6,8 @@ export default defineConfig({
     cloudflareTest({
       miniflare: {
         bindings: {
+          CONVEX_SITE_URL: 'https://convex.test',
+          USAGE_SYNC_SECRET: 'test-secret',
           BODY_ENCRYPTION_ROOT_KEY: 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=',
           BODY_ENCRYPTION_KEY_ID: 'v1',
         },

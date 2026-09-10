@@ -121,7 +121,20 @@ function compactSpanFlood(): Uint8Array {
 }
 
 describe('OTLP durable acceptance', () => {
-  beforeEach(() => _clearUsageCache());
+  beforeEach(() => {
+    _clearUsageCache();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json({
+          authorized: true,
+          expiresAt: Date.now() + 60_000,
+          createdAt: 1,
+          orgId: 'org-otlp',
+        }),
+      ),
+    );
+  });
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();

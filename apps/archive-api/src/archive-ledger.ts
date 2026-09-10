@@ -15,6 +15,14 @@ import {
   scheduleLedgerRecovery,
 } from './archive-ledger-recovery';
 import { ensurePendingReleaseSchema } from './archive-ledger-release-outbox';
+import { readLedgerSnapshot } from './archive-ledger-storage';
+import { readPendingIntent } from './archive-ledger-intent';
+import {
+  assertArchiveWritable,
+  clearLedgerSqlState,
+  ledgerErasureOrgId,
+  markLedgerErased,
+} from './archive-erasure-state';
 
 export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
   private commitQueue: Promise<void> = Promise.resolve();
@@ -74,6 +82,7 @@ export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
           : undefined;
       assertIncomingObservationCount(upload);
       const turn = this.commitQueue.then(async () => {
+        await assertArchiveWritable(this.ctx.storage);
         await armLedgerRecovery(this.ctx.storage);
         const result = await commitArchiveSession(this.ctx.storage, this.env, body).then(
           (acknowledgement) => ({ acknowledgement }),
@@ -121,6 +130,15 @@ export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
 
   async alarm(): Promise<void> {
     const turn = this.commitQueue.then(async () => {
+      try {
+        await assertArchiveWritable(this.ctx.storage);
+      } catch (error) {
+        if (error instanceof ArchiveContractError && error.errorClass === 'archive_deleting') {
+          await this.ctx.storage.deleteAlarm();
+          return;
+        }
+        throw error;
+      }
       let retry = true;
       try {
         await resumeLedgerRecovery(this.ctx.storage, this.env);
@@ -147,5 +165,36 @@ export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
       () => undefined,
     );
     await turn;
+  }
+
+  eraseArchive(input: {
+    orgId: string;
+    trustedRegistered?: boolean;
+  }): Promise<{ erased: boolean; reason?: 'foreign_or_uninitialized' }> {
+    const turn = this.commitQueue.then(async () => {
+      const erasedOrgId = await ledgerErasureOrgId(this.ctx.storage);
+      if (erasedOrgId !== undefined && erasedOrgId !== input.orgId) {
+        throw new ArchiveContractError('ledger_scope_mismatch');
+      }
+      const snapshot = readLedgerSnapshot(this.ctx.storage);
+      const pending = readPendingIntent(this.ctx.storage);
+      const storedOrgId = erasedOrgId ?? snapshot.scope?.orgId ?? pending?.commit?.scope.orgId;
+      if (storedOrgId !== undefined && storedOrgId !== input.orgId) {
+        if (input.trustedRegistered) throw new ArchiveContractError('ledger_scope_mismatch');
+        return { erased: false as const, reason: 'foreign_or_uninitialized' as const };
+      }
+      if (storedOrgId === undefined && !input.trustedRegistered) {
+        return { erased: false as const, reason: 'foreign_or_uninitialized' as const };
+      }
+      await markLedgerErased(this.ctx.storage, input.orgId);
+      await this.ctx.storage.deleteAlarm();
+      clearLedgerSqlState(this.ctx.storage);
+      return { erased: true as const };
+    });
+    this.commitQueue = turn.then(
+      () => undefined,
+      () => undefined,
+    );
+    return turn;
   }
 }

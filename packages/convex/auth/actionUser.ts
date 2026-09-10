@@ -13,5 +13,9 @@ export async function requireEnabledActionUser(ctx: ActionCtx): Promise<Doc<'use
   if (!user.enabled) {
     throw new Error('User account is not enabled. Please contact support.');
   }
+  const active = await ctx.runQuery(internal.auth.users.hasActiveOrganizationMembership, {
+    userId: user._id,
+  });
+  if (!active) throw new Error('Active organization membership required');
   return user;
 }

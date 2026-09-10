@@ -59,6 +59,14 @@ function makeDeleteCtx(batchCounts: DeleteCounts[]) {
         mutationIndex++;
         return Promise.resolve(null);
       }
+      if (mutationIndex === 1) {
+        mutationIndex++;
+        return Promise.resolve({
+          keyVersionsDeleted: 0,
+          custodyDeleted: 0,
+          hasMore: false,
+        });
+      }
       mutationIndex++;
       if (batchIndex < batchCounts.length) {
         const counts = batchCounts[batchIndex];
@@ -118,6 +126,27 @@ describe('admin.deleteOrgData', () => {
     expect(ctx.runMutation.mock.calls[0]?.[1]).toEqual({ orgId: 'org_1' });
     expect(ctx.runMutation.mock.invocationCallOrder[0]).toBeLessThan(
       ctx.runAction.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('destroys archive keys before erasing archive objects and Tinybird rows', async () => {
+    const ctx = makeDeleteCtx([emptyCounts()]);
+    const handler = (deleteOrgData as unknown as { _handler: DeleteHandler })._handler;
+
+    await handler(ctx, { orgId: 'org_1' });
+
+    expect(ctx.runAction).toHaveBeenCalledTimes(4);
+    expect(ctx.runAction.mock.invocationCallOrder[0]).toBeLessThan(
+      ctx.runAction.mock.invocationCallOrder[1]!,
+    );
+    expect(ctx.runMutation.mock.invocationCallOrder[1]).toBeGreaterThan(
+      ctx.runAction.mock.invocationCallOrder[1]!,
+    );
+    expect(ctx.runMutation.mock.invocationCallOrder[1]).toBeLessThan(
+      ctx.runAction.mock.invocationCallOrder[2]!,
+    );
+    expect(ctx.runAction.mock.invocationCallOrder[2]).toBeLessThan(
+      ctx.runAction.mock.invocationCallOrder[3]!,
     );
   });
 });

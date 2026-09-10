@@ -34,6 +34,7 @@ SQL >
     )
     WHERE message_count > 0
         AND last_event_at >= start_dt
+        AND last_event_at >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
         AND last_event_at < end_dt
         {% if defined(sources) %}
         AND source IN splitByChar(',', {{ String(sources) }})

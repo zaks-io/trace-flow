@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/nextjs';
 import { useEffect } from 'react';
 import { AlertCircle, RotateCcw, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { LogoutLink } from '@/components/LogoutLink';
 
 export default function Error({
   error,
@@ -48,10 +49,10 @@ export default function Error({
             Try again
           </Button>
           <Button asChild variant="outline" className="w-full sm:flex-1">
-            <a href="/auth/logout">
+            <LogoutLink>
               <LogOut className="mr-2 h-4 w-4" />
               Sign out
-            </a>
+            </LogoutLink>
           </Button>
         </div>
       </div>

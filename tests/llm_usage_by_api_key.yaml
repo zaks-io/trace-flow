@@ -1,0 +1,34 @@
+# Existing otel_trace_spans fixtures contain key_proj requests dated 2026-05-27.
+# Each interval selects a distinct rollup branch; a seven-day signed floor must hide them.
+
+- name: expired_hourly_visibility
+  description: historical time bounds cannot bypass the signed tier floor in the hourly rollup
+  expected_http_status: 200
+  parameters: api_keys=sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953&start_time_ns=1779753600000000000&end_time_ns=1779926400000000000&retention_days=7
+  expected_result: ''
+
+- name: expired_daily_visibility
+  description: historical time bounds cannot bypass the signed tier floor in the daily rollup
+  expected_http_status: 200
+  parameters: api_keys=sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953&start_time_ns=1775001600000000000&end_time_ns=1782864000000000000&retention_days=7
+  expected_result: ''
+
+- name: expired_monthly_visibility
+  description: historical time bounds cannot bypass the signed tier floor in the monthly rollup
+  expected_http_status: 200
+  parameters: api_keys=sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953&start_time_ns=1767225600000000000&end_time_ns=1798761600000000000&retention_days=7
+  expected_result: ''
+
+- name: authorized_daily_visibility
+  description: a signed long visibility window retains the five known key_proj fixture requests
+  expected_http_status: 200
+  parameters: api_keys=sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953&start_time_ns=1775001600000000000&end_time_ns=1782864000000000000&retention_days=3650
+  expected_result: |
+    {"api_key":"sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953","request_count":5,"input_tokens":50900,"uncached_input_tokens":50900,"output_tokens":25450,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"reasoning_tokens":0,"total_cost_usd":4.09,"input_cost_usd":2.045,"output_cost_usd":2.045,"cache_read_cost_usd":0,"cache_creation_cost_usd":0,"reasoning_cost_usd":0,"prompt_baseline_cost_usd":2.045,"cache_impact_cost_usd":0,"upstream_cost_usd":0,"total_tokens":76350,"avg_duration_ms":2520,"max_duration_ms":8000,"p95_duration_ms":6659.999999999999}
+
+- name: authorized_monthly_visibility
+  description: a signed long visibility window retains the five known key_proj fixture requests
+  expected_http_status: 200
+  parameters: api_keys=sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953&start_time_ns=1767225600000000000&end_time_ns=1798761600000000000&retention_days=3650
+  expected_result: |
+    {"api_key":"sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953","request_count":5,"input_tokens":50900,"uncached_input_tokens":50900,"output_tokens":25450,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"reasoning_tokens":0,"total_cost_usd":4.09,"input_cost_usd":2.045,"output_cost_usd":2.045,"cache_read_cost_usd":0,"cache_creation_cost_usd":0,"reasoning_cost_usd":0,"prompt_baseline_cost_usd":2.045,"cache_impact_cost_usd":0,"upstream_cost_usd":0,"total_tokens":76350,"avg_duration_ms":2520,"max_duration_ms":8000,"p95_duration_ms":6659.999999999999}

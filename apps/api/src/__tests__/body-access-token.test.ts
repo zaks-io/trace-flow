@@ -13,6 +13,7 @@ async function signBodyToken(overrides: Record<string, unknown> = {}) {
   const now = Math.floor(Date.now() / 1000);
   return new SignJWT({
     sub: 'auth0|user-1',
+    userId: 'j57axc8sefsfp6k28nx6c481js806pwv',
     orgId: 'org_123',
     requestId: 'req_123',
     scope: BODY_ACCESS_TOKEN_SCOPE,
@@ -39,6 +40,7 @@ describe('body access tokens', () => {
 
     await expect(verifyBodyAccessToken(token, SECRET)).resolves.toEqual({
       sub: 'auth0|user-1',
+      userId: 'j57axc8sefsfp6k28nx6c481js806pwv',
       orgId: 'org_123',
       requestId: 'req_123',
       scope: BODY_ACCESS_TOKEN_SCOPE,
@@ -53,6 +55,12 @@ describe('body access tokens', () => {
 
   it('rejects wrong scope', async () => {
     const token = await signBodyToken({ scope: 'api:read' });
+
+    await expect(verifyBodyAccessToken(token, SECRET)).resolves.toBeNull();
+  });
+
+  it('rejects tokens without the user id required for live authorization', async () => {
+    const token = await signBodyToken({ userId: undefined });
 
     await expect(verifyBodyAccessToken(token, SECRET)).resolves.toBeNull();
   });

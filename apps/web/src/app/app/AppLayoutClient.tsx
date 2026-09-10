@@ -4,6 +4,7 @@ import { type Preloaded, useConvexAuth, usePreloadedQuery, useQuery } from 'conv
 import { type FunctionReturnType } from 'convex/server';
 import { api } from '@trace-flow/convex/_generated/api';
 import { Providers } from '@/components/providers/Providers';
+import { QueryCacheProvider } from '@/components/providers/QueryCacheProvider';
 import { AppSidebar } from '@/components/AppSidebar';
 import { AdminProvider } from '@/components/admin/AdminContext';
 import { AnalystProvider } from '@/components/analyst/AnalystContext';
@@ -45,69 +46,102 @@ function RequireAuth({
 
 function AppLayoutInnerWithPreload({
   preloadedSessionContext,
+  cacheUserId,
   children,
 }: {
   preloadedSessionContext: Preloaded<SessionContext>;
+  cacheUserId: string;
   children: React.ReactNode;
 }) {
   const data = usePreloadedQuery(preloadedSessionContext);
-  return <AppLayoutContent data={data}>{children}</AppLayoutContent>;
+  return (
+    <AppLayoutContent data={data} cacheUserId={cacheUserId}>
+      {children}
+    </AppLayoutContent>
+  );
 }
 
-function AppLayoutInnerWithQuery({ children }: { children: React.ReactNode }) {
+function AppLayoutInnerWithQuery({
+  cacheUserId,
+  children,
+}: {
+  cacheUserId: string;
+  children: React.ReactNode;
+}) {
   const data = useQuery(api.app.sessionContext);
 
   if (data === undefined) {
     return <FullScreenSpinner />;
   }
 
-  return <AppLayoutContent data={data}>{children}</AppLayoutContent>;
+  return (
+    <AppLayoutContent data={data} cacheUserId={cacheUserId}>
+      {children}
+    </AppLayoutContent>
+  );
 }
 
 function AppLayoutContent({
   data,
+  cacheUserId,
   children,
 }: {
   data: FunctionReturnType<SessionContext>;
+  cacheUserId: string;
   children: React.ReactNode;
 }) {
   useUserInitialization();
   const analystEnabled = data.subscription?.tier === 'pro' && data.subscription.status === 'active';
+  const cacheIdentity = JSON.stringify([cacheUserId, data.user?.orgId ?? null]);
 
   return (
-    <AdminProvider value={data.isAdmin}>
-      <AnalystProvider enabled={analystEnabled}>
-        <SidebarProvider>
-          <AppSidebar isAdmin={data.isAdmin} />
-          <div className="flex min-w-0 flex-1">
-            <SidebarInset>
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-6 lg:p-8">
-                {children}
-              </div>
-            </SidebarInset>
-            {analystEnabled && <AnalystSidebar />}
-          </div>
-        </SidebarProvider>
-      </AnalystProvider>
-    </AdminProvider>
+    <QueryCacheProvider
+      key={cacheIdentity}
+      identity={cacheIdentity}
+      fallback={<FullScreenSpinner />}
+    >
+      <AdminProvider value={data.isAdmin}>
+        <AnalystProvider enabled={analystEnabled}>
+          <SidebarProvider>
+            <AppSidebar isAdmin={data.isAdmin} />
+            <div className="flex min-w-0 flex-1">
+              <SidebarInset>
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-6 lg:p-8">
+                  {children}
+                </div>
+              </SidebarInset>
+              {analystEnabled && <AnalystSidebar />}
+            </div>
+          </SidebarProvider>
+        </AnalystProvider>
+      </AdminProvider>
+    </QueryCacheProvider>
   );
 }
 
 interface AppLayoutClientProps {
   preloadedSessionContext: Preloaded<SessionContext> | null;
+  cacheUserId: string;
   children: React.ReactNode;
 }
 
-export function AppLayoutClient({ preloadedSessionContext, children }: AppLayoutClientProps) {
+export function AppLayoutClient({
+  preloadedSessionContext,
+  cacheUserId,
+  children,
+}: AppLayoutClientProps) {
   return (
     <Providers>
       <RequireAuth hasPreloadedData={preloadedSessionContext !== null}>
         {preloadedSessionContext ? (
-          <AppLayoutInnerWithPreload preloadedSessionContext={preloadedSessionContext}>
+          <AppLayoutInnerWithPreload
+            preloadedSessionContext={preloadedSessionContext}
+            cacheUserId={cacheUserId}
+          >
             {children}
           </AppLayoutInnerWithPreload>
         ) : (
-          <AppLayoutInnerWithQuery>{children}</AppLayoutInnerWithQuery>
+          <AppLayoutInnerWithQuery cacheUserId={cacheUserId}>{children}</AppLayoutInnerWithQuery>
         )}
       </RequireAuth>
     </Providers>

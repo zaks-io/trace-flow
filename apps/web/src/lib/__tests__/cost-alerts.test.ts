@@ -237,7 +237,9 @@ describe('cost alert helpers', () => {
       apiKeyIds: ['api_1'],
     });
     expect(
-      formatScope(rule as never, [{ _id: 'api_1' as never, name: 'Production', key: 'key-1' }]),
+      formatScope(rule as never, [
+        { _id: 'api_1' as never, name: 'Production', identifier: 'sha256:key-1' },
+      ]),
     ).toBe('Production · Provider: openai · Model: gpt-4o · Operation: checkout · User: user_456');
   });
 

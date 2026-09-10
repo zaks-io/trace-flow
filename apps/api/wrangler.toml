@@ -19,6 +19,7 @@ head_sampling_rate = 1
 [version_metadata]
 binding = "CF_VERSION_METADATA"
 
+# CONVEX_SITE_URL is injected by deployment workflows.
 # Secrets: AXIOM_TOKEN, BODY_ENCRYPTION_ROOT_KEY, BODY_ACCESS_JWT_SECRET
 
 [vars]

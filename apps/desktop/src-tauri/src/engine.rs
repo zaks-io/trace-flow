@@ -31,7 +31,7 @@ use collector_embedder::{
 };
 use tokio::sync::mpsc;
 
-use crate::settings::{ArchiveRequest, Settings, SettingsFile};
+use crate::settings::{ArchivePolicyDenial, ArchiveRequest, Settings, SettingsFile};
 use crate::state::{
     AppStateBus, ArchiveConnectionIdentity, ArchiveMenuState, ConnectionState, SourceCounts,
     SyncStatus,
@@ -42,6 +42,85 @@ const TICK: Duration = Duration::from_secs(5 * 60);
 
 /// The default backfill window the first "Start syncing" click triggers.
 const FIRST_BACKFILL: &str = "7d";
+
+#[derive(Default)]
+struct ArchivePolicyMemory {
+    unpersisted_denial: Option<(
+        ArchiveConnectionIdentity,
+        collector_embedder::ArchiveEnrollmentRecord,
+    )>,
+}
+
+impl ArchivePolicyMemory {
+    fn from_settings(settings: &Settings) -> Self {
+        Self {
+            unpersisted_denial: settings.archive_policy_denial.as_ref().map(|denial| {
+                (
+                    ArchiveConnectionIdentity {
+                        org_id: denial.org_id.clone(),
+                        collector_id: denial.collector_id.clone(),
+                    },
+                    denial.enrollment.clone(),
+                )
+            }),
+        }
+    }
+
+    fn denial_for(
+        &self,
+        connection: &ArchiveConnectionIdentity,
+    ) -> Option<collector_embedder::ArchiveEnrollmentRecord> {
+        self.unpersisted_denial
+            .as_ref()
+            .filter(|(remembered, _)| remembered == connection)
+            .map(|(_, record)| record.clone())
+    }
+
+    fn observe_refresh(
+        &mut self,
+        connection: &ArchiveConnectionIdentity,
+        observation: Option<&ArchivePolicyObservation>,
+    ) {
+        let Some(observation) = observation else {
+            return;
+        };
+        let is_denial = observation
+            .confirmed
+            .policy()
+            .is_ok_and(|policy| !policy.captures());
+        if is_denial && !observation.persisted {
+            self.unpersisted_denial = Some((connection.clone(), observation.confirmed.clone()));
+        } else if observation.persisted {
+            self.clear(connection);
+        }
+    }
+
+    fn update_settings(&self, settings: &mut Settings) {
+        settings.archive_policy_denial =
+            self.unpersisted_denial
+                .as_ref()
+                .map(|(connection, enrollment)| ArchivePolicyDenial {
+                    org_id: connection.org_id.clone(),
+                    collector_id: connection.collector_id.clone(),
+                    enrollment: enrollment.clone(),
+                });
+    }
+
+    fn clear(&mut self, connection: &ArchiveConnectionIdentity) {
+        if self
+            .unpersisted_denial
+            .as_ref()
+            .is_some_and(|(remembered, _)| remembered == connection)
+        {
+            self.unpersisted_denial = None;
+        }
+    }
+}
+
+struct ArchivePolicyObservation {
+    confirmed: collector_embedder::ArchiveEnrollmentRecord,
+    persisted: bool,
+}
 
 /// Commands the UI (tray menu or window) sends the engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +177,7 @@ async fn run_loop(
     settings_file: SettingsFile,
 ) {
     let mut settings = load_settings(&settings_file);
+    let mut archive_policy_memory = ArchivePolicyMemory::from_settings(&settings);
     let mut ticker = tokio::time::interval(TICK);
     // The first tick fires immediately; skip it so a paused engine does nothing on startup. A
     // resumed engine runs its own catch-up cycle below instead of waiting a full tick.
@@ -114,7 +194,7 @@ async fn run_loop(
 
     if settings.syncing {
         tracing::info!("sync authorized before relaunch; resuming");
-        run_authorized_cycle(&bus, &mut settings).await;
+        run_authorized_cycle(&bus, &mut settings, &mut archive_policy_memory).await;
         persist(&settings_file, &settings);
     }
 
@@ -136,7 +216,7 @@ async fn run_loop(
                         // Persist the authorization before the (possibly long) pass so a quit
                         // mid-backfill still comes back syncing.
                         persist(&settings_file, &settings);
-                        run_authorized_cycle(&bus, &mut settings).await;
+                        run_authorized_cycle(&bus, &mut settings, &mut archive_policy_memory).await;
                     }
                     EngineCommand::EnrollArchiveSource {
                         connection,
@@ -147,6 +227,7 @@ async fn run_loop(
                             &bus,
                             &settings_file,
                             &mut settings,
+                            &mut archive_policy_memory,
                             connection,
                             source,
                             history_choice,
@@ -158,7 +239,7 @@ async fn run_loop(
             _ = ticker.tick() => {
                 if settings.syncing {
                     let before = settings.clone();
-                    run_authorized_cycle(&bus, &mut settings).await;
+                    run_authorized_cycle(&bus, &mut settings, &mut archive_policy_memory).await;
                     if settings != before {
                         persist(&settings_file, &settings);
                     }
@@ -172,6 +253,7 @@ async fn enroll_archive_source(
     bus: &AppStateBus,
     settings_file: &SettingsFile,
     settings: &mut Settings,
+    archive_policy_memory: &mut ArchivePolicyMemory,
     expected_connection: Option<ArchiveConnectionIdentity>,
     source: ArchiveSource,
     history_choice: ArchiveHistoryChoice,
@@ -280,13 +362,18 @@ async fn enroll_archive_source(
 
     match result {
         Ok(Ok(enrolled)) => {
+            archive_policy_memory.clear(&ArchiveConnectionIdentity {
+                org_id: connection.org_id.clone(),
+                collector_id: connection.collector_id.clone(),
+            });
+            archive_policy_memory.update_settings(settings);
             let run_immediately = apply_enrollment_success(settings, enrolled);
             persist(settings_file, settings);
             refresh_archive(bus);
             clear_archive_error(bus);
             bus.update(|state| state.archive.pending = None);
             if run_immediately {
-                run_authorized_cycle(bus, settings).await;
+                run_authorized_cycle(bus, settings, archive_policy_memory).await;
             }
         }
         Ok(Err(err)) => {
@@ -370,11 +457,16 @@ fn clear_archive_error(bus: &AppStateBus) {
 /// (a click, a tick, a relaunch catch-up) uses the wider `FIRST_BACKFILL` window, so a first backfill
 /// that failed (network down, then a relaunch) is retried rather than quietly replaced by an
 /// incremental pass that would leave the older sessions unsynced.
-async fn run_authorized_cycle(bus: &AppStateBus, settings: &mut Settings) {
+async fn run_authorized_cycle(
+    bus: &AppStateBus,
+    settings: &mut Settings,
+    archive_policy_memory: &mut ArchivePolicyMemory,
+) {
     let window = window_for_authorized_cycle(settings);
-    if let Some(outcome) = run_cycle(bus, window).await {
+    if let Some(outcome) = run_cycle(bus, window, archive_policy_memory).await {
         apply_authorized_cycle(settings, &outcome);
     }
+    archive_policy_memory.update_settings(settings);
 }
 
 fn window_for_authorized_cycle(settings: &Settings) -> Window {
@@ -467,7 +559,11 @@ struct CycleOutcome {
 /// spawnable on the multi-threaded Tauri runtime without widening the shared crate's contract.
 /// Returns the cycle outcome when a pass ran. `None` means the engine skipped (not connected,
 /// missing credential) or the blocking task panicked — those must not retire the backfill window.
-async fn run_cycle(bus: &AppStateBus, window: Window) -> Option<CycleOutcome> {
+async fn run_cycle(
+    bus: &AppStateBus,
+    window: Window,
+    archive_policy_memory: &mut ArchivePolicyMemory,
+) -> Option<CycleOutcome> {
     let conn = match Paths::resolve().and_then(|p| p.load_connection()) {
         Ok(Some(conn)) => conn,
         Ok(None) => {
@@ -504,6 +600,8 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> Option<CycleOutcome> {
         org_id: conn.org_id.clone(),
         collector_id: conn.collector_id.clone(),
     };
+    let remembered_denial = archive_policy_memory.denial_for(&archive_connection);
+    let memory_connection = archive_connection.clone();
     publish_connection(bus, &conn);
 
     let credential = match keychain::load(&archive_connection.org_id) {
@@ -536,21 +634,22 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> Option<CycleOutcome> {
     bus.update(|s| s.sync = SyncStatus::Syncing);
 
     let now_ms = now_ms();
-    let outcome = tauri::async_runtime::spawn_blocking(move || {
-        run_cycle_blocking(
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        run_cycle_blocking_with_policy_memory(
             archive_connection,
             credential,
             ingest_url,
             home,
             window,
             now_ms,
-            CycleIsolation::production(),
+            CycleIsolation::production(remembered_denial),
         )
     })
     .await;
 
-    let outcome = match outcome {
-        Ok(outcome) => {
+    let outcome = match result {
+        Ok((outcome, observation)) => {
+            archive_policy_memory.observe_refresh(&memory_connection, observation.as_ref());
             let first_error = outcome.first_error.as_deref().unwrap_or("");
             let setup_error = outcome.setup_error.as_deref().unwrap_or("");
             let archive_setup_error = outcome.archive_setup_error.as_deref().unwrap_or("");
@@ -604,17 +703,20 @@ fn clear_archive_error_after_cycle(bus: &AppStateBus, outcome: &CycleOutcome) {
     }
 }
 
-/// Test isolation for collector state and Archive inputs. Production leaves both `None`.
+/// Test isolation for collector state and Archive inputs. Production resolves both paths itself and
+/// may carry a denial restored from desktop settings.
 struct CycleIsolation {
     state_dir: Option<std::path::PathBuf>,
     archive: Option<(String, Arc<dyn ArchiveKeyStore>)>,
+    remembered_denial: Option<collector_embedder::ArchiveEnrollmentRecord>,
 }
 
 impl CycleIsolation {
-    fn production() -> Self {
+    fn production(remembered_denial: Option<collector_embedder::ArchiveEnrollmentRecord>) -> Self {
         Self {
             state_dir: None,
             archive: None,
+            remembered_denial,
         }
     }
 }
@@ -628,9 +730,14 @@ fn cycle_archive_config(
     org_id: &str,
     collector_id: &str,
     archive: Option<(String, Arc<dyn ArchiveKeyStore>)>,
+    confirmed: Option<collector_embedder::ArchiveEnrollmentRecord>,
 ) -> (Option<sync::ArchiveRunConfig>, Option<String>) {
     if !sync::cleanup_obligation_exists(&paths.archive_spool_dir(org_id)) {
-        if let Ok(record) = archive_policy::load_archive_policy(paths, org_id) {
+        let loaded = confirmed
+            .is_none()
+            .then(|| archive_policy::load_archive_policy(paths, org_id).ok())
+            .flatten();
+        if let Some(record) = confirmed.as_ref().or(loaded.as_ref()) {
             if record.policy().is_ok_and(|policy| policy.captures())
                 && record.collector_id.as_deref() != Some(collector_id)
             {
@@ -638,13 +745,18 @@ fn cycle_archive_config(
             }
         }
     }
-    match archive {
-        Some((url, keys)) => sync::prepare_serialized_archive(paths, org_id, url, keys),
-        None => sync::prepare_desktop_serialized_archive(paths, org_id),
+    match (archive, confirmed) {
+        (Some((url, keys)), Some(record)) => {
+            sync::prepare_confirmed_archive(paths, org_id, url, keys, record)
+        }
+        (None, Some(record)) => sync::prepare_desktop_confirmed_archive(paths, org_id, record),
+        (Some((url, keys)), None) => sync::prepare_serialized_archive(paths, org_id, url, keys),
+        (None, None) => sync::prepare_desktop_serialized_archive(paths, org_id),
     }
 }
 
 /// The non-`Send` half: build a local current-thread runtime and drive one [`sync::run`] on it.
+#[cfg(test)]
 fn run_cycle_blocking(
     connection: ArchiveConnectionIdentity,
     credential: String,
@@ -654,6 +766,21 @@ fn run_cycle_blocking(
     now_ms: i64,
     isolation: CycleIsolation,
 ) -> CycleOutcome {
+    run_cycle_blocking_with_policy_memory(
+        connection, credential, ingest_url, home, window, now_ms, isolation,
+    )
+    .0
+}
+
+fn run_cycle_blocking_with_policy_memory(
+    connection: ArchiveConnectionIdentity,
+    credential: String,
+    ingest_url: String,
+    home: std::path::PathBuf,
+    window: Window,
+    now_ms: i64,
+    isolation: CycleIsolation,
+) -> (CycleOutcome, Option<ArchivePolicyObservation>) {
     let ArchiveConnectionIdentity {
         org_id,
         collector_id,
@@ -664,19 +791,25 @@ fn run_cycle_blocking(
     {
         Ok(rt) => rt,
         Err(err) => {
-            return CycleOutcome {
-                advanced: 0,
-                failed: 0,
-                first_error: None,
-                setup_error: Some(format!("build runtime: {err}")),
-                archive_setup_error: None,
-                archive_recovered: false,
-            };
+            return (
+                CycleOutcome {
+                    advanced: 0,
+                    failed: 0,
+                    first_error: None,
+                    setup_error: Some(format!("build runtime: {err}")),
+                    archive_setup_error: None,
+                    archive_recovered: false,
+                },
+                None,
+            );
         }
     };
 
-    let state_dir = isolation.state_dir;
-    let archive_input = isolation.archive;
+    let CycleIsolation {
+        state_dir,
+        archive: archive_input,
+        remembered_denial,
+    } = isolation;
     let paths = match state_dir.as_deref() {
         Some(dir) => Ok(Paths::at(dir.to_path_buf())),
         None => Paths::resolve().map_err(|err| format!("resolve collector paths: {err}")),
@@ -691,6 +824,8 @@ fn run_cycle_blocking(
 
     let should_refresh_policy = state_dir.is_none() || archive_input.is_some();
     let mut archive_recovered = false;
+    let mut confirmed_archive_policy = remembered_denial;
+    let mut archive_policy_observation = None;
     if archive_setup_error.is_none() && should_refresh_policy {
         let archive_url = archive_input
             .as_ref()
@@ -704,14 +839,39 @@ fn run_cycle_blocking(
                 archive_url,
                 &credential,
             )) {
-                Ok(refreshed) => archive_recovered = refreshed,
+                Ok(refreshed) => {
+                    archive_recovered = refreshed.persisted;
+                    if let Some(confirmed) = refreshed.confirmed {
+                        archive_policy_observation = Some(ArchivePolicyObservation {
+                            confirmed: confirmed.clone(),
+                            persisted: refreshed.persisted,
+                        });
+                        // An allowed response cannot lift a restart-safe denial until its normal
+                        // enrollment marker is durable.
+                        if refreshed.persisted
+                            || confirmed_archive_policy.is_none()
+                            || !confirmed.policy().is_ok_and(|policy| policy.captures())
+                        {
+                            confirmed_archive_policy = Some(confirmed);
+                        }
+                    }
+                    if let Some(error) = refreshed.persistence_error {
+                        archive_setup_error = Some(error);
+                    }
+                }
                 Err(err) => archive_setup_error = Some(err.to_string()),
             }
         }
     }
 
     let (archive, enrollment_error) = match &paths {
-        Ok(paths) => cycle_archive_config(paths, &org_id, &collector_id, archive_input),
+        Ok(paths) => cycle_archive_config(
+            paths,
+            &org_id,
+            &collector_id,
+            archive_input,
+            confirmed_archive_policy,
+        ),
         Err(_) => (None, None),
     };
     if archive_setup_error.is_none() {
@@ -729,7 +889,7 @@ fn run_cycle_blocking(
         state_dir: state_dir.as_deref(),
     }));
 
-    match result {
+    let outcome = match result {
         Ok(outcome) => {
             let mut advanced = 0u32;
             let mut failed = 0u32;
@@ -768,7 +928,8 @@ fn run_cycle_blocking(
             archive_setup_error: None,
             archive_recovered,
         },
-    }
+    };
+    (outcome, archive_policy_observation)
 }
 
 fn set_idle(bus: &AppStateBus) {
@@ -994,12 +1155,228 @@ mod archive_engine_tests {
                 "https://archive.example".to_string(),
                 Arc::new(MemoryKeyStore::new()),
             )),
+            None,
         );
 
         assert!(config.is_none());
         assert_eq!(error, None);
         assert_eq!(std::fs::read(policy_path).unwrap(), before);
         assert!(!paths.archive_spool_dir("org_1").exists());
+    }
+
+    #[test]
+    fn confirmed_denial_overrides_stale_enrolled_marker_for_the_current_cycle() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        enrollment(&paths, "org_1", "enrolled");
+        let inactive = collector_embedder::ArchiveEnrollmentRecord {
+            status: ArchivePolicy::Inactive.as_str().to_string(),
+            collector_id: Some("collector_1".to_string()),
+            authorized_sources: Vec::new(),
+            reason: Some("not_activated".to_string()),
+        };
+
+        let (config, error) = cycle_archive_config(
+            &paths,
+            "org_1",
+            "collector_1",
+            Some((
+                "https://archive.example".to_string(),
+                Arc::new(MemoryKeyStore::new()),
+            )),
+            Some(inactive),
+        );
+
+        assert!(config.is_none());
+        assert_eq!(error, None);
+        assert_eq!(
+            collector_embedder::ArchiveEnrollmentRecord::load(
+                &paths.archive_enrollment_file("org_1")
+            )
+            .unwrap(),
+            ArchivePolicy::Enrolled
+        );
+    }
+
+    #[test]
+    fn unpersisted_denial_survives_restart_and_a_later_refresh_failure() {
+        let state = TempDir::new().unwrap();
+        let paths = Paths::at(state.path().to_path_buf());
+        paths.ensure().unwrap();
+        enrollment(&paths, "org_1", "enrolled");
+        let settings_file = SettingsFile::at(state.path());
+        let mut settings = Settings::default();
+        let connection = archive_identity("org_1", "collector_1");
+        let inactive = collector_embedder::ArchiveEnrollmentRecord {
+            status: ArchivePolicy::Inactive.as_str().to_string(),
+            collector_id: Some("collector_1".to_string()),
+            authorized_sources: Vec::new(),
+            reason: Some("not_activated".to_string()),
+        };
+        let mut memory = ArchivePolicyMemory::default();
+        let failed_persistence = ArchivePolicyObservation {
+            confirmed: inactive.clone(),
+            persisted: false,
+        };
+
+        memory.observe_refresh(&connection, Some(&failed_persistence));
+        assert_eq!(
+            memory.denial_for(&connection).unwrap().policy().unwrap(),
+            ArchivePolicy::Inactive
+        );
+        memory.update_settings(&mut settings);
+        settings_file.save(&settings).unwrap();
+        let (first_config, first_error) = cycle_archive_config(
+            &paths,
+            "org_1",
+            "collector_1",
+            Some((
+                "https://archive.example".to_string(),
+                Arc::new(MemoryKeyStore::new()),
+            )),
+            Some(inactive),
+        );
+        assert!(first_config.is_none());
+        assert_eq!(first_error, None);
+
+        drop(memory);
+        drop(settings);
+        let mut restarted_settings = settings_file.load().unwrap();
+        let mut restarted_memory = ArchivePolicyMemory::from_settings(&restarted_settings);
+        restarted_memory.observe_refresh(&connection, None);
+        let (second_config, second_error) = cycle_archive_config(
+            &paths,
+            "org_1",
+            "collector_1",
+            Some((
+                "https://archive.example".to_string(),
+                Arc::new(MemoryKeyStore::new()),
+            )),
+            restarted_memory.denial_for(&connection),
+        );
+        assert!(second_config.is_none());
+        assert_eq!(second_error, None);
+        assert_eq!(
+            collector_embedder::ArchiveEnrollmentRecord::load(
+                &paths.archive_enrollment_file("org_1")
+            )
+            .unwrap(),
+            ArchivePolicy::Enrolled
+        );
+
+        let allowed = ArchivePolicyObservation {
+            confirmed: collector_embedder::ArchiveEnrollmentRecord {
+                status: ArchivePolicy::Enrolled.as_str().to_string(),
+                collector_id: Some("collector_1".to_string()),
+                authorized_sources: vec![collector_embedder::ArchiveAuthorizedSource {
+                    source: ArchiveSource::Claude,
+                    history_choice: ArchiveHistoryChoice::AllHistory,
+                    authorized_at: 1_770_000_000_001,
+                }],
+                reason: None,
+            },
+            persisted: true,
+        };
+        restarted_memory.observe_refresh(&connection, Some(&allowed));
+        restarted_memory.update_settings(&mut restarted_settings);
+        settings_file.save(&restarted_settings).unwrap();
+
+        let recovered_settings = settings_file.load().unwrap();
+        assert!(recovered_settings.archive_policy_denial.is_none());
+        let recovered_memory = ArchivePolicyMemory::from_settings(&recovered_settings);
+        let (recovered_config, recovered_error) = cycle_archive_config(
+            &paths,
+            "org_1",
+            "collector_1",
+            Some((
+                "https://archive.example".to_string(),
+                Arc::new(MemoryKeyStore::new()),
+            )),
+            recovered_memory.denial_for(&connection),
+        );
+        assert_eq!(recovered_config.unwrap().policy, ArchivePolicy::Enrolled);
+        assert_eq!(recovered_error, None);
+    }
+
+    #[test]
+    fn durably_persisted_enrollment_clears_remembered_denial() {
+        let state = TempDir::new().unwrap();
+        let paths = Paths::at(state.path().to_path_buf());
+        paths.ensure().unwrap();
+        enrollment(&paths, "org_1", "enrolled");
+        let connection = archive_identity("org_1", "collector_1");
+        let mut memory = ArchivePolicyMemory {
+            unpersisted_denial: Some((
+                connection.clone(),
+                collector_embedder::ArchiveEnrollmentRecord {
+                    status: ArchivePolicy::Inactive.as_str().to_string(),
+                    collector_id: Some("collector_1".to_string()),
+                    authorized_sources: Vec::new(),
+                    reason: Some("not_activated".to_string()),
+                },
+            )),
+        };
+        let enrolled = collector_embedder::ArchiveEnrollmentRecord {
+            status: ArchivePolicy::Enrolled.as_str().to_string(),
+            collector_id: Some("collector_1".to_string()),
+            authorized_sources: vec![collector_embedder::ArchiveAuthorizedSource {
+                source: ArchiveSource::Claude,
+                history_choice: ArchiveHistoryChoice::AllHistory,
+                authorized_at: 1_770_000_000_001,
+            }],
+            reason: None,
+        };
+        let mut recovered = ArchivePolicyObservation {
+            confirmed: enrolled,
+            persisted: false,
+        };
+
+        memory.observe_refresh(&connection, Some(&recovered));
+        assert!(memory.denial_for(&connection).is_some());
+        recovered.persisted = true;
+        memory.observe_refresh(&connection, Some(&recovered));
+        assert!(memory.denial_for(&connection).is_none());
+        let (config, error) = cycle_archive_config(
+            &paths,
+            "org_1",
+            "collector_1",
+            Some((
+                "https://archive.example".to_string(),
+                Arc::new(MemoryKeyStore::new()),
+            )),
+            memory.denial_for(&connection),
+        );
+        assert_eq!(config.unwrap().policy, ArchivePolicy::Enrolled);
+        assert_eq!(error, None);
+    }
+
+    #[test]
+    fn confirmed_revocation_drives_cleanup_when_the_enrollment_marker_is_stale() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        enrollment(&paths, "org_1", "enrolled");
+        let revoked = collector_embedder::ArchiveEnrollmentRecord {
+            status: ArchivePolicy::Revoked.as_str().to_string(),
+            collector_id: Some("collector_1".to_string()),
+            authorized_sources: Vec::new(),
+            reason: Some("credential_revoked".to_string()),
+        };
+
+        let (config, error) = cycle_archive_config(
+            &paths,
+            "org_1",
+            "collector_1",
+            Some((
+                "https://archive.example".to_string(),
+                Arc::new(MemoryKeyStore::new()),
+            )),
+            Some(revoked),
+        );
+
+        assert_eq!(config.unwrap().policy, ArchivePolicy::Revoked);
+        assert_eq!(error, None);
     }
 
     #[test]
@@ -1233,6 +1610,7 @@ mod archive_engine_tests {
             CycleIsolation {
                 state_dir: Some(state.path().to_path_buf()),
                 archive: None,
+                remembered_denial: None,
             },
         );
 
@@ -1299,6 +1677,7 @@ mod archive_engine_tests {
             CycleIsolation {
                 state_dir: Some(state.path().to_path_buf()),
                 archive: None,
+                remembered_denial: None,
             },
         );
 
@@ -1319,6 +1698,7 @@ mod archive_engine_tests {
             syncing: true,
             backfilled: false,
             archive_request: None,
+            archive_policy_denial: None,
         };
         match (
             apply_authorized_cycle(&mut settings, &outcome),
@@ -1370,6 +1750,7 @@ mod archive_engine_tests {
             CycleIsolation {
                 state_dir: Some(state.path().to_path_buf()),
                 archive: Some((format!("http://{addr}"), keys.clone())),
+                remembered_denial: None,
             },
         );
         server.join().unwrap();
@@ -1439,6 +1820,7 @@ mod archive_engine_tests {
                     "http://127.0.0.1:1".to_string(),
                     Arc::new(MemoryKeyStore::new()),
                 )),
+                remembered_denial: None,
             },
         );
 
@@ -1490,6 +1872,7 @@ mod archive_engine_tests {
             CycleIsolation {
                 state_dir: Some(state.path().to_path_buf()),
                 archive: Some((format!("http://{addr}"), keys.clone())),
+                remembered_denial: None,
             },
         );
         server.join().unwrap();
@@ -1551,6 +1934,7 @@ mod archive_engine_tests {
             syncing: true,
             backfilled: false,
             archive_request: None,
+            archive_policy_denial: None,
         };
         file.save(&settings).unwrap();
 
@@ -1567,6 +1951,7 @@ mod archive_engine_tests {
                 CycleIsolation {
                     state_dir: Some(state.path().to_path_buf()),
                     archive: Some((archive_url.clone(), keys.clone())),
+                    remembered_denial: None,
                 },
             );
 
@@ -1642,6 +2027,7 @@ mod archive_engine_tests {
             syncing: true,
             backfilled: false,
             archive_request: None,
+            archive_policy_denial: None,
         };
         file.save(&settings).unwrap();
 
@@ -1703,6 +2089,7 @@ mod archive_engine_tests {
             syncing: true,
             backfilled: false,
             archive_request: None,
+            archive_policy_denial: None,
         };
         let fatal = CycleOutcome {
             advanced: 0,
@@ -1772,13 +2159,16 @@ mod archive_request_tests {
             syncing: true,
             backfilled: true,
             archive_request: Some(pending_request()),
+            archive_policy_denial: None,
         };
         let expected_settings = settings.clone();
+        let mut archive_policy_memory = ArchivePolicyMemory::default();
 
         enroll_archive_source(
             &bus,
             &settings_file,
             &mut settings,
+            &mut archive_policy_memory,
             None,
             ArchiveSource::Claude,
             ArchiveHistoryChoice::AllHistory,
@@ -1844,6 +2234,7 @@ mod archive_request_tests {
                 syncing,
                 backfilled: true,
                 archive_request: Some(pending_request()),
+                archive_policy_denial: None,
             };
             let run_immediately = apply_enrollment_success(&mut settings, true);
             assert_eq!(run_immediately, syncing);
@@ -1856,6 +2247,7 @@ mod archive_request_tests {
             syncing: true,
             backfilled: false,
             archive_request: Some(pending_request()),
+            archive_policy_denial: None,
         };
         assert!(!apply_enrollment_success(&mut settings, false));
         assert!(settings.syncing);

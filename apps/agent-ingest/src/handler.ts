@@ -209,6 +209,7 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
           orgId: credential.orgId,
           userId: credential.userId,
           collectorId: credential.collectorId,
+          hashedSecret: credential.collectorCredentialId,
           sessionPks,
         },
         logger,

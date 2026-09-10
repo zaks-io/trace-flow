@@ -1,3 +1,4 @@
+/* eslint-disable max-lines */
 import { withTinybirdTracing } from './tinybirdTracing';
 import { createTool, type ToolCtx as AgentToolCtx } from '@convex-dev/agent';
 import {
@@ -8,6 +9,7 @@ import {
   type ToolCallResult,
 } from '@trace-flow/mcp-core';
 import { v } from 'convex/values';
+import { makeFunctionReference } from 'convex/server';
 import { z } from 'zod/v4';
 import { toPiRunRows } from './analystPiRows';
 import { createMcpBackend } from './mcp/backend';
@@ -198,6 +200,57 @@ async function postSandboxJson(
   }
 }
 
+const getOrganizationSandboxBackupIds = makeFunctionReference<
+  'query',
+  { orgId: Id<'organizations'> },
+  string[]
+>('analystSandboxStore:getOrganizationSandboxBackupIds');
+const clearOrganizationSandboxBackups = makeFunctionReference<
+  'mutation',
+  { orgId: Id<'organizations'> },
+  number
+>('analystSandboxStore:clearOrganizationSandboxBackups');
+
+export const eraseSandboxBackupObjects = internalAction({
+  args: { backupIds: v.array(v.string()) },
+  returns: v.null(),
+  handler: async (_ctx, args) => {
+    if (args.backupIds.length === 0 || args.backupIds.length > 100) {
+      throw new Error('Expected between 1 and 100 Analyst backup object ids');
+    }
+    await postSandboxJson('/internal/backups/erase', { backupIds: args.backupIds });
+    return null;
+  },
+});
+
+export const eraseOrganizationSandboxBackups = internalAction({
+  args: { orgId: v.id('organizations') },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const backupIds = [
+      ...new Set(await ctx.runQuery(getOrganizationSandboxBackupIds, { orgId: args.orgId })),
+    ];
+    for (let offset = 0; offset < backupIds.length; offset += 100) {
+      await postSandboxJson('/internal/backups/erase', {
+        backupIds: backupIds.slice(offset, offset + 100),
+      });
+    }
+
+    let erased = false;
+    while (!erased) {
+      const result = (await postSandboxJson('/internal/backups/erase', {
+        orgId: args.orgId,
+      })) as { erased?: unknown };
+      if (typeof result.erased !== 'boolean') {
+        throw new Error('Analyst backup erasure returned an invalid completion state');
+      }
+      erased = result.erased;
+    }
+    await ctx.runMutation(clearOrganizationSandboxBackups, { orgId: args.orgId });
+    return null;
+  },
+});
+
 async function startPiAgentAnalysis(
   ctx: ActionCtx,
   userId: Id<'users'>,
@@ -345,6 +398,7 @@ async function launchSandboxRun(
       tokenHash: hash,
       status: 'failed',
       error: message,
+      internalStartFailure: true,
       now: Date.now(),
     });
     return { ok: false, runId, error: message };
@@ -756,7 +810,50 @@ export const verifySandboxRunToken = action({
       runId: args.runId,
       tokenHash,
     });
-    return { ok: Boolean(run), status: run?.status ?? null };
+    return {
+      ok: Boolean(run && isActiveSandboxRunStatus(run.status)),
+      status: run?.status ?? null,
+    };
+  },
+});
+
+export const authorizeSandboxCompletion = action({
+  args: {
+    runId: v.id('analystSandboxRuns'),
+    token: v.string(),
+    status: v.union(
+      v.literal('completed'),
+      v.literal('failed'),
+      v.literal('timed_out'),
+      v.literal('cancelled'),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const tokenHash = await sha256Hex(args.token);
+    return ctx.runMutation(internal.analystSandboxStore.reserveSandboxCompletion, {
+      runId: args.runId,
+      tokenHash,
+      status: args.status,
+      now: Date.now(),
+    });
+  },
+});
+
+export const acknowledgeSandboxBackupCleanup = action({
+  args: {
+    runId: v.id('analystSandboxRuns'),
+    token: v.string(),
+    backupIds: v.array(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const tokenHash = await sha256Hex(args.token);
+    await ctx.runMutation(internal.analystSandboxStore.acknowledgeSandboxBackupCleanup, {
+      runId: args.runId,
+      tokenHash,
+      backupIds: args.backupIds,
+    });
+    return null;
   },
 });
 
@@ -776,6 +873,7 @@ export const receiveSandboxEvents = action({
         message: truncateText(event.message, MAX_SANDBOX_EVENT_MESSAGE_CHARS),
       })),
       now: Date.now(),
+      requireActive: true,
     });
     return { ok: true };
   },
@@ -796,31 +894,29 @@ export const completeSandboxRun = action({
     backup: v.optional(
       v.object({ id: v.string(), dir: v.string(), localBucket: v.optional(v.boolean()) }),
     ),
+    sandboxId: v.string(),
+    reservation: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const tokenHash = await sha256Hex(args.token);
-    await ctx.runMutation(internal.analystSandboxStore.completeSandboxRunInternal, {
-      runId: args.runId,
-      tokenHash,
-      status: args.status,
-      resultText: truncateText(args.resultText, MAX_SANDBOX_RESULT_CHARS),
-      error: truncateText(args.error, MAX_SANDBOX_EVENT_MESSAGE_CHARS),
-      now: Date.now(),
-    });
-
-    // Persist the fresh /workspace snapshot on the conversation so the next Pi run rehydrates
-    // and resumes. The runner only sends a backup handle when it has a usable snapshot;
-    // storeThreadSandboxBackup guards against a stale write clobbering a fresher checkpoint.
-    if (args.backup) {
-      await ctx.runMutation(internal.analystSandboxStore.storeThreadSandboxBackup, {
+    const completed = await ctx.runMutation(
+      internal.analystSandboxStore.completeSandboxRunInternal,
+      {
         runId: args.runId,
         tokenHash,
+        status: args.status,
+        resultText: truncateText(args.resultText, MAX_SANDBOX_RESULT_CHARS),
+        error: truncateText(args.error, MAX_SANDBOX_EVENT_MESSAGE_CHARS),
         backup: args.backup,
+        sandboxId: args.sandboxId,
+        reservation: args.reservation,
         now: Date.now(),
-      });
-    }
+      },
+    );
 
-    if (args.status === 'completed') {
+    if (!completed.ok) return completed;
+
+    if (completed.transitioned && args.status === 'completed') {
       const scheduled = await ctx.runMutation(
         internal.analystSandboxStore.markSandboxContinuationScheduled,
         {
@@ -835,7 +931,21 @@ export const completeSandboxRun = action({
       }
     }
 
-    return { ok: true };
+    return completed;
+  },
+});
+
+export const authorizeSandboxCheckpoint = action({
+  args: {
+    runId: v.id('analystSandboxRuns'),
+    token: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const tokenHash = await sha256Hex(args.token);
+    return ctx.runMutation(internal.analystSandboxStore.reserveSandboxCheckpoint, {
+      runId: args.runId,
+      tokenHash,
+    });
   },
 });
 
@@ -848,17 +958,20 @@ export const checkpointSandboxRun = action({
   args: {
     runId: v.id('analystSandboxRuns'),
     token: v.string(),
+    sandboxId: v.string(),
+    reservation: v.number(),
     backup: v.object({ id: v.string(), dir: v.string(), localBucket: v.optional(v.boolean()) }),
   },
   handler: async (ctx, args) => {
     const tokenHash = await sha256Hex(args.token);
-    await ctx.runMutation(internal.analystSandboxStore.storeThreadSandboxBackup, {
+    return ctx.runMutation(internal.analystSandboxStore.commitSandboxCheckpoint, {
       runId: args.runId,
       tokenHash,
+      sandboxId: args.sandboxId,
+      reservation: args.reservation,
       backup: args.backup,
       now: Date.now(),
     });
-    return { ok: true };
   },
 });
 
@@ -906,6 +1019,7 @@ export const executeSandboxToolCall = action({
           },
         ],
         now: Date.now(),
+        requireActive: true,
       });
       throw error;
     }

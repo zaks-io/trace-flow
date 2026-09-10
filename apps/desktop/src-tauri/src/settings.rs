@@ -15,7 +15,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use collector_embedder::{ArchiveHistoryChoice, ArchiveSource};
+use collector_embedder::{ArchiveEnrollmentRecord, ArchiveHistoryChoice, ArchiveSource};
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
@@ -31,6 +31,8 @@ pub struct Settings {
     pub backfilled: bool,
     /// Durable enrollment intent. The credential stays in the keychain.
     pub archive_request: Option<ArchiveRequest>,
+    /// Server-confirmed denial kept when the collector enrollment marker could not be replaced.
+    pub archive_policy_denial: Option<ArchivePolicyDenial>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,6 +43,14 @@ pub struct ArchiveRequest {
     pub source: ArchiveSource,
     pub history_choice: ArchiveHistoryChoice,
     pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ArchivePolicyDenial {
+    pub org_id: String,
+    pub collector_id: String,
+    pub enrollment: ArchiveEnrollmentRecord,
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +111,16 @@ mod tests {
                 history_choice: ArchiveHistoryChoice::AllHistory,
                 idempotency_key: "archive-enroll:request-1".to_string(),
             }),
+            archive_policy_denial: Some(ArchivePolicyDenial {
+                org_id: "org_1".to_string(),
+                collector_id: "collector_1".to_string(),
+                enrollment: ArchiveEnrollmentRecord {
+                    status: "inactive".to_string(),
+                    collector_id: Some("collector_1".to_string()),
+                    authorized_sources: Vec::new(),
+                    reason: Some("not_activated".to_string()),
+                },
+            }),
         };
         file.save(&settings).unwrap();
         assert_eq!(file.load().unwrap(), settings);
@@ -116,6 +136,7 @@ mod tests {
         assert!(settings.syncing);
         assert!(!settings.backfilled);
         assert!(settings.archive_request.is_none());
+        assert!(settings.archive_policy_denial.is_none());
     }
 
     #[test]

@@ -23,12 +23,18 @@
 - name: cost_distribution_current_window_only
   description: per-session cost percentiles, cost/token bands, and top-10% concentration for the current window; prior window is empty
   expected_http_status: 200
-  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=3650
   expected_result: |
     {"session_count":3,"prior_session_count":0,"total_generated_tokens":0,"prior_total_generated_tokens":0,"total_cache_inclusive_tokens":0,"prior_total_cache_inclusive_tokens":0,"total_cost_usd":4.9,"prior_total_cost_usd":0,"cost_p50":0.8,"prior_cost_p50":0,"cost_p90":4,"prior_cost_p90":0,"cost_p95":4,"prior_cost_p95":0,"cost_max":4,"prior_cost_max":0,"generated_tokens_p50":0,"prior_generated_tokens_p50":0,"generated_tokens_p90":0,"prior_generated_tokens_p90":0,"generated_tokens_p95":0,"prior_generated_tokens_p95":0,"generated_tokens_max":0,"prior_generated_tokens_max":0,"cache_inclusive_tokens_p50":0,"prior_cache_inclusive_tokens_p50":0,"cache_inclusive_tokens_p90":0,"prior_cache_inclusive_tokens_p90":0,"cache_inclusive_tokens_p95":0,"prior_cache_inclusive_tokens_p95":0,"cache_inclusive_tokens_max":0,"prior_cache_inclusive_tokens_max":0,"cost_bucket_lo":[0.1,0.8],"cost_bucket_hi":[0.8,4],"cost_bucket_count":[2,1],"cost_bucket_sum":[0.9,4],"token_bucket_lo":[],"token_bucket_hi":[],"token_bucket_count":[],"token_bucket_sum":[],"top_10pct_cost_usd":4,"top_10pct_session_count":1,"gini":0.7959,"half_spend_conv_count":1,"lorenz_conv_pct":[0,0.3333333333333333,0.6666666666666666,1],"lorenz_cost_pct":[0,0.816326530612245,0.979591836734694,1]}
 
 - name: cost_distribution_respects_source_filter
   description: sources=codex isolates a source with no org_test sessions; both windows empty -> no rows (the client renders this as no-data, like agent_sessions_browser)
   expected_http_status: 200
-  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&sources=codex
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&sources=codex&retention_days=3650
+  expected_result: ''
+
+- name: expired_visibility_window
+  description: explicit historical bounds cannot bypass the signed visibility floor
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=7
   expected_result: ''

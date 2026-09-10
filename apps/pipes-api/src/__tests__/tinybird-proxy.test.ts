@@ -5,10 +5,30 @@ import { hashString } from '../cache';
 function env() {
   return {
     TINYBIRD_API_URL: 'https://tinybird.test',
+    CONVEX_SITE_URL: 'https://convex.test',
+    PIPES_API_SHARED_SECRET: 'pipes-secret',
     PIPES_LIMITER: {
       limit: vi.fn().mockResolvedValue({ success: true }),
     },
   };
+}
+
+function stubAuthorizedFetch(upstream: Response = okPipeResponse()) {
+  const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url === 'https://convex.test/worker/authorize-pipes-query') {
+      return new Response(
+        JSON.stringify({
+          authorized: true,
+          token: 'server-tinybird-token',
+          expiresAt: Math.floor(Date.now() / 1000) + 300,
+        }),
+      );
+    }
+    return upstream.clone();
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
 }
 
 function executionCtx() {
@@ -31,6 +51,7 @@ describe('pipes API Tinybird passthrough', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -41,8 +62,7 @@ describe('pipes API Tinybird passthrough', () => {
         match: vi.fn().mockResolvedValue(new Response(cachedBody)),
       },
     });
-    const upstreamFetch = vi.fn();
-    vi.stubGlobal('fetch', upstreamFetch);
+    const upstreamFetch = stubAuthorizedFetch();
 
     const response = await pipesApp.fetch(
       new Request('https://pipes.trace-flow.dev/v0/pipes/traces_list.json?start=100', {
@@ -53,19 +73,19 @@ describe('pipes API Tinybird passthrough', () => {
     );
 
     expect(response.headers.get('X-Cache')).toBe('HIT');
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
     expect(response.headers.get('Access-Control-Expose-Headers')?.split(',')).toContain('X-Cache');
     expect(await response.text()).toBe(cachedBody);
-    expect(upstreamFetch).not.toHaveBeenCalled();
+    expect(upstreamFetch).toHaveBeenCalledTimes(1);
   });
 
-  it('forwards caller bearer tokens to Tinybird without admin-token credentials', async () => {
+  it('forwards only the server-returned Tinybird token upstream', async () => {
     const cache = {
       match: vi.fn().mockResolvedValue(null),
       put: vi.fn().mockResolvedValue(undefined),
     };
-    const upstreamFetch = vi.fn().mockResolvedValue(okPipeResponse());
+    const upstreamFetch = stubAuthorizedFetch();
     vi.stubGlobal('caches', { default: cache });
-    vi.stubGlobal('fetch', upstreamFetch);
 
     const testEnv = env();
     const res = await pipesApp.fetch(
@@ -79,18 +99,99 @@ describe('pipes API Tinybird passthrough', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('X-Cache')).toBe('MISS');
     expect(res.headers.get('Vary')).toContain('Authorization');
+    expect(res.headers.get('Cache-Control')).toBe('private, no-store');
     expect(cache.match).toHaveBeenCalledTimes(1);
     expect(cache.put).toHaveBeenCalledTimes(1);
 
     const tokenHash = await hashString('pipe-token');
     expect(testEnv.PIPES_LIMITER.limit).toHaveBeenCalledWith({ key: tokenHash });
 
-    const [upstreamUrl, upstreamInit] = upstreamFetch.mock.calls[0] as [string, RequestInit];
+    const [upstreamUrl, upstreamInit] = upstreamFetch.mock.calls[1] as unknown as [
+      string,
+      RequestInit,
+    ];
     const forwardedUrl = new URL(upstreamUrl);
     expect(forwardedUrl.origin).toBe('https://tinybird.test');
     expect(forwardedUrl.pathname).toBe('/v0/pipes/traces_list.json');
     expect(forwardedUrl.searchParams.get('start')).toBe('100');
-    expect(upstreamInit.headers).toEqual({ Authorization: 'Bearer pipe-token' });
+    expect(upstreamInit.headers).toEqual({ Authorization: 'Bearer server-tinybird-token' });
+  });
+
+  it('rejects a revoked grant before reading a populated response cache', async () => {
+    const cache = {
+      match: vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: ['stale'] }))),
+      put: vi.fn(),
+    };
+    vi.stubGlobal('caches', { default: cache });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({ authorized: false }))),
+    );
+
+    const res = await pipesApp.fetch(
+      new Request('https://pipes.trace-flow.dev/v0/pipes/traces_list.json', {
+        headers: { Authorization: 'Bearer revoked-grant' },
+      }),
+      env(),
+      executionCtx(),
+    );
+
+    expect(res.status).toBe(403);
+    expect(cache.match).not.toHaveBeenCalled();
+    expect(cache.put).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before cache lookup when Convex authorization is unavailable', async () => {
+    const cache = { match: vi.fn(), put: vi.fn() };
+    vi.stubGlobal('caches', { default: cache });
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('control plane unavailable')));
+
+    const res = await pipesApp.fetch(
+      new Request('https://pipes.trace-flow.dev/v0/pipes/traces_list.json', {
+        headers: { Authorization: 'Bearer grant' },
+      }),
+      env(),
+      executionCtx(),
+    );
+
+    expect(res.status).toBe(503);
+    expect(cache.match).not.toHaveBeenCalled();
+  });
+
+  it('caps internal cache lifetime to the server authorization expiry', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    const cache = {
+      match: vi.fn().mockResolvedValue(null),
+      put: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.stubGlobal('caches', { default: cache });
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.startsWith('https://convex.test/')) {
+        return new Response(
+          JSON.stringify({
+            authorized: true,
+            token: 'short-lived-tinybird-token',
+            expiresAt: 1007,
+          }),
+        );
+      }
+      return okPipeResponse();
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await pipesApp.fetch(
+      new Request('https://pipes.trace-flow.dev/v0/pipes/traces_list.json', {
+        headers: { Authorization: 'Bearer grant' },
+      }),
+      env(),
+      executionCtx(),
+    );
+
+    expect(res.status).toBe(200);
+    expect(cache.put).toHaveBeenCalledOnce();
+    const cachedResponse = cache.put.mock.calls[0]?.[1] as Response;
+    expect(cachedResponse.headers.get('Cache-Control')).toBe('s-maxage=7');
   });
 
   it('rejects missing bearer tokens before rate limiting or Tinybird fetch', async () => {
@@ -120,13 +221,12 @@ describe('pipes API Tinybird passthrough', () => {
       match: vi.fn().mockResolvedValue(null),
       put: vi.fn(),
     };
-    const upstreamFetch = vi.fn().mockResolvedValue(
+    stubAuthorizedFetch(
       new Response('forbidden for 11111111-1111-1111-1111-111111111111 Bearer secret.value', {
         status: 403,
       }),
     );
     vi.stubGlobal('caches', { default: cache });
-    vi.stubGlobal('fetch', upstreamFetch);
 
     const res = await pipesApp.fetch(
       new Request('https://pipes.trace-flow.dev/v0/pipes/traces_list.json', {
@@ -154,17 +254,14 @@ describe('pipes API Tinybird passthrough', () => {
       put: vi.fn(),
     };
     vi.stubGlobal('caches', { default: cache });
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        new Response('bad gateway', {
-          status: 503,
-          headers: {
-            'x-request-id': 'tb-req-1',
-            'x-tb-r': 'release-1',
-          },
-        }),
-      ),
+    stubAuthorizedFetch(
+      new Response('bad gateway', {
+        status: 503,
+        headers: {
+          'x-request-id': 'tb-req-1',
+          'x-tb-r': 'release-1',
+        },
+      }),
     );
 
     const res = await pipesApp.fetch(
@@ -219,9 +316,8 @@ describe('pipes API Tinybird passthrough', () => {
       match: vi.fn(),
       put: vi.fn(),
     };
-    const upstreamFetch = vi.fn().mockResolvedValue(okPipeResponse());
+    const upstreamFetch = stubAuthorizedFetch();
     vi.stubGlobal('caches', { default: cache });
-    vi.stubGlobal('fetch', upstreamFetch);
 
     const res = await pipesApp.fetch(
       new Request('https://pipes.trace-flow.dev/v0/pipes/traces_list.json?after_received_at=123', {
@@ -235,5 +331,6 @@ describe('pipes API Tinybird passthrough', () => {
     expect(res.headers.get('X-Cache')).toBe('BYPASS');
     expect(cache.match).not.toHaveBeenCalled();
     expect(cache.put).not.toHaveBeenCalled();
+    expect(upstreamFetch).toHaveBeenCalledTimes(2);
   });
 });

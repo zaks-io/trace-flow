@@ -34,6 +34,7 @@ SQL >
         {% end %}
     GROUP BY repo_fingerprint, session_pk
     HAVING maxMerge(LastEventAt) >= start_dt
+        AND maxMerge(LastEventAt) >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
         AND maxMerge(LastEventAt) < end_dt
 
 NODE scoped_sessions
@@ -117,6 +118,7 @@ SQL >
     -- Runaway scoring is message-cost oriented; tool/file/PR-only sessions have no model-call denominator.
     HAVING message_count > 0
         AND last_event_at >= start_dt
+        AND last_event_at >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
         AND last_event_at < end_dt
         {% if defined(sources) %}
         AND has(arrayFilter(x -> x != '', arrayMap(x -> trim(x), splitByChar(',', {{ String(sources) }}))), source)

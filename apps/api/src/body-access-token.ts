@@ -19,6 +19,7 @@ function isBodyAccessClaims(value: unknown): value is BodyAccessTokenClaims {
   const payload = value as Partial<BodyAccessTokenClaims>;
   return (
     typeof payload.sub === 'string' &&
+    typeof payload.userId === 'string' &&
     typeof payload.orgId === 'string' &&
     typeof payload.requestId === 'string' &&
     payload.scope === BODY_ACCESS_TOKEN_SCOPE
@@ -39,6 +40,7 @@ export async function verifyBodyAccessToken(
     if (!isBodyAccessClaims(payload)) return null;
     return {
       sub: payload.sub,
+      userId: payload.userId,
       orgId: payload.orgId,
       requestId: payload.requestId,
       scope: payload.scope,

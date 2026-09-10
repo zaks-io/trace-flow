@@ -535,7 +535,20 @@ describe('POST /v1/ingest', () => {
   it('202s the happy path and enqueues the claimed session', async () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
     interceptPolicy(200, POLICY);
-    interceptClaim({ claim: 'claimed' });
+    const expectedSecretHash = await sha256Hex(SECRET);
+    claimResponder = (_req, body) => {
+      const parsed = JSON.parse(body) as { hashedSecret: string; sessionPks: string[] };
+      expect(parsed.hashedSecret).toBe(expectedSecretHash);
+      return new Response(
+        JSON.stringify({
+          results: parsed.sessionPks.map((sessionPk) => ({
+            sessionPk,
+            status: 'claimed',
+            ownerUserId: 'user-1',
+          })),
+        }),
+      );
+    };
     const res = await post(env, JSON.stringify(envelope()), authHeaders);
     expect(res.status).toBe(202);
     expect(await res.json()).toMatchObject({ sessions: 1 });

@@ -48,6 +48,7 @@ SQL >
     FROM agent_usage_daily
     WHERE OrgId = {{ String(org_id, '') }}
         AND BucketStart >= scan_start_dt
+        AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
         AND BucketStart < end_dt
         {% if defined(sources) %}
         AND source IN splitByChar(',', {{ String(sources) }})

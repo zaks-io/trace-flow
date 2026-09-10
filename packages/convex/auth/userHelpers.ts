@@ -31,3 +31,33 @@ export async function requireEnabledUser(ctx: AuthContext): Promise<Doc<'users'>
   }
   return user;
 }
+
+export function isLiveOrganization(
+  organization: Doc<'organizations'> | null,
+): organization is Doc<'organizations'> {
+  return Boolean(
+    organization &&
+    organization.deletionStartedAt === undefined &&
+    organization.deletedAt === undefined,
+  );
+}
+
+export async function getActiveOrganizationMembership(ctx: AuthContext, user: Doc<'users'>) {
+  if (!user.enabled || !user.orgId) return null;
+  const organization = await ctx.db.get(user.orgId);
+  if (!isLiveOrganization(organization)) return null;
+  const membership = await ctx.db
+    .query('organizationMembers')
+    .withIndex('by_user_id', (q) => q.eq('userId', user._id))
+    .filter((q) => q.eq(q.field('orgId'), user.orgId))
+    .first();
+  if (membership?.status !== 'active') return null;
+  return { user, organization, membership, orgId: user.orgId };
+}
+
+export async function requireActiveOrganizationMembership(ctx: AuthContext) {
+  const user = await requireEnabledUser(ctx);
+  const active = await getActiveOrganizationMembership(ctx, user);
+  if (!active) throw new Error('Active organization membership required');
+  return active;
+}

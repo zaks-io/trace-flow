@@ -13,6 +13,11 @@ export const cloudDev = {
   credentialNamespace: 'f945ee3d71954ffabd364e3db385d3ab',
 } as const;
 
+export const cloudDevConvexErasureConfig = {
+  ARCHIVE_API_WORKER_NAME: cloudDev.workerName,
+  ARCHIVE_API_URL: cloudDev.workerUrl,
+} as const;
+
 const repoRoot = resolve(import.meta.dirname, '../..');
 const archiveApiRoot = resolve(repoRoot, 'apps/archive-api');
 const keychainService = 'com.trace-flow.archive-api.cloud-dev';
@@ -159,9 +164,23 @@ async function assertConvexSecret(sharedSecret: string): Promise<void> {
   assertMatchingSharedSecret(result.stdout.replace(/[\r\n]+$/u, ''), sharedSecret);
 }
 
+async function configureConvexErasure(): Promise<void> {
+  for (const [name, value] of Object.entries(cloudDevConvexErasureConfig)) {
+    const result = await captureCommand(
+      cli(),
+      ['convex', 'env', 'set', '--deployment', cloudDev.deployment, name, value],
+      { cwd: repoRoot },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(formatProcessFailure(`Cloud-Dev Convex ${name} configuration`, result));
+    }
+  }
+}
+
 async function deploy(): Promise<void> {
   const secrets = await loadSecrets();
   await assertConvexSecret(secrets.ARCHIVE_API_SHARED_SECRET);
+  await configureConvexErasure();
   const before = await currentVersion();
   assertCloudDevVersion(before);
   await assertHealth();

@@ -2,7 +2,7 @@ import { query, mutation, internalQuery, internalMutation } from '../_generated/
 import type { MutationCtx } from '../_generated/server';
 import { v } from 'convex/values';
 import { requireAuthenticated } from './auth';
-import { getCurrentEnabledUser, requireEnabledUser } from './userHelpers';
+import { getCurrentEnabledUser, isLiveOrganization, requireEnabledUser } from './userHelpers';
 import { organizationValidator } from '../validators';
 import { internal } from '../_generated/api';
 import { TIER_CONFIG } from '@trace-flow/types';
@@ -183,6 +183,7 @@ export async function createOrgWithDefaultBilling(
   if (sub) {
     await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.syncUserOrgToKV, {
       sub,
+      userId,
       orgId,
     });
   }
@@ -198,6 +199,10 @@ export async function ensureOrgHasSubscription(
   ctx: MutationCtx,
   orgId: Id<'organizations'>,
 ): Promise<void> {
+  const organization = await ctx.db.get(orgId);
+  if (!isLiveOrganization(organization)) {
+    throw new Error('Organization is not active');
+  }
   const existing = await ctx.db
     .query('subscriptions')
     .withIndex('by_org_id', (q) => q.eq('orgId', orgId))

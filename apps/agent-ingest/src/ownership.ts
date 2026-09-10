@@ -37,6 +37,7 @@ interface ClaimRequest {
   orgId: string;
   userId: string;
   collectorId: string;
+  hashedSecret: string;
   sessionPks: string[];
 }
 

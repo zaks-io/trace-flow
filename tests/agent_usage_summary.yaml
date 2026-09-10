@@ -34,3 +34,10 @@
   parameters: org_id=org_1c&start_time_ms=1779321600000&end_time_ms=1779408000000&retention_days=20000
   expected_result: |
     {"estimated_cost_usd":0.5,"total_tokens":100,"message_count":1,"session_count":1,"priced_message_count":1,"coverage_pct":1,"prior_cost_usd":2.7,"prior_total_tokens":630,"prior_message_count":8,"prior_session_count":4}
+
+- name: expired_current_and_prior_visibility
+  description: old requested dates cannot expose current or prior-period metrics beyond the signed visibility window
+  expected_http_status: 200
+  parameters: org_id=org_1c&start_time_ms=1779321600000&end_time_ms=1779408000000&retention_days=7
+  expected_result: |
+    {"estimated_cost_usd":0,"total_tokens":0,"message_count":0,"session_count":0,"priced_message_count":0,"coverage_pct":null,"prior_cost_usd":0,"prior_total_tokens":0,"prior_message_count":0,"prior_session_count":0}

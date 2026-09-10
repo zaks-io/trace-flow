@@ -7,9 +7,15 @@ import { clearAuthCookies } from '@/lib/auth-cookies';
 import { buildCsp, buildSentryReportUri, CSP_HEADER_NAME, readOrigin } from '@/lib/csp';
 import { isConvexTokenUsable } from '@/lib/convex-token';
 
+const CLEAR_BROWSER_STORAGE_HEADER = 'Clear-Site-Data';
+
 function applyResponseSecurityHeaders(response: NextResponse, csp: string): void {
   applySecurityHeaders(response.headers);
   response.headers.set(CSP_HEADER_NAME, csp);
+}
+
+function clearBrowserStorage(response: NextResponse): void {
+  response.headers.set(CLEAR_BROWSER_STORAGE_HEADER, '"storage"');
 }
 
 function redirectToLogin(request: NextRequest, csp: string): NextResponse {
@@ -17,6 +23,7 @@ function redirectToLogin(request: NextRequest, csp: string): NextResponse {
   loginUrl.searchParams.set('returnTo', `${request.nextUrl.pathname}${request.nextUrl.search}`);
   const response = NextResponse.redirect(loginUrl);
   clearAuthCookies(request, response);
+  clearBrowserStorage(response);
   applyResponseSecurityHeaders(response, csp);
   return response;
 }
@@ -56,6 +63,8 @@ export async function middleware(request: NextRequest) {
   try {
     const response = await auth0.middleware(request);
 
+    if (pathname === '/auth/logout') clearBrowserStorage(response);
+
     // Proactively refresh for protected routes to persist rotated refresh tokens.
     // Server Components cannot set cookies - middleware must do this.
     const shouldTouchTokens = pathname.startsWith('/app');
@@ -77,12 +86,14 @@ export async function middleware(request: NextRequest) {
       // /auth/error is a static page — bypass auth entirely if it somehow throws
       if (pathname === '/auth/error') {
         const response = NextResponse.next();
+        clearBrowserStorage(response);
         applyResponseSecurityHeaders(response, csp);
         return response;
       }
       // Guard against infinite loops if /auth/login itself keeps throwing
       if (request.nextUrl.searchParams.has('cleared')) {
         const response = NextResponse.redirect(new URL('/auth/error', request.url));
+        clearBrowserStorage(response);
         applyResponseSecurityHeaders(response, csp);
         return response;
       }
@@ -90,6 +101,7 @@ export async function middleware(request: NextRequest) {
       loginUrl.searchParams.set('cleared', '1');
       const response = NextResponse.redirect(loginUrl);
       clearAuthCookies(request, response);
+      clearBrowserStorage(response);
       applyResponseSecurityHeaders(response, csp);
       return response;
     }

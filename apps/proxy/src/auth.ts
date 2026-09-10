@@ -2,7 +2,7 @@ import type { Context } from 'hono';
 import type { Logger } from '@trace-flow/logging';
 import type { SubscriptionKVData } from '@trace-flow/types';
 import { analyticsKeyId } from '@trace-flow/utils';
-import { getCached, invalidate } from './cache';
+import { getCached } from './cache';
 
 export interface ApiKeyData {
   analyticsKeyId: string;
@@ -11,15 +11,66 @@ export interface ApiKeyData {
   orgId: string;
 }
 
+type ApiKeyAuthorization =
+  | { authorized: true; expiresAt: number; createdAt: number; orgId: string }
+  | { authorized: false; reason: 'invalid' | 'expired' };
+
+async function authorizeApiKey(
+  env: { CONVEX_SITE_URL: string; USAGE_SYNC_SECRET: string },
+  key: string,
+): Promise<ApiKeyAuthorization | null> {
+  try {
+    const response = await fetch(`${env.CONVEX_SITE_URL}/worker/authorize-api-key`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.USAGE_SYNC_SECRET}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ key }),
+    });
+    if (!response.ok) return null;
+    const body: unknown = await response.json();
+    if (!body || typeof body !== 'object' || !('authorized' in body)) return null;
+    if (
+      body.authorized === false &&
+      'reason' in body &&
+      (body.reason === 'invalid' || body.reason === 'expired')
+    ) {
+      return { authorized: false, reason: body.reason };
+    }
+    if (
+      body.authorized === true &&
+      'expiresAt' in body &&
+      typeof body.expiresAt === 'number' &&
+      'createdAt' in body &&
+      typeof body.createdAt === 'number' &&
+      'orgId' in body &&
+      typeof body.orgId === 'string'
+    ) {
+      return {
+        authorized: true,
+        expiresAt: body.expiresAt,
+        createdAt: body.createdAt,
+        orgId: body.orgId,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Validates API keys from KV namespace using the X-Trace-Flow-Api-Key header.
+ * Validates API keys against current Convex state using the X-Trace-Flow-Api-Key header.
  *
  * Returns an error Response if validation fails, or ApiKeyData if the key is valid.
  */
-export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
-  c: Context<{ Bindings: E }>,
-  logger?: Logger,
-): Promise<Response | ApiKeyData> {
+export async function validateApiKey<
+  E extends {
+    CONVEX_SITE_URL: string;
+    USAGE_SYNC_SECRET: string;
+  },
+>(c: Context<{ Bindings: E }>, logger?: Logger): Promise<Response | ApiKeyData> {
   const apiKey = c.req.header('X-Trace-Flow-Api-Key');
 
   if (!apiKey) {
@@ -33,21 +84,21 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
     );
   }
 
-  // Cache the parsed ApiKeyData (not the raw JSON string) to skip JSON.parse on hits.
-  // Corrupt/missing keys resolve to null. Expired keys are cached, then invalidated on first access.
   const identifier = await analyticsKeyId(apiKey);
-  const cacheKey = `apikey:${identifier}`;
-  const parsed = await getCached<ApiKeyData | null>(cacheKey, async () => {
-    const raw = await c.env.API_KEYS.get(apiKey);
-    if (!raw) return null;
-    try {
-      return JSON.parse(raw) as ApiKeyData;
-    } catch {
-      return null;
-    }
-  });
+  const authorization = await authorizeApiKey(c.env, apiKey);
+  if (!authorization) {
+    logger?.error('proxy.auth_unavailable');
+    return c.json(
+      {
+        error: 'Authentication unavailable',
+        message: 'Retry the request',
+      },
+      503,
+      { 'Retry-After': '1' },
+    );
+  }
 
-  if (!parsed) {
+  if (!authorization.authorized && authorization.reason === 'invalid') {
     logger?.warn('proxy.auth_rejected', { reason: 'invalid_key', path: c.req.path });
     return c.json(
       {
@@ -58,8 +109,7 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
     );
   }
 
-  if (parsed.expiresAt < Date.now()) {
-    await invalidate(cacheKey);
+  if (!authorization.authorized || authorization.expiresAt <= Date.now()) {
     logger?.warn('proxy.auth_rejected', { reason: 'expired_key', path: c.req.path });
     return c.json(
       {
@@ -70,7 +120,12 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
     );
   }
 
-  return { ...parsed, analyticsKeyId: identifier };
+  return {
+    analyticsKeyId: identifier,
+    expiresAt: authorization.expiresAt,
+    createdAt: authorization.createdAt,
+    orgId: authorization.orgId,
+  };
 }
 
 export function isAuthError(result: Response | ApiKeyData): result is Response {

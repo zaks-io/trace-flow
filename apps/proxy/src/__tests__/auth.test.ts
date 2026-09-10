@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { validateApiKey, isAuthError, checkBillingStatus } from '../auth';
 import { _clearAll } from '../cache';
 import { analyticsKeyId } from '@trace-flow/utils';
@@ -8,21 +8,43 @@ beforeEach(async () => {
   await _clearAll();
 });
 
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
 function createMockContext(
   headers: Record<string, string>,
-  kvData: string | null,
-): Context<{ Bindings: { API_KEYS: KVNamespace } }> {
-  const mockGet = vi.fn().mockResolvedValue(kvData);
-  const mockKV = {
-    get: mockGet,
-  } as unknown as KVNamespace;
+  authorization: object | string,
+): Context<{
+  Bindings: {
+    API_KEYS: KVNamespace;
+    CONVEX_SITE_URL: string;
+    USAGE_SYNC_SECRET: string;
+  };
+}> {
+  vi.stubGlobal(
+    'fetch',
+    vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(
+          new Response(
+            typeof authorization === 'string' ? authorization : JSON.stringify(authorization),
+            { headers: { 'Content-Type': 'application/json' } },
+          ),
+        ),
+      ),
+  );
 
   return {
     req: {
       header: (name: string) => headers[name.toLowerCase()],
     },
     env: {
-      API_KEYS: mockKV,
+      API_KEYS: { get: vi.fn() } as unknown as KVNamespace,
+      CONVEX_SITE_URL: 'https://convex.test',
+      USAGE_SYNC_SECRET: 'worker-secret',
     },
     json: (data: unknown, status: number) => {
       return new Response(JSON.stringify(data), {
@@ -30,12 +52,18 @@ function createMockContext(
         headers: { 'Content-Type': 'application/json' },
       });
     },
-  } as unknown as Context<{ Bindings: { API_KEYS: KVNamespace } }>;
+  } as unknown as Context<{
+    Bindings: {
+      API_KEYS: KVNamespace;
+      CONVEX_SITE_URL: string;
+      USAGE_SYNC_SECRET: string;
+    };
+  }>;
 }
 
 describe('validateApiKey', () => {
   it('should return error when API key is missing', async () => {
-    const context = createMockContext({}, null);
+    const context = createMockContext({}, { authorized: false, reason: 'invalid' });
 
     const result = await validateApiKey(context);
 
@@ -51,11 +79,12 @@ describe('validateApiKey', () => {
   });
 
   it('should return ApiKeyData for valid API key from X-Trace-Flow-Api-Key header', async () => {
-    const validKeyData = JSON.stringify({
+    const validKeyData = {
+      authorized: true,
       expiresAt: Date.now() + 100000,
       createdAt: Date.now(),
       orgId: 'org123',
-    });
+    };
 
     const context = createMockContext(
       {
@@ -72,15 +101,21 @@ describe('validateApiKey', () => {
       expect(result.analyticsKeyId).toBe(await analyticsKeyId('valid-api-key'));
       expect(JSON.stringify(result)).not.toContain('valid-api-key');
     }
-    expect(context.env.API_KEYS.get).toHaveBeenCalledWith('valid-api-key');
+    expect(fetch).toHaveBeenCalledWith(
+      'https://convex.test/worker/authorize-api-key',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ key: 'valid-api-key' }),
+      }),
+    );
   });
 
-  it('should return error when API key is not found in KV', async () => {
+  it('should return error when API key is not found in current state', async () => {
     const context = createMockContext(
       {
         'x-trace-flow-api-key': 'invalid-key',
       },
-      null,
+      { authorized: false, reason: 'invalid' },
     );
 
     const result = await validateApiKey(context);
@@ -97,11 +132,13 @@ describe('validateApiKey', () => {
   });
 
   it('should return error when API key is already expired', async () => {
-    const expiredKeyData = JSON.stringify({
+    const expiredKeyData = {
+      authorized: false,
+      reason: 'expired',
       expiresAt: Date.now() - 10000,
       createdAt: Date.now() - 100000,
       orgId: 'org123',
-    });
+    };
 
     const context = createMockContext(
       {
@@ -125,22 +162,23 @@ describe('validateApiKey', () => {
 
   it('should evict and reject key that expires after being cached', async () => {
     const expiresAt = Date.now() + 100;
-    const keyData = JSON.stringify({
+    const keyData = {
+      authorized: true,
       expiresAt,
       createdAt: Date.now(),
       orgId: 'org123',
-    });
+    };
 
     const context = createMockContext({ 'x-trace-flow-api-key': 'about-to-expire' }, keyData);
 
-    // First call: key is valid, gets cached
+    // First call: key is valid.
     const first = await validateApiKey(context);
     expect(isAuthError(first)).toBe(false);
 
     // Simulate time passing past expiry
     vi.spyOn(Date, 'now').mockReturnValue(expiresAt + 1);
 
-    // Second call: cache returns the key, but re-check detects expiry → evict + reject
+    // Second call gets a fresh control-plane decision and rechecks expiry locally.
     const second = await validateApiKey(context);
     expect(isAuthError(second)).toBe(true);
     if (isAuthError(second)) {
@@ -151,8 +189,6 @@ describe('validateApiKey', () => {
         message: 'The provided API key has expired',
       });
     }
-
-    vi.restoreAllMocks();
   });
 
   it('should return error when API key data is corrupted', async () => {
@@ -167,22 +203,23 @@ describe('validateApiKey', () => {
 
     expect(isAuthError(result)).toBe(true);
     if (isAuthError(result)) {
-      expect(result.status).toBe(401);
+      expect(result.status).toBe(503);
       const body = await result.json();
       expect(body).toEqual({
-        error: 'Invalid API key',
-        message: 'The provided API key is not valid',
+        error: 'Authentication unavailable',
+        message: 'Retry the request',
       });
     }
   });
 
   it('should handle edge case where expiresAt equals current time', async () => {
     const currentTime = Date.now();
-    const edgeCaseKeyData = JSON.stringify({
+    const edgeCaseKeyData = {
+      authorized: true,
       expiresAt: currentTime,
       createdAt: currentTime - 1000,
       orgId: 'org789',
-    });
+    };
 
     const context = createMockContext(
       {
@@ -195,10 +232,35 @@ describe('validateApiKey', () => {
 
     const result = await validateApiKey(context);
 
-    // expiresAt === Date.now() means NOT expired (< not <=)
-    expect(isAuthError(result)).toBe(false);
+    expect(isAuthError(result)).toBe(true);
+    if (isAuthError(result)) expect(result.status).toBe(401);
+  });
 
-    vi.restoreAllMocks();
+  it('rejects a revoked key immediately after a successful authorization', async () => {
+    const context = createMockContext(
+      { 'x-trace-flow-api-key': 'revoked-after-warmup' },
+      { authorized: true, expiresAt: Date.now() + 60_000, createdAt: 1, orgId: 'org123' },
+    );
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            authorized: true,
+            expiresAt: Date.now() + 60_000,
+            createdAt: 1,
+            orgId: 'org123',
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ authorized: false, reason: 'invalid' })),
+      );
+
+    expect(isAuthError(await validateApiKey(context))).toBe(false);
+    const revoked = await validateApiKey(context);
+    expect(isAuthError(revoked)).toBe(true);
+    if (isAuthError(revoked)) expect(revoked.status).toBe(401);
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 });
 

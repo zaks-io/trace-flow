@@ -27,6 +27,7 @@ import { statusFor } from './archive-ledger-support';
 import { appendArchiveAuditEvent } from './audit';
 import { publishArchiveIntegrityStatus } from './archive-integrity-status';
 import { isRetryableDurableObjectError } from './durable-object-errors';
+import { hasInternalArchiveAuthority } from './internal-authority';
 
 const COLLECTOR_SECRET_HEADER = 'X-Trace-Flow-Collector-Secret';
 const ARCHIVE_SOURCE_HEADER = 'X-Trace-Flow-Archive-Source';
@@ -287,6 +288,19 @@ export async function handleUpload(c: Context<{ Bindings: ArchiveApiEnv }>): Pro
         sourceSessionId,
       ]),
     );
+    try {
+      await c.env.STORAGE_BUDGET.getByName(currentDecision.orgId).registerLedger({
+        orgId: currentDecision.orgId,
+        ledgerId: ledgerId.toString(),
+      });
+    } catch (error) {
+      const reason =
+        error instanceof ArchiveContractError && error.errorClass === 'archive_deleting'
+          ? 'deleting'
+          : 'archive_registry_failed';
+      logger.warn('archive_api.upload_rejected', { reason, source });
+      return c.json({ error: 'upload_rejected', reason }, 503);
+    }
     const ledgerRequestBody = JSON.stringify({
       scope: {
         orgId: currentDecision.orgId,
@@ -454,20 +468,6 @@ export function handleDeleteContribution(c: Context<{ Bindings: ArchiveApiEnv }>
 
 export function handleDeleteArchive(c: Context<{ Bindings: ArchiveApiEnv }>): Response {
   return rejectWithoutExportGrant(c, 'archive_delete');
-}
-
-function hasInternalArchiveAuthority(
-  authHeader: string | undefined,
-  secret: string | undefined,
-): boolean {
-  if (!secret || !authHeader?.startsWith('Bearer ')) return false;
-  const provided = authHeader.slice(7);
-  if (provided.length !== secret.length) return false;
-  let diff = 0;
-  for (let index = 0; index < secret.length; index++) {
-    diff |= provided.charCodeAt(index) ^ secret.charCodeAt(index);
-  }
-  return diff === 0;
 }
 
 export async function handleRotateKey(c: Context<{ Bindings: ArchiveApiEnv }>): Promise<Response> {

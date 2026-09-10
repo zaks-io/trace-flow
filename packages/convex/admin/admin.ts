@@ -16,6 +16,24 @@ import { ensureOrgHasSubscription } from '../auth/organizations';
 import { TIER_CONFIG } from '@trace-flow/types';
 import { beginArchiveDeletion } from '../archiveLib';
 import type { Id, TableNames } from '../_generated/dataModel';
+import { makeFunctionReference } from 'convex/server';
+
+const stageArchiveErasure = makeFunctionReference<'action', { orgId: Id<'organizations'> }, null>(
+  'archiveErasure:stageArchiveErasure',
+);
+const destroyArchiveKeys = makeFunctionReference<
+  'mutation',
+  { orgId: Id<'organizations'> },
+  { keyVersionsDeleted: number; custodyDeleted: number; hasMore: boolean }
+>('archiveErasure:destroyArchiveKeys');
+const eraseArchiveData = makeFunctionReference<'action', { orgId: Id<'organizations'> }, null>(
+  'archiveErasure:eraseArchiveData',
+);
+const eraseOrganizationSandboxBackups = makeFunctionReference<
+  'action',
+  { orgId: Id<'organizations'> },
+  null
+>('analystSandbox:eraseOrganizationSandboxBackups');
 
 async function requireAdminAction(ctx: ActionCtx) {
   await requireAuthenticated(ctx);
@@ -336,6 +354,21 @@ async function deleteOrgDataImpl(ctx: ActionCtx, orgId: Id<'organizations'>) {
   // Establish the durable archive deletion gate before the external deletion begins.
   await ctx.runMutation(internal.admin.admin.beginOrgDeletion, { orgId });
 
+  // The deletion gate blocks new checkpoints before the Worker removes both referenced and
+  // orphaned org-scoped Analyst snapshots.
+  await ctx.runAction(eraseOrganizationSandboxBackups, { orgId });
+
+  // Stop Archive API writes that already passed control-plane authorization before destroying keys.
+  await ctx.runAction(stageArchiveErasure, { orgId });
+
+  // Cryptographic erasure precedes every archive object and ledger deletion.
+  let archiveKeysRemain = true;
+  while (archiveKeysRemain) {
+    const result = await ctx.runMutation(destroyArchiveKeys, { orgId });
+    archiveKeysRemain = result.hasMore;
+  }
+  await ctx.runAction(eraseArchiveData, { orgId });
+
   // IMPORTANT: Tinybird deletion must run BEFORE Convex record deletion.
   // deleteOrgTraces queries API keys from Convex to build the SQL WHERE clause.
   const tinybirdResults = await ctx.runAction(internal.integrations.tinybird.deleteOrgTraces, {
@@ -432,6 +465,45 @@ export const deleteOrgRecordsBatch = internalMutation({
 
     await beginArchiveDeletion(ctx, args.orgId, Date.now());
 
+    // Stop cost-alert work first, then remove every org-scoped row. Channels contain webhook
+    // secrets, so delete them before lower-sensitivity history if a large org needs many batches.
+    const costAlertMonitors = await ctx.db
+      .query('costAlertMonitors')
+      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
+      .take(PAGE_SIZE - ops);
+    for (const monitor of costAlertMonitors) {
+      if (ops >= PAGE_SIZE) return { counts, hasMore: true };
+      if (monitor.schedulerId) {
+        try {
+          await ctx.scheduler.cancel(monitor.schedulerId);
+        } catch {
+          // The scheduled evaluation already completed or was canceled.
+        }
+      }
+      await ctx.db.delete(monitor._id);
+      ops++;
+    }
+    if (ops >= PAGE_SIZE) return { counts, hasMore: true };
+
+    const costAlertTables = [
+      'costAlertChannels',
+      'costAlerts',
+      'costAlertStates',
+      'costAlertDeliveries',
+    ] as const;
+    for (const table of costAlertTables) {
+      const rows = await ctx.db
+        .query(table)
+        .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
+        .take(PAGE_SIZE - ops);
+      for (const row of rows) {
+        if (ops >= PAGE_SIZE) return { counts, hasMore: true };
+        await ctx.db.delete(row._id);
+        ops++;
+      }
+      if (ops >= PAGE_SIZE) return { counts, hasMore: true };
+    }
+
     // Helper: delete up to remaining budget from a query
     async function deleteBatch<T extends { _id: Id<TableNames> }>(
       items: T[],
@@ -497,10 +569,33 @@ export const deleteOrgRecordsBatch = internalMutation({
       .take(PAGE_SIZE - ops);
     if (await deleteBatch(addons, 'addonPurchases')) return { counts, hasMore: true };
 
-    // Mark members as removed and clean up per-member data
+    // Clear stale user routing even when an interrupted prior attempt already removed membership.
+    const orgUsers = await ctx.db
+      .query('users')
+      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
+      .take(PAGE_SIZE - ops);
+    for (const user of orgUsers) {
+      if (ops >= PAGE_SIZE) return { counts, hasMore: true };
+      const invite = user.inviteId ? await ctx.db.get(user.inviteId) : null;
+      await ctx.db.patch(user._id, {
+        orgId: undefined,
+        ...(invite?.orgId === args.orgId ? { inviteId: undefined } : {}),
+      });
+      const sub = extractSub(user.tokenIdentifier);
+      if (sub) {
+        await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.deleteUserOrgFromKV, {
+          sub,
+          userId: user._id,
+        });
+      }
+      ops++;
+    }
+    if (ops >= PAGE_SIZE) return { counts, hasMore: true };
+
+    // Mark active members as removed. The status index keeps prior batches from hiding later rows.
     const members = await ctx.db
       .query('organizationMembers')
-      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
+      .withIndex('by_org_id_status', (q) => q.eq('orgId', args.orgId).eq('status', 'active'))
       .take(PAGE_SIZE - ops);
     for (const member of members) {
       if (ops >= PAGE_SIZE) return { counts, hasMore: true };
@@ -513,6 +608,7 @@ export const deleteOrgRecordsBatch = internalMutation({
         if (sub) {
           await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.deleteUserOrgFromKV, {
             sub,
+            userId: member.userId,
           });
         }
         counts.membersRemoved++;

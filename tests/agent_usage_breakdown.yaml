@@ -35,3 +35,9 @@
   parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&dimension=source&sources=codex
   expected_result: |
     {"group_value":"codex","message_count":1,"session_count":1,"total_tokens":30,"cost_usd":0.5}
+
+- name: expired_visibility_window
+  description: explicit historical time bounds cannot expose fixtures outside the signed seven-day visibility window
+  expected_http_status: 200
+  parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=7&dimension=source
+  expected_result: ''

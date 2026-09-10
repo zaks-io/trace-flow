@@ -24,6 +24,7 @@ export function registerAgentIngestRoutes(app: HonoWithConvex<ActionCtx>): void 
       orgId: string;
       userId: string;
       collectorId: string;
+      hashedSecret: string;
       sessionPks: string[];
       traceContext?: TraceContext;
     }>();
@@ -50,7 +51,7 @@ export function registerAgentIngestRoutes(app: HonoWithConvex<ActionCtx>): void 
 
     const orgId = body.orgId as Id<'organizations'>;
     const org = await ctx.runQuery(internal.auth.organizations.getByIdInternal, { id: orgId });
-    if (!org) {
+    if (!org || org.deletionStartedAt !== undefined || org.deletedAt !== undefined) {
       logger.warn('convex.agent_claim_org_not_found');
       await logger.flush();
       return c.json({ error: 'Organization not found' }, 404);
@@ -63,8 +64,25 @@ export function registerAgentIngestRoutes(app: HonoWithConvex<ActionCtx>): void 
     }
 
     const userId = body.userId as Id<'users'>;
-    const user = await ctx.runQuery(internal.auth.users.getUserById, { id: userId });
-    if (user?.orgId !== orgId) {
+    if (!/^[a-f0-9]{64}$/u.test(body.hashedSecret)) {
+      logger.warn('convex.agent_claim_credential_invalid');
+      await logger.flush();
+      return c.json({ error: 'Collector credential not found' }, 404);
+    }
+    const [user, activeMembership, credential] = await Promise.all([
+      ctx.runQuery(internal.auth.users.getUserById, { id: userId }),
+      ctx.runQuery(internal.auth.users.hasActiveOrganizationMembership, { userId }),
+      ctx.runQuery(internal.integrations.cloudflare.getCollectorCredentialSyncData, {
+        hashedSecret: body.hashedSecret,
+      }),
+    ]);
+    if (
+      user?.orgId !== orgId ||
+      !activeMembership ||
+      credential?.orgId !== orgId ||
+      credential.userId !== userId ||
+      credential.collectorId !== body.collectorId
+    ) {
       logger.warn('convex.agent_claim_user_invalid', { userIdValid: Boolean(user) });
       await logger.flush();
       return c.json({ error: 'User not found in organization' }, 404);

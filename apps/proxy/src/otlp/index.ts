@@ -22,6 +22,8 @@ interface Env {
   STORAGE: R2Bucket;
   TRACE_DELIVERY_NAMESPACE: string;
   API_KEYS: KVNamespace;
+  CONVEX_SITE_URL: string;
+  USAGE_SYNC_SECRET: string;
   USAGE_TRACKER: DurableObjectNamespace;
   ORG_LIMITER: RateLimit;
   IP_LIMITER: RateLimit;
@@ -158,25 +160,11 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
   const orgLogger = keyData.orgId ? logger.child({ orgId: keyData.orgId }) : logger;
 
   const clientIp = c.req.header('cf-connecting-ip') ?? 'unknown';
-  const [ipLimit, orgLimit] = await Promise.all([
-    c.env.IP_LIMITER.limit({ key: clientIp }),
-    keyData.orgId
-      ? c.env.ORG_LIMITER.limit({ key: keyData.orgId })
-      : Promise.resolve({ success: true }),
-  ]);
-
+  const ipLimit = await c.env.IP_LIMITER.limit({ key: clientIp });
   if (!ipLimit.success) {
     orgLogger.warn('otlp.rate_limited', { reason: 'per_ip', clientIp });
     c.executionCtx.waitUntil(orgLogger.flush());
     return c.json({ error: { code: 429, message: 'Per-IP rate limit exceeded' } }, 429, {
-      'Retry-After': '60',
-    });
-  }
-
-  if (!orgLimit.success) {
-    orgLogger.warn('otlp.rate_limited', { reason: 'per_org' });
-    c.executionCtx.waitUntil(orgLogger.flush());
-    return c.json({ error: { code: 429, message: 'Per-organization rate limit exceeded' } }, 429, {
       'Retry-After': '60',
     });
   }
@@ -242,6 +230,17 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     }
     c.executionCtx.waitUntil(orgLogger.flush());
     return c.json({ error: { code: failure.status, message: failure.message } }, failure.status);
+  }
+
+  const orgLimit = keyData.orgId
+    ? await c.env.ORG_LIMITER.limit({ key: keyData.orgId })
+    : { success: true };
+  if (!orgLimit.success) {
+    orgLogger.warn('otlp.rate_limited', { reason: 'per_org' });
+    c.executionCtx.waitUntil(orgLogger.flush());
+    return c.json({ error: { code: 429, message: 'Per-organization rate limit exceeded' } }, 429, {
+      'Retry-After': '60',
+    });
   }
 
   const validation = validateOTLPRequest(body);

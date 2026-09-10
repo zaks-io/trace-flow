@@ -27,3 +27,9 @@
   expected_http_status: 200
   parameters: org_id=org_1c&start_time_ms=1779235200000&end_time_ms=1779408000000&retention_days=20000&models=gpt-5.6-sol
   expected_result: ''
+
+- name: expired_visibility_window
+  description: explicit historical time bounds cannot expose fixtures outside the signed seven-day visibility window
+  expected_http_status: 200
+  parameters: org_id=org_1c&start_time_ms=1779235200000&end_time_ms=1779408000000&retention_days=7
+  expected_result: ''

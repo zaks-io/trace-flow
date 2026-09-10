@@ -2,7 +2,7 @@ import { mutation, query, internalQuery } from './_generated/server';
 import { v } from 'convex/values';
 import { requireAuthenticated } from './auth/auth';
 import { internal } from './_generated/api';
-import { requireEnabledUser } from './auth/users';
+import { requireActiveOrganizationMembership } from './auth/userHelpers';
 import { collectorCredentialPublicValidator, collectorCredentialValidator } from './validators';
 import { rateLimiter } from './rateLimits';
 import type { Doc } from './_generated/dataModel';
@@ -45,9 +45,7 @@ export const list = query({
   returns: v.array(collectorCredentialPublicValidator),
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
-    const user = await requireEnabledUser(ctx);
-    if (!user.orgId) return [];
-    const orgId = user.orgId;
+    const { orgId } = await requireActiveOrganizationMembership(ctx);
 
     const creds = await ctx.db
       .query('collectorCredentials')
@@ -62,9 +60,7 @@ export const listActiveForCurrentUser = query({
   returns: v.array(collectorCredentialPublicValidator),
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
-    const user = await requireEnabledUser(ctx);
-    if (!user.orgId) throw new Error('Collector Credentials require an organization');
-    const orgId = user.orgId;
+    const { user, orgId } = await requireActiveOrganizationMembership(ctx);
 
     const now = Date.now();
     const creds = await ctx.db
@@ -93,10 +89,7 @@ export const mint = mutation({
   returns: v.object({ id: v.id('collectorCredentials'), secret: v.string() }),
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
-    const user = await requireEnabledUser(ctx);
-    if (!user.orgId) {
-      throw new Error('Collector Credentials require an organization');
-    }
+    const { user, orgId } = await requireActiveOrganizationMembership(ctx);
 
     await rateLimiter.limit(ctx, 'mintCollectorCredential', { key: user._id, throws: true });
 
@@ -114,7 +107,7 @@ export const mint = mutation({
 
     const id = await ctx.db.insert('collectorCredentials', {
       hashedSecret,
-      orgId: user.orgId,
+      orgId,
       userId: user._id,
       collectorId: args.collectorId,
       name: args.name,
@@ -125,7 +118,7 @@ export const mint = mutation({
 
     await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.syncCollectorCredToKV, {
       hashedSecret,
-      orgId: user.orgId,
+      orgId,
       userId: user._id,
       collectorId: args.collectorId,
       expiresAt: args.expiresAt,
@@ -143,7 +136,7 @@ export const revoke = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
-    const user = await requireEnabledUser(ctx);
+    const { user } = await requireActiveOrganizationMembership(ctx);
 
     const cred = await ctx.db.get(args.id);
     if (!cred) {

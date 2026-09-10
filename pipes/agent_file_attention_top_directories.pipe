@@ -55,6 +55,7 @@ SQL >
             {% end %}
         GROUP BY repo_fingerprint, session_pk, normalized_repo_path
         HAVING last_touched_at >= start_dt
+            AND last_touched_at >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
             AND last_touched_at < end_dt
             {% if defined(sources) %}
             AND source IN splitByChar(',', {{ String(sources) }})

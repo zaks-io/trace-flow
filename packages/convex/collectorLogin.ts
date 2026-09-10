@@ -4,6 +4,7 @@ import { internal } from './_generated/api';
 import { generateCollectorSecret, hashCollectorSecret } from './collectorCredentials';
 import { rateLimiter } from './rateLimits';
 import type { Id } from './_generated/dataModel';
+import { getActiveOrganizationMembership } from './auth/userHelpers';
 
 // Server-side half of the CLI `trace-flow login` device flow. The public `collectorCredentials.mint`
 // mutation requires a live Convex auth session (`ctx.auth`), which an HTTP callback resolving an Auth0
@@ -18,10 +19,10 @@ export const resolveLoginOrg = internalQuery({
   returns: v.union(v.null(), v.object({ orgId: v.id('organizations'), orgName: v.string() })),
   handler: async (ctx, args) => {
     const user = await ctx.db.get(args.userId);
-    if (!user?.enabled || !user.orgId) return null;
-    const org = await ctx.db.get(user.orgId);
-    if (!org) return null;
-    return { orgId: user.orgId, orgName: org.name };
+    if (!user) return null;
+    const active = await getActiveOrganizationMembership(ctx, user);
+    if (!active) return null;
+    return { orgId: active.orgId, orgName: active.organization.name };
   },
 });
 
@@ -47,10 +48,9 @@ export const mintForUser = internalMutation({
     if (!user?.enabled) {
       throw new Error('User account is not enabled. Please contact support.');
     }
-    if (!user.orgId) {
-      throw new Error('Collector Credentials require an organization');
-    }
-    const orgId: Id<'organizations'> = user.orgId;
+    const active = await getActiveOrganizationMembership(ctx, user);
+    if (!active) throw new Error('Active organization membership required');
+    const orgId: Id<'organizations'> = active.orgId;
 
     await rateLimiter.limit(ctx, 'mintCollectorCredential', { key: args.userId, throws: true });
 

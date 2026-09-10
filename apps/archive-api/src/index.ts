@@ -19,6 +19,11 @@ import {
   handleRotationHealth,
   handleUpload,
 } from './handler';
+import {
+  handleBeginArchiveErasure,
+  handleEraseArchiveLedgers,
+  handleFinishArchiveErasure,
+} from './archive-erasure';
 export { ArchiveSessionLedger } from './archive-ledger';
 export { StorageBudget } from './archive-storage-budget';
 
@@ -38,5 +43,9 @@ app.delete('/v1/archive', handleDeleteArchive);
 
 app.post('/v1/archive/key-rotations', handleRotateKey);
 app.get('/v1/archive/key-rotations/:orgId', handleRotationHealth);
+
+app.post('/internal/archive-erasure/begin', handleBeginArchiveErasure);
+app.post('/internal/archive-erasure/ledgers', handleEraseArchiveLedgers);
+app.post('/internal/archive-erasure/finish', handleFinishArchiveErasure);
 
 export default Sentry.withSentry(createArchiveApiSentryOptions, app);

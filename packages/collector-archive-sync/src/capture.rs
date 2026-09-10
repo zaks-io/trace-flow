@@ -220,7 +220,9 @@ pub(crate) async fn upload_pending<U: ArchiveUploader>(
                     Err(err) => Ok(UploadOutcome::Halt(err.class())),
                 }
             }
-            Some(ArchivePolicy::Frozen) | Some(ArchivePolicy::Grace) => Ok(UploadOutcome::Frozen),
+            Some(ArchivePolicy::Inactive)
+            | Some(ArchivePolicy::Frozen)
+            | Some(ArchivePolicy::Grace) => Ok(UploadOutcome::Frozen),
             _ => Err(err.class()),
         },
     }

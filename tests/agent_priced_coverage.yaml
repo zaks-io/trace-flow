@@ -30,3 +30,10 @@
   parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&source=codex
   expected_result: |
     {"message_count":1,"billable_message_count":1,"priced_message_count":1,"coverage_pct":1,"estimated_cost_usd":0.5}
+
+- name: expired_visibility_window
+  description: explicit historical bounds cannot bypass the signed visibility floor
+  expected_http_status: 200
+  parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=7
+  expected_result: |
+    {"message_count":0,"billable_message_count":0,"priced_message_count":0,"coverage_pct":null,"estimated_cost_usd":0}

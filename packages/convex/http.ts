@@ -21,6 +21,7 @@ import { registerMcpDiscoveryRoutes } from './httpRoutes/mcpDiscovery';
 import { registerMcpTokenRoutes } from './httpRoutes/mcpToken';
 import { registerStripeWebhookRoutes } from './httpRoutes/stripeWebhook';
 import { registerUsageRoutes } from './httpRoutes/usage';
+import { registerWorkerAuthorizationRoutes } from './httpRoutes/workerAuthorization';
 
 export type { HttpDeps };
 
@@ -55,6 +56,7 @@ export function createApp(
   registerArchiveSessionIntegrityRoutes(app);
   registerMcpBackendRoutes(app);
   registerCollectorAuthorizeRoutes(app, deps);
+  registerWorkerAuthorizationRoutes(app);
 
   return app;
 }

@@ -411,6 +411,32 @@ export declare const api: {
     >;
   };
   analystSandbox: {
+    acknowledgeSandboxBackupCleanup: FunctionReference<
+      "action",
+      "public",
+      {
+        backupIds: Array<string>;
+        runId: Id<"analystSandboxRuns">;
+        token: string;
+      },
+      null
+    >;
+    authorizeSandboxCompletion: FunctionReference<
+      "action",
+      "public",
+      {
+        runId: Id<"analystSandboxRuns">;
+        status: "completed" | "failed" | "timed_out" | "cancelled";
+        token: string;
+      },
+      any
+    >;
+    authorizeSandboxCheckpoint: FunctionReference<
+      "action",
+      "public",
+      { runId: Id<"analystSandboxRuns">; token: string },
+      any
+    >;
     cancelSandboxRun: FunctionReference<
       "action",
       "public",
@@ -422,7 +448,9 @@ export declare const api: {
       "public",
       {
         backup: { dir: string; id: string; localBucket?: boolean };
+        reservation: number;
         runId: Id<"analystSandboxRuns">;
+        sandboxId: string;
         token: string;
       },
       any
@@ -440,7 +468,9 @@ export declare const api: {
         backup?: { dir: string; id: string; localBucket?: boolean };
         error?: string;
         resultText?: string;
+        reservation?: number;
         runId: Id<"analystSandboxRuns">;
+        sandboxId: string;
         status: "completed" | "failed" | "timed_out" | "cancelled";
         token: string;
       },
@@ -1345,13 +1375,9 @@ export declare const api: {
       {},
       {
         apiKeys: Array<{
-          _creationTime: number;
           _id: Id<"apiKeys">;
-          expiresAt: number;
-          key: string;
+          identifier: string;
           name?: string;
-          orgId?: Id<"organizations">;
-          userId?: Id<"users">;
         }>;
         channels: Array<{
           _creationTime: number;
@@ -1819,6 +1845,16 @@ export declare const internal: {
     >;
   };
   analystSandboxStore: {
+    acknowledgeSandboxBackupCleanup: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        backupIds: Array<string>;
+        runId: Id<"analystSandboxRuns">;
+        tokenHash: string;
+      },
+      null
+    >;
     appendSandboxRunEvents: FunctionReference<
       "mutation",
       "internal",
@@ -1840,6 +1876,7 @@ export declare const internal: {
             | "usage";
         }>;
         now: number;
+        requireActive?: boolean;
         runId: Id<"analystSandboxRuns">;
         tokenHash: string;
       },
@@ -1849,11 +1886,28 @@ export declare const internal: {
       "mutation",
       "internal",
       {
+        backup?: { dir: string; id: string; localBucket?: boolean };
         error?: string;
+        internalStartFailure?: boolean;
         now: number;
+        reservation?: number;
         resultText?: string;
         runId: Id<"analystSandboxRuns">;
+        sandboxId?: string;
         status: "completed" | "failed" | "timed_out" | "cancelled";
+        tokenHash: string;
+      },
+      any
+    >;
+    commitSandboxCheckpoint: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        backup: { dir: string; id: string; localBucket?: boolean };
+        now: number;
+        reservation: number;
+        runId: Id<"analystSandboxRuns">;
+        sandboxId: string;
         tokenHash: string;
       },
       any
@@ -1981,6 +2035,23 @@ export declare const internal: {
       {
         requestedOutputTokens: number;
         runId: Id<"analystSandboxRuns">;
+        tokenHash: string;
+      },
+      any
+    >;
+    reserveSandboxCheckpoint: FunctionReference<
+      "mutation",
+      "internal",
+      { runId: Id<"analystSandboxRuns">; tokenHash: string },
+      any
+    >;
+    reserveSandboxCompletion: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        now: number;
+        runId: Id<"analystSandboxRuns">;
+        status: "completed" | "failed" | "timed_out" | "cancelled";
         tokenHash: string;
       },
       any
@@ -2559,6 +2630,12 @@ export declare const internal: {
           tokenIdentifier: string;
         } | null
       >;
+      hasActiveOrganizationMembership: FunctionReference<
+        "query",
+        "internal",
+        { userId: Id<"users"> },
+        boolean
+      >;
       isAdminInternal: FunctionReference<"query", "internal", {}, boolean>;
     };
   };
@@ -2943,6 +3020,12 @@ export declare const internal: {
     };
   };
   bodyAccess: {
+    authorizeSubject: FunctionReference<
+      "query",
+      "internal",
+      { orgId: Id<"organizations">; sub: string; userId: Id<"users"> },
+      boolean
+    >;
     currentSubject: FunctionReference<
       "query",
       "internal",
@@ -3214,7 +3297,7 @@ export declare const internal: {
       deleteUserOrgFromKV: FunctionReference<
         "action",
         "internal",
-        { retryCount?: number; sub: string },
+        { retryCount?: number; sub: string; userId: Id<"users"> },
         null
       >;
       getAllSyncData: FunctionReference<
@@ -3281,6 +3364,30 @@ export declare const internal: {
           }>;
         }
       >;
+      getApiKeySyncData: FunctionReference<
+        "query",
+        "internal",
+        { key: string },
+        any
+      >;
+      getCollectorCredentialSyncData: FunctionReference<
+        "query",
+        "internal",
+        { hashedSecret: string },
+        any
+      >;
+      getSubscriptionSyncData: FunctionReference<
+        "query",
+        "internal",
+        { orgId: Id<"organizations"> },
+        any
+      >;
+      getUserOrgSyncData: FunctionReference<
+        "query",
+        "internal",
+        { sub: string; userId: Id<"users"> },
+        { orgId: Id<"organizations"> } | null
+      >;
       isCallerAdmin: FunctionReference<"query", "internal", {}, boolean>;
       syncCollectorCredToKV: FunctionReference<
         "action",
@@ -3324,7 +3431,12 @@ export declare const internal: {
       syncUserOrgToKV: FunctionReference<
         "action",
         "internal",
-        { orgId: string; retryCount?: number; sub: string },
+        {
+          orgId: string;
+          retryCount?: number;
+          sub: string;
+          userId: Id<"users">;
+        },
         null
       >;
     };
@@ -3388,6 +3500,16 @@ export declare const internal: {
       >;
     };
     tinybird: {
+      authorizePipesQuery: FunctionReference<
+        "action",
+        "internal",
+        {
+          orgId: Id<"organizations">;
+          pipe: string;
+          userId: Id<"users">;
+        },
+        { expiresAt: number; token: string } | null
+      >;
       deleteOrgTraces: FunctionReference<
         "action",
         "internal",

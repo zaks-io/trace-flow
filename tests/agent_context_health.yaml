@@ -45,3 +45,9 @@
   parameters: org_id=org_context&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&models=gpt-5.5
   expected_result: |
     {"group_value":"","attention_threshold_tokens":140000,"model_call_count":5,"prior_model_call_count":2,"session_count":2,"prior_session_count":1,"first_call_context_p50":60000,"prior_first_call_context_p50":100000,"context_p10":20000,"prior_context_p10":100000,"context_p50":90000,"prior_context_p50":100000,"context_p90":220000,"prior_context_p90":130000,"context_p95":220000,"prior_context_p95":130000,"context_max":220000,"prior_context_max":130000,"calls_over_threshold":2,"prior_calls_over_threshold":0,"pct_calls_over_threshold":0.4,"prior_pct_calls_over_threshold":0,"sessions_over_threshold":1,"prior_sessions_over_threshold":0,"pct_sessions_over_threshold":0.5,"prior_pct_sessions_over_threshold":0,"context_overage_tokens":90000,"prior_context_overage_tokens":0,"cost_while_over_threshold":5,"prior_cost_while_over_threshold":0,"output_tokens_while_over_threshold":5000,"prior_output_tokens_while_over_threshold":0,"worst_session_pk":"ctx1","worst_session_context_max":220000,"worst_session_calls_over_threshold":2,"context_hist_bin_0":3,"context_hist_bin_1":1,"context_hist_bin_2":1,"context_hist_bin_3":0,"context_hist_bin_4":0,"context_hist_bin_5":0,"context_hist_bin_6":0,"context_hist_bin_7":0,"context_hist_bin_8":0,"context_hist_bin_9":0}
+
+- name: expired_visibility_window
+  description: explicit historical bounds cannot bypass the signed visibility floor
+  expected_http_status: 200
+  parameters: org_id=org_context&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=7
+  expected_result: ''

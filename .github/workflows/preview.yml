@@ -115,24 +115,43 @@ jobs:
       - name: Configure Convex query tracing
         run: |
           test -n "$SENTRY_DSN"
+          test -n "$PIPES_API_SHARED_SECRET"
+          test -n "$BODY_ACCESS_JWT_SECRET"
           printf '%s' "$SENTRY_DSN" |
             bunx convex env set --preview-name "$BRANCH_NAME" SENTRY_DSN
+          printf '%s' "$PIPES_API_SHARED_SECRET" |
+            bunx convex env set --preview-name "$BRANCH_NAME" PIPES_API_SHARED_SECRET
+          printf '%s' "$BODY_ACCESS_JWT_SECRET" |
+            bunx convex env set --preview-name "$BRANCH_NAME" BODY_ACCESS_JWT_SECRET
           bunx convex env set --preview-name "$BRANCH_NAME" SENTRY_ENVIRONMENT preview
         env:
           SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
+          PIPES_API_SHARED_SECRET: ${{ secrets.PIPES_API_SHARED_SECRET }}
+          BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}
           BRANCH_NAME: ${{ needs.prepare.outputs.head_ref }}
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
 
       - name: Configure Archive API authorization
         run: |
           test -n "$ARCHIVE_API_SHARED_SECRET"
+          test -n "$CLOUDFLARE_API_TOKEN"
           printf '%s' "$ARCHIVE_API_SHARED_SECRET" |
             bunx convex env set --preview-name "$BRANCH_NAME" ARCHIVE_API_SHARED_SECRET
+          printf '%s' "$CLOUDFLARE_API_TOKEN" |
+            bunx convex env set --preview-name "$BRANCH_NAME" CLOUDFLARE_API_TOKEN
+          bunx convex env set --preview-name "$BRANCH_NAME" \
+            CLOUDFLARE_ACCOUNT_ID "$CLOUDFLARE_ACCOUNT_ID"
           bunx convex env set --preview-name "$BRANCH_NAME" \
             CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID "$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID"
+          bunx convex env set --preview-name "$BRANCH_NAME" \
+            ARCHIVE_API_WORKER_NAME trace-flow-archive-api-preview
+          bunx convex env set --preview-name "$BRANCH_NAME" \
+            ARCHIVE_API_URL https://trace-flow-archive-api-preview.isaac-a46.workers.dev
           bunx convex env set --preview-name "$BRANCH_NAME" CONVERSATION_ARCHIVE_ENABLED true
         env:
           ARCHIVE_API_SHARED_SECRET: ${{ secrets.ARCHIVE_API_SHARED_SECRET }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           BRANCH_NAME: ${{ needs.prepare.outputs.head_ref }}
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
 
@@ -177,10 +196,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Protect pending trace deliveries from body expiration
+      - name: Configure R2 retention
         run: |
           node --test scripts/ci/body-retention.test.mjs
-          bun scripts/setup-r2-lifecycle.ts trace-flow-storage-dev
+          bun scripts/setup-r2-lifecycle.ts \
+            trace-flow-storage-dev \
+            trace-flow-analyst-sandbox-backups-dev \
+            trace-flow-analyst-sandbox-backups-preview
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -196,6 +218,8 @@ jobs:
               --filter='!@trace-flow/agent-ingest' \
               --filter='!@trace-flow/archive-api' \
               --filter='!@trace-flow/analyst-sandbox' \
+              --filter='!@trace-flow/pipes-api' \
+              --filter='!@trace-flow/api' \
               --env-mode=loose \
               --concurrency=1; then
               exit 0
@@ -228,12 +252,18 @@ jobs:
           trap 'rm -rf "$secrets_directory"' EXIT
           umask 077
           secrets_file="$secrets_directory/archive-api.env"
+          pipes_secrets_file="$secrets_directory/pipes-api.env"
+          api_secrets_file="$secrets_directory/api.env"
           test -n "$ARCHIVE_API_SHARED_SECRET"
           test -n "$ARCHIVE_KEY_WRAPPING_SECRET"
+          test -n "$PIPES_API_SHARED_SECRET"
+          test -n "$BODY_ACCESS_JWT_SECRET"
           {
             printf 'ARCHIVE_API_SHARED_SECRET=%s\n' "$ARCHIVE_API_SHARED_SECRET"
             printf 'ARCHIVE_KEY_WRAPPING_SECRET=%s\n' "$ARCHIVE_KEY_WRAPPING_SECRET"
           } > "$secrets_file"
+          printf 'PIPES_API_SHARED_SECRET=%s\n' "$PIPES_API_SHARED_SECRET" > "$pipes_secrets_file"
+          printf 'BODY_ACCESS_JWT_SECRET=%s\n' "$BODY_ACCESS_JWT_SECRET" > "$api_secrets_file"
           for attempt in 1 2 3; do
             if (
               cd apps/proxy && bunx wrangler deploy --env preview --var CONVEX_SITE_URL:"$CONVEX_SITE_URL"
@@ -241,6 +271,14 @@ jobs:
               cd apps/mcp && bunx wrangler deploy --env preview
             ) && (
               cd apps/agent-ingest && bunx wrangler deploy --env preview --var CONVEX_SITE_URL:"$CONVEX_SITE_URL"
+            ) && (
+              cd apps/api && bunx wrangler deploy --env preview \
+                --secrets-file "$api_secrets_file" \
+                --var CONVEX_SITE_URL:"$CONVEX_SITE_URL"
+            ) && (
+              cd apps/pipes-api && bunx wrangler deploy --env preview \
+                --secrets-file "$pipes_secrets_file" \
+                --var CONVEX_SITE_URL:"$CONVEX_SITE_URL"
             ) && (
               cd apps/archive-api && bunx wrangler deploy --env preview \
                 --secrets-file "$secrets_file" \
@@ -263,6 +301,8 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           ARCHIVE_API_SHARED_SECRET: ${{ secrets.ARCHIVE_API_SHARED_SECRET }}
           ARCHIVE_KEY_WRAPPING_SECRET: ${{ secrets.ARCHIVE_KEY_WRAPPING_SECRET }}
+          PIPES_API_SHARED_SECRET: ${{ secrets.PIPES_API_SHARED_SECRET }}
+          BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}
           CONVEX_URL: ${{ needs.deploy-convex.outputs.convex_url }}
           CONVEX_SITE_URL: ${{ needs.deploy-convex.outputs.convex_site_url }}
 
