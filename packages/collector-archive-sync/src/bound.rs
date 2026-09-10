@@ -10,6 +10,7 @@ use crate::spool::PendingArchiveRequest;
 pub const MAX_ARCHIVE_UPLOAD_BYTES: usize = 16_777_216;
 /// Archive API observation-count limit (`apps/archive-api` `MAX_UPLOAD_OBSERVATIONS`).
 pub const MAX_UPLOAD_OBSERVATIONS: usize = 16_384;
+const LEGACY_ARCHIVE_CHUNK_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 
 pub fn build_bounded_pending(
     source: ArchiveSource,
@@ -77,7 +78,15 @@ pub fn build_bounded_pending_with_limits(
         max_observations,
     )?;
     if fitted == 0 {
-        return Err(ArchiveSyncError::UploadTooLarge);
+        let observation = scan
+            .observations
+            .first()
+            .ok_or(ArchiveSyncError::UploadTooLarge)?;
+        return Err(ArchiveSyncError::RecordTooLarge {
+            source_record_identity: observation.source_record_identity.clone(),
+            record_size_bytes: observation.payload_bytes()?.len() as u64,
+            limit_bytes: max_bytes as u64,
+        });
     }
     let prefix_end = ends[prior_count + fitted - 1];
     let bounded = scan_snapshot(
@@ -197,9 +206,9 @@ fn request_fits(
         observed_at,
         prior,
     )?;
-    let request = scan.into_upload_request(&bytes[..prefix_end])?;
-    let body = serde_json::to_vec(&request)?;
-    Ok(body.len() <= max_bytes && request.observations.len() <= max_observations)
+    let observation_count = scan.observations.len();
+    let body = serialize_scan(&scan, &bytes[..prefix_end])?;
+    Ok(body.len() <= max_bytes && observation_count <= max_observations)
 }
 
 fn pending_from_scan(
@@ -207,13 +216,51 @@ fn pending_from_scan(
     scan: JsonlScan,
     source_bytes: &[u8],
 ) -> ArchiveSyncResult<PendingArchiveRequest> {
-    let request = scan.into_upload_request(source_bytes)?;
-    let body = serde_json::to_vec(&request)?;
-    if body.len() > MAX_ARCHIVE_UPLOAD_BYTES || request.observations.len() > MAX_UPLOAD_OBSERVATIONS
+    let source_session_id = scan.checkpoint.source_session_id.clone();
+    let source_transcript_part_id = scan.checkpoint.source_transcript_part_id().to_string();
+    let expected_record_count = scan.checkpoint.record_count;
+    let expected_appended_records = scan.observations.len() as u64;
+    let body = serialize_scan(&scan, source_bytes)?;
+    if body.len() > MAX_ARCHIVE_UPLOAD_BYTES
+        || expected_appended_records as usize > MAX_UPLOAD_OBSERVATIONS
     {
         return Err(ArchiveSyncError::UploadTooLarge);
     }
-    Ok(PendingArchiveRequest::from_upload(source, &request, body))
+    Ok(PendingArchiveRequest::from_parts(
+        source,
+        source_session_id,
+        source_transcript_part_id,
+        expected_record_count,
+        expected_appended_records,
+        body,
+    ))
+}
+
+fn serialize_scan(scan: &JsonlScan, source_bytes: &[u8]) -> ArchiveSyncResult<Vec<u8>> {
+    let contains_legacy_oversized_record = scan.observations.iter().any(|observation| {
+        observation.payload_encoding == collector_archive::PayloadEncoding::Utf8
+            && observation.payload.len() > LEGACY_ARCHIVE_CHUNK_LIMIT_BYTES
+    });
+    if contains_legacy_oversized_record {
+        match scan.compact_upload_body(source_bytes) {
+            Ok(body) => return Ok(body),
+            Err(collector_archive::JsonlError::CompactProofRequiresUtf8) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let request = scan.clone().into_upload_request(source_bytes)?;
+    let body = serde_json::to_vec(&request)?;
+    if body.len() <= MAX_ARCHIVE_UPLOAD_BYTES {
+        return Ok(body);
+    }
+    if scan.observations.len() == 1 {
+        match scan.compact_upload_body(source_bytes) {
+            Ok(body) => return Ok(body),
+            Err(collector_archive::JsonlError::CompactProofRequiresUtf8) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(body)
 }
 
 #[cfg(test)]
@@ -292,7 +339,7 @@ mod tests {
 
     #[test]
     fn byte_bound_splits_before_the_api_limit() {
-        let bytes = records(24, 400_000);
+        let bytes = records(48, 400_000);
         let pending = build_bounded_pending(
             ArchiveSource::Claude,
             "bound-session",
@@ -304,7 +351,7 @@ mod tests {
         .unwrap()
         .expect("bounded pending");
         assert!(pending.body.len() <= MAX_ARCHIVE_UPLOAD_BYTES);
-        assert!(observation_len(&pending.body) < 24);
+        assert!(observation_len(&pending.body) < 48);
         assert!(pending.expected_record_count >= 1);
         let full = scan_snapshot(
             ArchiveSource::Claude,
@@ -322,9 +369,7 @@ mod tests {
 
     #[test]
     fn single_large_append_record_fits_the_api_limit() {
-        const RAW_RECORD_BYTES: usize = 6_467_360;
-        const OLD_UPLOAD_LIMIT: usize = 8_388_608;
-
+        const RAW_RECORD_BYTES: usize = 13_655_041;
         let initial = records(1, 8);
         let prior = scan_snapshot(
             ArchiveSource::Claude,
@@ -357,23 +402,24 @@ mod tests {
         .expect("large append pending");
         let value: serde_json::Value = serde_json::from_slice(&pending.body).unwrap();
 
-        assert!(pending.body.len() > OLD_UPLOAD_LIMIT);
         assert!(pending.body.len() <= MAX_ARCHIVE_UPLOAD_BYTES);
+        assert_eq!(value["archive_upload_wire_version"], 2);
         assert_eq!(value["observations"].as_array().unwrap().len(), 1);
+        assert!(value["observations"][0].get("payload").is_none());
         assert_eq!(value["prior_checkpoint"]["record_count"], 1);
         assert_eq!(value["checkpoint"]["record_count"], 2);
         assert_eq!(
-            value["append_proof"]["appended_prefix_base64"]
+            value["append_proof"]["appended_prefix_utf8"]
                 .as_str()
                 .unwrap()
                 .len(),
-            (RAW_RECORD_BYTES + 1).div_ceil(3) * 4
+            RAW_RECORD_BYTES + 1
         );
     }
 
     #[test]
     fn unsplittable_record_is_too_large() {
-        let bytes = records(1, 9_000_000);
+        let bytes = records(1, MAX_ARCHIVE_UPLOAD_BYTES + 1);
         let error = build_bounded_pending(
             ArchiveSource::Claude,
             "bound-session",
@@ -383,6 +429,6 @@ mod tests {
             None,
         )
         .unwrap_err();
-        assert_eq!(error.class(), "upload_too_large");
+        assert_eq!(error.class(), "archive_record_too_large");
     }
 }

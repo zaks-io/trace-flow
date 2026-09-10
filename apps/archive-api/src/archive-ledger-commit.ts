@@ -5,6 +5,7 @@ import { ArchiveContractError, type ArchiveScope } from './archive-contract';
 import { packNewElementsPaged } from './archive-packing';
 import { assertPlannedChain } from './archive-chain';
 import {
+  archiveUploadIntentIdentity,
   assertIncomingObservationCount,
   parseAndValidateUpload,
   sourceFingerprints,
@@ -117,7 +118,10 @@ async function commitArchiveSessionEnvelope(
     throw new ArchiveContractError('ledger_state_corrupt');
   }
 
-  const intentHash = await intentDigest({ scope: envelope.scope, upload });
+  const intentHash = await intentDigest({
+    scope: envelope.scope,
+    upload: archiveUploadIntentIdentity(upload),
+  });
   let priorIntent = readIntent(storage, intentHash);
   const budget = env.STORAGE_BUDGET.getByName(envelope.scope.orgId);
   if (priorIntent?.status === 'committed') {

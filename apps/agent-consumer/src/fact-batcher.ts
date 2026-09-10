@@ -7,7 +7,6 @@ import {
   insertRows,
   requireRecoveryReason,
   serializeTinybirdFailure,
-  splitUtf8Chunks,
   TinybirdRecoveryStore,
   type ReconcileRecoveryInput,
   type RecoveryPage,
@@ -15,6 +14,15 @@ import {
   type RecoveryRecord,
 } from '@trace-flow/tinybird-client';
 import type { AgentConsumerEnv } from './context';
+import {
+  AgentFactMaintenance,
+  type BeginFactRebuildInput,
+  type BeginFactRebuildResult,
+  type CompleteFactRebuildInput,
+  type CompleteFactRebuildResult,
+  type ListRebuildFactsInput,
+  type ListRebuildFactsResult,
+} from './fact-maintenance';
 import {
   CATEGORIES,
   DATASOURCES,
@@ -25,13 +33,16 @@ import {
   stableHash,
   type Category,
 } from './facts';
+import { PendingFactStore } from './pending-fact-store';
 
 const BATCH_SIZE = 10_000;
 const MAX_NDJSON_BYTES = 900_000;
 // Agent dashboards do not need sub-minute ingest visibility; fewer larger inserts reduce part churn.
 const FLUSH_INTERVAL_MS = 60_000;
+const CAPPED_FLUSH_RETRY_MS = 1_000;
 const MAX_SQL_PARAMS = 90;
 const MAX_INSERT_ROWS = Math.floor(MAX_SQL_PARAMS / 3);
+const MAX_FLUSH_CANDIDATES = 500;
 
 export const AGENT_FACT_BATCHER_FLUSH_INTERVAL_MS = FLUSH_INTERVAL_MS;
 
@@ -64,11 +75,18 @@ interface StoredFactRow {
   data: string;
 }
 
+interface StoredFactCandidate extends StoredFactRow {
+  candidate_count: number;
+}
+
 class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   private queuedRows = 0;
   private flushAlarmScheduled = false;
   private flushInProgress = false;
   private recovery: TinybirdRecoveryStore;
+  private maintenance: AgentFactMaintenance;
+  private pendingFacts: PendingFactStore;
+  private tinybirdTokenFingerprint = '';
   private logger = createLogger({
     service: 'agent-consumer',
     runtime: 'durable-object',
@@ -79,10 +97,14 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   constructor(state: DurableObjectState, env: AgentConsumerEnv) {
     super(state, env);
     this.recovery = new TinybirdRecoveryStore(state.storage);
+    this.maintenance = new AgentFactMaintenance(state.storage, this.recovery);
+    this.pendingFacts = new PendingFactStore(state.storage, this.maintenance);
     void this.ctx.blockConcurrencyWhile(async () => {
+      if (!this.env.TINYBIRD_TOKEN) throw new Error('TINYBIRD_TOKEN is required');
+      this.tinybirdTokenFingerprint = await sha256Hex(this.env.TINYBIRD_TOKEN);
       this.initializeSchema();
       this.queuedRows = this.countPendingRows();
-      if (this.queuedRows > 0) {
+      if (this.queuedRows > 0 && !this.maintenance.isLocked()) {
         await this.ctx.storage.setAlarm(Date.now() + 1000);
         this.flushAlarmScheduled = true;
       }
@@ -97,6 +119,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     const now = Date.now();
 
     try {
+      this.maintenance.assertUnlocked();
       validateWriteTargets(batch);
       this.ctx.storage.transactionSync(() => {
         for (const category of CATEGORIES) {
@@ -104,21 +127,45 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
             const factId = rowIdentity(row, ROW_IDENTITY_FIELDS[category]);
             const contentHash = stableHash(row);
             const existing = [
-              ...this.ctx.storage.sql.exec<{ content_hash: string; data: string | null }>(
-                'SELECT content_hash, data FROM fact_ledger WHERE category = ? AND fact_id = ?',
+              ...this.ctx.storage.sql.exec<{
+                content_hash: string;
+                data: string | null;
+                clean_target: number | null;
+                legacy_target: number | null;
+              }>(
+                `SELECT content_hash, data, clean_target, legacy_target
+                 FROM fact_ledger WHERE category = ? AND fact_id = ?`,
                 category,
                 factId,
               ),
             ][0];
 
             if (existing?.content_hash === contentHash) {
+              const rowData = JSON.stringify(row);
+              if (this.maintenance.loadLedgerPayload(category, factId, existing.data) === null) {
+                this.maintenance.storeLedgerPayload(category, factId, rowData);
+              }
               duplicateRows++;
               continue;
             }
 
             if (existing) {
-              repairRows++;
               const changedData = JSON.stringify(row);
+              if (
+                !this.flushInProgress &&
+                this.pendingFacts.coalesce(
+                  category,
+                  factId,
+                  contentHash,
+                  changedData,
+                  existing.clean_target,
+                  existing.legacy_target,
+                )
+              ) {
+                acceptedRows++;
+                continue;
+              }
+              repairRows++;
               const priorRepair = [
                 ...this.ctx.storage.sql.exec<{ id: number }>(
                   `SELECT id FROM fact_repairs
@@ -148,7 +195,11 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
                   factId,
                   oldHash: existing.content_hash,
                   newHash: contentHash,
-                  originalPayload: existing.data,
+                  originalPayload: this.maintenance.loadLedgerPayload(
+                    category,
+                    factId,
+                    existing.data,
+                  ),
                 }),
                 dedupeKey: JSON.stringify([category, factId, existing.content_hash, contentHash]),
               });
@@ -157,22 +208,40 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
 
             const rowData = JSON.stringify(row);
             this.ctx.storage.sql.exec(
-              `INSERT INTO fact_ledger (category, fact_id, content_hash, first_seen_at_ms, data)
-               VALUES (?, ?, ?, ?, ?)`,
+              `INSERT INTO fact_ledger
+               (category, fact_id, content_hash, first_seen_at_ms, data, clean_target, legacy_target)
+               VALUES (?, ?, ?, ?, ?, ?, ?)`,
               category,
               factId,
               contentHash,
               now,
-              inlinePayload(rowData),
+              '',
+              batch.writeClean === false ? 0 : 1,
+              batch.writeLegacy && (LEGACY_CATEGORIES as Category[]).includes(category) ? 1 : 0,
             );
+            this.maintenance.storeLedgerPayload(category, factId, rowData);
             if (batch.writeClean !== false) {
-              this.insertPendingFact('pending_facts', category, rowData, now);
+              this.pendingFacts.insert(
+                'pending_facts',
+                category,
+                factId,
+                contentHash,
+                rowData,
+                now,
+              );
             }
             // Only mirror categories that have a legacy datasource. review_unit_attributions has
             // no legacy table, so a dual-mode row here would never be drained by flush() and would
             // wedge the pending count (and thus the flush alarm) forever.
             if (batch.writeLegacy && (LEGACY_CATEGORIES as Category[]).includes(category)) {
-              this.insertPendingFact('legacy_pending_facts', category, rowData, now);
+              this.pendingFacts.insert(
+                'legacy_pending_facts',
+                category,
+                factId,
+                contentHash,
+                rowData,
+                now,
+              );
             }
             acceptedRows++;
           }
@@ -220,6 +289,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
 
   async alarm(): Promise<void> {
     this.flushAlarmScheduled = false;
+    if (this.maintenance.isLocked()) return;
     await this.flush();
   }
 
@@ -235,6 +305,8 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
       )
     `);
     this.ensureColumn('fact_ledger', 'data', 'TEXT');
+    this.ensureColumn('fact_ledger', 'clean_target', 'INTEGER');
+    this.ensureColumn('fact_ledger', 'legacy_target', 'INTEGER');
     this.ctx.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS fact_repairs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -280,13 +352,26 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     `);
     this.ensureColumn('pending_facts', 'sent_at_ms', 'INTEGER');
     this.ensureColumn('legacy_pending_facts', 'sent_at_ms', 'INTEGER');
+    this.ensureColumn('pending_facts', 'fact_id', 'TEXT');
+    this.ensureColumn('pending_facts', 'content_hash', 'TEXT');
+    this.ensureColumn('legacy_pending_facts', 'fact_id', 'TEXT');
+    this.ensureColumn('legacy_pending_facts', 'content_hash', 'TEXT');
     this.ctx.storage.sql.exec(
       'CREATE INDEX IF NOT EXISTS idx_pending_facts_category_id ON pending_facts(category, id)',
     );
     this.ctx.storage.sql.exec(
       'CREATE INDEX IF NOT EXISTS idx_legacy_pending_facts_category_id ON legacy_pending_facts(category, id)',
     );
+    this.ctx.storage.sql.exec(
+      `CREATE INDEX IF NOT EXISTS idx_pending_facts_identity
+       ON pending_facts(category, fact_id, id)`,
+    );
+    this.ctx.storage.sql.exec(
+      `CREATE INDEX IF NOT EXISTS idx_legacy_pending_facts_identity
+       ON legacy_pending_facts(category, fact_id, id)`,
+    );
     this.recovery.initialize();
+    this.maintenance.initialize();
   }
 
   private ensureColumn(table: string, column: string, definition: string): void {
@@ -298,34 +383,6 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     ];
     if (existing.length === 0) {
       this.ctx.storage.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-    }
-  }
-
-  private insertPendingFact(
-    table: 'pending_facts' | 'legacy_pending_facts',
-    category: Category,
-    data: string,
-    createdAtMs: number,
-  ): void {
-    const oversized = new TextEncoder().encode(data).byteLength > MAX_NDJSON_BYTES;
-    this.ctx.storage.sql.exec(
-      `INSERT INTO ${table} (category, data, created_at_ms) VALUES (?, ?, ?)`,
-      category,
-      oversized ? '' : data,
-      createdAtMs,
-    );
-    if (!oversized) return;
-    const rowId = this.ctx.storage.sql
-      .exec<{ id: number }>('SELECT last_insert_rowid() AS id')
-      .one().id;
-    for (const [index, chunk] of splitUtf8Chunks(data, MAX_NDJSON_BYTES).entries()) {
-      this.ctx.storage.sql.exec(
-        `INSERT INTO fact_payload_chunks (table_name, row_id, chunk_index, data) VALUES (?, ?, ?, ?)`,
-        table,
-        rowId,
-        index,
-        chunk,
-      );
     }
   }
 
@@ -352,32 +409,49 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     );
   }
 
-  private async scheduleFlush(): Promise<void> {
+  private async scheduleFlush(delayMs = FLUSH_INTERVAL_MS): Promise<void> {
+    if (this.maintenance.isLocked()) return;
+    const alarmAt = Date.now() + delayMs;
     if (this.flushAlarmScheduled) {
-      return;
+      const currentAlarm = await this.ctx.storage.getAlarm();
+      if (currentAlarm !== null && currentAlarm <= alarmAt) return;
     }
-    await this.ctx.storage.setAlarm(Date.now() + FLUSH_INTERVAL_MS);
+    await this.ctx.storage.setAlarm(alarmAt);
     this.flushAlarmScheduled = true;
   }
 
   private async flush(): Promise<void> {
-    if (this.flushInProgress || this.queuedRows === 0) {
+    if (this.flushInProgress || this.queuedRows === 0 || this.maintenance.isLocked()) {
       return;
     }
 
     this.flushInProgress = true;
+    let eligibleRowsRemain = false;
+    let flushCompleted = false;
     try {
       for (const category of CATEGORIES) {
-        await this.flushCategory('pending_facts', DATASOURCES[category], category);
+        if (this.maintenance.isLocked()) break;
+        eligibleRowsRemain =
+          (await this.flushCategory('pending_facts', DATASOURCES[category], category)) ||
+          eligibleRowsRemain;
       }
       for (const category of LEGACY_CATEGORIES) {
-        await this.flushCategory('legacy_pending_facts', LEGACY_DATASOURCES[category], category);
+        if (this.maintenance.isLocked()) break;
+        eligibleRowsRemain =
+          (await this.flushCategory(
+            'legacy_pending_facts',
+            LEGACY_DATASOURCES[category],
+            category,
+          )) || eligibleRowsRemain;
       }
+      flushCompleted = true;
     } finally {
       this.queuedRows = this.countPendingRows();
       this.flushInProgress = false;
-      if (this.queuedRows > 0) {
-        await this.scheduleFlush();
+      if (this.queuedRows > 0 && !this.maintenance.isLocked()) {
+        await this.scheduleFlush(
+          flushCompleted && eligibleRowsRemain ? CAPPED_FLUSH_RETRY_MS : FLUSH_INTERVAL_MS,
+        );
       }
       await this.logger.flush();
     }
@@ -387,30 +461,46 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     table: 'pending_facts' | 'legacy_pending_facts',
     datasource: string,
     category: Category,
-  ): Promise<void> {
+  ): Promise<boolean> {
     this.deleteSentFacts(table, category);
 
     const targetKey = `${table}:${category}`;
     const rows = [
-      ...this.ctx.storage.sql.exec<StoredFactRow>(
-        `SELECT id, data
-         FROM ${table} AS p
-         WHERE category = ? AND sent_at_ms IS NULL
-           AND NOT EXISTS (
-             SELECT 1 FROM recovery_items AS i JOIN recovery_records AS r ON r.id = i.recovery_id
-             WHERE i.row_id = p.id AND i.target_key = ? AND r.state IN ('in_flight', 'blocked')
+      ...this.ctx.storage.sql.exec<StoredFactCandidate>(
+        `WITH candidates AS (
+           SELECT id, data, ROW_NUMBER() OVER (ORDER BY id) AS row_number,
+             COUNT(*) OVER () AS candidate_count,
+             SUM(CASE WHEN data = '' THEN ? ELSE length(CAST(data AS BLOB)) + 1 END)
+               OVER (ORDER BY id) AS cumulative_bytes
+           FROM (
+             SELECT id, data FROM ${table} AS p
+             WHERE category = ? AND sent_at_ms IS NULL
+               AND NOT EXISTS (
+                 SELECT 1 FROM recovery_items AS i JOIN recovery_records AS r ON r.id = i.recovery_id
+                 WHERE i.row_id = p.id AND i.target_key = ?
+                   AND r.state IN ('in_flight', 'blocked')
+               )
+             ORDER BY id LIMIT ?
            )
-         ORDER BY id
-         LIMIT ?`,
+         )
+         SELECT id, data, candidate_count FROM candidates
+         WHERE row_number = 1 OR cumulative_bytes <= ? ORDER BY id`,
+        MAX_NDJSON_BYTES + 1,
         category,
         targetKey,
-        BATCH_SIZE,
+        MAX_FLUSH_CANDIDATES,
+        MAX_NDJSON_BYTES,
       ),
     ].map((row) => ({ ...row, data: this.loadFactData(table, row.id, row.data) }));
+    const candidateCount = rows[0]?.candidate_count ?? 0;
+    const eligibleRowsRemain =
+      candidateCount === MAX_FLUSH_CANDIDATES || candidateCount > rows.length;
     for (const batch of splitRowsByBytes(rows)) {
+      if (this.maintenance.isLocked()) return eligibleRowsRemain;
       await this.sendFactBatch(table, datasource, category, targetKey, batch);
     }
     this.deleteSentFacts(table, category);
+    return eligibleRowsRemain;
   }
 
   private async sendFactBatch(
@@ -420,7 +510,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     targetKey: string,
     rows: StoredFactRow[],
   ): Promise<void> {
-    if (rows.length === 0) return;
+    if (rows.length === 0 || this.maintenance.isLocked()) return;
     const rowIds = rows.map((row) => row.id);
     let facts: unknown[];
     try {
@@ -564,6 +654,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   }
 
   async reconcileRecovery(input: ReconcileRecoveryInput): Promise<RecoveryRecord> {
+    this.maintenance.assertUnlocked();
     if (!['confirm-written', 'confirm-not-written', 'retain-original'].includes(input.action)) {
       throw new Error('invalid recovery action');
     }
@@ -602,10 +693,66 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   }
 
   resolveDlq(recoveryId: number, reason: string): RecoveryRecord {
+    this.maintenance.assertUnlocked();
     const record = this.recovery.get(recoveryId);
     if (record.kind !== 'dlq') throw new Error('recovery record is not a DLQ message');
     return this.recovery.resolve(recoveryId, 'replayed', reason);
   }
+
+  assertFactMaintenanceUnlocked(): void {
+    this.maintenance.assertUnlocked();
+  }
+
+  async beginFactRebuild(
+    orgId: string,
+    input: BeginFactRebuildInput,
+  ): Promise<BeginFactRebuildResult> {
+    const operation = this.maintenance.begin(orgId, input, {
+      tokenFingerprint: this.tinybirdTokenFingerprint,
+      host: this.env.TINYBIRD_HOST,
+    });
+    if (operation.completed) {
+      return {
+        operationId: operation.operationId,
+        reason: operation.reason,
+        startedAtMs: operation.startedAtMs,
+        expectedFactCount: operation.expectedFactCount,
+        tinybirdTokenFingerprint: operation.tinybirdTokenFingerprint,
+        tinybirdWorkspaceId: operation.tinybirdWorkspaceId,
+        tinybirdHost: operation.tinybirdHost,
+        status: 'completed',
+      };
+    }
+    await this.ctx.storage.deleteAlarm();
+    this.flushAlarmScheduled = false;
+    return {
+      operationId: operation.operationId,
+      reason: operation.reason,
+      startedAtMs: operation.startedAtMs,
+      expectedFactCount: operation.expectedFactCount,
+      tinybirdTokenFingerprint: operation.tinybirdTokenFingerprint,
+      tinybirdWorkspaceId: operation.tinybirdWorkspaceId,
+      tinybirdHost: operation.tinybirdHost,
+      status: this.flushInProgress ? 'retry-needed' : 'quiescent',
+    };
+  }
+
+  listRebuildFacts(input: ListRebuildFactsInput): ListRebuildFactsResult {
+    return this.maintenance.list(input);
+  }
+
+  async completeFactRebuild(input: CompleteFactRebuildInput): Promise<CompleteFactRebuildResult> {
+    const result = await this.maintenance.complete(input);
+    this.queuedRows = this.countPendingRows();
+    return result;
+  }
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)),
+  );
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function splitRowsByBytes(rows: StoredFactRow[]): StoredFactRow[][] {

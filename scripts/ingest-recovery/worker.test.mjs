@@ -77,3 +77,36 @@ test('forwards confirmed reconciliation to the agent service', async () => {
   );
   assert.equal(response.status, 200);
 });
+
+test('fact rebuild methods require agent pipeline and explicit mutation confirmation', async () => {
+  let calls = 0;
+  const env = {
+    AGENT_RECOVERY: {
+      beginFactRebuild: async () => {
+        calls++;
+        return { status: 'quiescent' };
+      },
+    },
+  };
+  const body = {
+    pipeline: 'agent',
+    shardId: 'org-1',
+    options: { operationId: 'op-1', reason: 'verified' },
+  };
+  assert.equal((await worker.fetch(request('beginFactRebuild', body), env)).status, 400);
+  assert.equal(
+    (
+      await worker.fetch(
+        request('beginFactRebuild', { ...body, pipeline: 'proxy', confirm: 'apply-recovery' }),
+        env,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (await worker.fetch(request('beginFactRebuild', { ...body, confirm: 'apply-recovery' }), env))
+      .status,
+    200,
+  );
+  assert.equal(calls, 1);
+});

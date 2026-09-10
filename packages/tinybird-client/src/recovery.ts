@@ -85,6 +85,15 @@ export class TinybirdRecoveryStore {
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_recovery_dlq_dedupe
        ON recovery_records(kind, dedupe_key) WHERE kind = 'dlq' AND dedupe_key IS NOT NULL`,
     );
+    this.storage.sql.exec(
+      `CREATE INDEX IF NOT EXISTS idx_recovery_repair_dedupe
+       ON recovery_records(kind, dedupe_key)
+       WHERE kind = 'repair' AND dedupe_key IS NOT NULL`,
+    );
+    this.storage.sql.exec(
+      `CREATE INDEX IF NOT EXISTS idx_recovery_records_blocked
+       ON recovery_records(state) WHERE state = 'blocked'`,
+    );
     this.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS recovery_items (
         recovery_id INTEGER NOT NULL,
@@ -184,7 +193,8 @@ export class TinybirdRecoveryStore {
   preserveRepair(payload: string, outcome: string, dedupeKey: string): RecoveryRecord {
     const existing = [
       ...this.storage.sql.exec<{ id: number }>(
-        `SELECT id FROM recovery_records WHERE kind = 'repair' AND dedupe_key = ?`,
+        `SELECT id FROM recovery_records
+         WHERE kind = 'repair' AND dedupe_key = ? LIMIT 1`,
         dedupeKey,
       ),
     ][0];

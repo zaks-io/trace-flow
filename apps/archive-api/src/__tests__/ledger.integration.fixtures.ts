@@ -19,6 +19,7 @@ import {
   GENESIS_CHAIN_HASH,
   MAX_CHUNK_BYTES,
   MAX_UPLOAD_OBSERVATIONS,
+  type ArchiveObservation,
   type ArchiveScope,
   type ArchiveSource,
   type ArchiveUploadRequest,
@@ -40,7 +41,11 @@ import type { StorageBudget } from '../archive-storage-budget';
 import { app } from '../index';
 import type { ArchiveApiEnv } from '../context';
 import { payloadBytes } from '../archive-contract';
-import { parseAndValidateUpload, sourceFingerprints } from '../archive-validation';
+import {
+  archiveUploadIntentIdentity,
+  parseAndValidateUpload,
+  sourceFingerprints,
+} from '../archive-validation';
 import { prefixChainHash } from '../archive-prefix-validation';
 import { MAX_ARCHIVE_UPLOAD_BYTES } from '../archive-request';
 import { buildAcknowledgement, intentDigest } from '../archive-ledger-support';
@@ -123,7 +128,7 @@ export function base64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-export function exactPrefix(observations: ArchiveUploadRequest['observations']): Uint8Array {
+export function exactPrefix(observations: ArchiveObservation[]): Uint8Array {
   const lines = observations.map((item) => {
     const payload = payloadBytes(item);
     const line = new Uint8Array(payload.length + 1);
@@ -174,7 +179,7 @@ export async function checkpoint(
   source: ArchiveSource,
   session: string,
   part: string,
-  observations: ArchiveUploadRequest['observations'],
+  observations: ArchiveObservation[],
   observedFileSize?: number,
   firstObservedAt = 1_700_000_000_000,
 ): Promise<CompletedScanCheckpoint> {
@@ -443,7 +448,10 @@ export async function seedPendingCommit(
       plaintextBase64: encodePendingPlaintext(plaintext),
     }),
   );
-  const intentHash = await intentDigest({ scope: currentScope, upload: validated });
+  const intentHash = await intentDigest({
+    scope: currentScope,
+    upload: archiveUploadIntentIdentity(validated),
+  });
   const intent: PendingIntent = {
     intentHash,
     status: 'building',

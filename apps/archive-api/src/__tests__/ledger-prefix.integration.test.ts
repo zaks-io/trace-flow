@@ -137,6 +137,64 @@ describe('Archive Session Ledger', () => {
     expect(stored.generation).toBe(initial.body.generation);
   });
 
+  it('rejects a legacy observation whose payload differs from its prefix proof', async () => {
+    const currentScope = scope('codex', `legacy-proof-${crypto.randomUUID()}`);
+    const proofRecord = await observation(
+      'codex',
+      currentScope.sourceSessionId,
+      partFor('codex'),
+      '0',
+      '"proof payload"',
+    );
+    const submittedRecord = await observation(
+      'codex',
+      currentScope.sourceSessionId,
+      partFor('codex'),
+      '0',
+      '"different payload"',
+    );
+    const rejected = await call(
+      newLedger(currentScope),
+      await envelope(currentScope, {
+        source_session_id: currentScope.sourceSessionId,
+        observations: [submittedRecord],
+        checkpoint: await checkpoint('codex', currentScope.sourceSessionId, partFor('codex'), [
+          proofRecord,
+        ]),
+        complete_prefix_base64: base64(exactPrefix([proofRecord])),
+      }),
+    );
+
+    expectIntegrity(rejected, 'checkpoint_prefix_unverifiable');
+  });
+
+  it('rejects a compact proof whose UTF-8 BOM would be lost during reconstruction', async () => {
+    const currentScope = scope('codex', `compact-bom-${crypto.randomUUID()}`);
+    const record = await observation(
+      'codex',
+      currentScope.sourceSessionId,
+      partFor('codex'),
+      '0',
+      '\ufeff{}',
+    );
+    const { payload: _payload, ...metadata } = record;
+    const rejected = await call(
+      newLedger(currentScope),
+      await envelope(currentScope, {
+        archive_upload_wire_version: 2,
+        source_session_id: currentScope.sourceSessionId,
+        observations: [metadata],
+        checkpoint: await checkpoint('codex', currentScope.sourceSessionId, partFor('codex'), [
+          record,
+        ]),
+        complete_prefix_utf8: `${record.payload}\n`,
+      }),
+    );
+
+    expect(rejected.response.status).toBe(400);
+    expect(rejected.body).toEqual({ error: 'invalid_payload_encoding' });
+  });
+
   it('rejects a same-position checkpoint after the source file shrinks', async () => {
     const currentScope = scope('codex', `shortened-same-position-${crypto.randomUUID()}`);
     const record = await observation(

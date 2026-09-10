@@ -15,8 +15,8 @@ use collector_archive_sync::{
     ArchiveKeyStore, ArchivePolicy, ArchiveSnapshot, ArchiveSourceChoice, ArchiveSpool,
     ArchiveSpoolKey, ArchiveSyncError, ArchiveUploader, ArchiveWorkClass, DeferredArchiveSnapshot,
     MemoryKeyStore, PendingArchiveRequest, PendingLoad, ARCHIVE_CAPTURE_WINDOW_BYTES,
-    ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE, MAX_ARCHIVE_UPLOAD_BYTES,
-    MAX_UPLOAD_OBSERVATIONS,
+    ARCHIVE_RECORD_POLICY_VERSION, ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE,
+    MAX_ARCHIVE_UPLOAD_BYTES, MAX_UPLOAD_OBSERVATIONS,
 };
 use collector_contracts::AgentSource;
 use tempfile::TempDir;
@@ -346,6 +346,58 @@ fn spool_cap_is_exact_and_not_a_rounded_gigabyte() {
 }
 
 #[test]
+fn blocked_record_existing_metadata_values_remain_wire_compatible() {
+    let existing = serde_json::json!({
+        "source": "claude",
+        "source_session_id": "session",
+        "source_transcript_part_id": "claude:part:parent",
+        "source_record_identity": "claude:part:parent:claude:id:record:0",
+        "record_size_bytes": 42,
+        "limit_bytes": 16_777_216,
+        "policy_version": ARCHIVE_RECORD_POLICY_VERSION,
+        "observed_file_size": 43,
+        "source_fingerprint_bytes": 43,
+        "observed_file_sha256": format!("sha256:{}", "0".repeat(64)),
+        "pending_body_sha256": null,
+    });
+
+    let blocked: collector_archive_sync::BlockedArchiveRecord =
+        serde_json::from_value(existing.clone()).unwrap();
+
+    assert_eq!(
+        blocked.source_record_identity.as_deref(),
+        Some("claude:part:parent:claude:id:record:0")
+    );
+    assert_eq!(blocked.record_size_bytes, Some(42));
+    assert_eq!(serde_json::to_value(blocked).unwrap(), existing);
+}
+
+#[test]
+fn partial_blocked_fingerprint_never_matches_a_complete_source() {
+    let prefix = b"{\"uuid\":\"blocked\"}\n";
+    let mut original = prefix.to_vec();
+    original.extend_from_slice(b"partial tail");
+    let blocked = collector_archive_sync::BlockedArchiveRecord {
+        source: ArchiveSource::Claude,
+        source_session_id: "session".to_string(),
+        source_transcript_part_id: "claude:part:parent".to_string(),
+        source_record_identity: None,
+        record_size_bytes: None,
+        limit_bytes: MAX_ARCHIVE_UPLOAD_BYTES as u64,
+        policy_version: ARCHIVE_RECORD_POLICY_VERSION.to_string(),
+        observed_file_size: original.len() as u64,
+        source_fingerprint_bytes: prefix.len() as u64,
+        observed_file_sha256: collector_archive::sha256(prefix).to_string(),
+        pending_body_sha256: None,
+    };
+    let mut changed_tail = original.clone();
+    changed_tail[prefix.len()] ^= 1;
+
+    assert!(!blocked.matches_source(&original));
+    assert!(!blocked.matches_source(&changed_tail));
+}
+
+#[test]
 fn crash_recovery_replays_the_same_pending_bytes() {
     let dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();
@@ -495,8 +547,12 @@ async fn session_error_does_not_block_other_sessions() {
     let codex = pending_from_bytes(ArchiveSource::Codex, CODEX, 11);
     spool.persist_pending(&claude).unwrap();
     spool.persist_pending(&codex).unwrap();
-    let uploader =
-        ScriptedUploader::new([Err(ArchiveClientError::InvalidUpload), Ok(ack_for(&codex))]);
+    let uploader = ScriptedUploader::new([
+        Err(ArchiveClientError::InvalidUpload {
+            reason: "unknown".to_string(),
+        }),
+        Ok(ack_for(&codex)),
+    ]);
     let report = run_archive_cycle(
         &uploader,
         &mut spool,
@@ -1100,6 +1156,248 @@ async fn oversized_session_splits_at_byte_limit() {
         second["prior_checkpoint"]["prefix_chain_sha256"],
         first["checkpoint"]["prefix_chain_sha256"]
     );
+}
+
+#[tokio::test]
+async fn unchanged_unsupported_record_is_durably_blocked_without_retrying() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let bytes = padded_records(1, MAX_ARCHIVE_UPLOAD_BYTES + 1, "blocked-session");
+    let current = snapshot(ArchiveSource::Claude, &bytes, 10);
+    let uploader = AckingUploader::new();
+
+    let first = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        std::slice::from_ref(&current),
+        ArchivePolicy::Enrolled,
+        &plan_for(ALL_ARCHIVE_SOURCES),
+        None,
+    )
+    .await;
+    assert_eq!(first.failed, 1);
+    assert_eq!(first.blocked, 1);
+    assert_eq!(
+        first.first_error.as_deref(),
+        Some("archive_record_too_large")
+    );
+    assert!(uploader.bodies.borrow().is_empty());
+    let blocked = spool
+        .blocked_part(
+            ArchiveSource::Claude,
+            "blocked-session",
+            &default_transcript_part_id(ArchiveSource::Claude),
+        )
+        .unwrap()
+        .expect("durable blocked record metadata");
+    assert!(blocked
+        .source_record_identity
+        .as_deref()
+        .is_some_and(|identity| identity.contains("claude:id:r0:0")));
+    assert_eq!(blocked.record_size_bytes, Some(bytes.len() as u64 - 1));
+    assert_eq!(blocked.limit_bytes, MAX_ARCHIVE_UPLOAD_BYTES as u64);
+    assert_eq!(blocked.policy_version, ARCHIVE_RECORD_POLICY_VERSION);
+    assert!(spool
+        .progress(ArchiveSource::Claude, "blocked-session")
+        .unwrap()
+        .is_none());
+
+    let second = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[current],
+        ArchivePolicy::Enrolled,
+        &plan_for(ALL_ARCHIVE_SOURCES),
+        None,
+    )
+    .await;
+    assert_eq!(second.failed, 0);
+    assert_eq!(second.blocked, 1);
+    assert!(second.first_error.is_none());
+    assert!(uploader.bodies.borrow().is_empty());
+
+    let mut changed = bytes;
+    changed.push(b' ');
+    let changed_report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[snapshot(ArchiveSource::Claude, &changed, 11)],
+        ArchivePolicy::Enrolled,
+        &plan_for(ALL_ARCHIVE_SOURCES),
+        None,
+    )
+    .await;
+    assert_eq!(changed_report.failed, 1);
+    assert_eq!(changed_report.blocked, 1);
+    assert_eq!(
+        changed_report.first_error.as_deref(),
+        Some("archive_record_too_large")
+    );
+}
+
+#[tokio::test]
+async fn server_stored_element_rejection_is_blocked_without_format_fallback() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    let current = snapshot(ArchiveSource::Claude, CLAUDE, 10);
+    spool.persist_pending(&pending).unwrap();
+    let uploader = ScriptedUploader::new([Err(ArchiveClientError::InvalidUpload {
+        reason: "archive_element_exceeds_chunk_limit".to_string(),
+    })]);
+
+    let first = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        std::slice::from_ref(&current),
+        ArchivePolicy::Enrolled,
+        &plan_for(ALL_ARCHIVE_SOURCES),
+        None,
+    )
+    .await;
+    assert_eq!(first.failed, 1);
+    assert_eq!(first.blocked, 1);
+    assert_eq!(
+        first.first_error.as_deref(),
+        Some("archive_record_too_large")
+    );
+    assert_eq!(uploader.calls.get(), 1);
+    assert!(spool
+        .pending(ArchiveSource::Claude, &pending.source_session_id)
+        .unwrap()
+        .is_some());
+    let blocked = spool
+        .blocked_part(
+            ArchiveSource::Claude,
+            &pending.source_session_id,
+            &pending.source_transcript_part_id,
+        )
+        .unwrap()
+        .expect("durable blocked record metadata");
+    assert_eq!(blocked.source_record_identity, None);
+    assert_eq!(blocked.record_size_bytes, None);
+    assert_eq!(blocked.observed_file_size, CLAUDE.len() as u64);
+    assert_eq!(blocked.source_fingerprint_bytes, CLAUDE.len() as u64);
+    assert_eq!(
+        blocked.observed_file_sha256,
+        collector_archive::sha256(CLAUDE).to_string()
+    );
+
+    let second = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[current],
+        ArchivePolicy::Enrolled,
+        &plan_for(ALL_ARCHIVE_SOURCES),
+        None,
+    )
+    .await;
+    assert_eq!(second.failed, 0);
+    assert_eq!(second.blocked, 1);
+    assert_eq!(uploader.calls.get(), 1);
+    assert!(spool
+        .pending(ArchiveSource::Claude, &pending.source_session_id)
+        .unwrap()
+        .is_some());
+}
+
+#[tokio::test]
+async fn server_rejection_keeps_exact_single_record_metadata() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let bytes = b"{\"uuid\":\"single\",\"sessionId\":\"single-server-rejection\"}\n";
+    let pending = pending_from_bytes(ArchiveSource::Claude, bytes, 10);
+    spool.persist_pending(&pending).unwrap();
+    let uploader = ScriptedUploader::new([Err(ArchiveClientError::InvalidUpload {
+        reason: "archive_element_exceeds_chunk_limit".to_string(),
+    })]);
+
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        &plan_for(ALL_ARCHIVE_SOURCES),
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        report.first_error.as_deref(),
+        Some("archive_record_too_large")
+    );
+    let blocked = spool
+        .blocked_part(
+            ArchiveSource::Claude,
+            &pending.source_session_id,
+            &pending.source_transcript_part_id,
+        )
+        .unwrap()
+        .expect("durable blocked record metadata");
+    assert!(blocked
+        .source_record_identity
+        .as_deref()
+        .is_some_and(|identity| identity.contains("claude:id:single:0")));
+    assert_eq!(blocked.record_size_bytes, Some(bytes.len() as u64 - 1));
+}
+
+#[tokio::test]
+async fn unsupported_wire_stays_pending_and_retries_the_identical_body() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let mut pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    let mut value: serde_json::Value = serde_json::from_slice(&pending.body).unwrap();
+    value["archive_upload_wire_version"] = serde_json::json!(2);
+    pending.body = serde_json::to_vec(&value).unwrap();
+    spool.persist_pending(&pending).unwrap();
+    let unsupported = || {
+        Err(ArchiveClientError::InvalidUpload {
+            reason: "unsupported_archive_upload_wire_version".to_string(),
+        })
+    };
+    let uploader = ScriptedUploader::new([unsupported(), unsupported()]);
+
+    for _ in 0..2 {
+        let report = run_archive_cycle(
+            &uploader,
+            &mut spool,
+            &keys,
+            &[],
+            ArchivePolicy::Enrolled,
+            &plan_for(ALL_ARCHIVE_SOURCES),
+            None,
+        )
+        .await;
+        assert_eq!(
+            report.first_error.as_deref(),
+            Some("archive_wire_unsupported")
+        );
+        assert_eq!(report.blocked, 0);
+    }
+    assert_eq!(uploader.calls.get(), 2);
+    assert!(uploader
+        .bodies
+        .borrow()
+        .iter()
+        .all(|body| body == &pending.body));
+    assert!(spool
+        .blocked_part(
+            ArchiveSource::Claude,
+            &pending.source_session_id,
+            &pending.source_transcript_part_id,
+        )
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]

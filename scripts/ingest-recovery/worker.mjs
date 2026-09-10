@@ -1,4 +1,6 @@
-const METHODS = new Set(['listRecovery', 'reconcileRecovery', 'replayDlq']);
+const AGENT_METHODS = new Set(['beginFactRebuild', 'listRebuildFacts', 'completeFactRebuild']);
+const READ_METHODS = new Set(['listRecovery', 'listRebuildFacts']);
+const METHODS = new Set(['listRecovery', 'reconcileRecovery', 'replayDlq', ...AGENT_METHODS]);
 
 export default {
   async fetch(request, env) {
@@ -26,7 +28,10 @@ export default {
     ) {
       return new Response('pipeline and shardId are required', { status: 400 });
     }
-    if (method !== 'listRecovery' && input.confirm !== 'apply-recovery') {
+    if (AGENT_METHODS.has(method) && input.pipeline !== 'agent') {
+      return new Response('Fact rebuild requires the agent pipeline', { status: 400 });
+    }
+    if (!READ_METHODS.has(method) && input.confirm !== 'apply-recovery') {
       return new Response('Explicit apply-recovery confirmation is required', { status: 400 });
     }
     const service = input.pipeline === 'proxy' ? env.PROXY_RECOVERY : env.AGENT_RECOVERY;

@@ -16,7 +16,7 @@ use collector_archive_sync::{
 use collector_contracts::AgentSource;
 use collector_sync::walk_transcripts;
 
-use crate::sources::archive_source_roots;
+use crate::sources::source_roots;
 
 use self::copies::prefix_compatible;
 use self::identity::{identify, target_from, Candidate};
@@ -163,7 +163,7 @@ fn discover(home: &Path, source: ArchiveSource, errors: &mut Vec<String>) -> Vec
         ArchiveSource::Codex => AgentSource::Codex,
     };
     let mut groups: HashMap<(String, String), Vec<Candidate>> = HashMap::new();
-    for root in archive_source_roots(home, agent_source) {
+    for root in source_roots(home, agent_source) {
         for file in walk_transcripts(&root) {
             match identify(source, &file.path, file.mtime_ms as i64, file.size_bytes) {
                 Ok(candidate) => groups

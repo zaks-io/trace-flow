@@ -710,6 +710,7 @@ mod tests {
                 reason: "policy_unavailable".to_string(),
             },
             ArchiveClientError::UploadRejected {
+                status: 404,
                 reason: "not_found".to_string(),
             },
             ArchiveClientError::Transport(anyhow!("offline")),
@@ -805,6 +806,7 @@ mod tests {
                 reason: "policy_unavailable".to_string(),
             },
             ArchiveClientError::UploadRejected {
+                status: 404,
                 reason: "not_found".to_string(),
             },
             ArchiveClientError::Transport(anyhow!("offline")),

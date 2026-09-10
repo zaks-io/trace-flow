@@ -30,7 +30,8 @@ interface StoredObject {
   etag: string;
 }
 
-export const MAX_ENCRYPTED_ARCHIVE_OBJECT_BYTES = Math.ceil((MAX_MANIFEST_BYTES * 4) / 3) + 16_384;
+export const MAX_ENCRYPTED_ARCHIVE_OBJECT_BYTES =
+  Math.ceil((Math.max(MAX_CHUNK_BYTES, MAX_MANIFEST_BYTES) * 4) / 3) + 16_384;
 
 function objectClassFromBudget(value: BudgetObjectClass): ArchiveObjectClass {
   return value === 'agent_archive_chunk' ? 'chunk' : 'manifest';

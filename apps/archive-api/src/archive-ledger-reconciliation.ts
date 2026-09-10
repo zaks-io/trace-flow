@@ -56,13 +56,14 @@ async function assertFullScanHistory(
     throw new ArchiveContractError('historical_prefix_changed');
   }
   if (!upload.priorCheckpoint) {
-    await assertStoredPrefixHash(upload.completePrefixBase64, previous.checkpoint);
+    await assertStoredPrefixHash(upload.completePrefix, previous.checkpoint);
   }
   await assertPrefixHash(
     upload.observations,
     upload.checkpoint,
-    upload.completePrefixBase64,
+    upload.completePrefix,
     upload.priorCheckpoint,
+    upload.proofLines,
   );
 }
 
@@ -114,6 +115,7 @@ export async function reconcileArchiveUpload(
         upload.checkpoint,
         upload.priorCheckpoint,
         upload.appendProof,
+        upload.proofLines,
       );
     } else {
       if (

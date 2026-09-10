@@ -14,6 +14,8 @@ use crate::history::ArchiveHistoryState;
 use crate::key_store::{ArchiveKeyStore, ArchiveSpoolKey};
 use crate::policy::ArchivePolicy;
 
+pub const ARCHIVE_RECORD_POLICY_VERSION: &str = "archive-upload-wire-v2-chunk-16mib";
+
 /// Exact on-disk cap for the encrypted Archive Spool. Never round or evict to stay under this.
 pub const ARCHIVE_SPOOL_CAP_BYTES: u64 = 2_147_483_648;
 pub use crate::key_store::ARCHIVE_SPOOL_KEYRING_SERVICE;
@@ -33,6 +35,40 @@ pub struct PendingArchiveRequest {
     pub body: Vec<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BlockedArchiveRecord {
+    pub source: ArchiveSource,
+    pub source_session_id: String,
+    pub source_transcript_part_id: String,
+    pub source_record_identity: Option<String>,
+    pub record_size_bytes: Option<u64>,
+    pub limit_bytes: u64,
+    pub policy_version: String,
+    pub observed_file_size: u64,
+    pub source_fingerprint_bytes: u64,
+    pub observed_file_sha256: String,
+    pub pending_body_sha256: Option<String>,
+}
+
+impl BlockedArchiveRecord {
+    pub fn matches_source(&self, bytes: &[u8]) -> bool {
+        let fingerprint_end = self.source_fingerprint_bytes as usize;
+        self.policy_version == ARCHIVE_RECORD_POLICY_VERSION
+            && self.observed_file_size == bytes.len() as u64
+            && self.source_fingerprint_bytes == self.observed_file_size
+            && bytes.get(..fingerprint_end).is_some_and(|prefix| {
+                self.observed_file_sha256 == collector_archive::sha256(prefix).to_string()
+            })
+    }
+
+    pub fn matches_pending(&self, pending: &PendingArchiveRequest) -> bool {
+        self.policy_version == ARCHIVE_RECORD_POLICY_VERSION
+            && self.pending_body_sha256.as_ref().is_some_and(|digest| {
+                *digest == collector_archive::sha256(&pending.body).to_string()
+            })
+    }
+}
+
 impl PendingArchiveRequest {
     pub fn from_upload(
         source: ArchiveSource,
@@ -45,6 +81,24 @@ impl PendingArchiveRequest {
             source_transcript_part_id: request.checkpoint.source_transcript_part_id().to_string(),
             expected_record_count: request.checkpoint.record_count,
             expected_appended_records: request.observations.len() as u64,
+            body,
+        }
+    }
+
+    pub fn from_parts(
+        source: ArchiveSource,
+        source_session_id: String,
+        source_transcript_part_id: String,
+        expected_record_count: u64,
+        expected_appended_records: u64,
+        body: Vec<u8>,
+    ) -> Self {
+        Self {
+            source,
+            source_session_id,
+            source_transcript_part_id,
+            expected_record_count,
+            expected_appended_records,
             body,
         }
     }
@@ -487,6 +541,55 @@ impl ArchiveSpool {
             ),
             |plain| serde_json::from_slice(plain).map_err(|_| ArchiveSyncError::Corrupt),
         )
+    }
+
+    pub fn blocked_part(
+        &self,
+        source: ArchiveSource,
+        source_session_id: &str,
+        source_transcript_part_id: &str,
+    ) -> ArchiveSyncResult<Option<BlockedArchiveRecord>> {
+        let path = self.blocked_path(source, source_session_id, source_transcript_part_id)?;
+        self.read_encrypted(
+            &path,
+            &self.aad(
+                "blocked",
+                source,
+                source_session_id,
+                source_transcript_part_id,
+            ),
+            |plain| serde_json::from_slice(plain).map_err(|_| ArchiveSyncError::Corrupt),
+        )
+    }
+
+    pub fn persist_blocked_record(&self, blocked: &BlockedArchiveRecord) -> ArchiveSyncResult<()> {
+        let path = self.blocked_path(
+            blocked.source,
+            &blocked.source_session_id,
+            &blocked.source_transcript_part_id,
+        )?;
+        let plaintext = serde_json::to_vec(blocked)?;
+        let aad = self.aad(
+            "blocked",
+            blocked.source,
+            &blocked.source_session_id,
+            &blocked.source_transcript_part_id,
+        );
+        let blob = encrypt(&self.key, &aad, &plaintext)?;
+        self.write_capped(&path, &blob)
+    }
+
+    pub fn clear_blocked_part(
+        &self,
+        source: ArchiveSource,
+        source_session_id: &str,
+        source_transcript_part_id: &str,
+    ) -> ArchiveSyncResult<()> {
+        remove_if_present(&self.blocked_path(
+            source,
+            source_session_id,
+            source_transcript_part_id,
+        )?)
     }
 
     pub fn history_state(
@@ -1129,6 +1232,20 @@ impl ArchiveSpool {
         Ok(self
             .root
             .join("progress")
+            .join(source.as_str())
+            .join(session_dir_name(source_session_id)?)
+            .join(part_file_name(source_transcript_part_id)?))
+    }
+
+    fn blocked_path(
+        &self,
+        source: ArchiveSource,
+        source_session_id: &str,
+        source_transcript_part_id: &str,
+    ) -> ArchiveSyncResult<PathBuf> {
+        Ok(self
+            .root
+            .join("blocked")
             .join(source.as_str())
             .join(session_dir_name(source_session_id)?)
             .join(part_file_name(source_transcript_part_id)?))

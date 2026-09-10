@@ -2,8 +2,8 @@
 // Adapted from otto-parser/src/parser/codex_cli/mod.rs message emission (~/src/otto, 2026-05-25).
 // Reworked: otto builds one priced event per `message` record and threads a renumbering turn counter;
 // Trace Flow emits one unpriced `AgentMessageFact` per segmented turn (see `codex_turns`), ships tokens
-// + model only (pricing is server-side), and leaves `*_pk` to the ingest Worker. Codex has no
-// sub-agents in its transcript, so `agent_depth`/`is_sidechain`/`is_subagent_spawn` are constant.
+// + model only (pricing is server-side), and leaves `*_pk` to the ingest Worker. Codex child sessions
+// carry their parent identity in `session_meta`; the sync layer resolves their explicit depth.
 // Trace Flow owns the contract, IDs, pricing, redaction, and storage around this code.
 
 //! Codex `AgentMessageFact` emission. [`codex_message_facts`] turns a Codex session's records into one
@@ -72,7 +72,25 @@ fn turn_event_at(record: &Value, ctx: &SessionContext) -> i64 {
         .unwrap_or(0)
 }
 
-fn message_fact(turn: &CodexTurn, model: String, ctx: &SessionContext) -> AgentMessageFact {
+fn session_is_sidechain(records: &[Value], ctx: &SessionContext) -> bool {
+    ctx.agent_depth > 0
+        || records.iter().any(|record| {
+            record.get("type").and_then(Value::as_str) == Some("session_meta")
+                && record
+                    .get("payload")
+                    .and_then(|payload| payload.get("parent_thread_id"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .is_some_and(|parent| !parent.is_empty())
+        })
+}
+
+fn message_fact(
+    turn: &CodexTurn,
+    model: String,
+    is_sidechain: bool,
+    ctx: &SessionContext,
+) -> AgentMessageFact {
     let usage = turn.usage.unwrap_or_default();
     let has_usage = turn.usage.is_some();
     AgentMessageFact {
@@ -107,10 +125,11 @@ fn message_fact(turn: &CodexTurn, model: String, ctx: &SessionContext) -> AgentM
         } else {
             CacheCoverage::Missing
         },
-        // Codex transcripts are single-agent: no sub-agent depth, spawn, or sidechain.
-        agent_depth: 0,
+        agent_depth: ctx.agent_depth,
+        // Parent metadata identifies a child session, but it does not identify the parent message
+        // that spawned it. Keep spawn false until the transcript supplies that message-level link.
         is_subagent_spawn: false,
-        is_sidechain: false,
+        is_sidechain,
         agent_id: ctx.agent_id.clone(),
         normalized_git_remote: ctx.normalized_git_remote.clone(),
         repo_path_fallback: ctx.repo_path_fallback.clone(),
@@ -127,10 +146,11 @@ fn message_fact(turn: &CodexTurn, model: String, ctx: &SessionContext) -> AgentM
 pub fn codex_message_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentMessageFact> {
     let turns = session_turns(records.iter());
     let models = models_by_turn(records, &turns);
+    let is_sidechain = session_is_sidechain(records, ctx);
     turns
         .iter()
         .zip(models)
-        .map(|(turn, model)| message_fact(turn, model, ctx))
+        .map(|(turn, model)| message_fact(turn, model, is_sidechain, ctx))
         .collect()
 }
 
@@ -291,11 +311,70 @@ mod tests {
             assert_eq!(fact.normalized_git_remote, context.normalized_git_remote);
             assert_eq!(fact.git_head_sha, context.git_head_sha);
             assert_eq!(fact.vendor_started_at, context.vendor_started_at);
-            // Codex transcripts are single-agent.
-            assert_eq!(fact.agent_depth, 0);
+            assert_eq!(fact.agent_depth, context.agent_depth);
             assert!(!fact.is_sidechain);
             assert!(!fact.is_subagent_spawn);
         }
+    }
+
+    #[test]
+    fn parent_metadata_marks_child_turns_with_explicit_context_depth() {
+        let records = [
+            json!({
+                "type": "session_meta",
+                "payload": {
+                    "id": "child-session",
+                    "parent_thread_id": "parent-session",
+                    "source": { "subagent": { "thread_spawn": { "depth": 2 } } }
+                }
+            }),
+            user_message("2026-05-16T20:53:01.000Z"),
+            assistant_message("2026-05-16T20:53:05.000Z"),
+            token_count((10, 0, 5, 0, 15), 15, "2026-05-16T20:53:10.000Z"),
+        ];
+        let mut context = ctx();
+        context.agent_depth = 2;
+        let facts = codex_message_facts(&records, &context);
+        assert_eq!(facts.len(), 2);
+        assert!(facts.iter().all(|fact| fact.is_sidechain));
+        assert!(facts.iter().all(|fact| fact.agent_depth == 2));
+        assert!(facts.iter().all(|fact| !fact.is_subagent_spawn));
+    }
+
+    #[test]
+    fn resolved_depth_marks_nested_parent_shape_as_sidechain() {
+        let records = [
+            json!({
+                "type": "session_meta",
+                "payload": {
+                    "id": "child-session",
+                    "source": {
+                        "subagent": {
+                            "thread_spawn": { "parent_thread_id": "parent-session", "depth": 2 }
+                        }
+                    }
+                }
+            }),
+            user_message("2026-05-16T20:53:01.000Z"),
+        ];
+        let mut context = ctx();
+        context.agent_depth = 2;
+
+        let fact = &codex_message_facts(&records, &context)[0];
+        assert_eq!(fact.agent_depth, 2);
+        assert!(fact.is_sidechain);
+    }
+
+    #[test]
+    fn blank_parent_identity_does_not_mark_a_sidechain() {
+        let records = [
+            json!({
+                "type": "session_meta",
+                "payload": { "id": "top-session", "parent_thread_id": "   " }
+            }),
+            user_message("2026-05-16T20:53:01.000Z"),
+        ];
+        assert!(!codex_message_facts(&records, &ctx())[0].is_sidechain);
     }
 
     #[test]

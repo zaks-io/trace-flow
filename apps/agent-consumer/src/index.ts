@@ -18,6 +18,14 @@ import { isQueueMessage, processAgentBatch, processAgentRecoveryPayload } from '
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { AgentFactBatcherInstance } from './fact-batcher';
 import type {
+  BeginFactRebuildInput,
+  BeginFactRebuildResult,
+  CompleteFactRebuildInput,
+  CompleteFactRebuildResult,
+  ListRebuildFactsInput,
+  ListRebuildFactsResult,
+} from './fact-maintenance';
+import type {
   ReconcileRecoveryInput,
   RecoveryPage,
   RecoveryPageOptions,
@@ -35,11 +43,16 @@ function getAgentBatcher(
   env: AgentConsumerEnv,
   shardId: string,
 ): DurableObjectStub<AgentFactBatcherInstance> {
+  const normalized = normalizeAgentShardId(shardId);
+  return env.AGENT_FACT_BATCHER.getByName(`org:${normalized}`);
+}
+
+function normalizeAgentShardId(shardId: string): string {
   const normalized = shardId.trim();
   if (!normalized || normalized.length > 256 || normalized.includes(':')) {
     throw new Error('agent shardId must be a non-empty org ID without a colon');
   }
-  return env.AGENT_FACT_BATCHER.getByName(`org:${normalized}`);
+  return normalized;
 }
 
 async function preserveDeadLetterBatch(
@@ -92,9 +105,26 @@ export class TraceRecovery extends WorkerEntrypoint<AgentConsumerEnv> {
     return getAgentBatcher(this.env, shardId).reconcileRecovery(input);
   }
 
+  beginFactRebuild(shardId: string, input: BeginFactRebuildInput): Promise<BeginFactRebuildResult> {
+    const orgId = normalizeAgentShardId(shardId);
+    return getAgentBatcher(this.env, orgId).beginFactRebuild(orgId, input);
+  }
+
+  listRebuildFacts(shardId: string, input: ListRebuildFactsInput): Promise<ListRebuildFactsResult> {
+    return getAgentBatcher(this.env, shardId).listRebuildFacts(input);
+  }
+
+  completeFactRebuild(
+    shardId: string,
+    input: CompleteFactRebuildInput,
+  ): Promise<CompleteFactRebuildResult> {
+    return getAgentBatcher(this.env, shardId).completeFactRebuild(input);
+  }
+
   async replayDlq(shardId: string, input: ReplayDlqInput): Promise<RecoveryRecord> {
     requireRecoveryReason(input.reason);
     const batcher = getAgentBatcher(this.env, shardId);
+    await batcher.assertFactMaintenanceUnlocked();
     const record = await batcher.getRecovery(input.recoveryId);
     if (record.kind !== 'dlq' || record.state !== 'blocked')
       throw new Error('DLQ record is not blocked');

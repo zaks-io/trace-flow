@@ -8,14 +8,12 @@ import {
   app,
   archiveKey,
   archiveSessionPrefix,
-  base64,
   canonicalElement,
   checkpoint,
   createExecutionContext,
   decryptArchiveObject,
   decompress,
   digest,
-  exactPrefix,
   fallbackArchiveKeyHttp,
   newLedger,
   observation,
@@ -37,14 +35,14 @@ import type {
   ArchiveUploadRequest,
 } from './ledger.integration.fixtures';
 
-const RAW_RECORD_BYTES = 6_467_360;
-const OLD_UPLOAD_LIMIT = 8 * 1024 * 1024;
-const OLD_CHUNK_LIMIT = (3 * 1024 * 1024) / 2;
+const RAW_RECORD_BYTES = 13_655_041;
+const OLD_CHUNK_LIMIT = 8 * 1024 * 1024;
+const SECOND_RAW_RECORD_BYTES = OLD_CHUNK_LIMIT + 1;
 
-function largeRawRecord(session: string): string {
-  const prefix = `{"sessionId":"${session}","uuid":"large","pad":"`;
+function largeRawRecord(session: string, uuid: string, targetBytes: number): string {
+  const prefix = `{"sessionId":"${session}","uuid":"${uuid}","pad":"`;
   const suffix = '"}';
-  const paddingLength = RAW_RECORD_BYTES - prefix.length - suffix.length;
+  const paddingLength = targetBytes - 1 - prefix.length - suffix.length;
   if (paddingLength < 0) throw new Error('large record fixture prefix exceeds target size');
   return `${prefix}${'x'.repeat(paddingLength)}${suffix}`;
 }
@@ -134,26 +132,41 @@ describe('large archive records', () => {
       ARCHIVE_API_SHARED_SECRET: 'archive-api-shared-test-value',
     } as unknown as ArchiveApiEnv;
     const part = partFor(currentScope.source);
+    const firstPayload = `${largeRawRecord(
+      currentScope.sourceSessionId,
+      'large-8mib',
+      SECOND_RAW_RECORD_BYTES,
+    )}\r`;
+    expect(new TextEncoder().encode(firstPayload).byteLength).toBe(SECOND_RAW_RECORD_BYTES);
     const firstRecord = await observation(
       currentScope.source,
       currentScope.sourceSessionId,
       part,
       `${part}:codex:line:0`,
-      '{"small":true}',
+      firstPayload,
     );
-    const firstCheckpoint = await checkpoint(
-      currentScope.source,
-      currentScope.sourceSessionId,
-      part,
-      [firstRecord],
-    );
-    const firstUpload: ArchiveUploadRequest = {
-      source_session_id: currentScope.sourceSessionId,
-      observations: [firstRecord],
-      checkpoint: firstCheckpoint,
-      complete_prefix_base64: base64(exactPrefix([firstRecord])),
+    const firstPrefixText = `\n \t\n${firstPayload}\n`;
+    const firstPrefix = new TextEncoder().encode(firstPrefixText);
+    const firstCheckpoint = {
+      ...(await checkpoint(currentScope.source, currentScope.sourceSessionId, part, [firstRecord])),
+      last_complete_byte_offset: firstPrefix.byteLength,
+      observed_file_size: firstPrefix.byteLength,
+      complete_prefix_sha256: await digest(firstPrefix),
+      prefix_chain_sha256: await prefixChainHash(undefined, firstPrefix),
     };
-    const payload = largeRawRecord(currentScope.sourceSessionId);
+    const { payload: _firstPayload, ...firstMetadata } = firstRecord;
+    const firstUpload = {
+      archive_upload_wire_version: 2,
+      source_session_id: currentScope.sourceSessionId,
+      observations: [firstMetadata],
+      checkpoint: firstCheckpoint,
+      complete_prefix_utf8: firstPrefixText,
+    } satisfies ArchiveUploadRequest;
+    const payload = `${largeRawRecord(
+      currentScope.sourceSessionId,
+      'large-13mib',
+      RAW_RECORD_BYTES,
+    )}\r`;
     const payloadBytes = new TextEncoder().encode(payload);
     expect(payloadBytes.byteLength).toBe(RAW_RECORD_BYTES);
     const largeRecord = await observation(
@@ -163,8 +176,11 @@ describe('large archive records', () => {
       `${part}:codex:line:1`,
       payload,
     );
-    const appendedPrefix = new TextEncoder().encode(`${payload}\n`);
-    const fullPrefix = exactPrefix([firstRecord, largeRecord]);
+    const appendedPrefixText = `\n${payload}\n\t \n`;
+    const appendedPrefix = new TextEncoder().encode(appendedPrefixText);
+    const fullPrefix = new Uint8Array(firstPrefix.byteLength + appendedPrefix.byteLength);
+    fullPrefix.set(firstPrefix);
+    fullPrefix.set(appendedPrefix, firstPrefix.byteLength);
     const appendCheckpoint = {
       ...(await checkpoint(currentScope.source, currentScope.sourceSessionId, part, [
         firstRecord,
@@ -176,27 +192,32 @@ describe('large archive records', () => {
         appendedPrefix,
       ),
       first_observed_at: firstCheckpoint.first_observed_at,
+      last_complete_byte_offset: fullPrefix.byteLength,
+      observed_file_size: fullPrefix.byteLength + 19,
     };
-    const appendUpload: ArchiveUploadRequest = {
+    const { payload: _largePayload, ...largeMetadata } = largeRecord;
+    const appendUpload = {
+      archive_upload_wire_version: 2,
       source_session_id: currentScope.sourceSessionId,
-      observations: [largeRecord],
+      observations: [largeMetadata],
       checkpoint: appendCheckpoint,
       prior_checkpoint: firstCheckpoint,
       append_proof: {
         prior_prefix_chain_sha256: firstCheckpoint.prefix_chain_sha256,
-        appended_prefix_base64: base64(appendedPrefix),
+        appended_prefix_utf8: appendedPrefixText,
       },
-    };
+    } satisfies ArchiveUploadRequest;
     const appendBody = JSON.stringify(appendUpload);
     const appendBodyBytes = new TextEncoder().encode(appendBody).byteLength;
-    expect(appendBodyBytes).toBe(15_092_316);
-    expect(appendBodyBytes).toBeGreaterThan(OLD_UPLOAD_LIMIT);
+    expect(appendBody).not.toContain('"payload":');
+    expect(appendBody).not.toContain('appended_prefix_base64');
+    expect(appendBodyBytes).toBeGreaterThan(RAW_RECORD_BYTES);
     expect(appendBodyBytes).toBeLessThanOrEqual(MAX_ARCHIVE_UPLOAD_BYTES);
     const storedRecord = await buildRecord(largeRecord, 2, GENESIS_CHAIN_HASH);
     const storedRecordBytes = new TextEncoder().encode(
       `${canonicalElement(storedRecord)}\n`,
     ).byteLength;
-    expect(storedRecordBytes).toBe(6_467_997);
+    expect(storedRecordBytes).toBeGreaterThan(RAW_RECORD_BYTES);
     expect(storedRecordBytes).toBeGreaterThan(OLD_CHUNK_LIMIT);
     expect(storedRecordBytes).toBeLessThanOrEqual(MAX_CHUNK_BYTES);
 
@@ -235,6 +256,16 @@ describe('large archive records', () => {
         record_count: 2,
         generation: 2,
       });
+      const replayed = await send(appendBody);
+      expect(replayed.response.status).toBe(200);
+      expect(replayed.body).toMatchObject({
+        status: 'acknowledged',
+        duplicate: false,
+        appended_records: 1,
+        appended_checkpoint: true,
+        record_count: 2,
+        generation: 2,
+      });
       const durableState = await runInDurableObject(newLedger(currentScope), (_instance, state) => [
         ...state.storage.sql.exec<{ data: string }>('SELECT data FROM ledger_state WHERE id = 1'),
       ]);
@@ -253,7 +284,7 @@ describe('large archive records', () => {
       const listed = await runtimeEnv.ARCHIVE_STORAGE.list({
         prefix: await archiveSessionPrefix(currentScope),
       });
-      let persisted: Record<string, unknown> | undefined;
+      const persisted = new Map<string, Record<string, unknown>>();
       for (const listedObject of listed.objects) {
         const object = await runtimeEnv.ARCHIVE_STORAGE.get(listedObject.key);
         if (!object) throw new Error('archive object missing after acknowledgement');
@@ -269,21 +300,31 @@ describe('large archive records', () => {
         const plaintext = await decompress(compressed);
         for (const line of new TextDecoder().decode(plaintext).trimEnd().split('\n')) {
           const element = JSON.parse(line) as Record<string, unknown>;
-          if (element.source_record_identity === largeRecord.source_record_identity) {
-            persisted = element;
+          if (
+            element.source_record_identity === firstRecord.source_record_identity ||
+            element.source_record_identity === largeRecord.source_record_identity
+          ) {
+            persisted.set(String(element.source_record_identity), element);
           }
         }
       }
-      expect(persisted).toMatchObject({
+      expect(persisted.get(largeRecord.source_record_identity)).toMatchObject({
         kind: 'record',
         content_sha256: largeRecord.content_sha256,
         source_record_identity: largeRecord.source_record_identity,
       });
-      const persistedPayload = new TextEncoder().encode(String(persisted?.payload));
-      expect(persistedPayload.byteLength).toBe(RAW_RECORD_BYTES);
-      expect(await digest(persistedPayload)).toBe(largeRecord.content_sha256);
+      const persistedLargePayload = new TextEncoder().encode(
+        String(persisted.get(largeRecord.source_record_identity)?.payload),
+      );
+      expect(persistedLargePayload.byteLength).toBe(RAW_RECORD_BYTES);
+      expect(await digest(persistedLargePayload)).toBe(largeRecord.content_sha256);
+      const persistedSecondPayload = new TextEncoder().encode(
+        String(persisted.get(firstRecord.source_record_identity)?.payload),
+      );
+      expect(persistedSecondPayload.byteLength).toBe(SECOND_RAW_RECORD_BYTES);
+      expect(await digest(persistedSecondPayload)).toBe(firstRecord.content_sha256);
     } finally {
       fetchMock.mockRestore();
     }
-  }, 30_000);
+  }, 45_000);
 });

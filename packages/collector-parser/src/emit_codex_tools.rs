@@ -6,14 +6,16 @@
 // process exit code from the output text, and ships redacted capped excerpts only.
 // Trace Flow owns the contract, IDs, pricing, redaction, and storage around this code.
 
-//! Codex CLI `AgentToolEventFact` emission. [`codex_tool_facts`] emits one fact per `function_call`
-//! record, joined to its `function_call_output` by `call_id`. Unlike Claude's Bash sidecar — which
-//! records only `interrupted`/`stderr`/`stdout` — a Codex exec output carries a `Process exited with
+//! Codex CLI `AgentToolEventFact` emission. [`codex_tool_facts`] emits one fact per `function_call` or
+//! `custom_tool_call` record, joined to its matching output by `call_id`. Unlike Claude's Bash sidecar,
+//! which records only `interrupted`/`stderr`/`stdout`, a Codex exec output carries a `Process exited with
 //! code N` line, so `exit_code` is populated and `status` rides it: exit `0` is success, non-zero is
 //! failure, and a call with no parseable code (a dangling call, or an MCP tool whose output carries no
-//! process code) is `Unknown`. `duration_ms` is the wall-clock gap between the call record and its
-//! output record. Only `exec_command` carries a shell command to classify; extracting touched files
-//! from `apply_patch` shell text is the file emitter's job, so `repo_relative_paths` ships empty here.
+//! process code) is `Unknown`. A custom `exec` call represents one JavaScript invocation; its terminal
+//! `Script completed` or `Script failed` output determines status, without expanding nested calls into
+//! inferred tool events. `duration_ms` is the wall-clock gap between the call record and its output
+//! record. Only `exec_command` carries a shell command to classify. The file emitter extracts touched
+//! paths from direct `apply_patch` inputs, so `repo_relative_paths` stays empty here.
 //! Provider/repo/PR and sub-agent enrichment are deferred (the ADR names the columns but gives no
 //! parser algorithm), so those columns ship empty.
 
@@ -80,8 +82,25 @@ fn parse_arguments(record: &Value) -> Value {
         .unwrap_or(Value::Null)
 }
 
-/// The text body of a `function_call_output`. Real Codex builds store a plain string; the object arm
-/// covers a build that wraps the result as `{output, metadata}`.
+/// The JavaScript source passed directly to a `custom_tool_call` named `exec`.
+fn custom_exec_input(record: &Value) -> Option<&str> {
+    (payload_type(record) == Some("custom_tool_call")
+        && record
+            .get("payload")
+            .and_then(|payload| payload.get("name"))
+            .and_then(Value::as_str)
+            == Some("exec"))
+    .then(|| {
+        record
+            .get("payload")
+            .and_then(|payload| payload.get("input"))
+            .and_then(Value::as_str)
+    })
+    .flatten()
+}
+
+/// The text body of a call output. Function outputs are strings or `{output, metadata}` objects.
+/// Custom outputs are content-block arrays; only their `input_text` blocks are diagnostic text.
 fn output_text(output_record: &Value) -> Option<String> {
     let raw = output_record.get("payload")?.get("output")?;
     match raw {
@@ -90,7 +109,41 @@ fn output_text(output_record: &Value) -> Option<String> {
             .get("output")
             .and_then(Value::as_str)
             .map(str::to_string),
+        Value::Array(blocks) => {
+            let text = blocks
+                .iter()
+                .filter(|block| block.get("type").and_then(Value::as_str) == Some("input_text"))
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n");
+            (!text.is_empty()).then_some(text)
+        }
         _ => None,
+    }
+}
+
+fn custom_status_from_output(output_record: Option<&Value>) -> AgentEventStatus {
+    let Some(raw) = output_record
+        .and_then(|record| record.get("payload"))
+        .and_then(|payload| payload.get("output"))
+    else {
+        return AgentEventStatus::Unknown;
+    };
+    let first_text = raw.as_str().or_else(|| {
+        raw.as_array().and_then(|blocks| {
+            blocks
+                .iter()
+                .filter(|block| block.get("type").and_then(Value::as_str) == Some("input_text"))
+                .find_map(|block| block.get("text").and_then(Value::as_str))
+        })
+    });
+    let Some(first_text) = first_text else {
+        return AgentEventStatus::Unknown;
+    };
+    match first_text.lines().next().map(str::trim) {
+        Some("Script failed") => AgentEventStatus::Failure,
+        Some("Script completed") => AgentEventStatus::Success,
+        _ => AgentEventStatus::Unknown,
     }
 }
 
@@ -153,24 +206,29 @@ fn excerpt(raw: Option<&str>, cap: usize) -> (String, i64) {
     }
 }
 
-/// Emits one [`AgentToolEventFact`] per Codex `function_call` record in file order, joined to its
-/// `function_call_output` by `call_id`. `source_block_index` is the call's 0-based position among the
-/// session's function calls (ordering metadata, stable on re-parse); identity rides on `tool_use_id`
+/// Emits one [`AgentToolEventFact`] per Codex function or custom call in file order, joined to the
+/// corresponding output by `call_id`. `source_block_index` is the call's 0-based position among the
+/// session's calls (ordering metadata, stable on re-parse); identity rides on `tool_use_id`
 /// (the `call_id`), so the index is not part of the pk.
 pub fn codex_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentToolEventFact> {
-    // `call_id -> output record`. The result side is a separate top-level record, joined by call_id.
-    let outputs: HashMap<&str, &Value> = records
+    // `(output type, call_id) -> output record`. Function and custom ids occupy separate call kinds.
+    let outputs: HashMap<(&str, &str), &Value> = records
         .iter()
-        .filter(|record| payload_type(record) == Some("function_call_output"))
-        .filter_map(|record| Some((call_id(record)?, record)))
+        .filter(|record| {
+            matches!(
+                payload_type(record),
+                Some("function_call_output" | "custom_tool_call_output")
+            )
+        })
+        .filter_map(|record| Some(((payload_type(record)?, call_id(record)?), record)))
         .collect();
 
     let mut block_index = 0i64;
     let mut facts = Vec::new();
     for record in records {
-        if payload_type(record) != Some("function_call") {
+        let Some(call_type @ ("function_call" | "custom_tool_call")) = payload_type(record) else {
             continue;
-        }
+        };
         let payload = record.get("payload");
         // Identity rides on `call_id`; a `function_call` without one can't form a stable
         // `tool_use_id`, and several such records would all collapse to `None` and collide. Skip it.
@@ -187,23 +245,35 @@ pub fn codex_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentToo
 
         let arguments = parse_arguments(record);
         // Only `exec_command` carries a shell command; MCP tools (get_issue, …) and write_stdin do not.
-        let command = (tool_name == "exec_command")
+        let shell_command = (call_type == "function_call" && tool_name == "exec_command")
             .then(|| arguments.get("cmd").and_then(Value::as_str))
             .flatten();
-        let classification = command.map(classify_command).unwrap_or_default();
-        let (command_excerpt, command_dropped) = excerpt(command, COMMAND_EXCERPT_CAP_BYTES);
+        let command_input = shell_command.or_else(|| custom_exec_input(record));
+        let classification = shell_command.map(classify_command).unwrap_or_default();
+        let (command_excerpt, command_dropped) = excerpt(command_input, COMMAND_EXCERPT_CAP_BYTES);
 
-        let output_record = outputs.get(id).copied();
+        let output_type = if call_type == "function_call" {
+            "function_call_output"
+        } else {
+            "custom_tool_call_output"
+        };
+        let output_record = outputs.get(&(output_type, id)).copied();
         let out_text = output_record.and_then(output_text);
-        let exit_code = exit_code_from_output(out_text.as_deref());
-        let status = status_from_exit_code(exit_code);
+        let exit_code = (call_type == "function_call")
+            .then(|| exit_code_from_output(out_text.as_deref()))
+            .flatten();
+        let status = if call_type == "function_call" {
+            status_from_exit_code(exit_code)
+        } else {
+            custom_status_from_output(output_record)
+        };
         // The exec output is the diagnostic text for a failed call; on success there is no error.
         let error_source = (status == AgentEventStatus::Failure)
             .then_some(out_text.as_deref())
             .flatten();
         let error_classification = classify_tool_error(status, error_source);
         let (error_excerpt, error_dropped) = excerpt(error_source, ERROR_EXCERPT_CAP_BYTES);
-        let navigation = classify_navigation(command);
+        let navigation = classify_navigation(shell_command);
         let mut remaining_hint_budget = TOOL_EXCERPT_TOTAL_CAP_BYTES
             .saturating_sub(command_excerpt.len() + error_excerpt.len());
         let (navigation_path_hint, navigation_path_dropped) = excerpt(
@@ -239,8 +309,8 @@ pub fn codex_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentToo
             navigation_hint_coverage: navigation.hint_coverage,
             navigation_path_hint,
             navigation_pattern_hint,
-            // Codex function calls carry no structured file path; extracting touched files from
-            // `apply_patch` shell text is the file emitter's job.
+            // Codex calls carry no separate structured file path; extracting touched files from a
+            // direct `apply_patch` input is the file emitter's job.
             repo_relative_paths: Vec::new(),
             // Deferred enrichment: no parser algorithm in the ADR; PR links are a separate fact.
             extracted_provider: String::new(),
@@ -324,11 +394,76 @@ mod tests {
         })
     }
 
+    fn custom_exec(call_id: &str, input: &str, ts: &str) -> Value {
+        json!({
+            "type": "response_item",
+            "timestamp": ts,
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "exec",
+                "input": input,
+                "call_id": call_id,
+                "status": "completed"
+            }
+        })
+    }
+
+    fn custom_output(call_id: &str, blocks: Vec<Value>, ts: &str) -> Value {
+        json!({
+            "type": "response_item",
+            "timestamp": ts,
+            "payload": {
+                "type": "custom_tool_call_output",
+                "call_id": call_id,
+                "output": blocks
+            }
+        })
+    }
+
+    fn input_text(text: &str) -> Value {
+        json!({ "type": "input_text", "text": text })
+    }
+
     /// An exec output framed the way Codex writes it: preamble, the `Process exited` status line, body.
     fn exec_output(exit_code: i64, body: &str) -> String {
         format!(
             "Chunk ID: abc123\nWall time: 0.0000 seconds\nProcess exited with code {exit_code}\nOutput:\n{body}\n"
         )
+    }
+
+    #[test]
+    fn custom_string_output_preserves_status_preamble() {
+        for (text, expected) in [
+            (
+                "Script completed\nOutput:\nScript failed",
+                AgentEventStatus::Success,
+            ),
+            (
+                "Script failed\nOutput:\nScript completed",
+                AgentEventStatus::Failure,
+            ),
+            ("Script running with cell ID 1", AgentEventStatus::Unknown),
+        ] {
+            let record = serde_json::json!({"payload":{"output":text}});
+            assert_eq!(custom_status_from_output(Some(&record)), expected);
+        }
+    }
+
+    #[test]
+    fn custom_block_output_reads_status_after_non_text_blocks() {
+        let record = serde_json::json!({
+            "payload": {
+                "output": [
+                    { "type": "input_image", "image_url": "data:image/png;base64,AA==" },
+                    input_text("Script failed\nOutput:\ncommand failed")
+                ]
+            }
+        });
+
+        assert_eq!(
+            custom_status_from_output(Some(&record)),
+            AgentEventStatus::Failure
+        );
     }
 
     #[test]
@@ -483,6 +618,89 @@ mod tests {
         assert_eq!(f.command_family, "");
         assert_eq!(f.command_program, "");
         assert_eq!(f.command_excerpt, "");
+    }
+
+    #[test]
+    fn custom_exec_emits_one_outer_tool_fact_alongside_function_calls() {
+        let javascript = "const first = await tools.exec_command({cmd: \"pwd\"});\nconst second = await tools.exec_command({cmd: \"ls\"});\ntext(first.output + second.output);";
+        let records = [
+            exec_call("function-1", "git status", "2026-05-16T20:53:00.000Z"),
+            output(
+                "function-1",
+                &exec_output(0, "clean"),
+                "2026-05-16T20:53:00.200Z",
+            ),
+            custom_exec("custom-1", javascript, "2026-05-16T20:53:01.000Z"),
+            custom_output(
+                "custom-1",
+                vec![
+                    input_text("Script completed\nWall time: 0.4 seconds\nOutput:\nfirst result"),
+                    input_text("additional emitted value"),
+                ],
+                "2026-05-16T20:53:01.400Z",
+            ),
+        ];
+        let facts = codex_tool_facts(&records, &ctx());
+        assert_eq!(facts.len(), 2);
+        let custom = &facts[1];
+        assert_eq!(custom.tool_use_id.as_deref(), Some("custom-1"));
+        assert_eq!(custom.tool_name, "exec");
+        assert_eq!(custom.command_excerpt, javascript);
+        assert_eq!(custom.command_program, "");
+        assert_eq!(custom.command_family, "");
+        assert_eq!(custom.command_subcommand, "");
+        assert_eq!(custom.status, AgentEventStatus::Success);
+        assert_eq!(custom.exit_code, None);
+        assert_eq!(custom.duration_ms, Some(400));
+        assert!(!custom.is_navigation);
+    }
+
+    #[test]
+    fn custom_exec_failure_uses_outer_script_status_and_redacted_error() {
+        let records = [
+            custom_exec(
+                "custom-1",
+                "await tools.exec_command({cmd: \"cat missing.txt\"});",
+                "2026-05-16T20:53:00.000Z",
+            ),
+            custom_output(
+                "custom-1",
+                vec![input_text(
+                    "Script failed\nWall time: 0.5 seconds\nOutput:\nfailed reading /Users/janedoe/private",
+                )],
+                "2026-05-16T20:53:00.500Z",
+            ),
+        ];
+        let fact = &codex_tool_facts(&records, &ctx())[0];
+        assert_eq!(fact.status, AgentEventStatus::Failure);
+        assert_eq!(fact.exit_code, None);
+        assert!(!fact.error_excerpt.contains("janedoe"));
+        assert_eq!(fact.error_category, AgentToolErrorCategory::Other);
+    }
+
+    #[test]
+    fn custom_exec_without_terminal_output_is_unknown() {
+        let records = [custom_exec(
+            "custom-1",
+            "await tools.exec_command({cmd: \"pwd\"});",
+            "2026-05-16T20:53:00.000Z",
+        )];
+        let fact = &codex_tool_facts(&records, &ctx())[0];
+        assert_eq!(fact.status, AgentEventStatus::Unknown);
+        assert_eq!(fact.duration_ms, None);
+    }
+
+    #[test]
+    fn custom_exec_input_uses_the_existing_redaction_path() {
+        let token = format!("ghp_{}", "0".repeat(36));
+        let records = [custom_exec(
+            "custom-1",
+            &format!("await tools.exec_command({{cmd: \"deploy --token={token}\"}});"),
+            "2026-05-16T20:53:00.000Z",
+        )];
+        let fact = &codex_tool_facts(&records, &ctx())[0];
+        assert!(fact.dropped_sensitive >= 1);
+        assert!(!fact.command_excerpt.contains("ghp_"));
     }
 
     #[test]

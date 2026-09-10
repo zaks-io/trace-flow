@@ -8,10 +8,10 @@ import {
   ROW_IDENTITY_FIELDS,
   emptyAccumulator,
   rowIdentity,
-  rowOrgId,
   type Accumulator,
 } from './facts';
 import { PriceCache, priceMessage } from './pricing';
+import { flushFacts, flushRowsByOrg } from './fact-flush';
 import {
   batchContext,
   capabilitySnapshotRow,
@@ -21,9 +21,6 @@ import {
   reviewUnitAttributionRow,
   toolEventRow,
 } from './rows';
-
-type Logger = ReturnType<typeof createLogger>;
-type WriteMode = 'clean' | 'legacy' | 'dual';
 
 /**
  * Full queue-contract guard and the named "malformed message → DLQ" trigger. The producer is our own
@@ -48,7 +45,7 @@ export async function processAgentRecoveryPayload(
     const acc = emptyAccumulator();
     await accumulateMessage(body, acc, new PriceCache(env.MODEL_PRICING));
     dedupeAccumulator(acc);
-    if (!(await flush(acc, env, logger)))
+    if (!(await flushFacts(acc, env, logger)))
       throw new Error('agent recovery replay was not durably staged');
   } finally {
     await logger.flush();
@@ -84,86 +81,6 @@ async function accumulateMessage(
   }
 }
 
-/** Hands rows to the configured Tinybird write targets. Returns false when any target failed. */
-async function flush(acc: Accumulator, env: AgentConsumerEnv, logger: Logger): Promise<boolean> {
-  const mode = writeMode(env);
-  return flushBatched(acc, env, logger, mode !== 'legacy', mode !== 'clean');
-}
-
-function writeMode(env: AgentConsumerEnv): WriteMode {
-  const mode = env.TINYBIRD_AGENT_WRITE_MODE ?? 'clean';
-  if (mode === 'clean' || mode === 'legacy' || mode === 'dual') {
-    return mode;
-  }
-  throw new Error(`invalid TINYBIRD_AGENT_WRITE_MODE: ${mode}`);
-}
-
-/** Hands rows to the sharded Durable Object ledger. Returns false when any shard failed. */
-async function flushBatched(
-  acc: Accumulator,
-  env: AgentConsumerEnv,
-  logger: Logger,
-  writeClean: boolean,
-  writeLegacy: boolean,
-): Promise<boolean> {
-  const byOrg = groupRowsByOrg(acc);
-  if (byOrg.size === 0) {
-    return true;
-  }
-
-  const results = await Promise.allSettled(
-    [...byOrg.entries()].map(async ([orgId, rows]) => {
-      const batcher = env.AGENT_FACT_BATCHER.getByName(`org:${orgId}`);
-      const result = await batcher.addFacts({ rows, writeClean, writeLegacy });
-      if (result.status === 'failed') {
-        throw new Error(`agent fact batcher rejected org ${orgId}`);
-      }
-      if (result.repairRows > 0) {
-        logger.warn('agent_consumer.repair_rows_detected', {
-          orgId,
-          repairRows: result.repairRows,
-        });
-      }
-      if (result.blockedRecoveryRecords > 0) {
-        logger.warn('agent_consumer.blocked_recovery_rows', {
-          orgId,
-          blockedRecoveryRows: result.blockedRecoveryRows,
-          blockedRecoveryRecords: result.blockedRecoveryRecords,
-        });
-      }
-    }),
-  );
-
-  let ok = true;
-  for (const result of results) {
-    if (result.status === 'rejected') {
-      ok = false;
-      logger.error('agent_consumer.fact_batcher_failed', result.reason);
-      Sentry.captureException(result.reason, { tags: { operation: 'agent_fact_batcher' } });
-    }
-  }
-  return ok;
-}
-
-function groupRowsByOrg(acc: Accumulator): Map<string, Accumulator> {
-  const byOrg = new Map<string, Accumulator>();
-  for (const category of CATEGORIES) {
-    for (const row of acc[category]) {
-      const orgId = rowOrgId(row);
-      if (!orgId) {
-        continue;
-      }
-      let orgRows = byOrg.get(orgId);
-      if (!orgRows) {
-        orgRows = emptyAccumulator();
-        byOrg.set(orgId, orgRows);
-      }
-      orgRows[category].push(row);
-    }
-  }
-  return byOrg;
-}
-
 function dedupeAccumulator(acc: Accumulator): number {
   let removed = 0;
   for (const category of CATEGORIES) {
@@ -172,6 +89,10 @@ function dedupeAccumulator(acc: Accumulator): number {
     removed += before - acc[category].length;
   }
   return removed;
+}
+
+function mergeAccumulator(target: Accumulator, source: Accumulator): void {
+  for (const category of CATEGORIES) target[category].push(...source[category]);
 }
 
 function dedupeRows(rows: unknown[], keyFields: string[]): unknown[] {
@@ -198,9 +119,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * Drains one queue batch: prices each message and accumulates one row set per base datasource.
- * Named failure paths — a malformed message dead-letters (retry
- * exhausts to the DLQ); a ledger failure retries every contributing message. Duplicate redelivery is
- * absorbed by the AgentFactBatcher ledger before Tinybird insert. Nothing is silently dropped.
+ * Named failure paths: a malformed message dead-letters after retry exhaustion, and a ledger failure
+ * retries the messages for that organization. Duplicate redelivery is absorbed by the
+ * AgentFactBatcher ledger before Tinybird insert.
  */
 export async function processAgentBatch(
   batch: MessageBatch<unknown>,
@@ -214,8 +135,8 @@ export async function processAgentBatch(
   });
 
   const cache = new PriceCache(env.MODEL_PRICING);
-  const acc = emptyAccumulator();
   const wellFormed: Message<unknown>[] = [];
+  const byOrg = new Map<string, { rows: Accumulator; messages: Message<unknown>[] }>();
 
   const accumulate = async (message: Message<unknown>): Promise<void> => {
     try {
@@ -229,7 +150,16 @@ export async function processAgentBatch(
         message.retry();
         return;
       }
-      await accumulateMessage(message.body, acc, cache);
+      const messageRows = emptyAccumulator();
+      await accumulateMessage(message.body, messageRows, cache);
+      const orgId = message.body.tenancy.org_id;
+      let orgBatch = byOrg.get(orgId);
+      if (!orgBatch) {
+        orgBatch = { rows: emptyAccumulator(), messages: [] };
+        byOrg.set(orgId, orgBatch);
+      }
+      mergeAccumulator(orgBatch.rows, messageRows);
+      orgBatch.messages.push(message);
       wellFormed.push(message);
     } catch (error) {
       logger.error('agent_consumer.message_process_failed', error, { messageId: message.id });
@@ -267,24 +197,39 @@ export async function processAgentBatch(
       return;
     }
 
-    const dedupedRows = dedupeAccumulator(acc);
-    const flushed = await flush(acc, env, logger);
-    if (!flushed) {
-      for (const message of wellFormed) {
-        message.retry();
+    let dedupedRows = 0;
+    for (const { rows } of byOrg.values()) dedupedRows += dedupeAccumulator(rows);
+    const failedOrgIds = await flushRowsByOrg(
+      new Map([...byOrg].map(([orgId, value]) => [orgId, value.rows])),
+      env,
+      logger,
+    );
+    let retried = 0;
+    for (const [orgId, orgBatch] of byOrg) {
+      for (const message of orgBatch.messages) {
+        if (failedOrgIds.has(orgId)) {
+          message.retry();
+          retried++;
+        } else {
+          message.ack();
+        }
       }
+    }
+    if (retried > 0) {
       logger.warn('agent_consumer.batch_retried', {
-        retried: wellFormed.length,
+        retried,
+        failedOrganizations: failedOrgIds.size,
       });
       return;
     }
 
-    for (const message of wellFormed) {
-      message.ack();
-    }
     logger.info('agent_consumer.batch_processed', {
       messages: wellFormed.length,
-      rows: CATEGORIES.reduce((sum, category) => sum + acc[category].length, 0),
+      rows: [...byOrg.values()].reduce(
+        (sum, orgBatch) =>
+          sum + CATEGORIES.reduce((orgSum, category) => orgSum + orgBatch.rows[category].length, 0),
+        0,
+      ),
       dedupedRows,
     });
   } finally {

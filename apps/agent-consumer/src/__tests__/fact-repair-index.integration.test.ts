@@ -12,6 +12,7 @@ it('indexes existing repairs without losing rows and bounds hit and miss reads',
   await runInDurableObject(batcher, (instance: AgentFactBatcherInstance, state) => {
     const sql = state.storage.sql;
     sql.exec('DROP INDEX IF EXISTS idx_fact_repairs_lookup');
+    sql.exec('DROP INDEX IF EXISTS idx_fact_repairs_rebuild_fallback');
     sql.exec(`
       WITH RECURSIVE rows(n) AS (
         SELECT 1 UNION ALL SELECT n + 1 FROM rows WHERE n < 10000
@@ -35,6 +36,15 @@ it('indexes existing repairs without losing rows and bounds hit and miss reads',
     const schema = instance as unknown as { initializeSchema(): void };
     schema.initializeSchema();
     schema.initializeSchema();
+
+    const indexes = [
+      ...sql.exec<{ name: string }>(
+        `SELECT name FROM sqlite_master
+         WHERE type = 'index' AND tbl_name = 'fact_repairs'`,
+      ),
+    ].map((row) => row.name);
+    expect(indexes).toContain('idx_fact_repairs_lookup');
+    expect(indexes).toContain('idx_fact_repairs_rebuild_fallback');
 
     expect(
       sql

@@ -3,7 +3,8 @@ import { isArchiveCanonicalIdentifier } from '@trace-flow/types';
 export const ARCHIVE_FORMAT_VERSION = 1;
 export const CHAIN_HASH_VERSION = 1;
 export const ARCHIVE_CHUNK_TARGET_BYTES = (3 * 1024 * 1024) / 2;
-export const MAX_CHUNK_BYTES = 8 * 1024 * 1024;
+export const MAX_CHUNK_BYTES = 16 * 1024 * 1024;
+export const ARCHIVE_UPLOAD_WIRE_VERSION = 2;
 // This bounds one request's materialization. It is not a session lifetime cap.
 export const MAX_UPLOAD_OBSERVATIONS = 16_384;
 export const MAX_MANIFEST_BYTES = 8 * 1024 * 1024;
@@ -40,21 +41,48 @@ export interface CompletedScanCheckpoint {
   first_observed_at: number;
 }
 
-export interface ArchiveAppendProof {
+export interface LegacyArchiveAppendProof {
   prior_prefix_chain_sha256: string;
   appended_prefix_base64: string;
+  appended_prefix_utf8?: never;
 }
 
-export interface ArchiveUploadRequest {
+export interface CompactArchiveObservation extends Omit<ArchiveObservation, 'payload'> {
+  payload?: never;
+}
+
+export interface CompactArchiveAppendProof {
+  prior_prefix_chain_sha256: string;
+  appended_prefix_base64?: never;
+  appended_prefix_utf8: string;
+}
+
+interface ArchiveUploadRequestBase {
   source_session_id: string;
-  observations: ArchiveObservation[];
   checkpoint: CompletedScanCheckpoint;
   prior_checkpoint?: CompletedScanCheckpoint;
+}
+
+export interface LegacyArchiveUploadRequest extends ArchiveUploadRequestBase {
+  archive_upload_wire_version?: never;
+  observations: ArchiveObservation[];
   /** Optional exact bytes for the completed source prefix, including blank lines and separators. */
   complete_prefix_base64?: string;
+  complete_prefix_utf8?: never;
   /** Bounded bytes appended after prior_checkpoint, never the cumulative source prefix. */
-  append_proof?: ArchiveAppendProof;
+  append_proof?: LegacyArchiveAppendProof;
 }
+
+export interface CompactArchiveUploadRequest extends ArchiveUploadRequestBase {
+  archive_upload_wire_version: typeof ARCHIVE_UPLOAD_WIRE_VERSION;
+  observations: CompactArchiveObservation[];
+  complete_prefix_base64?: never;
+  /** Exact UTF-8 prefix for wire v2. */
+  complete_prefix_utf8?: string;
+  append_proof?: CompactArchiveAppendProof;
+}
+
+export type ArchiveUploadRequest = LegacyArchiveUploadRequest | CompactArchiveUploadRequest;
 
 export interface ArchiveScope {
   orgId: string;

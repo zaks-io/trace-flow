@@ -79,6 +79,10 @@ CREATE TABLE IF NOT EXISTS fact_cursors (
     content_hash TEXT NOT NULL,
     PRIMARY KEY (org_id, source, category, fact_identity)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS file_parser_versions (
+    org_id TEXT NOT NULL, source TEXT NOT NULL, file_path TEXT NOT NULL, version TEXT NOT NULL,
+    PRIMARY KEY (org_id, source, file_path)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS cursor_meta (
     org_id TEXT NOT NULL,
     key    TEXT NOT NULL,
@@ -152,6 +156,8 @@ pub enum CursorStoreError {
 pub struct CursorStore {
     conn: Connection,
     org_id: String,
+    replay_facts: bool,
+    active_parser_version: Option<String>,
 }
 
 impl CursorStore {
@@ -170,7 +176,41 @@ impl CursorStore {
 
     fn init(conn: Connection, org_id: String) -> Result<Self, CursorStoreError> {
         conn.execute_batch(MIGRATION)?;
-        Ok(Self { conn, org_id })
+        Ok(Self {
+            conn,
+            org_id,
+            replay_facts: false,
+            active_parser_version: None,
+        })
+    }
+
+    /// Replay bypasses local send filtering without deleting the accepted cursor evidence.
+    pub fn set_replay_facts(&mut self, replay: bool) {
+        self.replay_facts = replay;
+    }
+
+    pub fn set_active_parser_version(&mut self, version: &str) {
+        self.active_parser_version = Some(version.to_string());
+    }
+
+    pub fn is_file_parser_current(
+        &self,
+        source: AgentSource,
+        path: &str,
+    ) -> Result<bool, CursorStoreError> {
+        let stored: Option<String> = self.conn.query_row(
+            "SELECT version FROM file_parser_versions WHERE org_id=?1 AND source=?2 AND file_path=?3",
+            params![self.org_id, source_key(source), path], |row| row.get(0),
+        ).optional()?;
+        Ok(self.active_parser_version.is_some() && stored == self.active_parser_version)
+    }
+
+    pub fn parser_version(&self) -> Result<Option<String>, CursorStoreError> {
+        self.get_meta("parser_version")
+    }
+
+    pub fn mark_parser_version(&self, version: &str) -> Result<(), CursorStoreError> {
+        self.set_meta("parser_version", version)
     }
 
     /// Repair legacy cursor DBs that have unit-level cursors but no fact-level send state. That shape
@@ -314,7 +354,8 @@ impl CursorStore {
         source: AgentSource,
         cursor: &FileCursor,
     ) -> Result<(), CursorStoreError> {
-        self.conn.execute(
+        let transaction = self.conn.unchecked_transaction()?;
+        transaction.execute(
             "INSERT INTO file_cursors \
                 (org_id, source, file_path, mtime_ms, byte_offset, content_hash_head) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
@@ -331,6 +372,13 @@ impl CursorStore {
                 cursor.content_hash_head,
             ],
         )?;
+        if let Some(version) = &self.active_parser_version {
+            transaction.execute(
+                "INSERT INTO file_parser_versions VALUES (?1, ?2, ?3, ?4) ON CONFLICT(org_id, source, file_path) DO UPDATE SET version=excluded.version",
+                params![self.org_id, source_key(source), cursor.file_path, version],
+            )?;
+        }
+        transaction.commit()?;
         Ok(())
     }
 
@@ -452,7 +500,7 @@ impl CursorStore {
         let mut kept = Vec::with_capacity(rows.len());
         for row in rows {
             let fact_cursor = cursor(source, &row)?;
-            if self.is_fact_current(source, &fact_cursor)? {
+            if !self.replay_facts && self.is_fact_current(source, &fact_cursor)? {
                 continue;
             }
             sent.push(fact_cursor);

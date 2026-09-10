@@ -2,9 +2,7 @@ import {
   ArchiveContractError,
   GENESIS_CHAIN_HASH,
   type ArchiveObservation,
-  type ArchiveAppendProof,
   type CompletedScanCheckpoint,
-  decodeBase64Bytes,
   digestBytes,
   payloadBytes,
 } from './archive-contract';
@@ -16,13 +14,13 @@ function isAsciiWhitespace(byte: number): boolean {
   return byte === 0x09 || byte === 0x0c || byte === 0x0d || byte === 0x20;
 }
 
-function prefixRecordLines(prefix: Uint8Array): Uint8Array[] {
+export function prefixRecordLines(prefix: Uint8Array): Uint8Array[] {
   const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false });
   const lines: Uint8Array[] = [];
   let start = 0;
   for (let index = 0; index <= prefix.length; index++) {
     if (index !== prefix.length && prefix[index] !== 0x0a) continue;
-    const line = prefix.slice(start, index);
+    const line = prefix.subarray(start, index);
     start = index + 1;
     if (line.length === 0 || line.every(isAsciiWhitespace)) continue;
     try {
@@ -38,11 +36,13 @@ function prefixRecordLines(prefix: Uint8Array): Uint8Array[] {
 function assertPrefixMatchesObservations(
   prefix: Uint8Array,
   observations: ArchiveObservation[],
+  verifiedLines?: Uint8Array[],
 ): void {
-  const lines = prefixRecordLines(prefix);
+  const lines = verifiedLines ?? prefixRecordLines(prefix);
   if (lines.length !== observations.length) {
     throw new ArchiveContractError('checkpoint_prefix_unverifiable');
   }
+  if (verifiedLines) return;
   observations.forEach((observation, index) => {
     const payload = payloadBytes(observation);
     const line = lines[index];
@@ -63,13 +63,13 @@ async function prefixDigest(prefix: Uint8Array): Promise<string> {
 }
 
 export async function assertStoredPrefixHash(
-  completePrefixBase64: string | undefined,
+  completePrefix: Uint8Array | undefined,
   previousCheckpoint: CompletedScanCheckpoint,
 ): Promise<void> {
-  if (completePrefixBase64 === undefined) {
+  if (completePrefix === undefined) {
     throw new ArchiveContractError('missing_historical_prefix_proof');
   }
-  const prefix = decodeBase64Bytes(completePrefixBase64);
+  const prefix = completePrefix;
   if (prefix.byteLength < previousCheckpoint.last_complete_byte_offset) {
     throw new ArchiveContractError('historical_prefix_changed');
   }
@@ -103,29 +103,17 @@ export async function prefixChainHash(
   ]);
 }
 
-function assertAppendProof(value: unknown): asserts value is ArchiveAppendProof {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new ArchiveContractError('checkpoint_prefix_unverifiable');
-  }
-  const proof = value as Record<string, unknown>;
-  if (typeof proof.prior_prefix_chain_sha256 !== 'string') {
-    throw new ArchiveContractError('checkpoint_prefix_unverifiable');
-  }
-  if (typeof proof.appended_prefix_base64 !== 'string') {
-    throw new ArchiveContractError('checkpoint_prefix_unverifiable');
-  }
-}
-
 export async function assertPrefixHash(
   observations: ArchiveObservation[],
   checkpoint: CompletedScanCheckpoint,
-  completePrefixBase64: string | undefined,
+  completePrefix: Uint8Array | undefined,
   priorCheckpoint: CompletedScanCheckpoint | undefined,
+  verifiedLines?: Uint8Array[],
 ): Promise<void> {
-  if (completePrefixBase64 === undefined) {
+  if (completePrefix === undefined) {
     throw new ArchiveContractError('missing_historical_prefix_proof');
   }
-  const prefix = decodeBase64Bytes(completePrefixBase64);
+  const prefix = completePrefix;
   if (prefix.byteLength !== checkpoint.last_complete_byte_offset) {
     throw new ArchiveContractError('checkpoint_prefix_unverifiable');
   }
@@ -135,7 +123,7 @@ export async function assertPrefixHash(
   if ((await prefixChainHash(undefined, prefix)) !== checkpoint.prefix_chain_sha256) {
     throw new ArchiveContractError('checkpoint_prefix_unverifiable');
   }
-  assertPrefixMatchesObservations(prefix, observations);
+  assertPrefixMatchesObservations(prefix, observations, verifiedLines);
   if (priorCheckpoint) {
     if (priorCheckpoint.last_complete_byte_offset > prefix.byteLength) {
       throw new ArchiveContractError('checkpoint_prefix_unverifiable');
@@ -147,17 +135,23 @@ export async function assertPrefixHash(
   }
 }
 
+export interface ValidatedArchiveAppendProof {
+  priorPrefixChainSha256: string;
+  appendedPrefix: Uint8Array;
+}
+
 export async function assertDeltaPrefixHash(
   observations: ArchiveObservation[],
   checkpoint: CompletedScanCheckpoint,
   priorCheckpoint: CompletedScanCheckpoint,
-  appendProof: ArchiveAppendProof | undefined,
+  appendProof: ValidatedArchiveAppendProof | undefined,
+  verifiedLines?: Uint8Array[],
 ): Promise<void> {
-  assertAppendProof(appendProof);
-  if (appendProof.prior_prefix_chain_sha256 !== priorCheckpoint.prefix_chain_sha256) {
+  if (!appendProof) throw new ArchiveContractError('checkpoint_prefix_unverifiable');
+  if (appendProof.priorPrefixChainSha256 !== priorCheckpoint.prefix_chain_sha256) {
     throw new ArchiveContractError('historical_prefix_changed');
   }
-  const appendedPrefix = decodeBase64Bytes(appendProof.appended_prefix_base64);
+  const appendedPrefix = appendProof.appendedPrefix;
   const expectedDeltaBytes =
     checkpoint.last_complete_byte_offset - priorCheckpoint.last_complete_byte_offset;
   if (checkpoint.last_complete_byte_offset < priorCheckpoint.last_complete_byte_offset) {
@@ -173,5 +167,5 @@ export async function assertDeltaPrefixHash(
   if (expectedPrefixChain !== checkpoint.prefix_chain_sha256) {
     throw new ArchiveContractError('checkpoint_prefix_unverifiable');
   }
-  assertPrefixMatchesObservations(appendedPrefix, observations);
+  assertPrefixMatchesObservations(appendedPrefix, observations, verifiedLines);
 }

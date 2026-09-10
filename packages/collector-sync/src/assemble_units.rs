@@ -18,6 +18,8 @@
 //! [`GitMetadata`], so it is testable without a real repo); the only impure steps are the file read and
 //! the one `git` resolve in the async wrapper.
 
+use std::io::{BufRead, BufReader, Cursor, Error, ErrorKind, Read};
+
 use collector_contracts::AgentSource;
 use collector_parser::session_context::SessionContext;
 use serde_json::Value;
@@ -25,6 +27,7 @@ use serde_json::Value;
 use crate::claude_session::{
     agent_depth_from_transcript_path, claude_session_fields, ClaudeSessionFields,
 };
+use crate::codex_lineage::CodexLineage;
 use crate::codex_session::codex_session_fields;
 use crate::cursor::FileCursor;
 use crate::discovery::{head_hash, DiscoveredFile};
@@ -40,17 +43,33 @@ pub async fn assemble_sync_unit(
     source: AgentSource,
     cache: &GitRemoteCache,
 ) -> std::io::Result<SyncUnit> {
-    // Synchronous read by design: this crate spawns nothing and carries no tokio `rt` feature (the
-    // whole discovery/cursor layer reads on the embedder's thread). This fn is `async` only for the
-    // `git` resolve below; the embedder budgets the read like every other scan I/O.
-    let bytes = std::fs::read(&file.path)?;
-    assemble_sync_unit_from_bytes(file, source, cache, &bytes).await
+    assemble_sync_unit_with_lineage(file, source, cache, None).await
+}
+
+pub async fn assemble_sync_unit_with_lineage(
+    file: &DiscoveredFile,
+    source: AgentSource,
+    cache: &GitRemoteCache,
+    lineage: Option<&CodexLineage>,
+) -> std::io::Result<SyncUnit> {
+    let input = std::fs::File::open(&file.path)?;
+    // Bound this pass to the discovered snapshot. A concurrent append belongs to the next pass.
+    let snapshot =
+        read_transcript_snapshot(BufReader::new(input.take(file.size_bytes)), file.size_bytes)?;
+    assemble_records(
+        file,
+        source,
+        cache,
+        snapshot.records,
+        snapshot.content_hash_head,
+        lineage,
+    )
+    .await
 }
 
 /// Assemble a [`SyncUnit`] from an already-read snapshot of `file`.
 ///
-/// Archive capture and parsed-fact sync share one source traversal; the embedder reads each
-/// transcript once and feeds the same bytes to both pipelines. Facts still require UTF-8, matching
+/// Callers with a captured snapshot can reuse those bytes. Facts require UTF-8, matching
 /// the historical `read_to_string` path.
 pub async fn assemble_sync_unit_from_bytes(
     file: &DiscoveredFile,
@@ -58,18 +77,65 @@ pub async fn assemble_sync_unit_from_bytes(
     cache: &GitRemoteCache,
     bytes: &[u8],
 ) -> std::io::Result<SyncUnit> {
-    let text = std::str::from_utf8(bytes)
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
-    let records = read_transcript(text);
+    let size = usize::try_from(file.size_bytes)
+        .map_err(|_| Error::new(ErrorKind::InvalidInput, "transcript snapshot is too large"))?;
+    if bytes.len() < size {
+        return Err(Error::new(
+            ErrorKind::UnexpectedEof,
+            format!(
+                "transcript shrank after discovery: expected {} bytes, read {}",
+                file.size_bytes,
+                bytes.len()
+            ),
+        ));
+    }
+    let snapshot =
+        read_transcript_snapshot(BufReader::new(Cursor::new(&bytes[..size])), file.size_bytes)?;
+    assemble_records(
+        file,
+        source,
+        cache,
+        snapshot.records,
+        snapshot.content_hash_head,
+        None,
+    )
+    .await
+}
 
+async fn assemble_records(
+    file: &DiscoveredFile,
+    source: AgentSource,
+    cache: &GitRemoteCache,
+    records: Vec<Value>,
+    content_hash_head: String,
+    lineage: Option<&CodexLineage>,
+) -> std::io::Result<SyncUnit> {
     // Codex and Claude carry session identity + git differently: Claude repeats `sessionId`/`cwd`/
     // `gitBranch` per line and the repo is resolved live from `cwd`; Codex records one `session_meta`
     // whose payload embeds the id, cwd, and git remote/branch/sha directly. Using the Claude reader on
     // a Codex transcript left every Codex session with no cwd → no remote → a path-hash that read like
     // a commit. Branch on source so each gets the right extractor.
-    let (fields, meta, head_sha) = match source {
+    let (fields, meta, head_sha, codex_agent_depth) = match source {
         AgentSource::Codex => {
             let codex = codex_session_fields(&records);
+            let agent_depth = match (codex.agent_depth, codex.parent_thread_id.as_deref()) {
+                (Some(0), Some(_)) => {
+                    return Err(Error::new(
+                        ErrorKind::InvalidData,
+                        "Codex child session has explicit depth zero",
+                    ));
+                }
+                (Some(depth), _) => depth,
+                (None, Some(parent)) => lineage
+                    .ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::InvalidData,
+                            "Codex child depth requires the source lineage index",
+                        )
+                    })?
+                    .child_depth(parent)?,
+                (None, None) => 0,
+            };
             // Prefer the transcript's embedded git (stable even if the checkout moved); only fall back
             // to a live resolve when Codex recorded no git block at all.
             let meta = match codex.embedded_git {
@@ -79,7 +145,12 @@ pub async fn assemble_sync_unit_from_bytes(
                     None => None,
                 },
             };
-            (codex.fields, meta, codex.git_head_sha.unwrap_or_default())
+            (
+                codex.fields,
+                meta,
+                codex.git_head_sha.unwrap_or_default(),
+                Some(agent_depth),
+            )
         }
         AgentSource::Claude | AgentSource::Cursor => {
             let fields = claude_session_fields(&records);
@@ -89,18 +160,19 @@ pub async fn assemble_sync_unit_from_bytes(
                 Some(cwd) => cache.resolve(cwd).await,
                 None => None,
             };
-            (fields, meta, String::new())
+            (fields, meta, String::new(), None)
         }
     };
-    let ctx = build_session_context(&fields, &file.path, meta.as_ref(), &head_sha);
+    let mut ctx = build_session_context(&fields, &file.path, meta.as_ref(), &head_sha);
+    if let Some(agent_depth) = codex_agent_depth {
+        ctx.agent_depth = agent_depth;
+    }
 
     let next_cursor = UnitCursor::File(FileCursor {
         file_path: file.path.clone(),
         mtime_ms: file.mtime_ms,
         byte_offset: file.size_bytes,
-        // Hash the same text we just read so the cursor matches what `discovery::read_head_hash`
-        // recomputes from disk next scan; re-reading could race a concurrent write.
-        content_hash_head: head_hash(text),
+        content_hash_head,
     });
     Ok(SyncUnit {
         records,
@@ -118,6 +190,54 @@ pub fn read_transcript(text: &str) -> Vec<Value> {
         .filter(|line| !line.trim().is_empty())
         .filter_map(|line| serde_json::from_str(line).ok())
         .collect()
+}
+
+struct TranscriptSnapshot {
+    records: Vec<Value>,
+    content_hash_head: String,
+}
+
+fn read_transcript_snapshot(
+    mut reader: impl BufRead,
+    expected_bytes: u64,
+) -> std::io::Result<TranscriptSnapshot> {
+    let mut records = Vec::new();
+    let mut line = String::new();
+    let mut bytes_read = 0u64;
+    let mut head = String::new();
+    let mut head_chars = 0usize;
+    loop {
+        let count = reader.read_line(&mut line)?;
+        if count == 0 {
+            break;
+        }
+        bytes_read = bytes_read.saturating_add(count as u64);
+        if head_chars < 4096 {
+            let remaining = 4096 - head_chars;
+            for ch in line.chars().take(remaining) {
+                head.push(ch);
+                head_chars += 1;
+            }
+        }
+        if !line.trim().is_empty() {
+            if let Ok(record) = serde_json::from_str(&line) {
+                records.push(record);
+            }
+        }
+        line.clear();
+    }
+    if bytes_read != expected_bytes {
+        return Err(Error::new(
+            ErrorKind::UnexpectedEof,
+            format!(
+                "transcript shrank after discovery: expected {expected_bytes} bytes, read {bytes_read}"
+            ),
+        ));
+    }
+    Ok(TranscriptSnapshot {
+        records,
+        content_hash_head: head_hash(&head),
+    })
 }
 
 /// Map a session's record-derived [`ClaudeSessionFields`] and resolved [`GitMetadata`] onto the
@@ -409,5 +529,187 @@ mod tests {
             "d1e85c4e8fdef82fbaded9539532b754080419e0"
         );
         assert_eq!(unit.ctx.repo_root, cwd.to_str().unwrap());
+    }
+
+    #[tokio::test]
+    async fn streaming_and_byte_snapshot_paths_match_for_unicode_and_malformed_lines() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let padding = "界".repeat(4_200);
+        let body = format!(
+            "{}\nmalformed json\n{}\n",
+            json!({
+                "type": "user",
+                "sessionId": "unicode-session",
+                "timestamp": "2026-05-26T16:38:59.892Z",
+                "message": { "content": padding }
+            }),
+            json!({ "type": "assistant", "sessionId": "unicode-session" })
+        );
+        let path = dir.path().join("unicode.jsonl");
+        std::fs::write(&path, &body).unwrap();
+        let file = DiscoveredFile {
+            path: path.to_str().unwrap().to_string(),
+            mtime_ms: 10.0,
+            size_bytes: body.len() as u64,
+        };
+        let cache = GitRemoteCache::new();
+
+        let streamed = assemble_sync_unit(&file, AgentSource::Claude, &cache)
+            .await
+            .unwrap();
+        let from_bytes =
+            assemble_sync_unit_from_bytes(&file, AgentSource::Claude, &cache, body.as_bytes())
+                .await
+                .unwrap();
+
+        assert_eq!(streamed.records, from_bytes.records);
+        assert_eq!(streamed.ctx, from_bytes.ctx);
+        assert_eq!(streamed.next_cursor, from_bytes.next_cursor);
+        let UnitCursor::File(cursor) = streamed.next_cursor else {
+            panic!("JSONL source has a file cursor");
+        };
+        assert_eq!(cursor.content_hash_head, head_hash(&body));
+    }
+
+    #[tokio::test]
+    async fn assembly_ignores_bytes_appended_after_discovery() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let first = format!(
+            "{}\n",
+            json!({ "type": "user", "sessionId": "bounded", "message": {} })
+        );
+        let appended = format!(
+            "{}\n",
+            json!({ "type": "assistant", "sessionId": "bounded", "message": {} })
+        );
+        let path = dir.path().join("bounded.jsonl");
+        std::fs::write(&path, &first).unwrap();
+        let file = DiscoveredFile {
+            path: path.to_str().unwrap().to_string(),
+            mtime_ms: 10.0,
+            size_bytes: first.len() as u64,
+        };
+        std::fs::write(&path, format!("{first}{appended}")).unwrap();
+        let cache = GitRemoteCache::new();
+
+        let streamed = assemble_sync_unit(&file, AgentSource::Claude, &cache)
+            .await
+            .unwrap();
+        let from_bytes = assemble_sync_unit_from_bytes(
+            &file,
+            AgentSource::Claude,
+            &cache,
+            format!("{first}{appended}").as_bytes(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(streamed.records.len(), 1);
+        assert_eq!(streamed.records, from_bytes.records);
+        assert_eq!(streamed.next_cursor, from_bytes.next_cursor);
+        let UnitCursor::File(cursor) = streamed.next_cursor else {
+            panic!("JSONL source has a file cursor");
+        };
+        assert_eq!(cursor.byte_offset, first.len() as u64);
+        assert_eq!(cursor.content_hash_head, head_hash(&first));
+    }
+
+    #[tokio::test]
+    async fn assembly_fails_when_the_discovered_snapshot_is_no_longer_available() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let body = "{\"type\":\"user\",\"sessionId\":\"short\"}\n";
+        let path = dir.path().join("short.jsonl");
+        std::fs::write(&path, body).unwrap();
+        let file = DiscoveredFile {
+            path: path.to_str().unwrap().to_string(),
+            mtime_ms: 10.0,
+            size_bytes: body.len() as u64,
+        };
+        std::fs::write(&path, &body[..body.len() / 2]).unwrap();
+        let cache = GitRemoteCache::new();
+
+        let disk_error = match assemble_sync_unit(&file, AgentSource::Claude, &cache).await {
+            Ok(_) => panic!("a short disk snapshot must fail"),
+            Err(error) => error,
+        };
+        let bytes_error = match assemble_sync_unit_from_bytes(
+            &file,
+            AgentSource::Claude,
+            &cache,
+            &body.as_bytes()[..body.len() / 2],
+        )
+        .await
+        {
+            Ok(_) => panic!("a short byte snapshot must fail"),
+            Err(error) => error,
+        };
+        assert_eq!(disk_error.kind(), ErrorKind::UnexpectedEof);
+        assert_eq!(bytes_error.kind(), ErrorKind::UnexpectedEof);
+    }
+
+    #[tokio::test]
+    async fn codex_uses_explicit_depth_without_a_parent_index() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let body = format!(
+            "{}\n",
+            json!({
+                "type": "session_meta",
+                "payload": {
+                    "id": "child",
+                    "parent_thread_id": "unavailable-parent",
+                    "source": { "subagent": { "thread_spawn": { "depth": 3 } } }
+                }
+            })
+        );
+        let path = dir.path().join("child.jsonl");
+        std::fs::write(&path, &body).unwrap();
+        let file = DiscoveredFile {
+            path: path.to_str().unwrap().to_string(),
+            mtime_ms: 1.0,
+            size_bytes: body.len() as u64,
+        };
+
+        let unit = assemble_sync_unit(&file, AgentSource::Codex, &GitRemoteCache::new())
+            .await
+            .unwrap();
+        assert_eq!(unit.ctx.agent_depth, 3);
+    }
+
+    #[tokio::test]
+    async fn codex_derives_missing_depth_from_verified_parent_metadata() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let parent_body = format!(
+            "{}\n",
+            json!({ "type": "session_meta", "payload": { "id": "parent" } })
+        );
+        let parent_path = dir.path().join("parent.jsonl");
+        std::fs::write(&parent_path, &parent_body).unwrap();
+        let child_body = format!(
+            "{}\n",
+            json!({
+                "type": "session_meta",
+                "payload": { "id": "child", "parent_thread_id": "parent" }
+            })
+        );
+        let child_path = dir.path().join("child.jsonl");
+        std::fs::write(&child_path, &child_body).unwrap();
+        let discovered = |path: &Path, size: usize| DiscoveredFile {
+            path: path.to_str().unwrap().to_string(),
+            mtime_ms: 1.0,
+            size_bytes: size as u64,
+        };
+        let parent = discovered(&parent_path, parent_body.len());
+        let child = discovered(&child_path, child_body.len());
+        let lineage = CodexLineage::index(&[parent, child.clone()]);
+
+        let unit = assemble_sync_unit_with_lineage(
+            &child,
+            AgentSource::Codex,
+            &GitRemoteCache::new(),
+            Some(&lineage),
+        )
+        .await
+        .unwrap();
+        assert_eq!(unit.ctx.agent_depth, 1);
     }
 }

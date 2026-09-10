@@ -146,3 +146,88 @@ unchanged malformed messages.
 Inspect blocked recovery counts even when the normal queue is draining. A healthy
 queue depth does not mean all historical deliveries were committed. Never delete
 pending outbox or recovery records as cleanup.
+
+## Agent fact replacement and collector replay
+
+Claude and Codex parser upgrades reparse previously known local transcripts, including
+Codex `archived_sessions`. New history still follows the selected import window. An
+explicit `trace-flow sync --since 1y --replay` resends Claude and Codex facts while
+preserving the local cursor evidence. Set the collector endpoints to Cloud-Dev for
+verification. Running that command against a saved production connection requires
+production approval. It does not prove that an asynchronously accepted fact reached
+Tinybird; compare persisted identities afterward.
+
+Changes received before an original fact is flushed can replace that pending fact.
+Corrections to already delivered or uncertain facts remain durable repair records.
+Use the agent rebuild tool to apply those corrections and recover missing ledger facts.
+The rebuild is an operator action, not an automatic recurring job.
+
+First inspect the exact target without changing it:
+
+```sh
+bun scripts/ingest-recovery/rebuild-agent.ts \
+  --org ORGANIZATION_ID --tinybird-config /private/path/to/.tinyb
+```
+
+This reports organization-scoped fact and dependent-table counts and checks the deployed
+materialization definitions against this checkout. It never prints the token. Before
+applying, deploy the compatible consumer through CI, replay the updated collector, and
+resolve preserved DLQ messages through the normal recovery flow. Snapshot capture fails
+before deletion if ledger payloads are missing, a stored column is absent, or the materialization graph differs from the reviewed graph. Oversized individual
+rows travel alone without truncation.
+
+After production approval, start the local bridge for the approved environment, then run:
+
+```sh
+bun scripts/ingest-recovery/rebuild-agent.ts \
+  --org ORGANIZATION_ID --tinybird-config /private/path/to/.tinyb \
+  --apply --confirm-org ORGANIZATION_ID \
+  --operation STABLE_OPERATION_UUID --reason 'Verified ingestion parity repair' \
+  --backup /private/new-rebuild-directory
+```
+
+The tool checks workspace-scoped [Tinybird token fingerprints](https://www.tinybird.co/docs/api-reference/token-api)
+against the consumer's configured credential before maintenance starts. Tokens stay private.
+A persistent executor identity and an exclusive operating-system lock prevent concurrent
+executors from sharing an organization or backup. The lock uses Python 3's standard
+[`fcntl.flock`](https://docs.python.org/3/library/fcntl.html); Python 3 is required on macOS or Linux.
+The deployed materialization graph is checked again before deletion and before completion.
+
+The consumer durably pauses this organization and waits for any in-flight insert to
+finish. New queue deliveries retry while paused; other organizations continue. The
+tool saves every original fact row, ledger replacement, and blocked recovery payload
+in a private SQLite backup using [Bun’s SQLite driver](https://bun.sh/docs/runtime/sqlite). It keeps the latest recorded repair for each identity,
+deduplicates physical copies, and restores missing ledger identities. Legacy tables
+retain their existing coverage plus explicitly pending legacy rows; clean-only history
+is not copied into them.
+
+Tinybird does not cascade row deletion into materialized views. The tool therefore
+awaits organization-scoped deletion jobs for all source and dependent tables before
+appending the replacement facts once. It verifies every persisted identity and value,
+then checks every daily/hourly usage and tool aggregate at its stored grouping grain
+against canonical facts. Counts and tokens must match exactly; cost permits one
+nanodollar of Float64 merge-order rounding. Only
+then does it confirm ledger rows and recovery records and release maintenance. The
+operation retains the backup digest and verification fingerprints. See the
+[Tinybird delete API](https://www.tinybird.co/docs/api-reference/datasource-api) and
+[Jobs API](https://www.tinybird.co/docs/api-reference/jobs-api).
+
+Keep the backup and journal. Resume with the same operation and directory after a
+known failure. For a delete whose receipt was lost, inspect the Tinybird job and resume with
+`--delete-job TABLE=JOB_ID` on the same command. The tool checks the job's type,
+datasource, organization condition, and creation time against the recorded submission,
+then durably records that receipt before waiting for completion. It never repeats the
+delete request. A mismatched receipt stops the operation. A resumed insert
+checks every intended stored row, including its timestamp; it proceeds without another
+insert only when that entire batch already matches exactly. Partial or conflicting
+batches stop for investigation. A failed rebuild leaves
+maintenance enabled. Never discard that lock or edit the journal to force progress.
+If capture failed before any deletion, preserve `snapshot.sqlite` under a different filename in that same backup directory,
+then retry the same operation and directory. Keep `executor.json` unchanged. Never move
+a snapshot aside after a deletion journal has been created.
+
+Run the local repair checks with `bun test scripts/ingest-recovery/agent-*.test.ts`.
+After `tb --local build`, the integration check is
+`bun scripts/ingest-recovery/agent-rebuild.smoke.ts /private/tinybird-local-config.json`.
+It refuses a remote host and uses unique test organizations to exercise actual Tinybird
+insertion, deletion jobs, aggregate rebuild, and cross-organization isolation.

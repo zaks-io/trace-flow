@@ -159,6 +159,40 @@ struct ErrorBody {
     reason: Option<String>,
 }
 
+fn safe_server_reason(value: Option<String>) -> String {
+    match value.as_deref() {
+        Some(
+            reason @ ("invalid_credential_class"
+            | "invalid"
+            | "credential_revoked"
+            | "enrollment_invalid"
+            | "deleting"
+            | "revoked"
+            | "frozen"
+            | "expired"
+            | "not_pro"
+            | "server_disabled"
+            | "not_activated"
+            | "not_enrolled"
+            | "policy_unavailable"
+            | "policy_mismatch"
+            | "policy_malformed"
+            | "request_body_limit"
+            | "archive_upload_observation_limit"
+            | "unsupported_archive_upload_wire_version"
+            | "archive_element_exceeds_chunk_limit"
+            | "archive_commit_too_large"
+            | "archive_key_version_mismatch"
+            | "storage_cap_exceeded"
+            | "archive_commit_failed"
+            | "key_configuration_invalid"
+            | "key_unavailable"
+            | "archive_registry_failed"),
+        ) => reason.to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
 fn classify_response(
     status: u16,
     body: &str,
@@ -180,18 +214,23 @@ fn classify_response(
     });
     match status {
         401 => Err(ArchiveClientError::Unauthorized {
-            reason: parsed.reason.unwrap_or_default(),
+            reason: safe_server_reason(parsed.reason),
         }),
         403 => Err(ArchiveClientError::Forbidden {
-            reason: parsed.reason.unwrap_or_default(),
+            reason: safe_server_reason(parsed.reason),
         }),
-        413 => Err(ArchiveClientError::UploadTooLarge),
-        400 => Err(ArchiveClientError::InvalidUpload),
+        413 => Err(ArchiveClientError::UploadTooLarge {
+            reason: safe_server_reason(parsed.reason.or(parsed.error)),
+        }),
+        400 => Err(ArchiveClientError::InvalidUpload {
+            reason: safe_server_reason(parsed.reason.or(parsed.error)),
+        }),
         503 => Err(ArchiveClientError::Unavailable {
-            reason: parsed.reason.or(parsed.error).unwrap_or_default(),
+            reason: safe_server_reason(parsed.reason.or(parsed.error)),
         }),
         _ => Err(ArchiveClientError::UploadRejected {
-            reason: parsed.reason.or(parsed.error).unwrap_or_default(),
+            status,
+            reason: safe_server_reason(parsed.reason.or(parsed.error)),
         }),
     }
 }
@@ -209,16 +248,17 @@ fn classify_policy_response(
     });
     match status {
         401 => Err(ArchiveClientError::Unauthorized {
-            reason: parsed.reason.unwrap_or_default(),
+            reason: safe_server_reason(parsed.reason),
         }),
         403 => Err(ArchiveClientError::Forbidden {
-            reason: parsed.reason.unwrap_or_default(),
+            reason: safe_server_reason(parsed.reason),
         }),
         503 => Err(ArchiveClientError::Unavailable {
-            reason: parsed.reason.or(parsed.error).unwrap_or_default(),
+            reason: safe_server_reason(parsed.reason.or(parsed.error)),
         }),
         _ => Err(ArchiveClientError::UploadRejected {
-            reason: parsed.reason.or(parsed.error).unwrap_or_default(),
+            status,
+            reason: safe_server_reason(parsed.reason.or(parsed.error)),
         }),
     }
 }
@@ -293,5 +333,42 @@ mod tests {
             classify_enrollment_response(409, r#"{"error":"consent_conflict"}"#),
             Err(ArchiveClientError::ConsentConflict)
         ));
+    }
+
+    #[test]
+    fn upload_errors_keep_status_and_only_known_server_reasons() {
+        let unsupported = classify_response(
+            400,
+            r#"{"error":"upload_rejected","reason":"unsupported_archive_upload_wire_version"}"#,
+        )
+        .unwrap_err();
+        assert_eq!(unsupported.http_status(), Some(400));
+        assert_eq!(
+            unsupported.safe_reason(),
+            Some("unsupported_archive_upload_wire_version")
+        );
+        assert_eq!(unsupported.class(), "archive_wire_unsupported");
+
+        let untrusted = classify_response(
+            503,
+            r#"{"reason":"source payload and secret-like attacker text"}"#,
+        )
+        .unwrap_err();
+        assert_eq!(untrusted.http_status(), Some(503));
+        assert_eq!(untrusted.safe_reason(), Some("unknown"));
+        assert!(!format!("{untrusted:?}").contains("attacker text"));
+    }
+
+    #[test]
+    fn api_ledger_rejection_reasons_are_preserved() {
+        for reason in [
+            "archive_commit_too_large",
+            "archive_element_exceeds_chunk_limit",
+            "archive_key_version_mismatch",
+            "archive_upload_observation_limit",
+            "storage_cap_exceeded",
+        ] {
+            assert_eq!(safe_server_reason(Some(reason.to_string())), reason);
+        }
     }
 }

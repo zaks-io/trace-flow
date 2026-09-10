@@ -19,8 +19,7 @@
 /// start instant in epoch milliseconds when the transcript records it. `agent_depth` is the transcript's
 /// nesting depth: `0` for a top-level session, `> 0` for a sub-agent transcript the sync layer
 /// discovered in a nested file (Claude stores those as separate `subagents/<agent>.jsonl` files linked
-/// to the parent `session_pk`; Codex sub-agents share the parent transcript, so its sessions stay at
-/// `0`).
+/// to the parent `session_pk`). Codex uses recorded depth or a verified local parent chain.
 ///
 /// `repo_root` is the sole field that is *not* emitted onto a fact: it is the absolute repo directory
 /// the sync layer resolved for the session (the git root it walked up to from the session `cwd`, the
