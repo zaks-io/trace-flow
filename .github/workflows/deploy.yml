@@ -335,6 +335,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/api
+          environment: production
           command: deploy --env production --var CONVEX_SITE_URL:${{ needs.deploy-convex.outputs.convex_site_url }}
           packageManager: bun
           secrets: BODY_ACCESS_JWT_SECRET
@@ -347,6 +348,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/pipes-api
+          environment: production
           command: deploy --env production --var CONVEX_SITE_URL:${{ needs.deploy-convex.outputs.convex_site_url }}
           packageManager: bun
           secrets: |
