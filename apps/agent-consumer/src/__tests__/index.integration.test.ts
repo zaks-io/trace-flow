@@ -46,45 +46,55 @@ describe('agent consumer DLQ', () => {
 });
 
 describe('DLQ preservation failure', () => {
-  it('retries without acknowledging and emits an actionable failure event', async () => {
-    const ack = vi.fn();
-    const retry = vi.fn();
-    const message = {
-      id: 'preservation-failure',
-      timestamp: new Date(),
-      body: { malformed: true },
-      attempts: 1,
-      ack,
-      retry,
-    };
-    const batch = {
-      queue: 'agent-ingest-dlq-dev',
-      messages: [message],
-      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
-      retryAll: vi.fn(),
-      ackAll: vi.fn(),
-    } as unknown as MessageBatch<unknown>;
-    const preservationError = new Error('durable storage unavailable');
-    const unavailable = () => {
-      throw preservationError;
-    };
-    const failingEnv = {
-      ...env,
-      AGENT_FACT_BATCHER: { getByName: unavailable, idFromName: unavailable, get: unavailable },
-    } as unknown as typeof env;
-    await worker.queue(batch, failingEnv);
-    expect(ack).not.toHaveBeenCalled();
-    expect(retry).toHaveBeenCalledOnce();
-    expect(retry).toHaveBeenCalledWith({ delaySeconds: 60 });
-    expect(captureException).toHaveBeenCalledOnce();
-    expect(captureException).toHaveBeenCalledWith(preservationError, {
-      level: 'fatal',
-      tags: { operation: 'dlq_preserve' },
-      extra: {
+  it.each([
+    { attempts: 1, delaySeconds: 60 },
+    { attempts: 2, delaySeconds: 120 },
+    { attempts: 8, delaySeconds: 7_680 },
+    { attempts: 9, delaySeconds: 14_400 },
+    { attempts: 100, delaySeconds: 14_400 },
+  ])(
+    'backs off delivery attempt $attempts and reports the original error',
+    async ({ attempts, delaySeconds }) => {
+      vi.clearAllMocks();
+      const ack = vi.fn();
+      const retry = vi.fn();
+      const message = {
+        id: 'preservation-failure',
+        timestamp: new Date(),
+        body: { malformed: true },
+        attempts,
+        ack,
+        retry,
+      };
+      const batch = {
         queue: 'agent-ingest-dlq-dev',
-        messageId: 'preservation-failure',
-        attempts: 1,
-      },
-    });
-  });
+        messages: [message],
+        metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
+        retryAll: vi.fn(),
+        ackAll: vi.fn(),
+      } as unknown as MessageBatch<unknown>;
+      const preservationError = new Error('durable storage unavailable');
+      const unavailable = () => {
+        throw preservationError;
+      };
+      const failingEnv = {
+        ...env,
+        AGENT_FACT_BATCHER: { getByName: unavailable, idFromName: unavailable, get: unavailable },
+      } as unknown as typeof env;
+      await worker.queue(batch, failingEnv);
+      expect(ack).not.toHaveBeenCalled();
+      expect(retry).toHaveBeenCalledOnce();
+      expect(retry).toHaveBeenCalledWith({ delaySeconds });
+      expect(captureException).toHaveBeenCalledOnce();
+      expect(captureException).toHaveBeenCalledWith(preservationError, {
+        level: 'fatal',
+        tags: { operation: 'dlq_preserve' },
+        extra: {
+          queue: 'agent-ingest-dlq-dev',
+          messageId: 'preservation-failure',
+          attempts,
+        },
+      });
+    },
+  );
 });

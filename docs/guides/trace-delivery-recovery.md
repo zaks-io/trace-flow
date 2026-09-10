@@ -55,9 +55,13 @@ corrupt aggregate counts, so it requires reconciliation. DLQ messages are likewi
 preserved for explicit replay instead of relying on finite queue retention.
 Message deduplication records remain durable for that same unbounded recovery lifetime.
 
-If DLQ preservation itself fails, the message is retried and a fatal
-`dead_letter_preservation_failed` event is emitted. DLQ consumers use 100 retries
-spaced four hours apart to avoid exhausting retries during a brief storage outage.
+If DLQ preservation itself fails, the message remains unacknowledged. Agent delivery
+preservation reports the original exception at fatal level with `operation=dlq_preserve`.
+Its first retry waits 60 seconds, then delays double up to four hours. This
+[attempt-based backoff](https://developers.cloudflare.com/queues/configuration/batching-retries/#apply-a-backoff-algorithm)
+recovers brief failures quickly while retaining a long retry window during outages.
+Proxy delivery preservation emits a fatal `dead_letter_preservation_failed` event
+and uses the configured four-hour retry delay. Both DLQ consumers allow 100 retries.
 Until preservation succeeds, legacy and agent DLQ messages remain subject to
 [Cloudflare queue retention](https://developers.cloudflare.com/queues/platform/limits/).
 An outage lasting through that retention window can still lose those messages;
