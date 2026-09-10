@@ -9,6 +9,8 @@ use collector_embedder::{ArchiveHistoryChoice, ArchiveSource};
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
+use crate::settings::ArchiveRepairState;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArchiveConnectionIdentity {
     pub org_id: String,
@@ -117,6 +119,8 @@ pub struct AppState {
     pub sync: SyncStatus,
     pub sources: SourceCounts,
     pub archive: ArchiveMenuState,
+    #[serde(skip)]
+    pub archive_repairs: Option<ArchiveRepairState>,
     pub autostart: bool,
     pub update: UpdateStatus,
     pub last_sync_at: Option<SystemTime>,

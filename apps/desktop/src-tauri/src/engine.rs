@@ -770,9 +770,25 @@ fn reconcile_archive_repairs(settings: &mut Settings, outcome: &CycleOutcome) {
 }
 
 fn publish_archive_repairs(bus: &AppStateBus, settings: &Settings) -> bool {
-    let connection = bus.snapshot().connection.archive_identity();
-    let message = settings
-        .archive_repairs
+    let mut published = false;
+    bus.update(|state| {
+        state.archive_repairs = settings.archive_repairs.clone();
+        if let Some(message) =
+            repair_message_for_connection(state.archive_repairs.as_ref(), &state.connection)
+        {
+            state.archive.last_error = Some(message);
+            published = true;
+        }
+    });
+    published
+}
+
+fn repair_message_for_connection(
+    repairs: Option<&ArchiveRepairState>,
+    connection: &ConnectionState,
+) -> Option<String> {
+    let connection = connection.archive_identity();
+    repairs
         .as_ref()
         .filter(|repairs| {
             connection.as_ref().is_some_and(|connection| {
@@ -780,13 +796,7 @@ fn publish_archive_repairs(bus: &AppStateBus, settings: &Settings) -> bool {
                     && repairs.collector_id == connection.collector_id
             })
         })
-        .and_then(|repairs| repairs.targets.iter().find_map(archive_repair_message));
-    if let Some(message) = message {
-        publish_archive_error(bus, message);
-        true
-    } else {
-        false
-    }
+        .and_then(|repairs| repairs.targets.iter().find_map(archive_repair_message))
 }
 
 fn publish_archive_recovery(bus: &AppStateBus, settings: &Settings) {
@@ -1096,6 +1106,11 @@ fn publish_connection(bus: &AppStateBus, connection: &Connection) -> bool {
             state.archive = ArchiveMenuState::default();
         }
         state.connection = next;
+        if let Some(message) =
+            repair_message_for_connection(state.archive_repairs.as_ref(), &state.connection)
+        {
+            state.archive.last_error = Some(message);
+        }
     });
     changed
 }
@@ -1553,6 +1568,59 @@ mod archive_engine_tests {
         let bus = AppStateBus::new();
         publish_connection(&bus, &saved_connection("org_1", "collector_1"));
         bus
+    }
+
+    #[test]
+    fn reconnect_restores_scoped_repair_without_running_a_cycle() {
+        let bus = connected_bus();
+        let mut settings = Settings::default();
+        let error = target_error(
+            "archive_historical_prefix_changed",
+            ArchiveSource::Codex,
+            "private-session",
+            "codex:part:primary",
+        );
+        reconcile_archive_repairs(&mut settings, &cycle_outcome(vec![error], Vec::new()));
+        publish_archive_repairs(&bus, &settings);
+
+        publish_disconnected(&bus);
+        assert_eq!(bus.snapshot().archive.last_error, None);
+        publish_connection(&bus, &saved_connection("org_1", "collector_1"));
+        publish_archive_refresh(&bus, ArchiveMenuState::default());
+        assert_eq!(
+            bus.snapshot().archive.last_error.as_deref(),
+            Some("Codex archive needs repair")
+        );
+        assert_eq!(bus.snapshot().sync, SyncStatus::Paused);
+
+        publish_connection(&bus, &saved_connection("org_2", "collector_1"));
+        assert_eq!(bus.snapshot().archive.last_error, None);
+        publish_connection(&bus, &saved_connection("org_1", "collector_2"));
+        assert_eq!(bus.snapshot().archive.last_error, None);
+        publish_connection(&bus, &saved_connection("org_1", "collector_1"));
+        assert_eq!(
+            bus.snapshot().archive.last_error.as_deref(),
+            Some("Codex archive needs repair")
+        );
+
+        let serialized = serde_json::to_value(bus.snapshot()).unwrap();
+        assert!(serialized.get("archive_repairs").is_none());
+        assert!(!serialized.to_string().contains("private-session"));
+
+        let recovered = cycle_outcome(
+            Vec::new(),
+            vec![validated_target(
+                ArchiveSource::Codex,
+                "private-session",
+                "codex:part:primary",
+            )],
+        );
+        reconcile_archive_repairs(&mut settings, &recovered);
+        update_archive_error_after_cycle(&bus, &settings, &recovered);
+        publish_disconnected(&bus);
+        publish_connection(&bus, &saved_connection("org_1", "collector_1"));
+        assert_eq!(bus.snapshot().archive.last_error, None);
+        assert!(bus.snapshot().archive_repairs.is_none());
     }
 
     #[test]
