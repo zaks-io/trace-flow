@@ -256,6 +256,21 @@ mod tests {
     }
 
     #[test]
+    fn custom_exec_javascript_does_not_infer_nested_apply_patch_events() {
+        let record = json!({
+            "type": "response_item",
+            "timestamp": "2026-05-16T20:53:00.000Z",
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "exec",
+                "input": "await tools.apply_patch(`*** Update File: src/not-evidence.rs\\n`);",
+                "call_id": "custom-1"
+            }
+        });
+        assert!(codex_file_facts(&[record], &ctx()).is_empty());
+    }
+
+    #[test]
     fn exec_command_and_other_calls_emit_no_file_facts() {
         let exec = json!({
             "type": "response_item",

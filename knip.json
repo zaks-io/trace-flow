@@ -1,7 +1,10 @@
 {
   "$schema": "https://unpkg.com/knip@latest/schema.json",
   "ignore": ["scripts/**", ".agents/skills/**", ".claude/skills/**", "apps/desktop/ui/**"],
-  "ignoreExportsUsedInFile": { "interface": true, "type": true },
+  "ignoreExportsUsedInFile": {
+    "interface": true,
+    "type": true
+  },
   "ignoreBinaries": ["wrangler", "tb"],
   "ignoreDependencies": ["cloudflare"],
   "workspaces": {
@@ -24,6 +27,16 @@
       "entry": ["open-next.config.ts"],
       "ignoreDependencies": ["postcss"],
       "ignoreUnresolved": ["@/generated/*"]
+    },
+    ".": {
+      "entry": [
+        "scripts/ingest-recovery/rebuild-agent.ts",
+        "scripts/ingest-recovery/agent-*.test.ts",
+        "scripts/ingest-recovery/agent-rebuild.smoke.ts"
+      ],
+      "typescript": {
+        "config": ["tsconfig.json", "scripts/ingest-recovery/tsconfig.json"]
+      }
     }
   }
 }

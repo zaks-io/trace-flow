@@ -21,7 +21,6 @@
 //! Batch ids are minted per POST from a process counter seeded by the wall clock so they are unique
 //! within a run without needing `Date.now()` at the cursor seam.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -38,24 +37,19 @@ pub use collector_archive_sync::{
 };
 use collector_contracts::AgentSource;
 use collector_sync::{
-    assemble_cursor_units, assemble_sync_unit_from_bytes, run_sync_cycle, select_changed,
-    walk_transcripts, BatchMeta, CursorStore, DiscoveredFile, GitRemoteCache, HistoryPreset,
+    assemble_cursor_units, run_sync_cycle, BatchMeta, CursorStore, GitRemoteCache, HistoryPreset,
     ImportWindow, Orchestrator, SyncUnit, Trigger,
 };
 
 use crate::archive_history::prepare as prepare_archive_history;
 use crate::connection::Paths;
-use crate::sources::{cursor_db_path, ingestable_sources, source_root};
+use crate::fact_sources::FactSources;
+use crate::sources::{cursor_db_path, ingestable_sources, source_roots};
 
 /// The version strings the ingest worker's compatibility policy gates on. The CLI is the collector
 /// "desktop" embedder; the parser version tracks the `collector-parser` crate.
 pub const DESKTOP_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const PARSER_VERSION: &str = "0.1.0";
-
-/// How many transcripts to assemble (read + parse + git resolve) concurrently. Bounded so a large
-/// history import overlaps I/O without opening every file at once; the git freeze cache dedups the
-/// per-repo `git` shell-outs across them.
-const ASSEMBLY_CONCURRENCY: usize = 16;
+pub const PARSER_VERSION: &str = "0.2.0";
 
 /// How far back a sync reaches.
 #[derive(Debug, Clone, Copy)]
@@ -110,6 +104,9 @@ pub struct RunConfig<'a> {
     pub org_id: &'a str,
     pub home: &'a Path,
     pub window: Window,
+    /// Explicitly resend Claude and Codex facts in the selected history window without deleting
+    /// local cursors. Cursor replay requires a full composer-selection path and is not claimed here.
+    pub replay: bool,
     /// `now` in epoch ms, injected so the window math is testable and the cursor seam stays clock-free.
     pub now_ms: i64,
     /// A short embedder tag (e.g. `"cli"`, `"desktop"`) that prefixes the per-POST batch id, so a
@@ -275,7 +272,7 @@ pub async fn run(cfg: RunConfig<'_>) -> Result<Vec<(AgentSource, SourceReport)>>
     Ok(run_detailed(cfg).await?.reports)
 }
 
-/// Same cycle as [`run`], with discovery/read/archive counters for the single-traversal contract.
+/// Same cycle as [`run`], with fact discovery/read counters and archive progress.
 pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
     let client = CollectorApiClient::new(CollectorApiClientConfig::new(
         cfg.ingest_url.clone(),
@@ -284,8 +281,10 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
     .context("build ingest client")?;
 
     let paths = resolve_paths(&cfg)?;
-    let store =
+    let mut store =
         CursorStore::open(paths.cursor_db(cfg.org_id), cfg.org_id).context("open cursor store")?;
+    store.set_active_parser_version(PARSER_VERSION);
+    let reparse_known = store.parser_version()?.as_deref() != Some(PARSER_VERSION);
     store
         .repair_legacy_cursors_without_fact_state()
         .context("repair legacy cursor state")?;
@@ -339,25 +338,6 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
     } else {
         Default::default()
     };
-    let mut discovery_passes = 0usize;
-    let mut files_read = 0usize;
-    let mut prepared = Vec::new();
-
-    for source in ingestable_sources() {
-        let mut report = SourceReport::default();
-        let units = match source_root(cfg.home, source) {
-            Some(root) => {
-                discovery_passes += 1;
-                let pass =
-                    assemble_jsonl_pass(&store, &cache, source, &root, window, &mut report).await?;
-                files_read += pass.files_read;
-                pass.units
-            }
-            None => assemble_cursor_source_units(&store, &cfg, window, &mut report)?,
-        };
-        prepared.push((source, report, units));
-    }
-
     let mut archive = if let Some(archive_cfg) = &cfg.archive {
         let mut report = run_archive_work(
             archive_cfg,
@@ -378,10 +358,39 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
         None
     };
 
+    let mut discovery_passes = 0usize;
+    let mut files_read = 0usize;
     let mut reports = Vec::new();
-    for (source, mut report, units) in prepared {
-        if !units.is_empty() {
-            apply_fact_cycle(&client, &store, source, &units, &mut mint, &mut report).await?;
+    for source in ingestable_sources() {
+        let mut report = SourceReport::default();
+        let roots = source_roots(cfg.home, source);
+        store.set_replay_facts(replay_facts_for_source(cfg.replay, source));
+        if roots.is_empty() {
+            let units = assemble_cursor_source_units(&store, &cfg, window, &mut report)?;
+            if !units.is_empty() {
+                apply_fact_cycle(&client, &store, source, &units, &mut mint, &mut report).await?;
+            }
+        } else {
+            discovery_passes += 1;
+            let mut files = FactSources::discover(
+                &roots,
+                source,
+                &store,
+                window,
+                cfg.replay,
+                reparse_known,
+                &mut report,
+            )
+            .context("select changed files")?;
+            while let Some(units) = files.next_batch(&cache, &mut report, &mut files_read).await {
+                if !units.is_empty() {
+                    apply_fact_cycle(&client, &store, source, &units, &mut mint, &mut report)
+                        .await?;
+                }
+                if report.aborted_early {
+                    break;
+                }
+            }
         }
         reports.push((source, report));
     }
@@ -392,6 +401,7 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
         .iter()
         .all(|(_, report)| report.failed == 0 && !report.aborted_early);
     if complete {
+        store.mark_parser_version(PARSER_VERSION)?;
         // The pass started at `now_ms`; anything modified after that is caught by the next pass's
         // grace window. A pass with failures keeps the old watermark so the failed files stay in scope.
         store
@@ -409,6 +419,10 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
         files_read,
         archive,
     })
+}
+
+fn replay_facts_for_source(replay: bool, source: AgentSource) -> bool {
+    replay && matches!(source, AgentSource::Claude | AgentSource::Codex)
 }
 
 fn resolve_paths(cfg: &RunConfig<'_>) -> Result<Paths> {
@@ -512,85 +526,6 @@ fn apply_archive_policy_after_cycle(
 #[cfg(test)]
 fn is_unauthorized(first_error: &Option<String>) -> bool {
     ingest_denial_reason(first_error).is_some()
-}
-
-struct JsonlPass {
-    units: Vec<SyncUnit>,
-    files_read: usize,
-}
-
-/// Discover + assemble units for a JSONL source (Claude, Codex): one walk, one full read per needed
-/// file, then Archive snapshots (when enrolled) and fact units from the same bytes.
-async fn assemble_jsonl_pass(
-    store: &CursorStore,
-    cache: &GitRemoteCache,
-    source: AgentSource,
-    root: &Path,
-    window: ImportWindow,
-    report: &mut SourceReport,
-) -> Result<JsonlPass> {
-    let files = walk_transcripts(root);
-    report.source_files_scanned = files.len();
-
-    let selected =
-        select_changed(files.clone(), store, source, window).context("select changed files")?;
-    report.selected = selected.len();
-
-    let mut needed: HashMap<String, DiscoveredFile> = HashMap::new();
-    for file in &selected {
-        needed.insert(file.path.clone(), file.clone());
-    }
-
-    let mut bytes_by_path = HashMap::new();
-    let mut files_read = 0usize;
-    for path in needed.keys() {
-        if let Ok(bytes) = std::fs::read(path) {
-            bytes_by_path.insert(path.clone(), bytes);
-            files_read += 1;
-        }
-    }
-
-    if selected.is_empty() {
-        return Ok(JsonlPass {
-            units: Vec::new(),
-            files_read,
-        });
-    }
-
-    use futures_util::stream::{self, StreamExt};
-    let assembled: Vec<_> = stream::iter(selected.iter())
-        .map(|file| {
-            let bytes = bytes_by_path.get(&file.path).cloned();
-            async move {
-                match bytes {
-                    Some(bytes) => assemble_sync_unit_from_bytes(file, source, cache, &bytes).await,
-                    None => Err(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "unreadable transcript",
-                    )),
-                }
-            }
-        })
-        .buffer_unordered(ASSEMBLY_CONCURRENCY)
-        .collect()
-        .await;
-    let mut units = Vec::with_capacity(assembled.len());
-    for result in assembled {
-        match result {
-            Ok(unit) => units.push(unit),
-            // A file that fails to read is skipped this pass; its cursor never advanced, so it is
-            // retried next pass. One unreadable transcript must not strand the whole Source, but it
-            // does keep the pass incomplete (no watermark advance), so it must be visible: a stable
-            // class, never the path or the transcript. An ingest error class, if one follows, wins.
-            Err(_) => {
-                report.failed += 1;
-                report
-                    .first_error
-                    .get_or_insert_with(|| "unreadable transcript".to_string());
-            }
-        }
-    }
-    Ok(JsonlPass { units, files_read })
 }
 
 async fn run_archive_work(
@@ -766,6 +701,14 @@ mod tests {
     }
 
     #[test]
+    fn explicit_replay_is_scoped_to_jsonl_sources() {
+        assert!(replay_facts_for_source(true, AgentSource::Claude));
+        assert!(replay_facts_for_source(true, AgentSource::Codex));
+        assert!(!replay_facts_for_source(true, AgentSource::Cursor));
+        assert!(!replay_facts_for_source(false, AgentSource::Claude));
+    }
+
+    #[test]
     fn first_incremental_window_is_the_24h_grace_ending_now() {
         let now = 1_779_840_000_000;
         let w = Window::Incremental.import_window(now, None);
@@ -911,6 +854,7 @@ mod tests {
             org_id: "org_1",
             home,
             window: Window::Incremental,
+            replay: false,
             now_ms: 1_779_840_000_000,
             batch_id_prefix: "test",
             archive,
@@ -926,6 +870,33 @@ mod tests {
             .unwrap()
             .last_complete_sync_at_ms()
             .unwrap()
+    }
+
+    fn cursor_store(state: &Path) -> CursorStore {
+        CursorStore::open(Paths::at(state.to_path_buf()).cursor_db("org_1"), "org_1").unwrap()
+    }
+
+    async fn run_fact_sync(
+        home: &Path,
+        state: &Path,
+        ingest_url: String,
+        replay: bool,
+        now_ms: i64,
+    ) -> SyncRunOutcome {
+        run_detailed(RunConfig {
+            ingest_url,
+            credential: "tfc_secret".to_string(),
+            org_id: "org_1",
+            home,
+            window: Window::Incremental,
+            replay,
+            now_ms,
+            batch_id_prefix: "test",
+            archive: None,
+            state_dir: Some(state),
+        })
+        .await
+        .unwrap()
     }
 
     #[tokio::test]
@@ -994,6 +965,51 @@ mod tests {
         assert!(sources.contains(&"claude".to_string()));
         assert!(sources.contains(&"codex".to_string()));
         assert!(!sources.iter().any(|source| source == "cursor"));
+    }
+
+    #[tokio::test]
+    async fn archived_codex_transcripts_are_ingested_by_the_normal_fact_cycle() {
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        let archived = home.path().join(".codex/archived_sessions");
+        std::fs::create_dir_all(&archived).unwrap();
+        let transcript = archived.join("codex-session-001.jsonl");
+        std::fs::write(&transcript, CODEX).unwrap();
+        let hits = Arc::new(Mutex::new(0u32));
+        let ingest_url = spawn_http({
+            let hits = Arc::clone(&hits);
+            move |_raw| {
+                *hits.lock().unwrap() += 1;
+                raw_response(
+                    202,
+                    "Accepted",
+                    r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#,
+                )
+            }
+        })
+        .await;
+
+        let outcome = run_fact_sync(
+            home.path(),
+            state.path(),
+            ingest_url,
+            false,
+            1_779_840_000_000,
+        )
+        .await;
+        let codex = outcome
+            .reports
+            .iter()
+            .find(|(source, _)| *source == AgentSource::Codex)
+            .unwrap();
+        assert_eq!(codex.1.source_files_scanned, 1);
+        assert_eq!(codex.1.selected, 1);
+        assert_eq!(codex.1.advanced, 1);
+        assert_eq!(*hits.lock().unwrap(), 1);
+        assert!(cursor_store(state.path())
+            .get(AgentSource::Codex, transcript.to_str().unwrap())
+            .unwrap()
+            .is_some());
     }
 
     #[tokio::test]
@@ -1140,6 +1156,174 @@ mod tests {
 
         assert!(outcome.reports.iter().any(|(_, report)| report.failed > 0));
         assert_eq!(last_complete_sync_at_ms(state.path()), None);
+    }
+
+    #[tokio::test]
+    async fn parser_migration_reparses_known_old_transcripts_without_importing_unknown_ones() {
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        let claude_dir = home.path().join(".claude/projects/p1");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(claude_dir.join("known.jsonl"), CLAUDE).unwrap();
+        let hits = Arc::new(Mutex::new(0u32));
+        let ingest_url = spawn_http({
+            let hits = Arc::clone(&hits);
+            move |_raw| {
+                *hits.lock().unwrap() += 1;
+                raw_response(
+                    202,
+                    "Accepted",
+                    r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#,
+                )
+            }
+        })
+        .await;
+        run_fact_sync(
+            home.path(),
+            state.path(),
+            ingest_url.clone(),
+            false,
+            1_779_840_000_000,
+        )
+        .await;
+        std::fs::write(claude_dir.join("unknown.jsonl"), CLAUDE).unwrap();
+        let mut old_store = cursor_store(state.path());
+        old_store.set_active_parser_version("0.1.0");
+        for cursor in old_store.list(AgentSource::Claude).unwrap() {
+            old_store.advance(AgentSource::Claude, &cursor).unwrap();
+        }
+        old_store.mark_parser_version("0.1.0").unwrap();
+
+        let migrated = run_fact_sync(
+            home.path(),
+            state.path(),
+            ingest_url,
+            false,
+            9_000_000_000_000,
+        )
+        .await;
+        let claude = migrated
+            .reports
+            .iter()
+            .find(|(source, _)| *source == AgentSource::Claude)
+            .unwrap()
+            .1
+            .clone();
+        assert_eq!(claude.source_files_scanned, 2);
+        assert_eq!(claude.selected, 1);
+        assert_eq!(migrated.files_read, 1);
+        assert_eq!(claude.advanced, 1);
+        assert_eq!(*hits.lock().unwrap(), 2);
+        assert_eq!(
+            cursor_store(state.path())
+                .parser_version()
+                .unwrap()
+                .as_deref(),
+            Some(PARSER_VERSION)
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_parser_migration_keeps_the_old_version_for_retry() {
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        let claude_dir = home.path().join(".claude/projects/p1");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(claude_dir.join("known.jsonl"), CLAUDE).unwrap();
+        let accepted = spawn_http(|_raw| {
+            raw_response(
+                202,
+                "Accepted",
+                r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#,
+            )
+        })
+        .await;
+        run_fact_sync(
+            home.path(),
+            state.path(),
+            accepted,
+            false,
+            1_779_840_000_000,
+        )
+        .await;
+        let mut old_store = cursor_store(state.path());
+        old_store.set_active_parser_version("0.1.0");
+        for cursor in old_store.list(AgentSource::Claude).unwrap() {
+            old_store.advance(AgentSource::Claude, &cursor).unwrap();
+        }
+        old_store.mark_parser_version("0.1.0").unwrap();
+        let rejected =
+            spawn_http(|_raw| raw_response(500, "Error", r#"{"error":"ingest_failed"}"#)).await;
+
+        let outcome = run_fact_sync(
+            home.path(),
+            state.path(),
+            rejected,
+            false,
+            9_000_000_000_000,
+        )
+        .await;
+        assert!(outcome.reports.iter().any(|(_, report)| report.failed > 0));
+        assert_eq!(
+            cursor_store(state.path())
+                .parser_version()
+                .unwrap()
+                .as_deref(),
+            Some("0.1.0")
+        );
+    }
+
+    #[tokio::test]
+    async fn replay_resends_accepted_facts_without_deleting_cursor_state() {
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        let claude_dir = home.path().join(".claude/projects/p1");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(claude_dir.join("session.jsonl"), CLAUDE).unwrap();
+        let hits = Arc::new(Mutex::new(0u32));
+        let ingest_url = spawn_http({
+            let hits = Arc::clone(&hits);
+            move |_raw| {
+                *hits.lock().unwrap() += 1;
+                raw_response(
+                    202,
+                    "Accepted",
+                    r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#,
+                )
+            }
+        })
+        .await;
+        run_fact_sync(
+            home.path(),
+            state.path(),
+            ingest_url.clone(),
+            false,
+            1_779_840_000_000,
+        )
+        .await;
+        let before = cursor_store(state.path())
+            .list(AgentSource::Claude)
+            .unwrap();
+
+        let replayed = run_fact_sync(
+            home.path(),
+            state.path(),
+            ingest_url,
+            true,
+            1_779_840_000_000,
+        )
+        .await;
+        let after = cursor_store(state.path())
+            .list(AgentSource::Claude)
+            .unwrap();
+        let claude = replayed
+            .reports
+            .iter()
+            .find(|(source, _)| *source == AgentSource::Claude)
+            .unwrap();
+        assert_eq!(claude.1.advanced, 1);
+        assert_eq!(*hits.lock().unwrap(), 2);
+        assert_eq!(after, before);
     }
 
     #[test]

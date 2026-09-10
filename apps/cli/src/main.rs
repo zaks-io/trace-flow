@@ -66,6 +66,9 @@ enum Command {
         /// 7d, 30d, or 1y (history import).
         #[arg(long, default_value = "24h")]
         since: String,
+        /// Resend Claude and Codex facts in this window, preserving local cursor evidence.
+        #[arg(long)]
+        replay: bool,
     },
     /// Show connection state and per-source counts. Prints no secrets.
     Status,
@@ -111,7 +114,7 @@ async fn run() -> Result<()> {
         Command::Sources { action } => match action {
             SourcesAction::List => cmd_sources_list(),
         },
-        Command::Sync { since } => cmd_sync(&since).await,
+        Command::Sync { since, replay } => cmd_sync(&since, replay).await,
         Command::Status => cmd_status(),
         Command::Disconnect => cmd_disconnect().await,
         Command::CursorDryrun => cmd_cursor_dryrun(),
@@ -147,7 +150,7 @@ fn cmd_sources_list() -> Result<()> {
     Ok(())
 }
 
-async fn cmd_sync(since: &str) -> Result<()> {
+async fn cmd_sync(since: &str, replay: bool) -> Result<()> {
     let window = sync::window_from_since(since)?;
 
     let paths = Paths::resolve()?;
@@ -173,6 +176,7 @@ async fn cmd_sync(since: &str) -> Result<()> {
         org_id: &conn.org_id,
         home: &home,
         window,
+        replay,
         now_ms: now_ms(),
         batch_id_prefix: "cli",
         archive: None,

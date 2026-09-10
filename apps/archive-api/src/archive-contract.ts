@@ -3,7 +3,8 @@ import { isArchiveCanonicalIdentifier } from '@trace-flow/types';
 export const ARCHIVE_FORMAT_VERSION = 1;
 export const CHAIN_HASH_VERSION = 1;
 export const ARCHIVE_CHUNK_TARGET_BYTES = (3 * 1024 * 1024) / 2;
-export const MAX_CHUNK_BYTES = 8 * 1024 * 1024;
+export const MAX_CHUNK_BYTES = 16 * 1024 * 1024;
+export const ARCHIVE_UPLOAD_WIRE_VERSION = 2;
 // This bounds one request's materialization. It is not a session lifetime cap.
 export const MAX_UPLOAD_OBSERVATIONS = 16_384;
 export const MAX_MANIFEST_BYTES = 8 * 1024 * 1024;
@@ -42,16 +43,21 @@ export interface CompletedScanCheckpoint {
 
 export interface ArchiveAppendProof {
   prior_prefix_chain_sha256: string;
-  appended_prefix_base64: string;
+  appended_prefix_base64?: string;
+  appended_prefix_utf8?: string;
 }
 
 export interface ArchiveUploadRequest {
+  /** Present only for the compact UTF-8 proof form. Legacy requests omit it. */
+  archive_upload_wire_version?: number;
   source_session_id: string;
   observations: ArchiveObservation[];
   checkpoint: CompletedScanCheckpoint;
   prior_checkpoint?: CompletedScanCheckpoint;
   /** Optional exact bytes for the completed source prefix, including blank lines and separators. */
   complete_prefix_base64?: string;
+  /** Exact UTF-8 prefix for wire v2. Mutually exclusive with complete_prefix_base64. */
+  complete_prefix_utf8?: string;
   /** Bounded bytes appended after prior_checkpoint, never the cumulative source prefix. */
   append_proof?: ArchiveAppendProof;
 }

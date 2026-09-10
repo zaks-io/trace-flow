@@ -7,6 +7,7 @@ import type { AgentFactBatcherInstance } from '../fact-batcher';
 import { AGENT_FACT_BATCHER_FLUSH_INTERVAL_MS } from '../fact-batcher';
 import { batchContext, toolEventRow } from '../rows';
 import { queueMessage, toolEventFact } from './factories';
+import { stableHash } from '../facts';
 
 vi.mock('@trace-flow/tinybird-client', async (importOriginal) => ({
   ...(await importOriginal<typeof TinybirdClient>()),
@@ -301,7 +302,7 @@ describe('AgentFactBatcher logic', () => {
   it('preserves the complete changed fact for operator reconciliation', async () => {
     await runInDurableObject(batcher, async (instance: AgentFactBatcherInstance, state) => {
       await instance.addFacts(sparseBatch);
-      await state.storage.deleteAlarm();
+      await instance.alarm();
       await instance.addFacts({
         rows: {
           ...emptyBatchRows,
@@ -324,6 +325,154 @@ describe('AgentFactBatcher logic', () => {
     expect(JSON.parse(page.records[0]?.payload ?? '{}')).toMatchObject({ content: 'changed' });
   });
 
+  it('coalesces a changed identity before its first insert', async () => {
+    const first = { ...sparseBatch.rows.messages[0], output_tokens: 1 };
+    const latest = { ...first, output_tokens: 42 };
+    await runInDurableObject(batcher, async (instance: AgentFactBatcherInstance, state) => {
+      await instance.addFacts({ rows: { ...emptyBatchRows, messages: [first] } });
+      await state.storage.deleteAlarm();
+      const changed = await instance.addFacts({ rows: { ...emptyBatchRows, messages: [latest] } });
+      expect(changed).toMatchObject({ status: 'accepted', acceptedRows: 1, repairRows: 0 });
+      await instance.alarm();
+      await state.storage.deleteAlarm();
+    });
+
+    expect(insertRows).toHaveBeenCalledOnce();
+    expect(vi.mocked(insertRows).mock.calls[0]?.[0]).toEqual([latest]);
+    const recovery = await runInDurableObject(batcher, (instance: AgentFactBatcherInstance) =>
+      instance.listRecovery(),
+    );
+    expect(recovery.records).toHaveLength(0);
+  });
+
+  it('loads at most 500 pending candidates per flush pass', async () => {
+    await runInDurableObject(batcher, async (instance: AgentFactBatcherInstance, state) => {
+      state.storage.sql.exec(`
+        WITH RECURSIVE sequence(value) AS (
+          SELECT 0 UNION ALL SELECT value + 1 FROM sequence WHERE value < 499
+        )
+        INSERT INTO pending_facts (category, fact_id, content_hash, data, created_at_ms)
+        SELECT 'messages', 'seed-' || value, 'hash-' || value,
+          json_object(
+            'OrgId', 'org-1',
+            'session_pk', 'bounded-flush',
+            'message_pk', 'seed-' || value
+          ), 0
+        FROM sequence
+      `);
+      await instance.addFacts({
+        rows: {
+          ...emptyBatchRows,
+          messages: [{ OrgId: 'org-1', session_pk: 'bounded-flush', message_pk: 'message-500' }],
+        },
+      });
+      await state.storage.deleteAlarm();
+      await instance.alarm();
+      await state.storage.deleteAlarm();
+    });
+
+    expect(vi.mocked(insertRows).mock.calls[0]?.[0]).toHaveLength(500);
+    expect(
+      await runInDurableObject(batcher, (instance: AgentFactBatcherInstance) =>
+        instance.getStats(),
+      ),
+    ).toMatchObject({ queuedRows: 1 });
+    await flushNow();
+    expect(vi.mocked(insertRows).mock.calls[1]?.[0]).toHaveLength(1);
+  });
+
+  it('preserves a changed identity after its first insert as a repair', async () => {
+    const first = { ...sparseBatch.rows.messages[0], output_tokens: 1 };
+    const latest = { ...first, output_tokens: 42 };
+    await runInDurableObject(batcher, async (instance: AgentFactBatcherInstance, state) => {
+      await instance.addFacts({ rows: { ...emptyBatchRows, messages: [first] } });
+      await instance.alarm();
+      await instance.addFacts({ rows: { ...emptyBatchRows, messages: [latest] } });
+      await state.storage.deleteAlarm();
+    });
+
+    expect(insertRows).toHaveBeenCalledOnce();
+    const recovery = await runInDurableObject(batcher, (instance: AgentFactBatcherInstance) =>
+      instance.listRecovery(),
+    );
+    expect(recovery.records).toHaveLength(1);
+    expect(JSON.parse(recovery.records[0]!.payload)).toEqual(latest);
+  });
+
+  it('locks a rebuild without mutating a pending identity while its insert is in flight', async () => {
+    vi.useRealTimers();
+    const first = { ...sparseBatch.rows.messages[0], output_tokens: 1 };
+    const latest = { ...first, output_tokens: 42 };
+    let startInsert!: () => void;
+    let releaseInsert!: () => void;
+    const started = new Promise<void>((resolve) => {
+      startInsert = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseInsert = resolve;
+    });
+    vi.mocked(insertRows).mockImplementationOnce(async () => {
+      startInsert();
+      await release;
+    });
+
+    const hashes = await runInDurableObject(
+      batcher,
+      async (instance: AgentFactBatcherInstance, state) => {
+        await instance.addFacts({ rows: { ...emptyBatchRows, messages: [first] } });
+        await state.storage.deleteAlarm();
+        const flushing = instance.alarm();
+        await started;
+        const changed = await instance.addFacts({
+          rows: { ...emptyBatchRows, messages: [latest] },
+        });
+        const rebuild = await instance.beginFactRebuild('org-1', {
+          operationId: 'rebuild-during-insert',
+          executorId: '11111111-1111-4111-8111-111111111111',
+          reason: 'pause while the current insert finishes',
+          tinybirdWorkspaceId: '33333333-3333-4333-8333-333333333333',
+          tinybirdTokenFingerprints: [
+            '02678c7d0b2ede6174be0b3e990a2a3cd18a45640f35d6ae636f6342acba2e4e',
+          ],
+        });
+        const values = {
+          changed,
+          rebuild,
+          ledger: state.storage.sql
+            .exec<{ content_hash: string }>('SELECT content_hash FROM fact_ledger')
+            .one().content_hash,
+          pending: state.storage.sql
+            .exec<{ content_hash: string }>('SELECT content_hash FROM pending_facts')
+            .one().content_hash,
+        };
+        releaseInsert();
+        await flushing;
+        return values;
+      },
+    );
+
+    expect(hashes.changed).toMatchObject({ repairRows: 1, acceptedRows: 0 });
+    expect(hashes.rebuild.status).toBe('retry-needed');
+    expect(hashes.ledger).toBe(stableHash(first));
+    expect(hashes.pending).toBe(stableHash(first));
+    expect(
+      (
+        await batcher.beginFactRebuild('org-1', {
+          operationId: 'rebuild-during-insert',
+          executorId: '11111111-1111-4111-8111-111111111111',
+          reason: 'pause while the current insert finishes',
+          tinybirdWorkspaceId: '33333333-3333-4333-8333-333333333333',
+          tinybirdTokenFingerprints: [
+            '02678c7d0b2ede6174be0b3e990a2a3cd18a45640f35d6ae636f6342acba2e4e',
+          ],
+        })
+      ).status,
+    ).toBe('quiescent');
+    expect(
+      await runInDurableObject(batcher, async (_instance, state) => state.storage.getAlarm()),
+    ).toBeNull();
+  });
+
   it('dedupes repeated repair candidates', async () => {
     const changedBatch = {
       rows: {
@@ -340,7 +489,7 @@ describe('AgentFactBatcher logic', () => {
     };
     await runInDurableObject(batcher, async (instance: AgentFactBatcherInstance, state) => {
       await instance.addFacts(sparseBatch);
-      await state.storage.deleteAlarm();
+      await instance.alarm();
       await instance.addFacts(changedBatch);
       await state.storage.deleteAlarm();
       await instance.addFacts(changedBatch);

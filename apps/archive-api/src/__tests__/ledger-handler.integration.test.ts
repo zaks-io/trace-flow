@@ -118,7 +118,10 @@ describe('Archive Session Ledger', () => {
       );
       await waitOnExecutionContext(executionContext);
       expect(response.status).toBe(413);
-      expect(await response.json()).toEqual({ error: 'upload_too_large' });
+      expect(await response.json()).toEqual({
+        error: 'upload_too_large',
+        reason: 'archive_upload_observation_limit',
+      });
       expect(idFromNameCalls).toBe(0);
       expect(keyRequests).toBe(0);
       const stored = await runtimeEnv.ARCHIVE_STORAGE.list({

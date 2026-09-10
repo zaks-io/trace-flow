@@ -55,6 +55,7 @@ pub struct ArchiveCycleReport {
     pub purged: bool,
     pub frozen: bool,
     pub halted: bool,
+    pub blocked: u32,
     pub first_error: Option<String>,
     pub history: Vec<ArchiveSourceHistoryReport>,
 }
@@ -122,8 +123,12 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
         if policy.uploads() {
             let mut pending_failed = false;
             for pending in &part.pending {
-                match upload_pending(uploader, spool, key_store, pending, cancel).await {
+                match upload_pending(uploader, spool, key_store, pending, None, cancel).await {
                     Ok(UploadOutcome::Advanced) => report.uploaded += 1,
+                    Ok(UploadOutcome::Blocked) => {
+                        report.blocked += 1;
+                        break;
+                    }
                     Ok(UploadOutcome::Frozen) => report.frozen = true,
                     Ok(UploadOutcome::Purged) => report.purged = true,
                     Ok(UploadOutcome::Halt(class)) => {

@@ -20,6 +20,12 @@ pub enum ArchiveSyncError {
     AcknowledgementMismatch,
     #[error("archive upload is too large")]
     UploadTooLarge,
+    #[error("archive source record exceeds the supported upload limit")]
+    RecordTooLarge {
+        source_record_identity: String,
+        record_size_bytes: u64,
+        limit_bytes: u64,
+    },
     #[error("archive I/O failed")]
     Io(#[from] std::io::Error),
     #[error("archive crypto failed")]
@@ -43,6 +49,7 @@ impl ArchiveSyncError {
             Self::KeyUnavailable => "archive_key_unavailable",
             Self::AcknowledgementMismatch => "archive_ack_mismatch",
             Self::UploadTooLarge => "upload_too_large",
+            Self::RecordTooLarge { .. } => "archive_record_too_large",
             Self::Io(_) => "archive_io",
             Self::Crypto => "archive_crypto",
             Self::Scan(_) => "archive_scan",
@@ -59,15 +66,15 @@ pub enum ArchiveClientError {
     #[error("forbidden: {reason}")]
     Forbidden { reason: String },
     #[error("invalid archive upload")]
-    InvalidUpload,
+    InvalidUpload { reason: String },
     #[error("archive enrollment request is invalid")]
     InvalidEnrollmentRequest,
     #[error("archive history choice conflicts with existing consent")]
     ConsentConflict,
     #[error("archive upload too large")]
-    UploadTooLarge,
+    UploadTooLarge { reason: String },
     #[error("archive upload rejected")]
-    UploadRejected { reason: String },
+    UploadRejected { status: u16, reason: String },
     #[error("archive unavailable")]
     Unavailable { reason: String },
     #[error("invalid archive acknowledgement")]
@@ -83,10 +90,21 @@ impl ArchiveClientError {
         match self {
             Self::Unauthorized { .. } => "unauthorized",
             Self::Forbidden { .. } => "forbidden",
-            Self::InvalidUpload => "invalid_upload",
+            Self::InvalidUpload { reason }
+                if reason == "unsupported_archive_upload_wire_version" =>
+            {
+                "archive_wire_unsupported"
+            }
+            Self::InvalidUpload { reason } if reason == "archive_element_exceeds_chunk_limit" => {
+                "archive_record_too_large"
+            }
+            Self::InvalidUpload { .. } => "invalid_upload",
             Self::InvalidEnrollmentRequest => "invalid_request",
             Self::ConsentConflict => "consent_conflict",
-            Self::UploadTooLarge => "upload_too_large",
+            Self::UploadTooLarge { reason } if reason == "archive_element_exceeds_chunk_limit" => {
+                "archive_record_too_large"
+            }
+            Self::UploadTooLarge { .. } => "upload_too_large",
             Self::UploadRejected { .. } => "upload_rejected",
             Self::Unavailable { .. } => "archive_unavailable",
             Self::InvalidAcknowledgement => "invalid_acknowledgement",
@@ -98,6 +116,31 @@ impl ArchiveClientError {
     pub fn denial_reason(&self) -> Option<&str> {
         match self {
             Self::Unauthorized { reason } | Self::Forbidden { reason } => Some(reason.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn http_status(&self) -> Option<u16> {
+        match self {
+            Self::Unauthorized { .. } => Some(401),
+            Self::Forbidden { .. } => Some(403),
+            Self::InvalidUpload { .. } | Self::InvalidEnrollmentRequest => Some(400),
+            Self::ConsentConflict => Some(409),
+            Self::UploadTooLarge { .. } => Some(413),
+            Self::Unavailable { .. } => Some(503),
+            Self::UploadRejected { status, .. } => Some(*status),
+            Self::InvalidAcknowledgement | Self::InvalidPolicy | Self::Transport(_) => None,
+        }
+    }
+
+    pub fn safe_reason(&self) -> Option<&str> {
+        match self {
+            Self::Unauthorized { reason }
+            | Self::Forbidden { reason }
+            | Self::InvalidUpload { reason }
+            | Self::UploadTooLarge { reason }
+            | Self::UploadRejected { reason, .. }
+            | Self::Unavailable { reason } => Some(reason),
             _ => None,
         }
     }

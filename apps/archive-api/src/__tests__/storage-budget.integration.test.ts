@@ -948,6 +948,9 @@ describe('StorageBudget Durable Object', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const request = new Request(input, init);
       const payload: Record<string, unknown> = await request.json();
+      // Alarms from other test organizations may publish while this global fetch mock is installed.
+      if (payload.orgId !== orgId)
+        return Response.json({ revision: payload.revision, replay: false });
       published.push(payload);
       if (published.length === 1) {
         return Response.json({ error: 'Archive status revision conflict' }, { status: 409 });

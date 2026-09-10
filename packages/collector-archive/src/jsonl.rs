@@ -248,6 +248,10 @@ pub enum JsonlError {
     HistoricalRecordCountRegressed,
     #[error("the source bytes do not contain the complete checkpoint prefix")]
     WirePrefixUnavailable,
+    #[error("compact archive proof requires canonical UTF-8 source bytes")]
+    CompactProofRequiresUtf8,
+    #[error("compact archive request serialization failed")]
+    WireSerialization(#[source] serde_json::Error),
 }
 
 #[cfg(test)]

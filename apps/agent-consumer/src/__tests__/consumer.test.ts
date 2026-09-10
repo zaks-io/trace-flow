@@ -3,6 +3,7 @@ import * as Sentry from '@sentry/cloudflare';
 import { microdollarsToDollars, type ModelPricing } from '@trace-flow/pricing';
 import { AGENT_INGEST_LIMITS, type AgentSource } from '@trace-flow/types';
 import { processAgentBatch } from '../consumer';
+import { AGENT_FACT_RPC_MAX_ROWS } from '../fact-rpc-batches';
 
 // withSentry initializes the client in the deployed Worker; here we mock the capture surface so the
 // error paths (insert failure, contract drift) can assert they report rather than fail silently.
@@ -305,6 +306,116 @@ describe('processAgentBatch', () => {
         tags: expect.objectContaining({ operation: 'agent_fact_batcher' }),
       }),
     );
+  });
+
+  it('acks a healthy organization while retrying only messages for a failed organization', async () => {
+    tb = mockTinybird();
+    const { kv } = makeKv({ [PRICING_KEY]: PRICING });
+    const healthy = stubMessage(queueMessage(), 'healthy');
+    const failed = stubMessage(
+      queueMessage({
+        tenancy: {
+          org_id: 'org-2',
+          user_id: 'user-2',
+          collector_id: 'collector-2',
+          collector_credential_id: 'cred-2',
+        },
+      }),
+      'failed',
+    );
+    const env = makeEnv(kv);
+    const healthyAddFacts = vi.fn(async () => ({
+      status: 'accepted' as const,
+      acceptedRows: 1,
+      duplicateRows: 0,
+      repairRows: 0,
+      blockedRecoveryRows: 0,
+      blockedRecoveryRecords: 0,
+    }));
+    const failedAddFacts = vi.fn(async () => ({
+      status: 'failed' as const,
+      acceptedRows: 0,
+      duplicateRows: 0,
+      repairRows: 0,
+      blockedRecoveryRows: 0,
+      blockedRecoveryRecords: 0,
+    }));
+    env.AGENT_FACT_BATCHER = {
+      getByName: (name: string) => ({
+        addFacts: name === 'org:org-1' ? healthyAddFacts : failedAddFacts,
+      }),
+    } as unknown as typeof env.AGENT_FACT_BATCHER;
+
+    await processAgentBatch(batchOf([healthy, failed]), env);
+
+    expect(healthyAddFacts).toHaveBeenCalledOnce();
+    expect(failedAddFacts).toHaveBeenCalledOnce();
+    expect(healthy.ack).toHaveBeenCalledOnce();
+    expect(healthy.retry).not.toHaveBeenCalled();
+    expect(failed.retry).toHaveBeenCalledOnce();
+    expect(failed.ack).not.toHaveBeenCalled();
+  });
+
+  it('replays deterministic chunks after a partial failure and lets the ledger dedupe staged rows', async () => {
+    tb = mockTinybird();
+    const { kv } = makeKv({ [PRICING_KEY]: PRICING });
+    const facts = Array.from({ length: AGENT_FACT_RPC_MAX_ROWS + 1 }, (_, index) =>
+      messageFact({ message_pk: `message-${index}` }),
+    );
+    const body = queueMessage({ facts: { ...emptyQueueFacts(), messages: facts } });
+    const firstDelivery = stubMessage(body, 'first-delivery');
+    const redelivery = stubMessage(body, 'redelivery');
+    const seen = new Set<string>();
+    let call = 0;
+    const addFacts = vi.fn(async (batch: { rows: { messages: Record<string, unknown>[] } }) => {
+      call++;
+      if (call === 2) {
+        return {
+          status: 'failed' as const,
+          acceptedRows: 0,
+          duplicateRows: 0,
+          repairRows: 0,
+          blockedRecoveryRows: 0,
+          blockedRecoveryRecords: 0,
+        };
+      }
+      let acceptedRows = 0;
+      let duplicateRows = 0;
+      for (const row of batch.rows.messages) {
+        const id = String(row.message_pk);
+        if (seen.has(id)) duplicateRows++;
+        else {
+          seen.add(id);
+          acceptedRows++;
+        }
+      }
+      return {
+        status: 'accepted' as const,
+        acceptedRows,
+        duplicateRows,
+        repairRows: 0,
+        blockedRecoveryRows: 0,
+        blockedRecoveryRecords: 0,
+      };
+    });
+    const env = makeEnv(kv);
+    env.AGENT_FACT_BATCHER = {
+      getByName: () => ({ addFacts }),
+    } as unknown as typeof env.AGENT_FACT_BATCHER;
+
+    await processAgentBatch(batchOf([firstDelivery]), env);
+    await processAgentBatch(batchOf([redelivery]), env);
+
+    expect(addFacts).toHaveBeenCalledTimes(4);
+    expect(addFacts.mock.calls[0]?.[0].rows.messages).toHaveLength(AGENT_FACT_RPC_MAX_ROWS);
+    expect(addFacts.mock.calls[1]?.[0].rows.messages).toHaveLength(1);
+    expect(addFacts.mock.calls[2]?.[0]).toEqual(addFacts.mock.calls[0]?.[0]);
+    expect(addFacts.mock.calls[3]?.[0]).toEqual(addFacts.mock.calls[1]?.[0]);
+    expect(seen).toHaveLength(AGENT_FACT_RPC_MAX_ROWS + 1);
+    expect(firstDelivery.retry).toHaveBeenCalledOnce();
+    expect(firstDelivery.ack).not.toHaveBeenCalled();
+    expect(redelivery.ack).toHaveBeenCalledOnce();
+    expect(redelivery.retry).not.toHaveBeenCalled();
   });
 
   it('issues one insert per non-empty base datasource', async () => {

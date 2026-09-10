@@ -33,6 +33,13 @@ const COLLECTOR_SECRET_HEADER = 'X-Trace-Flow-Collector-Secret';
 const ARCHIVE_SOURCE_HEADER = 'X-Trace-Flow-Archive-Source';
 const LEDGER_COMMIT_MAX_ATTEMPTS = 3;
 const LEDGER_COMMIT_RETRY_BASE_MS = 100;
+const SAFE_LEDGER_REJECTION_REASONS = new Set([
+  'archive_commit_too_large',
+  'archive_element_exceeds_chunk_limit',
+  'archive_key_version_mismatch',
+  'archive_upload_observation_limit',
+  'storage_cap_exceeded',
+]);
 
 interface LedgerIntegrityResponse {
   error: 'integrity_error';
@@ -159,7 +166,9 @@ export async function handleUpload(c: Context<{ Bindings: ArchiveApiEnv }>): Pro
         reason: tooLarge ? 'upload_too_large' : 'invalid_json',
       });
       return c.json(
-        { error: tooLarge ? 'upload_too_large' : 'invalid_upload' },
+        tooLarge
+          ? { error: 'upload_too_large', reason: 'request_body_limit' }
+          : { error: 'invalid_upload' },
         tooLarge ? 413 : 400,
       );
     }
@@ -186,7 +195,10 @@ export async function handleUpload(c: Context<{ Bindings: ArchiveApiEnv }>): Pro
       }
       logger.warn('archive_api.invalid_upload', { reason: error.errorClass });
       if (error.errorClass === 'archive_upload_observation_limit') {
-        return c.json({ error: 'upload_too_large' }, 413);
+        return c.json(
+          { error: 'upload_too_large', reason: 'archive_upload_observation_limit' },
+          413,
+        );
       }
       return c.json({ error: 'invalid_upload' }, 400);
     }
@@ -417,7 +429,9 @@ export async function handleUpload(c: Context<{ Bindings: ArchiveApiEnv }>): Pro
       let reason = 'archive_commit_failed';
       try {
         const parsed = parsedBody as { error?: unknown };
-        if (typeof parsed.error === 'string') reason = parsed.error;
+        if (typeof parsed.error === 'string' && SAFE_LEDGER_REJECTION_REASONS.has(parsed.error)) {
+          reason = parsed.error;
+        }
       } catch {
         // The ledger response is not part of the client contract when malformed.
       }

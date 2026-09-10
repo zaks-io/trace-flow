@@ -8,7 +8,7 @@
 //! `~/.claude/projects`, Codex under `~/.codex/sessions`, Cursor in its `state.vscdb` SQLite store under
 //! globalStorage — and a presence check the `sources list` command renders. Cursor is `Ready`: the
 //! Cursor reader (`collector_sync::assemble_cursor_units`) ingests its SQLite store directly, so it does
-//! not have a `.jsonl` root the walker reads (`source_root` is `None`); its presence is the DB file
+//! not have a `.jsonl` root the walker reads (`source_roots` is empty); its presence is the DB file
 //! existing. We never print the absolute root (it carries `$HOME`/username); the UI shows a stable label.
 
 use std::path::PathBuf;
@@ -42,23 +42,14 @@ impl DetectedSource {
     pub fn display_root(&self) -> &'static str {
         match self.source {
             AgentSource::Claude => "~/.claude/projects",
-            AgentSource::Codex => "~/.codex/sessions",
+            AgentSource::Codex => "~/.codex/{sessions,archived_sessions}",
             AgentSource::Cursor => "(Cursor state store)",
         }
     }
 }
 
-/// The transcript root for `source` under `home`, or `None` for a Source with no `.jsonl` root. Cursor
-/// reads a SQLite store, not a `.jsonl` tree, so it has no walker root (see [`cursor_db_path`]).
-pub fn source_root(home: &std::path::Path, source: AgentSource) -> Option<PathBuf> {
-    match source {
-        AgentSource::Claude => Some(home.join(".claude").join("projects")),
-        AgentSource::Codex => Some(home.join(".codex").join("sessions")),
-        AgentSource::Cursor => None,
-    }
-}
-
-pub fn archive_source_roots(home: &std::path::Path, source: AgentSource) -> Vec<PathBuf> {
+/// All transcript roots for a source. Archived Codex sessions retain the same fact identity.
+pub fn source_roots(home: &std::path::Path, source: AgentSource) -> Vec<PathBuf> {
     match source {
         AgentSource::Claude => vec![home.join(".claude").join("projects")],
         AgentSource::Codex => vec![
@@ -107,12 +98,13 @@ where
 {
     let mut out = Vec::new();
     for source in ingestable_sources() {
-        let file_count = match source_root(home, source) {
-            Some(root) => count(&root),
-            // No JSONL root: Cursor's presence is its DB existing (1) or not (0).
-            None => cursor_db_path(home)
+        let roots = source_roots(home, source);
+        let file_count = if roots.is_empty() {
+            cursor_db_path(home)
                 .map(|db| usize::from(db_exists(&db)))
-                .unwrap_or(0),
+                .unwrap_or(0)
+        } else {
+            roots.iter().map(|root| count(root)).sum()
         };
         out.push(DetectedSource {
             source,
@@ -142,15 +134,18 @@ mod tests {
     fn claude_and_codex_roots_are_under_home_and_cursor_has_no_jsonl_root() {
         let home = Path::new("/home/u");
         assert_eq!(
-            source_root(home, AgentSource::Claude).unwrap(),
-            Path::new("/home/u/.claude/projects")
+            source_roots(home, AgentSource::Claude),
+            vec![PathBuf::from("/home/u/.claude/projects")]
         );
         assert_eq!(
-            source_root(home, AgentSource::Codex).unwrap(),
-            Path::new("/home/u/.codex/sessions")
+            source_roots(home, AgentSource::Codex),
+            vec![
+                PathBuf::from("/home/u/.codex/sessions"),
+                PathBuf::from("/home/u/.codex/archived_sessions")
+            ]
         );
         // Cursor reads SQLite, not a JSONL tree, so it has no walker root.
-        assert!(source_root(home, AgentSource::Cursor).is_none());
+        assert!(source_roots(home, AgentSource::Cursor).is_empty());
     }
 
     #[test]

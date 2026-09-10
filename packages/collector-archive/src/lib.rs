@@ -22,7 +22,7 @@ mod manifest;
 mod types;
 
 pub use archive_checkpoint::default_transcript_part_id;
-pub use archive_wire::{ArchiveUploadRequest, JsonlScan};
+pub use archive_wire::{ArchiveUploadRequest, JsonlScan, ARCHIVE_UPLOAD_WIRE_VERSION};
 pub use chain::{ArchiveChain, ChainError, CommitReport};
 pub use elements::{ArchiveRecord, ChainElement, CommittedScanCheckpoint};
 pub use encoding::{EncodedPayload, PayloadEncoding};

@@ -587,7 +587,10 @@ describe('Archive API authorization', () => {
       }),
     });
     expect(res.status).toBe(413);
-    expect(await res.json()).toEqual({ error: 'upload_too_large' });
+    expect(await res.json()).toEqual({
+      error: 'upload_too_large',
+      reason: 'request_body_limit',
+    });
   });
 
   it.each(['session-\ud800', 'session-\udc00'])(

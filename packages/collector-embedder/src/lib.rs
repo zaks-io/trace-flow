@@ -24,6 +24,7 @@ mod archive_history;
 pub mod archive_policy;
 pub mod connection;
 pub mod defaults;
+mod fact_sources;
 pub mod keychain;
 pub mod login;
 pub mod sources;

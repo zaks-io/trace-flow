@@ -7,6 +7,9 @@ export default defineConfig({
       wrangler: {
         configPath: './wrangler.jsonc',
       },
+      miniflare: {
+        bindings: { TINYBIRD_TOKEN: 'tb-token' },
+      },
     }),
   ],
   test: {

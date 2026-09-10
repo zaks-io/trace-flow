@@ -10,10 +10,10 @@
 //! Claude Code per-message token usage. `session_message_usages` collapses a session's JSONL records
 //! to one [`ClaudeMessageUsage`] per `message.id`, the input to the per-message token fields on
 //! `AgentMessageFact`. It is the home of the repeated-`message.usage` trap the 3a canary asserts
-//! against: Claude Code writes one record per content block of an assistant turn, every record
-//! repeating that turn's full `usage`, so summing per record overcounts by the block count.
+//! against: Claude Code writes one record per content block of an assistant turn. Records can repeat
+//! or advance that turn's usage, so summing per record overcounts by the block count.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use serde_json::Value;
 
@@ -89,24 +89,24 @@ fn message_usage(record: &Value) -> Option<ClaudeMessageUsage> {
 
 /// Collapses a session's JSONL records (in file order) to one [`ClaudeMessageUsage`] per `message.id`.
 ///
-/// Claude Code writes one record per content block of an assistant turn — text, each `tool_use`, each
-/// `tool_result` — and every record repeats that turn's full `message.usage`. Counting per record
-/// therefore multiplies a turn's tokens by its block count (a captured session repeats one id's usage
-/// 8x). Real captures show every record sharing a `message.id` carries identical usage, so the first
-/// record carrying usage for an id is kept and later repeats are dropped; first-appearance order is
-/// preserved so the result tracks turn order. Records without a `message.id` or `message.usage` are
-/// skipped (they contribute no tokens).
+/// Claude Code writes one record per content block of an assistant turn. Exact repeats must count once,
+/// but later records can carry a newer cumulative usage snapshot for the same `message.id`. The latest
+/// snapshot replaces the stored values without moving the message from its first-appearance position.
+/// Records without a `message.id` or `message.usage` are skipped because they contribute no tokens.
 pub fn session_message_usages<'a, I>(records: I) -> Vec<ClaudeMessageUsage>
 where
     I: IntoIterator<Item = &'a Value>,
 {
     let mut messages = Vec::new();
-    let mut seen = HashSet::new();
+    let mut message_indexes = HashMap::new();
     for record in records {
         let Some(usage) = message_usage(record) else {
             continue;
         };
-        if seen.insert(usage.message_id.clone()) {
+        if let Some(index) = message_indexes.get(&usage.message_id).copied() {
+            messages[index] = usage;
+        } else {
+            message_indexes.insert(usage.message_id.clone(), messages.len());
             messages.push(usage);
         }
     }
@@ -242,6 +242,46 @@ mod tests {
             .map(|m| m.message_id)
             .collect();
         assert_eq!(ids, ["msg_1", "msg_2", "msg_3"]);
+    }
+
+    #[test]
+    fn keeps_latest_usage_without_changing_turn_identity_or_order() {
+        let records = [
+            assistant("msg_1", 1, 10, 0, 0, None),
+            assistant("msg_2", 2, 20, 0, 0, None),
+            assistant("msg_1", 1, 30, 0, 0, None),
+            assistant("msg_1", 1, 50, 0, 0, None),
+        ];
+        let messages = session_message_usages(records.iter());
+        let identity_and_output: Vec<_> = messages
+            .iter()
+            .map(|usage| (usage.message_id.as_str(), usage.output_tokens))
+            .collect();
+        assert_eq!(identity_and_output, [("msg_1", 50), ("msg_2", 20)]);
+    }
+
+    #[test]
+    fn exact_duplicate_snapshots_still_count_once() {
+        let one = assistant("msg_same", 5, 598, 17_917, 17_937, Some((0, 17_937)));
+        let records = [one.clone(), one];
+        assert_eq!(
+            session_message_usages(records.iter()),
+            vec![message_usage(&records[0]).unwrap()]
+        );
+    }
+
+    #[test]
+    fn final_snapshot_recovers_the_observed_output_delta() {
+        let records = [
+            assistant("msg_changed", 1, 101_382, 0, 0, None),
+            assistant("msg_changed", 1, 134_426, 0, 0, None),
+        ];
+        let output: i64 = session_message_usages(records.iter())
+            .iter()
+            .map(|usage| usage.output_tokens)
+            .sum();
+        assert_eq!(output, 134_426);
+        assert_eq!(output - 101_382, 33_044);
     }
 
     #[test]

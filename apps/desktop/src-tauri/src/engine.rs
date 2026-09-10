@@ -883,6 +883,7 @@ fn run_cycle_blocking_with_policy_memory(
         org_id: &org_id,
         home: &home,
         window,
+        replay: false,
         now_ms,
         batch_id_prefix: "desktop",
         archive,

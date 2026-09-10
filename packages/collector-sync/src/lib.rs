@@ -28,6 +28,7 @@
 
 pub mod assemble_units;
 pub mod claude_session;
+pub mod codex_lineage;
 pub mod codex_session;
 pub mod cursor;
 pub mod cursor_reader;
@@ -40,11 +41,13 @@ pub mod orchestrator;
 pub mod sync_cycle;
 
 pub use assemble_units::{
-    assemble_sync_unit, assemble_sync_unit_from_bytes, build_session_context, read_transcript,
+    assemble_sync_unit, assemble_sync_unit_from_bytes, assemble_sync_unit_with_lineage,
+    build_session_context, read_transcript,
 };
 pub use claude_session::{
     agent_depth_from_transcript_path, claude_session_fields, ClaudeSessionFields,
 };
+pub use codex_lineage::CodexLineage;
 pub use codex_session::{codex_session_fields, CodexSessionFields};
 pub use cursor::{ComposerCursor, CursorStore, CursorStoreError, FileCursor};
 pub use cursor_reader::{assemble_cursor_units, CursorReadError};

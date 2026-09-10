@@ -18,6 +18,7 @@ import {
 export async function validateObservation(
   value: unknown,
   expected: { source: ArchiveSource; sourceSessionId: string },
+  proofPayload?: Uint8Array,
 ): Promise<ArchiveObservation> {
   if (typeof value !== 'object' || value === null) {
     throw new ArchiveContractError('invalid_observation');
@@ -50,8 +51,16 @@ export async function validateObservation(
   if (observation.payload_encoding !== 'utf8' && observation.payload_encoding !== 'base64') {
     throw new ArchiveContractError('invalid_payload_encoding');
   }
-  if (typeof observation.payload !== 'string') {
+  if (proofPayload === undefined && typeof observation.payload !== 'string') {
     throw new ArchiveContractError('invalid_payload');
+  }
+  if (proofPayload !== undefined) {
+    if (observation.payload !== undefined || observation.payload_encoding !== 'utf8') {
+      throw new ArchiveContractError('invalid_compact_observation');
+    }
+    if (proofPayload[0] === 0xef && proofPayload[1] === 0xbb && proofPayload[2] === 0xbf) {
+      throw new ArchiveContractError('invalid_payload_encoding');
+    }
   }
   assertDigest(observation.content_sha256, 'invalid_content_hash');
   const normalized: ArchiveObservation = {
@@ -63,10 +72,13 @@ export async function validateObservation(
     source_record_identity: observation.source_record_identity,
     observed_at: observation.observed_at as number,
     payload_encoding: observation.payload_encoding,
-    payload: observation.payload,
+    payload:
+      proofPayload === undefined
+        ? (observation.payload as string)
+        : new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(proofPayload),
     content_sha256: observation.content_sha256,
   };
-  const bytes = payloadBytes(normalized);
+  const bytes = proofPayload ?? payloadBytes(normalized);
   if (
     digestString(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))) !==
     normalized.content_sha256

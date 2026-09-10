@@ -30,6 +30,11 @@ pub struct CodexSessionFields {
     pub embedded_git: Option<GitMetadata>,
     /// `payload.git.commit_hash` — the HEAD sha Codex records (Claude transcripts carry none).
     pub git_head_sha: Option<String>,
+    /// Direct parent session identity from `payload.parent_thread_id`, when this is a child session.
+    pub parent_thread_id: Option<String>,
+    /// Exact nesting depth from `payload.source.subagent.thread_spawn.depth`. A parent id can exist
+    /// without this field, so callers must not invent a depth when this is `None`.
+    pub agent_depth: Option<i64>,
 }
 
 /// Extract Codex session identity + embedded git from a parsed transcript's `records`. Reads the first
@@ -70,6 +75,14 @@ pub fn codex_session_fields(records: &[Value]) -> CodexSessionFields {
         .filter(|s| !s.is_empty())
         .map(str::to_string);
     let cwd = nonempty_str(payload, "cwd");
+    let parent_thread_id = nonempty_str(payload, "parent_thread_id");
+    let agent_depth = payload
+        .get("source")
+        .and_then(|source| source.get("subagent"))
+        .and_then(|subagent| subagent.get("thread_spawn"))
+        .and_then(|spawn| spawn.get("depth"))
+        .and_then(Value::as_i64)
+        .filter(|depth| *depth >= 0);
 
     // Build embedded git metadata only when there is something to attribute. `git_root` anchors path
     // relativization; with no live resolve, the recorded `cwd` is the best available root.
@@ -99,6 +112,8 @@ pub fn codex_session_fields(records: &[Value]) -> CodexSessionFields {
         },
         embedded_git,
         git_head_sha: head_sha,
+        parent_thread_id,
+        agent_depth,
     }
 }
 
@@ -198,5 +213,50 @@ mod tests {
         assert_eq!(f.fields.vendor_session_id, "abc");
         assert_eq!(f.fields.cwd.as_deref(), Some("/work/repo"));
         assert_eq!(f.embedded_git, None);
+    }
+
+    #[test]
+    fn reads_parent_identity_and_explicit_subagent_depth() {
+        let meta = json!({
+            "type": "session_meta",
+            "payload": {
+                "id": "child-session",
+                "parent_thread_id": "parent-session",
+                "source": {
+                    "subagent": {
+                        "thread_spawn": {
+                            "parent_thread_id": "parent-session",
+                            "depth": 2,
+                            "agent_path": "/root/child"
+                        }
+                    }
+                }
+            }
+        });
+        let f = codex_session_fields(&recs(json!([meta])));
+        assert_eq!(f.parent_thread_id.as_deref(), Some("parent-session"));
+        assert_eq!(f.agent_depth, Some(2));
+    }
+
+    #[test]
+    fn parent_identity_does_not_invent_a_missing_depth() {
+        let meta = json!({
+            "type": "session_meta",
+            "payload": {
+                "id": "review-session",
+                "parent_thread_id": "parent-session",
+                "source": { "subagent": { "other": "guardian" } }
+            }
+        });
+        let f = codex_session_fields(&recs(json!([meta])));
+        assert_eq!(f.parent_thread_id.as_deref(), Some("parent-session"));
+        assert_eq!(f.agent_depth, None);
+    }
+
+    #[test]
+    fn top_level_session_has_no_parent_or_depth() {
+        let f = codex_session_fields(&recs(json!([session_meta()])));
+        assert_eq!(f.parent_thread_id, None);
+        assert_eq!(f.agent_depth, None);
     }
 }
