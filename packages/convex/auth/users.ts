@@ -1,17 +1,34 @@
 import { mutation, query, internalMutation, internalQuery } from '../_generated/server';
 import { v } from 'convex/values';
+import { makeFunctionReference } from 'convex/server';
 import { type QueryCtx, type MutationCtx } from '../_generated/server';
 import { type Doc, type Id } from '../_generated/dataModel';
 import { internal } from '../_generated/api';
 import { createOrgWithDefaultBilling, ensureOrgHasSubscription } from './organizations';
-import { getCurrentEnabledUser, getCurrentUser, requireEnabledUser } from './userHelpers';
+import {
+  getActiveOrganizationMembership,
+  getCurrentEnabledUser,
+  getCurrentUser,
+  isLiveOrganization,
+  requireEnabledUser,
+} from './userHelpers';
 import { userValidator } from '../validators';
 import { rateLimiter } from '../rateLimits';
 import { invalidateArchiveEnrollmentsForUser } from '../archiveLib';
 
 type AuthContext = QueryCtx | MutationCtx;
 
-export { getCurrentEnabledUser, getCurrentUser, requireEnabledUser };
+const eraseSandboxBackupObjects = makeFunctionReference<'action', { backupIds: string[] }, null>(
+  'analystSandbox:eraseSandboxBackupObjects',
+);
+
+export {
+  getActiveOrganizationMembership,
+  getCurrentEnabledUser,
+  getCurrentUser,
+  requireActiveOrganizationMembership,
+  requireEnabledUser,
+} from './userHelpers';
 
 /**
  * Extracts the Auth0 `sub` claim from Convex's tokenIdentifier.
@@ -51,6 +68,7 @@ function hasUserDataChanged(existingUser: Doc<'users'>, newUserInfo: UserInfo): 
 
 async function scheduleUserOrgSync(
   ctx: MutationCtx,
+  userId: Id<'users'>,
   tokenIdentifier: string,
   orgId: Id<'organizations'>,
 ) {
@@ -58,25 +76,38 @@ async function scheduleUserOrgSync(
   if (sub) {
     await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.syncUserOrgToKV, {
       sub,
+      userId,
       orgId,
     });
   }
 }
 
-async function scheduleUserOrgRemoval(ctx: MutationCtx, tokenIdentifier: string) {
+async function scheduleUserOrgRemoval(
+  ctx: MutationCtx,
+  userId: Id<'users'>,
+  tokenIdentifier: string,
+) {
   const sub = extractSub(tokenIdentifier);
   if (sub) {
-    await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.deleteUserOrgFromKV, { sub });
+    await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.deleteUserOrgFromKV, {
+      sub,
+      userId,
+    });
   }
 }
 
-async function revokeApiKeysForUser(ctx: MutationCtx, userId: Id<'users'>) {
+async function revokeApiKeysForUser(
+  ctx: MutationCtx,
+  orgId: Id<'organizations'>,
+  userId: Id<'users'>,
+) {
   const keys = await ctx.db
     .query('apiKeys')
     .withIndex('by_user_id', (q) => q.eq('userId', userId))
     .collect();
 
   for (const key of keys) {
+    if (key.orgId !== orgId) continue;
     await ctx.db.delete(key._id);
     await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.deleteKeyFromKV, {
       key: key.key,
@@ -104,8 +135,12 @@ async function revokeCollectorCredentialsForUser(ctx: MutationCtx, userId: Id<'u
   }
 }
 
-async function revokeCredentialsForRemovedUser(ctx: MutationCtx, userId: Id<'users'>) {
-  await revokeApiKeysForUser(ctx, userId);
+async function revokeCredentialsAfterMemberRemoval(
+  ctx: MutationCtx,
+  orgId: Id<'organizations'>,
+  userId: Id<'users'>,
+) {
+  await revokeApiKeysForUser(ctx, orgId, userId);
   await revokeCollectorCredentialsForUser(ctx, userId);
 }
 
@@ -145,11 +180,30 @@ async function ensureOrgMembership(
 async function getAcceptedInviteForEmail(ctx: MutationCtx, email: string) {
   const normalizedEmail = normalizeEmail(email);
 
-  return await ctx.db
+  const invite = await ctx.db
     .query('invites')
     .withIndex('by_email', (q) => q.eq('email', normalizedEmail))
     .filter((q) => q.eq(q.field('status'), 'accepted'))
     .first();
+  if (!invite?.orgId) return invite;
+  return isLiveOrganization(await ctx.db.get(invite.orgId)) ? invite : null;
+}
+
+async function clearStaleOrganizationAssociation(
+  ctx: MutationCtx,
+  userId: Id<'users'>,
+): Promise<Doc<'users'>> {
+  const user = await ctx.db.get(userId);
+  if (!user) throw new Error('User not found');
+  if (!user.orgId || (await getActiveOrganizationMembership(ctx, user))) return user;
+
+  const invite = user.inviteId ? await ctx.db.get(user.inviteId) : null;
+  await ctx.db.patch(userId, {
+    orgId: undefined,
+    ...(invite?.orgId === user.orgId ? { inviteId: undefined } : {}),
+  });
+  await scheduleUserOrgRemoval(ctx, user._id, user.tokenIdentifier);
+  return (await ctx.db.get(userId))!;
 }
 
 /**
@@ -189,7 +243,7 @@ async function reconcileAcceptedInvite(
   }
 
   if (nextOrgId) {
-    await scheduleUserOrgSync(ctx, userInfo.tokenIdentifier, nextOrgId);
+    await scheduleUserOrgSync(ctx, userId, userInfo.tokenIdentifier, nextOrgId);
     await ensureOrgHasSubscription(ctx, nextOrgId);
   }
 }
@@ -253,15 +307,30 @@ export const removeMember = mutation({
       if (acceptedInvite && inviteTiesToOrg) {
         await ctx.db.patch(acceptedInvite._id, { status: 'expired' });
       }
-      await revokeCredentialsForRemovedUser(ctx, removedUser._id);
+      await revokeCredentialsAfterMemberRemoval(ctx, membership.orgId, removedUser._id);
       await invalidateArchiveEnrollmentsForUser(ctx, {
         orgId: membership.orgId,
         userId: removedUser._id,
         reason: 'member_removed',
         actorUserId: caller._id,
       });
+      const analystThreads = await ctx.db
+        .query('analystThreads')
+        .withIndex('by_creator_updated', (q) => q.eq('creatorUserId', removedUser._id))
+        .collect();
+      const backupIds: string[] = [];
+      for (const thread of analystThreads) {
+        if (thread.orgId !== membership.orgId || !thread.sandboxBackup) continue;
+        backupIds.push(thread.sandboxBackup.id);
+        await ctx.db.patch(thread._id, { sandboxBackup: undefined });
+      }
+      for (let offset = 0; offset < backupIds.length; offset += 100) {
+        await ctx.scheduler.runAfter(0, eraseSandboxBackupObjects, {
+          backupIds: backupIds.slice(offset, offset + 100),
+        });
+      }
       if (removedUser.tokenIdentifier) {
-        await scheduleUserOrgRemoval(ctx, removedUser.tokenIdentifier);
+        await scheduleUserOrgRemoval(ctx, removedUser._id, removedUser.tokenIdentifier);
       }
     }
   },
@@ -306,7 +375,7 @@ export const initializeUser = mutation({
         await reconcileAcceptedInvite(ctx, existingUser._id, userAfterProfile, userInfo);
       }
 
-      const refreshed = (await ctx.db.get(existingUser._id))!;
+      const refreshed = await clearStaleOrganizationAssociation(ctx, existingUser._id);
       if (!refreshed.orgId) {
         await createOrgWithDefaultBilling(
           ctx,
@@ -339,7 +408,7 @@ export const initializeUser = mutation({
     if (acceptedInvite?.orgId) {
       await ctx.db.patch(userId, { orgId: acceptedInvite.orgId });
       await ensureOrgMembership(ctx, acceptedInvite.orgId, userId, 'member');
-      await scheduleUserOrgSync(ctx, userInfo.tokenIdentifier, acceptedInvite.orgId);
+      await scheduleUserOrgSync(ctx, userId, userInfo.tokenIdentifier, acceptedInvite.orgId);
       await ensureOrgHasSubscription(ctx, acceptedInvite.orgId);
     } else {
       await createOrgWithDefaultBilling(
@@ -422,7 +491,7 @@ export const findOrCreateUser = internalMutation({
       const userAfterProfile = (await ctx.db.get(existingUser._id))!;
       await reconcileAcceptedInvite(ctx, existingUser._id, userAfterProfile, userInfo);
 
-      const refreshed = (await ctx.db.get(existingUser._id))!;
+      const refreshed = await clearStaleOrganizationAssociation(ctx, existingUser._id);
       if (!refreshed.orgId) {
         await createOrgWithDefaultBilling(
           ctx,
@@ -450,7 +519,7 @@ export const findOrCreateUser = internalMutation({
     if (acceptedInvite?.orgId) {
       await ctx.db.patch(userId, { orgId: acceptedInvite.orgId });
       await ensureOrgMembership(ctx, acceptedInvite.orgId, userId, 'member');
-      await scheduleUserOrgSync(ctx, args.tokenIdentifier, acceptedInvite.orgId);
+      await scheduleUserOrgSync(ctx, userId, args.tokenIdentifier, acceptedInvite.orgId);
       await ensureOrgHasSubscription(ctx, acceptedInvite.orgId);
     } else {
       await createOrgWithDefaultBilling(
@@ -481,6 +550,15 @@ export const getUserByTokenIdentifier = internalQuery({
       .query('users')
       .withIndex('by_token_identifier', (q) => q.eq('tokenIdentifier', args.tokenIdentifier))
       .first();
+  },
+});
+
+export const hasActiveOrganizationMembership = internalQuery({
+  args: { userId: v.id('users') },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    return user ? Boolean(await getActiveOrganizationMembership(ctx, user)) : false;
   },
 });
 

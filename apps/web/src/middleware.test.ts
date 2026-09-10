@@ -61,6 +61,7 @@ describe('protected app middleware', () => {
     );
     expect(mockedAuth0.getAccessToken).not.toHaveBeenCalled();
     expect(mockedClearAuthCookies).toHaveBeenCalledWith(req, response);
+    expect(response.headers.get('clear-site-data')).toBe('"storage"');
   });
 
   it('redirects an expired Convex ID token instead of rendering with it', async () => {
@@ -73,6 +74,7 @@ describe('protected app middleware', () => {
     expect(response.status).toBe(307);
     expect(mockedAuth0.getAccessToken).not.toHaveBeenCalled();
     expect(mockedClearAuthCookies).toHaveBeenCalledOnce();
+    expect(response.headers.get('clear-site-data')).toBe('"storage"');
   });
 
   it('clears a session that Auth0 cannot verify', async () => {
@@ -95,6 +97,33 @@ describe('protected app middleware', () => {
     expect(response.status).toBe(200);
     expect(mockedAuth0.getAccessToken).toHaveBeenCalledWith(req, response);
     expect(mockedClearAuthCookies).not.toHaveBeenCalled();
+    expect(response.headers.get('clear-site-data')).toBeNull();
+  });
+
+  it('clears browser storage on direct Auth0 logout routes', async () => {
+    const response = await middleware(request('/auth/logout'));
+
+    expect(response.headers.get('clear-site-data')).toBe('"storage"');
+  });
+
+  it('clears browser storage when an Auth0 logout route throws', async () => {
+    mockedAuth0.middleware.mockRejectedValue(new Error('invalid session'));
+
+    const response = await middleware(request('/auth/logout'));
+
+    expect(response.status).toBe(307);
+    expect(mockedClearAuthCookies).toHaveBeenCalledOnce();
+    expect(response.headers.get('clear-site-data')).toBe('"storage"');
+  });
+
+  it('clears browser storage on terminal auth error recovery', async () => {
+    mockedAuth0.middleware.mockRejectedValue(new Error('invalid session'));
+
+    const response = await middleware(request('/auth/login?cleared=1'));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe('https://trace-flow.dev/auth/error');
+    expect(response.headers.get('clear-site-data')).toBe('"storage"');
   });
 });
 

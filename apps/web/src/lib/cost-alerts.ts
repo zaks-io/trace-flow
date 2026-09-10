@@ -46,7 +46,7 @@ export interface AlertFormData {
 interface ApiKeyOption {
   _id: Id<'apiKeys'>;
   name?: string;
-  key: string;
+  identifier: string;
 }
 
 interface CostAlertChannelLike {
@@ -401,7 +401,7 @@ export function formatScope(rule: CostAlertRuleLike, apiKeys: ApiKeyOption[]): s
     const labels = rule.apiKeyIds
       .map((id) => apiKeys.find((apiKey) => apiKey._id === id))
       .filter((apiKey): apiKey is ApiKeyOption => Boolean(apiKey))
-      .map((apiKey) => apiKey.name ?? apiKey.key);
+      .map((apiKey) => apiKey.name ?? apiKey.identifier);
 
     parts.push(labels.length > 0 ? labels.join(', ') : 'Selected API keys');
   } else {

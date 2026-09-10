@@ -6,6 +6,7 @@ import { axiomConfigFromEnv, createWorkerLogger, type Logger } from '@trace-flow
 import { applySecurityHeaders } from '@trace-flow/utils';
 import type { SubscriptionKVData } from '@trace-flow/types';
 import { readBearerToken, verifyBodyAccessToken } from './body-access-token';
+import { authorizeBodyAccess } from './body-authorization';
 import { getStoredBodies, isBodyVisible } from './bodies';
 
 interface Env {
@@ -20,6 +21,7 @@ interface Env {
   BODY_ENCRYPTION_ROOT_KEY?: string;
   BODY_ENCRYPTION_KEY_ID?: string;
   BODY_ACCESS_JWT_SECRET: string;
+  CONVEX_SITE_URL: string;
   CF_VERSION_METADATA?: { id: string };
 }
 
@@ -108,6 +110,16 @@ apiApp.get('/bodies/:requestId', async (c) => {
       tokenRequestId: bodyAccess.requestId,
     });
     return c.json({ error: 'Forbidden', message: 'Request mismatch' }, 403);
+  }
+
+  const authorization = await authorizeBodyAccess(c.env, bodyAccess);
+  if (authorization === 'unavailable') {
+    requestLogger.error('api.body_access_authorization_unavailable');
+    return c.json({ error: 'Authorization unavailable' }, 503, { 'Retry-After': '1' });
+  }
+  if (authorization === 'denied') {
+    requestLogger.warn('api.body_access_revoked');
+    return c.json({ error: 'Forbidden' }, 403);
   }
 
   const limit = await c.env.BODIES_LIMITER.limit({ key: bodyAccess.sub });

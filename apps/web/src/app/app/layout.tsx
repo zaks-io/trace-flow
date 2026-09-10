@@ -14,7 +14,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }
 
   const token = session.tokenSet?.idToken;
-  if (!token) {
+  const cacheUserId = session.user.sub;
+  if (!token || !cacheUserId) {
     redirect('/auth/login?returnTo=/app');
   }
 
@@ -26,6 +27,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   );
 
   return (
-    <AppLayoutClient preloadedSessionContext={preloadedSessionContext}>{children}</AppLayoutClient>
+    <AppLayoutClient preloadedSessionContext={preloadedSessionContext} cacheUserId={cacheUserId}>
+      {children}
+    </AppLayoutClient>
   );
 }

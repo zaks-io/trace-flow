@@ -15,6 +15,7 @@ import {
   shouldNotify,
   summarizeHighCostRequests,
   summarizeModelApprovalAnomalies,
+  evaluateOrg,
 } from '../integrations/costAlerts';
 import {
   assertCostAlertWebhookDeliveryTarget,
@@ -745,4 +746,44 @@ describe('cost alert helpers', () => {
     expect(result.active).toBe(false);
     expect(result.lastRecoveredAt).toBe(20_000);
   });
+});
+
+describe('cost alert evaluator lifecycle', () => {
+  it.each(['deletionStartedAt', 'deletedAt'] as const)(
+    'stops without evaluating or rescheduling an organization with %s',
+    async (deletionField) => {
+      const runQuery = vi.fn().mockResolvedValue({
+        org: {
+          _id: 'org_1',
+          _creationTime: 1,
+          name: 'Deleting org',
+          ownerId: 'user_1',
+          [deletionField]: 1,
+        },
+        alerts: [],
+        channels: [],
+        states: [],
+        apiKeys: [],
+      });
+      const runMutation = vi.fn().mockResolvedValue(null);
+      const handler = (
+        evaluateOrg as unknown as {
+          _handler: (
+            ctx: { runQuery: typeof runQuery; runMutation: typeof runMutation },
+            args: { orgId: string },
+          ) => Promise<null>;
+        }
+      )._handler;
+
+      await expect(handler({ runQuery, runMutation }, { orgId: 'org_1' })).resolves.toBeNull();
+
+      expect(runQuery).toHaveBeenCalledTimes(1);
+      expect(runMutation).toHaveBeenCalledTimes(1);
+      expect(runMutation.mock.calls[0]?.[1]).toMatchObject({
+        orgId: 'org_1',
+        delayMs: null,
+        lastError: 'Organization is not active',
+      });
+    },
+  );
 });

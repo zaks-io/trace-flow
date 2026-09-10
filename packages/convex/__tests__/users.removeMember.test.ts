@@ -48,6 +48,13 @@ function makeRemoveMemberCtx(acceptedInvite: Record<string, unknown> | null = nu
       userId: 'user_removed',
       expiresAt: Date.now() + 60_000,
     },
+    {
+      _id: 'api_key_owner',
+      key: '22222222-2222-2222-2222-222222222222',
+      orgId: 'org_1',
+      userId: caller._id,
+      expiresAt: Date.now() + 60_000,
+    },
   ];
   const collectorCredentials = [
     {
@@ -63,13 +70,24 @@ function makeRemoveMemberCtx(acceptedInvite: Record<string, unknown> | null = nu
 
   const usersQuery = queryResult(caller);
   const membersQuery = queryResult(callerMembership);
-  const apiKeysQuery = queryResult(null, apiKeys);
+  const apiKeysQuery = queryResult(null, [apiKeys[0]]);
   const collectorCredentialsQuery = queryResult(null, collectorCredentials);
   const invitesQuery = queryResult(acceptedInvite);
+  const analystThreadsQuery = queryResult(null, [
+    {
+      _id: 'analyst_thread_1',
+      creatorUserId: removedUser._id,
+      orgId: removedMembership.orgId,
+      sandboxBackup: { id: 'snapshot-to-erase', dir: '/workspace', updatedAt: 1 },
+    },
+  ]);
 
   const dbGet = vi.fn(async (id: string) => {
     if (id === removedMembership._id) return removedMembership;
     if (id === removedUser._id) return removedUser;
+    if (id === 'org_1') {
+      return { _id: 'org_1', name: 'Test organization', ownerId: caller._id };
+    }
     return null;
   });
   const dbPatch = vi.fn().mockResolvedValue(undefined);
@@ -90,10 +108,12 @@ function makeRemoveMemberCtx(acceptedInvite: Record<string, unknown> | null = nu
         if (table === 'apiKeys') return apiKeysQuery;
         if (table === 'collectorCredentials') return collectorCredentialsQuery;
         if (table === 'invites') return invitesQuery;
+        if (table === 'analystThreads') return analystThreadsQuery;
         if (
           table === 'archiveEnrollments' ||
           table === 'archiveContributions' ||
-          table === 'archiveStatuses'
+          table === 'archiveStatuses' ||
+          table === 'analystThreads'
         ) {
           return queryResult(null, []);
         }
@@ -142,17 +162,20 @@ describe('auth.users.removeMember', () => {
     });
     expect(dbPatch).toHaveBeenCalledWith(removedUser._id, { orgId: undefined });
     expect(dbDelete).toHaveBeenCalledWith(apiKeys[0]._id);
+    expect(dbDelete).not.toHaveBeenCalledWith(apiKeys[1]._id);
     expect(dbPatch).toHaveBeenCalledWith(collectorCredentials[0]._id, {
       status: 'revoked',
       revokedAt: expect.any(Number),
     });
+    expect(dbPatch).toHaveBeenCalledWith('analyst_thread_1', { sandboxBackup: undefined });
 
     const scheduledArgs = schedulerRunAfter.mock.calls.map((call) => call[2]);
     expect(scheduledArgs).toEqual(
       expect.arrayContaining([
         { key: apiKeys[0].key },
         { hashedSecret: collectorCredentials[0].hashedSecret },
-        { sub: 'auth0|removed' },
+        { sub: 'auth0|removed', userId: removedUser._id },
+        { backupIds: ['snapshot-to-erase'] },
       ]),
     );
   });

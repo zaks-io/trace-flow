@@ -44,6 +44,7 @@ function makeActionCtx(proEnabled: boolean): ActionCtx {
   const runQuery = vi
     .fn()
     .mockResolvedValueOnce(user)
+    .mockResolvedValueOnce(true)
     .mockResolvedValueOnce(organization)
     .mockResolvedValueOnce(null)
     .mockResolvedValueOnce(proEnabled);

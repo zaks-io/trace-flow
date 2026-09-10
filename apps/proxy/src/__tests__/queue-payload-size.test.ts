@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
 import worker from '../index';
 import type { ProxyEnv } from '../context';
+import { authorizeApiKeyRequest } from './api-key-authorization.test-support';
 
 // Cloudflare Queues rejects messages over 128 KB with "Payload Too Large":
 // https://developers.cloudflare.com/queues/configuration/javascript-apis/
@@ -91,7 +92,10 @@ describe('queue payload size', () => {
       await setupCredential('org-queue-payload');
       let upstreamBytes = 0;
       vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-        await new Request(input, init).arrayBuffer();
+        const upstreamRequest = new Request(input, init);
+        const authorization = await authorizeApiKeyRequest(upstreamRequest.clone());
+        if (authorization) return authorization;
+        await upstreamRequest.arrayBuffer();
         const response = upstream();
         upstreamBytes = (await response.clone().text()).length;
         return response;

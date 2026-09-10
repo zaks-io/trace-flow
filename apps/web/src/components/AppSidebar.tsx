@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { LogoutLink } from '@/components/LogoutLink';
 import {
   LayoutDashboard,
   Activity,
@@ -208,10 +209,10 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
               asChild
               className="h-9 gap-3 rounded-lg px-3 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
             >
-              <a href="/auth/logout">
+              <LogoutLink>
                 <LogOut className="h-4 w-4" />
                 <span className="text-sm font-medium">Sign out</span>
-              </a>
+              </LogoutLink>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem className="mt-1">

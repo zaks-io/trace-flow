@@ -4,6 +4,10 @@ const authMocks = vi.hoisted(() => ({
   requireAuthenticated: vi.fn(),
   getCurrentEnabledUser: vi.fn(),
   requireEnabledUser: vi.fn(),
+  getActiveOrganizationMembership: vi.fn((_ctx, user) =>
+    Promise.resolve(user?.orgId ? { user, orgId: user.orgId } : null),
+  ),
+  requireActiveOrganizationMembership: vi.fn(),
   requireEnabledActionUser: vi.fn(),
 }));
 
@@ -14,6 +18,8 @@ vi.mock('../auth/auth', () => ({
 vi.mock('../auth/users', () => ({
   getCurrentEnabledUser: authMocks.getCurrentEnabledUser,
   requireEnabledUser: authMocks.requireEnabledUser,
+  getActiveOrganizationMembership: authMocks.getActiveOrganizationMembership,
+  requireActiveOrganizationMembership: authMocks.requireActiveOrganizationMembership,
 }));
 
 vi.mock('../auth/actionUser', () => ({
@@ -24,6 +30,7 @@ import {
   canAccessApiKey,
   canManageApiKey,
   getByKey,
+  list,
   listAnalytics,
   listForUser,
   remove,
@@ -98,17 +105,23 @@ describe('apiKeys.list handler logic', () => {
     expect(result).toEqual([]);
   });
 
-  it('queries by orgId when user has orgId', async () => {
-    const _user = makeUser();
-    const keys = [makeApiKey(), makeApiKey({ _id: 'key_id_2' })];
+  it("returns only the current user's keys", async () => {
+    const user = makeUser();
+    const ownKey = makeApiKey();
+    const peerKey = makeApiKey({ _id: 'peer_key', userId: 'peer_user' });
     const ctx = makeCtx();
+    authMocks.getCurrentEnabledUser.mockResolvedValue(user);
     ctx.db.query = vi.fn().mockReturnValue({
       withIndex: vi.fn().mockReturnThis(),
-      collect: vi.fn().mockResolvedValue(keys),
+      collect: vi.fn().mockResolvedValue([ownKey, peerKey]),
     });
 
-    const result = await ctx.db.query('apiKeys').withIndex('by_org_id').collect();
-    expect(result).toHaveLength(2);
+    const result = await (
+      list as unknown as {
+        _handler: (context: unknown, args: Record<string, never>) => Promise<unknown[]>;
+      }
+    )._handler(ctx, {});
+    expect(result).toEqual([ownKey]);
   });
 
   it('queries by userId when user has no orgId', () => {
@@ -177,25 +190,26 @@ describe('apiKeys.listAnalytics', () => {
 });
 
 describe('apiKeys resource authorization', () => {
-  it('allows the creating user and members of the key organization', () => {
+  it('allows only the creating user to obtain a key', () => {
     expect(canAccessApiKey(makeUser(), makeApiKey())).toBe(true);
     expect(
       canAccessApiKey(
         makeUser({ _id: 'org_member' }),
         makeApiKey({ userId: undefined, orgId: 'org_id' }),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('keeps user-owned key management scoped to the creator', () => {
     const key = makeApiKey();
     expect(canManageApiKey(makeUser(), key)).toBe(true);
-    expect(canAccessApiKey(makeUser({ _id: 'org_member' }), key)).toBe(true);
+    expect(canAccessApiKey(makeUser({ _id: 'org_member' }), key)).toBe(false);
     expect(canManageApiKey(makeUser({ _id: 'org_member' }), key)).toBe(false);
   });
 
-  it('allows current org members to manage legacy org-owned keys', () => {
-    expect(canManageApiKey(makeUser(), makeApiKey({ userId: undefined }))).toBe(true);
+  it('does not expose ownerless legacy organization keys', () => {
+    expect(canAccessApiKey(makeUser(), makeApiKey({ userId: undefined }))).toBe(false);
+    expect(canManageApiKey(makeUser(), makeApiKey({ userId: undefined }))).toBe(false);
   });
 
   it('does not let a creator retain an organization key after changing organizations', () => {
@@ -268,6 +282,10 @@ describe('apiKeys resource authorization', () => {
     const user = makeUser({ orgId: 'attacker_org' });
     const foreignKey = makeApiKey({ orgId: 'victim_org' });
     authMocks.requireEnabledUser.mockResolvedValue(user);
+    authMocks.requireActiveOrganizationMembership.mockResolvedValue({
+      user,
+      orgId: user.orgId,
+    });
     const ctx = makeCtx();
     ctx.db.get = vi.fn().mockResolvedValue(foreignKey);
 
@@ -398,16 +416,14 @@ describe('apiKeys.update handler logic', () => {
     expect(ctx._dbPatch).toHaveBeenCalledWith('key_id', { name: 'Updated Name' });
   });
 
-  it('allows update when apiKey has no userId (org-owned key)', async () => {
+  it('rejects update when a legacy organization key has no owner', async () => {
     const user = makeUser();
     const apiKey = makeApiKey({ userId: undefined });
     const ctx = makeCtx();
     ctx.db.get = vi.fn().mockResolvedValue(apiKey);
 
-    if (!canManageApiKey(user, apiKey)) throw new Error('no permission');
-    await ctx.db.patch(apiKey._id, { name: 'Org Key Renamed' });
-
-    expect(ctx._dbPatch).toHaveBeenCalledWith('key_id', { name: 'Org Key Renamed' });
+    expect(canManageApiKey(user, apiKey)).toBe(false);
+    expect(ctx._dbPatch).not.toHaveBeenCalled();
   });
 });
 

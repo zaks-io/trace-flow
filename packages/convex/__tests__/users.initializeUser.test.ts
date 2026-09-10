@@ -39,9 +39,20 @@ function makeCtx(
         if (table === 'users') return queryResult(existingUser);
         if (table === 'invites') return queryResult(options.acceptedInvite ?? null);
         if (table === 'subscriptions') return queryResult(subscription);
+        if (table === 'organizationMembers') {
+          return queryResult(
+            existingUser
+              ? { userId: existingUser._id, orgId: existingUser.orgId, status: 'active' }
+              : null,
+          );
+        }
         throw new Error(`Unexpected table: ${table}`);
       }),
-      get: vi.fn().mockResolvedValue(existingUser),
+      get: vi.fn(async (id: string) =>
+        id === 'org_1' || id === 'org_personal'
+          ? { _id: id, name: 'Organization', ownerId: existingUser?._id ?? 'user_new' }
+          : existingUser,
+      ),
       patch: vi.fn().mockResolvedValue(undefined),
       insert: dbInsert,
     },

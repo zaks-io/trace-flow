@@ -169,6 +169,13 @@ export type DataModel = {
     document: {
       analystThreadId: Id<"analystThreads">;
       completedAt?: number;
+      checkpointCount?: number;
+      checkpointReservation?: number;
+      completionAttemptCount?: number;
+      completionReservation?: number;
+      completionReservationStatus?: "completed" | "failed" | "timed_out" | "cancelled";
+      completionReservedAt?: number;
+      pendingBackupCleanupIds?: Array<string>;
       continuationScheduledAt?: number;
       creatorUserId: Id<"users">;
       error?: string;
@@ -208,6 +215,13 @@ export type DataModel = {
       | "_id"
       | "analystThreadId"
       | "completedAt"
+      | "checkpointCount"
+      | "checkpointReservation"
+      | "completionAttemptCount"
+      | "completionReservation"
+      | "completionReservationStatus"
+      | "completionReservedAt"
+      | "pendingBackupCleanupIds"
       | "continuationScheduledAt"
       | "creatorUserId"
       | "error"
@@ -355,6 +369,7 @@ export type DataModel = {
     indexes: {
       by_id: ["_id"];
       by_creation_time: ["_creationTime"];
+      by_key: ["key", "_creationTime"];
       by_org_id: ["orgId", "_creationTime"];
       by_user_id: ["userId", "_creationTime"];
     };

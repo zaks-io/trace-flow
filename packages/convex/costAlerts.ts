@@ -24,6 +24,8 @@ import {
   organizationValidator,
 } from './validators';
 import { normalizeWebhookHeaders, parseWebhookDeliveryUrl } from './costAlertWebhookSecurity';
+import { analyticsKeyId } from '@trace-flow/utils';
+import { isLiveOrganization } from './auth/userHelpers';
 
 const CONFIG_CHANGE_RECHECK_MS = 5 * 1000;
 const MAX_ALERT_STRING_LENGTH = 200;
@@ -32,7 +34,13 @@ const costAlertSettingsValidator = v.object({
   rules: v.array(costAlertValidator),
   channels: v.array(costAlertChannelValidator),
   states: v.array(costAlertStateValidator),
-  apiKeys: v.array(apiKeyValidator),
+  apiKeys: v.array(
+    v.object({
+      _id: v.id('apiKeys'),
+      name: v.optional(v.string()),
+      identifier: v.string(),
+    }),
+  ),
   isOwner: v.boolean(),
 });
 
@@ -304,7 +312,13 @@ async function getSettingsForOrg(ctx: QueryCtx, orgId: Id<'organizations'>, isOw
     rules: rules.sort((a, b) => b.updatedAt - a.updatedAt),
     channels: channels.sort((a, b) => b.updatedAt - a.updatedAt).map(redactChannelConfig),
     states,
-    apiKeys,
+    apiKeys: await Promise.all(
+      apiKeys.map(async (apiKey) => ({
+        _id: apiKey._id,
+        name: apiKey.name,
+        identifier: await analyticsKeyId(apiKey.key),
+      })),
+    ),
     isOwner,
   };
 }
@@ -315,7 +329,8 @@ async function updateMonitorSchedule(
   delayMs: number | null,
   metadata?: { lastEvaluatedAt?: number; lastError?: string | undefined },
 ) {
-  const [existingMonitor, alerts] = await Promise.all([
+  const [organization, existingMonitor, alerts] = await Promise.all([
+    ctx.db.get(orgId),
     ctx.db
       .query('costAlertMonitors')
       .withIndex('by_org_id', (q) => q.eq('orgId', orgId))
@@ -325,6 +340,18 @@ async function updateMonitorSchedule(
       .withIndex('by_org_id', (q) => q.eq('orgId', orgId))
       .collect(),
   ]);
+
+  if (!isLiveOrganization(organization)) {
+    if (existingMonitor?.schedulerId) {
+      try {
+        await ctx.scheduler.cancel(existingMonitor.schedulerId);
+      } catch {
+        // The scheduled evaluation already completed or was canceled.
+      }
+    }
+    if (existingMonitor) await ctx.db.delete(existingMonitor._id);
+    return;
+  }
 
   const hasEnabledAlerts = alerts.some((alert) => alert.enabled);
   const shouldSchedule = hasEnabledAlerts && delayMs !== null;
@@ -818,8 +845,9 @@ export const recordState = internalMutation({
     lastSummary: v.optional(v.string()),
     lastDeliveryError: v.optional(v.string()),
   },
-  returns: v.id('costAlertStates'),
+  returns: v.union(v.id('costAlertStates'), v.null()),
   handler: async (ctx, args) => {
+    if (!isLiveOrganization(await ctx.db.get(args.orgId))) return null;
     const existing = await ctx.db
       .query('costAlertStates')
       .withIndex('by_alert_id', (q) => q.eq('costAlertId', args.costAlertId))
@@ -857,8 +885,9 @@ export const recordDelivery = internalMutation({
     deliveredAt: v.optional(v.number()),
     error: v.optional(v.string()),
   },
-  returns: v.id('costAlertDeliveries'),
+  returns: v.union(v.id('costAlertDeliveries'), v.null()),
   handler: async (ctx, args) => {
+    if (!isLiveOrganization(await ctx.db.get(args.orgId))) return null;
     const existing = await ctx.db
       .query('costAlertDeliveries')
       .withIndex('by_idempotency_key', (q) => q.eq('idempotencyKey', args.idempotencyKey))

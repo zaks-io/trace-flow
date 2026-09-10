@@ -772,6 +772,44 @@ async fn grace_and_frozen_retain_without_uploading() {
     }
 }
 
+#[tokio::test]
+async fn inactive_pending_denial_stops_later_parts_without_capturing() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    spool.persist_pending(&pending).unwrap();
+    let later = snapshot(ArchiveSource::Codex, CODEX, 11);
+    let later_session = later.source_session_id.clone();
+    let uploader = ScriptedUploader::new([Err(ArchiveClientError::Forbidden {
+        reason: "not_activated".to_string(),
+    })]);
+
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[later],
+        ArchivePolicy::Enrolled,
+        &plan_for(ALL_ARCHIVE_SOURCES),
+        None,
+    )
+    .await;
+
+    assert_eq!(uploader.calls.get(), 1);
+    assert!(report.frozen);
+    assert_eq!(report.failed, 0);
+    assert_eq!(report.captured, 0);
+    assert!(spool
+        .pending(ArchiveSource::Claude, &pending.source_session_id)
+        .unwrap()
+        .is_some());
+    assert!(spool
+        .pending(ArchiveSource::Codex, &later_session)
+        .unwrap()
+        .is_none());
+}
+
 #[test]
 fn enrollment_file_is_non_secret() {
     let dir = TempDir::new().unwrap();

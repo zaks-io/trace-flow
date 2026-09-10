@@ -77,13 +77,8 @@ export async function validateRequest(c: Context<{ Bindings: ProxyEnv }>): Promi
   }
 
   const orgLogger = requestLogger.child({ orgId: keyData.orgId });
-
   const clientIp = c.req.header('cf-connecting-ip') ?? 'unknown';
-  const [ipLimit, orgLimit] = await Promise.all([
-    c.env.IP_LIMITER.limit({ key: clientIp }),
-    c.env.ORG_LIMITER.limit({ key: keyData.orgId }),
-  ]);
-
+  const ipLimit = await c.env.IP_LIMITER.limit({ key: clientIp });
   if (!ipLimit.success) {
     orgLogger.warn('proxy.rate_limited', { reason: 'per_ip', clientIp });
     c.executionCtx.waitUntil(orgLogger.flush());
@@ -92,19 +87,6 @@ export async function validateRequest(c: Context<{ Bindings: ProxyEnv }>): Promi
       response: c.json({ error: 'Too many requests', message: 'Per-IP rate limit exceeded' }, 429, {
         'Retry-After': '60',
       }),
-    };
-  }
-
-  if (!orgLimit.success) {
-    orgLogger.warn('proxy.rate_limited', { reason: 'per_org' });
-    c.executionCtx.waitUntil(orgLogger.flush());
-    return {
-      kind: 'reject',
-      response: c.json(
-        { error: 'Rate limit exceeded', message: 'Per-organization rate limit exceeded' },
-        429,
-        { 'Retry-After': '60' },
-      ),
     };
   }
 
@@ -164,6 +146,20 @@ export async function validateRequest(c: Context<{ Bindings: ProxyEnv }>): Promi
           message: `Request body exceeds ${MAX_REQUEST_SIZE / (1024 * 1024)}MB limit`,
         },
         413,
+      ),
+    };
+  }
+
+  const orgLimit = await c.env.ORG_LIMITER.limit({ key: keyData.orgId });
+  if (!orgLimit.success) {
+    orgLogger.warn('proxy.rate_limited', { reason: 'per_org' });
+    c.executionCtx.waitUntil(orgLogger.flush());
+    return {
+      kind: 'reject',
+      response: c.json(
+        { error: 'Rate limit exceeded', message: 'Per-organization rate limit exceeded' },
+        429,
+        { 'Retry-After': '60' },
       ),
     };
   }

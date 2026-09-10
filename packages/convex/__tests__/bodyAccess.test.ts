@@ -17,6 +17,7 @@ vi.mock('@trace-flow/tinybird-client', () => ({
 }));
 
 import { bodyAccessRateLimitKey, buildBodyAccessOwnershipSql, issueToken } from '../bodyAccess';
+import { sqlStringLiteral } from '../tinybirdSql';
 
 const VALID_API_KEY = '11111111-1111-1111-1111-111111111111';
 const VALID_ANALYTICS_KEY_ID =
@@ -47,6 +48,19 @@ beforeEach(() => {
 });
 
 describe('body access token helpers', () => {
+  it.each([
+    [String.raw`\' OR 1=1 --`, String.raw`'\\'' OR 1=1 --'`],
+    [String.raw`\'); SELECT 1 --`, String.raw`'\\''); SELECT 1 --'`],
+    [String.raw`req\n\x27`, String.raw`'req\\n\\x27'`],
+    ["req_'quoted", "'req_''quoted'"],
+    ['req_123', "'req_123'"],
+  ])('preserves request ID %j as a single ClickHouse literal', (requestId, literal) => {
+    expect(sqlStringLiteral(requestId)).toBe(literal);
+    expect(
+      buildBodyAccessOwnershipSql({ requestId, analyticsKeyIds: [VALID_ANALYTICS_KEY_ID] }),
+    ).toContain(`AND JSONExtractString(SpanAttributes, 'gen_ai.request_id') = ${literal}\nLIMIT 1`);
+  });
+
   it('rate-limits body token minting per user, not per request id', () => {
     const userId = 'user_123';
 

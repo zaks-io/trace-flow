@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SignJWT } from 'jose';
 import {
   BODY_ACCESS_TOKEN_AUDIENCE,
@@ -22,6 +22,7 @@ function executionCtx() {
 async function signBodyToken(requestId = 'req_123') {
   return new SignJWT({
     sub: 'auth0|user-1',
+    userId: 'j57axc8sefsfp6k28nx6c481js806pwv',
     orgId: 'org_123',
     requestId,
     scope: BODY_ACCESS_TOKEN_SCOPE,
@@ -38,6 +39,7 @@ function env(storageGet = vi.fn()) {
   return {
     SENTRY_ENVIRONMENT: 'development',
     BODY_ACCESS_JWT_SECRET: SECRET,
+    CONVEX_SITE_URL: 'https://convex.test',
     BODY_ENCRYPTION_ROOT_KEY: ROOT_KEY,
     BODY_ENCRYPTION_KEY_ID: 'v1',
     STORAGE: { get: storageGet },
@@ -49,6 +51,15 @@ function env(storageGet = vi.fn()) {
     },
   };
 }
+
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ authorized: true })));
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 function storedObject(body: string, overrides: Partial<R2ObjectBody> = {}) {
   return {
@@ -112,6 +123,53 @@ describe('GET /bodies/:requestId', () => {
       responseBody: '{"output":"hello"}',
     });
     expect(storageGet).toHaveBeenCalledWith('bodies/req_123');
+    expect(fetch).toHaveBeenCalledWith(
+      'https://convex.test/worker/authorize-body-access',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: `Bearer ${SECRET}` }),
+        body: JSON.stringify({
+          sub: 'auth0|user-1',
+          userId: 'j57axc8sefsfp6k28nx6c481js806pwv',
+          orgId: 'org_123',
+        }),
+      }),
+    );
+    expect(JSON.stringify(vi.mocked(fetch).mock.calls)).not.toContain(token);
+  });
+
+  it('rejects an otherwise valid token immediately after membership is revoked', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json({ authorized: false }));
+    const storageGet = vi.fn();
+    const token = await signBodyToken();
+
+    const res = await apiApp.fetch(
+      new Request('https://raw.trace-flow.dev/bodies/req_123', {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+      env(storageGet),
+      executionCtx(),
+    );
+
+    expect(res.status).toBe(403);
+    expect(storageGet).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when live authorization is unavailable', async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new Error('control plane unavailable'));
+    const storageGet = vi.fn();
+    const token = await signBodyToken();
+
+    const res = await apiApp.fetch(
+      new Request('https://raw.trace-flow.dev/bodies/req_123', {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+      env(storageGet),
+      executionCtx(),
+    );
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get('Retry-After')).toBe('1');
+    expect(storageGet).not.toHaveBeenCalled();
   });
 
   it('decrypts encrypted stored bodies for a valid request-scoped token', async () => {

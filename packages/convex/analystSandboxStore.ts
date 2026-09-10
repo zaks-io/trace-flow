@@ -14,6 +14,9 @@ import {
   SANDBOX_INFERENCE_MAX_REQUESTS,
   SANDBOX_INFERENCE_MAX_OUTPUT_TOKENS_PER_REQUEST,
   SANDBOX_INFERENCE_MAX_RESERVED_OUTPUT_TOKENS,
+  SANDBOX_MAX_CHECKPOINTS,
+  SANDBOX_COMPLETION_LEASE_MS,
+  SANDBOX_MAX_COMPLETION_ATTEMPTS,
   sandboxRunDeadlineMs,
   shouldScheduleContinuation,
 } from './analystSandboxPolicy';
@@ -23,6 +26,31 @@ import type { Doc, Id } from './_generated/dataModel';
 const MAX_SANDBOX_EVENT_BATCH = 50;
 const MAX_SANDBOX_EVENT_MESSAGE_CHARS = 20_000;
 const MAX_SANDBOX_RESULT_CHARS = 120_000;
+
+async function canPersistSandboxBackup(
+  ctx: MutationCtx,
+  run: Doc<'analystSandboxRuns'>,
+): Promise<boolean> {
+  const creator = await ctx.db.get(run.creatorUserId);
+  const organization = await ctx.db.get(run.orgId);
+  const membership = await ctx.db
+    .query('organizationMembers')
+    .withIndex('by_user_id', (q) => q.eq('userId', run.creatorUserId))
+    .filter((q) => q.eq(q.field('orgId'), run.orgId))
+    .first();
+  return (
+    creator?.enabled === true &&
+    creator.orgId === run.orgId &&
+    organization !== null &&
+    organization.deletionStartedAt === undefined &&
+    organization.deletedAt === undefined &&
+    membership?.status === 'active'
+  );
+}
+
+function backupIds(...ids: (string | undefined)[]): string[] {
+  return [...new Set(ids.filter((id): id is string => id !== undefined))];
+}
 
 const pageContextReferenceValidator = v.object({
   surface: v.literal('agents'),
@@ -78,6 +106,30 @@ export const getActiveSandboxRunsForAction = internalQuery({
     return runs.filter(
       (run) => run.creatorUserId === args.userId && isActiveSandboxRunStatus(run.status),
     );
+  },
+});
+
+export const getOrganizationSandboxBackupIds = internalQuery({
+  args: { orgId: v.id('organizations') },
+  handler: async (ctx, args) => {
+    const threads = await ctx.db.query('analystThreads').collect();
+    return threads
+      .filter((thread) => thread.orgId === args.orgId && thread.sandboxBackup)
+      .map((thread) => thread.sandboxBackup!.id);
+  },
+});
+
+export const clearOrganizationSandboxBackups = internalMutation({
+  args: { orgId: v.id('organizations') },
+  handler: async (ctx, args) => {
+    const threads = await ctx.db.query('analystThreads').collect();
+    const matching = threads.filter(
+      (thread) => thread.orgId === args.orgId && thread.sandboxBackup,
+    );
+    for (const thread of matching) {
+      await ctx.db.patch(thread._id, { sandboxBackup: undefined });
+    }
+    return matching.length;
   },
 });
 
@@ -162,6 +214,7 @@ export const createSandboxRun = internalMutation({
       nextSeq: 0,
       inferenceRequestCount: 0,
       inferenceReservedOutputTokens: 0,
+      checkpointCount: 0,
     });
   },
 });
@@ -177,8 +230,18 @@ export const reserveSandboxInference = internalMutation({
     if (run?.runTokenHash !== args.tokenHash) {
       return { ok: false as const, reason: 'unauthorized' as const, status: null };
     }
-    const creator = await ctx.db.get(run.creatorUserId);
-    if (!creator?.enabled || !creator.orgId || creator.orgId !== run.orgId) {
+    const [creator, organization] = await Promise.all([
+      ctx.db.get(run.creatorUserId),
+      ctx.db.get(run.orgId),
+    ]);
+    if (
+      !creator?.enabled ||
+      !creator.orgId ||
+      creator.orgId !== run.orgId ||
+      organization === null ||
+      organization.deletionStartedAt !== undefined ||
+      organization.deletedAt !== undefined
+    ) {
       return { ok: false as const, reason: 'unauthorized' as const, status: null };
     }
     if (!ACTIVE_SANDBOX_RUN_STATUSES.has(run.status)) {
@@ -237,10 +300,14 @@ export const appendSandboxRunEvents = internalMutation({
     tokenHash: v.string(),
     events: v.array(sandboxRunEventInput),
     now: v.number(),
+    requireActive: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const run = await ctx.db.get(args.runId);
     if (run?.runTokenHash !== args.tokenHash) throw new Error('Pi run not found');
+    if (args.requireActive && !isActiveSandboxRunStatus(run.status)) {
+      throw new Error(`Pi run is ${run.status}`);
+    }
 
     let seq = run.nextSeq;
     const batch = args.events.slice(0, MAX_SANDBOX_EVENT_BATCH);
@@ -332,12 +399,41 @@ export const completeSandboxRunInternal = internalMutation({
     ),
     resultText: v.optional(v.string()),
     error: v.optional(v.string()),
+    backup: v.optional(
+      v.object({ id: v.string(), dir: v.string(), localBucket: v.optional(v.boolean()) }),
+    ),
+    sandboxId: v.optional(v.string()),
+    reservation: v.optional(v.number()),
+    internalStartFailure: v.optional(v.boolean()),
     now: v.number(),
   },
   handler: async (ctx, args) => {
     const run = await ctx.db.get(args.runId);
     if (run?.runTokenHash !== args.tokenHash) throw new Error('Pi run not found');
-    if (['completed', 'failed', 'timed_out', 'cancelled'].includes(run.status)) return run;
+    if (!isActiveSandboxRunStatus(run.status)) {
+      const thread = args.backup ? await ctx.db.get(run.analystThreadId) : null;
+      const backupAccepted = thread?.sandboxBackup?.id === args.backup?.id;
+      const backupIdsToDelete = backupIds(
+        ...(run.pendingBackupCleanupIds ?? []),
+        backupAccepted ? undefined : args.backup?.id,
+      );
+      return {
+        ok: run.status === args.status,
+        transitioned: false,
+        sandboxId: run.sandboxId,
+        status: run.status,
+        backupAccepted,
+        backupIdsToDelete,
+      };
+    }
+    if (
+      !args.internalStartFailure &&
+      (run.sandboxId !== args.sandboxId ||
+        run.completionReservation !== args.reservation ||
+        run.completionReservationStatus !== args.status)
+    ) {
+      throw new Error('Pi completion reservation not found');
+    }
 
     const resultText = truncateText(args.resultText, MAX_SANDBOX_RESULT_CHARS);
     const error = truncateText(args.error, MAX_SANDBOX_EVENT_MESSAGE_CHARS);
@@ -362,9 +458,261 @@ export const completeSandboxRunInternal = internalMutation({
       lastEventAt: args.now,
       updatedAt: args.now,
       nextSeq: seq + 1,
+      completionReservation: undefined,
+      completionReservationStatus: undefined,
+      completionReservedAt: undefined,
     } as const;
     await ctx.db.patch(args.runId, patch);
-    return { ...run, ...patch };
+    let backupAccepted = false;
+    let backupIdsToDelete: string[] = [];
+    if (args.backup && args.status === 'completed') {
+      const thread = await ctx.db.get(run.analystThreadId);
+      const existing = thread?.sandboxBackup;
+      if (!(await canPersistSandboxBackup(ctx, run))) {
+        if (existing) {
+          await ctx.db.patch(run.analystThreadId, { sandboxBackup: undefined });
+        }
+        backupIdsToDelete = backupIds(args.backup.id, existing?.id);
+      } else if (!existing || existing.updatedAt < args.now) {
+        await ctx.db.patch(run.analystThreadId, {
+          sandboxBackup: { ...args.backup, updatedAt: args.now },
+        });
+        backupAccepted = true;
+        backupIdsToDelete = backupIds(existing?.id === args.backup.id ? undefined : existing?.id);
+      } else if (existing.id === args.backup.id) {
+        backupAccepted = true;
+      } else {
+        backupIdsToDelete = [args.backup.id];
+      }
+    }
+    const pendingBackupCleanupIds = backupIds(
+      ...(run.pendingBackupCleanupIds ?? []),
+      ...backupIdsToDelete,
+    );
+    if (pendingBackupCleanupIds.length > 0) {
+      await ctx.db.patch(args.runId, { pendingBackupCleanupIds });
+    }
+    return {
+      ok: true,
+      transitioned: true,
+      sandboxId: run.sandboxId,
+      status: args.status,
+      backupAccepted,
+      backupIdsToDelete: pendingBackupCleanupIds,
+    };
+  },
+});
+
+export const acknowledgeSandboxBackupCleanup = internalMutation({
+  args: {
+    runId: v.id('analystSandboxRuns'),
+    tokenHash: v.string(),
+    backupIds: v.array(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (run?.runTokenHash !== args.tokenHash) throw new Error('Pi run not found');
+    const pending = run.pendingBackupCleanupIds ?? [];
+    if (
+      pending.length !== args.backupIds.length ||
+      pending.some((id) => !args.backupIds.includes(id))
+    ) {
+      throw new Error('Sandbox backup cleanup acknowledgement mismatch');
+    }
+    await ctx.db.patch(args.runId, { pendingBackupCleanupIds: undefined });
+    return null;
+  },
+});
+
+export const reserveSandboxCompletion = internalMutation({
+  args: {
+    runId: v.id('analystSandboxRuns'),
+    tokenHash: v.string(),
+    status: v.union(
+      v.literal('completed'),
+      v.literal('failed'),
+      v.literal('timed_out'),
+      v.literal('cancelled'),
+    ),
+    now: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (run?.runTokenHash !== args.tokenHash) {
+      return { ok: false as const, reason: 'unauthorized' as const };
+    }
+    if (!isActiveSandboxRunStatus(run.status)) {
+      return run.status === args.status
+        ? {
+            ok: true as const,
+            terminalReplay: true as const,
+            sandboxId: run.sandboxId,
+            allowSnapshot: false,
+            backupIdsToDelete: run.pendingBackupCleanupIds ?? [],
+          }
+        : { ok: false as const, reason: 'terminal_mismatch' as const };
+    }
+    if (
+      run.completionReservation !== undefined &&
+      run.completionReservedAt !== undefined &&
+      args.now - run.completionReservedAt < SANDBOX_COMPLETION_LEASE_MS
+    ) {
+      return { ok: false as const, reason: 'in_progress' as const };
+    }
+    const attemptCount = run.completionAttemptCount ?? 0;
+    if (attemptCount >= SANDBOX_MAX_COMPLETION_ATTEMPTS) {
+      return { ok: false as const, reason: 'quota_exceeded' as const };
+    }
+
+    const reservation = attemptCount + 1;
+    const canSnapshot = await canPersistSandboxBackup(ctx, run);
+
+    await ctx.db.patch(args.runId, {
+      completionAttemptCount: reservation,
+      completionReservation: reservation,
+      completionReservationStatus: args.status,
+      completionReservedAt: args.now,
+    });
+    return {
+      ok: true as const,
+      terminalReplay: false as const,
+      sandboxId: run.sandboxId,
+      orgId: run.orgId,
+      reservation,
+      allowSnapshot: args.status === 'completed' && canSnapshot,
+    };
+  },
+});
+
+export const reserveSandboxCheckpoint = internalMutation({
+  args: {
+    runId: v.id('analystSandboxRuns'),
+    tokenHash: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (run?.runTokenHash !== args.tokenHash) {
+      return { ok: false as const, reason: 'unauthorized' as const, status: null };
+    }
+    const cleanup =
+      run.pendingBackupCleanupIds && run.pendingBackupCleanupIds.length > 0
+        ? { backupIdsToDelete: run.pendingBackupCleanupIds }
+        : {};
+    if (!isActiveSandboxRunStatus(run.status)) {
+      return { ok: false as const, reason: 'inactive' as const, status: run.status, ...cleanup };
+    }
+    if (!(await canPersistSandboxBackup(ctx, run))) {
+      return { ok: false as const, reason: 'unauthorized' as const, status: null, ...cleanup };
+    }
+    const checkpointCount = run.checkpointCount ?? 0;
+    if (checkpointCount >= SANDBOX_MAX_CHECKPOINTS) {
+      return {
+        ok: false as const,
+        reason: 'quota_exceeded' as const,
+        status: run.status,
+        ...cleanup,
+      };
+    }
+    const reservation = checkpointCount + 1;
+    await ctx.db.patch(args.runId, {
+      checkpointCount: reservation,
+      checkpointReservation: reservation,
+    });
+    return {
+      ok: true as const,
+      sandboxId: run.sandboxId,
+      orgId: run.orgId,
+      reservation,
+      status: run.status,
+      ...cleanup,
+    };
+  },
+});
+
+export const commitSandboxCheckpoint = internalMutation({
+  args: {
+    runId: v.id('analystSandboxRuns'),
+    tokenHash: v.string(),
+    sandboxId: v.string(),
+    reservation: v.number(),
+    backup: v.object({ id: v.string(), dir: v.string(), localBucket: v.optional(v.boolean()) }),
+    now: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    const thread = run ? await ctx.db.get(run.analystThreadId) : null;
+    const existing = thread?.sandboxBackup;
+    if (
+      run?.runTokenHash === args.tokenHash &&
+      run.sandboxId === args.sandboxId &&
+      run.checkpointReservation === undefined &&
+      existing?.id === args.backup.id
+    ) {
+      return {
+        ok: true as const,
+        replayed: true as const,
+        backupIdsToDelete: run.pendingBackupCleanupIds ?? [],
+      };
+    }
+    if (
+      run?.runTokenHash !== args.tokenHash ||
+      run.sandboxId !== args.sandboxId ||
+      run.checkpointReservation !== args.reservation
+    ) {
+      throw new Error('Pi checkpoint reservation not found');
+    }
+    if (!isActiveSandboxRunStatus(run.status)) throw new Error(`Pi run is ${run.status}`);
+
+    if (!(await canPersistSandboxBackup(ctx, run))) {
+      if (existing) await ctx.db.patch(run.analystThreadId, { sandboxBackup: undefined });
+      const backupIdsToDelete = backupIds(
+        ...(run.pendingBackupCleanupIds ?? []),
+        args.backup.id,
+        existing?.id,
+      );
+      await ctx.db.patch(args.runId, {
+        checkpointReservation: undefined,
+        pendingBackupCleanupIds: backupIdsToDelete,
+      });
+      return {
+        ok: false as const,
+        reason: 'unauthorized' as const,
+        backupIdsToDelete,
+      };
+    }
+    if (!existing || existing.updatedAt < args.now) {
+      await ctx.db.patch(run.analystThreadId, {
+        sandboxBackup: { ...args.backup, updatedAt: args.now },
+      });
+      const backupIdsToDelete = backupIds(
+        ...(run.pendingBackupCleanupIds ?? []),
+        existing?.id === args.backup.id ? undefined : existing?.id,
+      );
+      await ctx.db.patch(args.runId, {
+        checkpointReservation: undefined,
+        pendingBackupCleanupIds: backupIdsToDelete,
+      });
+      return {
+        ok: true as const,
+        replayed: false as const,
+        backupIdsToDelete,
+      };
+    }
+    const backupIdsToDelete = backupIds(
+      ...(run.pendingBackupCleanupIds ?? []),
+      existing.id === args.backup.id ? undefined : args.backup.id,
+    );
+    await ctx.db.patch(args.runId, {
+      checkpointReservation: undefined,
+      pendingBackupCleanupIds: backupIdsToDelete,
+    });
+    return {
+      ok: existing.id === args.backup.id,
+      replayed: existing.id === args.backup.id,
+      reason: existing.id === args.backup.id ? undefined : ('stale' as const),
+      backupIdsToDelete,
+    };
   },
 });
 

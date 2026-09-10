@@ -120,11 +120,19 @@ jobs:
       - name: Configure Convex query tracing
         run: |
           test -n "$SENTRY_DSN"
+          test -n "$PIPES_API_SHARED_SECRET"
+          test -n "$BODY_ACCESS_JWT_SECRET"
           bunx convex env set SENTRY_DSN "$SENTRY_DSN" --prod
           bunx convex env set SENTRY_ENVIRONMENT prod --prod
+          printf '%s' "$PIPES_API_SHARED_SECRET" |
+            bunx convex env set --prod PIPES_API_SHARED_SECRET
+          printf '%s' "$BODY_ACCESS_JWT_SECRET" |
+            bunx convex env set --prod BODY_ACCESS_JWT_SECRET
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
           SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
+          PIPES_API_SHARED_SECRET: ${{ secrets.PIPES_API_SHARED_SECRET }}
+          BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}
 
       - name: Deploy Convex
         id: deploy
@@ -283,10 +291,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Protect pending trace deliveries from body expiration
+      - name: Configure R2 retention
         run: |
           node --test scripts/ci/body-retention.test.mjs
-          bun scripts/setup-r2-lifecycle.ts trace-flow-storage-prod
+          bun scripts/setup-r2-lifecycle.ts \
+            trace-flow-storage-prod \
+            trace-flow-analyst-sandbox-backups-production
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -303,7 +313,7 @@ jobs:
   deploy-api:
     name: Deploy Read API Workers
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [ci]
+    needs: [ci, deploy-convex]
     environment: Production
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -325,8 +335,11 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/api
-          command: deploy --env production
+          command: deploy --env production --var CONVEX_SITE_URL:${{ needs.deploy-convex.outputs.convex_site_url }}
           packageManager: bun
+          secrets: BODY_ACCESS_JWT_SECRET
+        env:
+          BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}
 
       - name: Deploy Pipes API Worker
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
@@ -334,13 +347,14 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/pipes-api
-          command: deploy
-          environment: production
+          command: deploy --env production --var CONVEX_SITE_URL:${{ needs.deploy-convex.outputs.convex_site_url }}
           packageManager: bun
           secrets: |
             SENTRY_DSN
+            PIPES_API_SHARED_SECRET
         env:
           SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
+          PIPES_API_SHARED_SECRET: ${{ secrets.PIPES_API_SHARED_SECRET }}
 
   # MCP worker verifies access tokens via Convex JWKS, so Convex must deploy first.
   deploy-mcp:
@@ -522,10 +536,18 @@ jobs:
 
       - name: Configure Archive API authorization
         run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
           printf '%s' "$ARCHIVE_API_SHARED_SECRET" |
             bunx convex env set --prod ARCHIVE_API_SHARED_SECRET
+          printf '%s' "$CLOUDFLARE_API_TOKEN" |
+            bunx convex env set --prod CLOUDFLARE_API_TOKEN
+          bunx convex env set --prod CLOUDFLARE_ACCOUNT_ID "$CLOUDFLARE_ACCOUNT_ID"
+          bunx convex env set --prod ARCHIVE_API_WORKER_NAME trace-flow-archive-api
+          bunx convex env set --prod ARCHIVE_API_URL https://archive.trace-flow.dev
         env:
           ARCHIVE_API_SHARED_SECRET: ${{ secrets.ARCHIVE_API_SHARED_SECRET }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
 
       - name: Deploy Archive API Worker

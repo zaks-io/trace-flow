@@ -1,8 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { clearBodyAccessTokenCache } from '@/lib/bodies';
-import { clearTokenCache } from '@/lib/tinybird';
+import { clearAuthenticatedCaches } from '@/components/providers/query-cache';
 
 // Refresh token 60 seconds before expiry to prevent failed requests
 const TOKEN_REFRESH_BUFFER_MS = 60 * 1000;
@@ -99,8 +98,7 @@ export function useConvexAuthSession() {
             }
 
             if (!isMountedRef.current) return null;
-            clearBodyAccessTokenCache();
-            clearTokenCache();
+            clearAuthenticatedCaches();
             setIsAuthenticated(false);
             if (!redirectingToLoginRef.current) {
               redirectingToLoginRef.current = true;

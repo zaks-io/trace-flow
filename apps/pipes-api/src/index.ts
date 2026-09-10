@@ -6,9 +6,12 @@ import { cors } from 'hono/cors';
 import { axiomConfigFromEnv, createWorkerLogger, type Logger } from '@trace-flow/logging';
 import { applySecurityHeaders } from '@trace-flow/utils';
 import { buildCacheKey, computeTTL, hashString } from './cache';
+import { authorizePipesQuery } from './authorization';
 
 interface Env {
   TINYBIRD_API_URL: string;
+  CONVEX_SITE_URL: string;
+  PIPES_API_SHARED_SECRET: string;
   PIPES_LIMITER: RateLimit;
   AXIOM_TOKEN?: string;
   AXIOM_DATASET?: string;
@@ -114,9 +117,22 @@ pipesApp.get('/v0/pipes/*', async (c) => {
     return c.json({ error: 'Too many requests' }, 429, { 'Retry-After': '60' });
   }
 
-  const ttl = computeTTL(pipe, url.searchParams);
+  const authorization = await authorizePipesQuery(c.env, token, pipe);
+  if (authorization.kind === 'denied') {
+    return c.json({ error: 'Tinybird authorization expired or revoked' }, 403);
+  }
+  if (authorization.kind === 'unavailable') {
+    logger.error('pipes_api.authorization_unavailable');
+    return c.json({ error: 'Authorization unavailable' }, 503, { 'Retry-After': '1' });
+  }
+  const remainingTtl = authorization.expiresAt - Math.ceil(Date.now() / 1000);
+  if (remainingTtl <= 0) {
+    return c.json({ error: 'Tinybird authorization expired or revoked' }, 403);
+  }
+
+  const ttl = Math.min(computeTTL(pipe, url.searchParams), remainingTtl);
   if (ttl === 0) {
-    const tbResponse = await fetchFromTinybird(c.env.TINYBIRD_API_URL, url, token);
+    const tbResponse = await fetchFromTinybird(c.env.TINYBIRD_API_URL, url, authorization.token);
     if (!tbResponse.ok) {
       return handleUpstreamError(c, logger, tbResponse, pipe);
     }
@@ -129,12 +145,13 @@ pipesApp.get('/v0/pipes/*', async (c) => {
   const cached = await cache.match(cacheRequest);
   if (cached) {
     const response = new Response(cached.body, cached);
-    response.headers.delete('Cache-Control');
+    response.headers.set('Cache-Control', 'private, no-store');
+    response.headers.set('Vary', 'Authorization');
     response.headers.set('X-Cache', 'HIT');
     return response;
   }
 
-  const tbResponse = await fetchFromTinybird(c.env.TINYBIRD_API_URL, url, token);
+  const tbResponse = await fetchFromTinybird(c.env.TINYBIRD_API_URL, url, authorization.token);
   if (!tbResponse.ok) {
     return handleUpstreamError(c, logger, tbResponse, pipe);
   }
@@ -144,7 +161,7 @@ pipesApp.get('/v0/pipes/*', async (c) => {
   // with `s-maxage` instead; per-token isolation comes from the cache key.
   c.executionCtx.waitUntil(cache.put(cacheRequest, cacheableCopy(body, ttl)));
 
-  return pipeResponse(body, 'MISS', ttl);
+  return pipeResponse(body, 'MISS');
 });
 
 pipesApp.notFound((c) => c.json({ error: 'Not found' }, 404));
@@ -155,15 +172,13 @@ function parsePipeName(pathname: string): string | null {
   return VALID_PIPE_NAME.test(pipe) ? pipe : null;
 }
 
-function pipeResponse(body: string, cacheState: string, ttl?: number): Response {
+function pipeResponse(body: string, cacheState: string): Response {
   const headers = new Headers({
     'Content-Type': 'application/json',
     'X-Cache': cacheState,
+    'Cache-Control': 'private, no-store',
+    Vary: 'Authorization',
   });
-  if (ttl !== undefined) {
-    headers.set('Cache-Control', `private, max-age=${ttl}`);
-    headers.set('Vary', 'Authorization');
-  }
   return new Response(body, { status: 200, headers });
 }
 

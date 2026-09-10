@@ -24,7 +24,7 @@ interface CostAlertRuleDialogProps {
   editingAlertId: Id<'costAlerts'> | null;
   alertForm: AlertFormData;
   setAlertForm: (form: AlertFormData) => void;
-  apiKeys: Doc<'apiKeys'>[];
+  apiKeys: Array<{ _id: Id<'apiKeys'>; name?: string; identifier: string }>;
   channels: Doc<'costAlertChannels'>[];
   error: string | null;
   submitting: boolean;
@@ -336,7 +336,7 @@ export function CostAlertRuleDialog({
                             })
                           }
                         />
-                        <span>{apiKey.name ?? apiKey.key}</span>
+                        <span>{apiKey.name ?? apiKey.identifier}</span>
                       </label>
                     );
                   })}

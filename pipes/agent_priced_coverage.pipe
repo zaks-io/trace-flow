@@ -23,6 +23,7 @@ SQL >
     FROM agent_usage_hourly
     WHERE OrgId = {{ String(org_id, '') }}
         AND BucketStart >= start_dt
+        AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
         AND BucketStart < end_dt
         {% if defined(source) %}
         AND source = {{ String(source) }}

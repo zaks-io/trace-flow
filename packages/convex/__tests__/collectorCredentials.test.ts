@@ -31,6 +31,11 @@ function makeCtx() {
     withIndex: vi.fn().mockReturnThis(),
     first: vi.fn().mockResolvedValue(user),
   };
+  const membershipQuery = {
+    withIndex: vi.fn().mockReturnThis(),
+    filter: vi.fn().mockReturnThis(),
+    first: vi.fn().mockResolvedValue({ userId: user._id, orgId: user.orgId, status: 'active' }),
+  };
   const insert = vi.fn().mockResolvedValue('collector_credential_1');
   const runAfter = vi.fn().mockResolvedValue('scheduled');
 
@@ -42,7 +47,10 @@ function makeCtx() {
         }),
       },
       db: {
-        query: vi.fn().mockReturnValue(usersQuery),
+        query: vi.fn((table: string) =>
+          table === 'organizationMembers' ? membershipQuery : usersQuery,
+        ),
+        get: vi.fn().mockResolvedValue({ _id: user.orgId, name: 'Org' }),
         insert,
       },
       scheduler: { runAfter },
@@ -165,13 +173,22 @@ describe('collectorCredentials.listActiveForCurrentUser', () => {
       withIndex: vi.fn().mockReturnThis(),
       collect: vi.fn().mockResolvedValue(rows),
     };
-    const query = vi.fn((table: string) => (table === 'users' ? userQuery : credentialQuery));
+    const membershipQuery = {
+      withIndex: vi.fn().mockReturnThis(),
+      filter: vi.fn().mockReturnThis(),
+      first: vi.fn().mockResolvedValue({ userId: user._id, orgId: user.orgId, status: 'active' }),
+    };
+    const query = vi.fn((table: string) => {
+      if (table === 'users') return userQuery;
+      if (table === 'organizationMembers') return membershipQuery;
+      return credentialQuery;
+    });
     const result = await listActiveForCurrentUserHandler(
       {
         auth: {
           getUserIdentity: vi.fn().mockResolvedValue({ tokenIdentifier: user.tokenIdentifier }),
         },
-        db: { query },
+        db: { query, get: vi.fn().mockResolvedValue({ _id: user.orgId, name: 'Org' }) },
       },
       {},
     );

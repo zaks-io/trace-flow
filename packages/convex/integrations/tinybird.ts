@@ -12,6 +12,7 @@ import { RETENTION_DAYS } from '@trace-flow/types';
 import { analyticsKeyId } from '@trace-flow/utils';
 import { rateLimiter } from '../rateLimits';
 import { NORMALIZED_API_KEY_SQL, sanitizeAnalyticsKeyIds, sqlStringLiteral } from '../tinybirdSql';
+import { signPipesAccessGrant } from '../pipesAccessGrant';
 
 export { sanitizeAnalyticsKeyIds } from '../tinybirdSql';
 
@@ -36,6 +37,7 @@ interface TinybirdScope {
 }
 
 export const WEB_READ_TOKEN_TTL_SECONDS = 5 * 60;
+const PIPES_UPSTREAM_TOKEN_TTL_SECONDS = 60;
 
 export const WEB_TINYBIRD_PIPES = [
   'filter_options',
@@ -175,18 +177,18 @@ async function getUserRowSecurityParams(
   ctx: ActionCtx,
   user: Doc<'users'>,
 ): Promise<{ apiKeyString: string; retentionDays: number; orgId: string }> {
-  await rateLimiter.limit(ctx, 'generateTinybirdJwt', { key: user._id, throws: true });
+  if (!user.orgId) throw new Error('Active organization membership required');
 
   const apiKeyString = await getApiKeyString(ctx, user._id);
-  const subscription = user.orgId
-    ? await ctx.runQuery(internal.billing.subscriptions.getByOrgId, { orgId: user.orgId })
-    : null;
+  const subscription = await ctx.runQuery(internal.billing.subscriptions.getByOrgId, {
+    orgId: user.orgId,
+  });
   const tier = subscription?.tier ?? 'hobby';
 
   return {
     apiKeyString,
     retentionDays: RETENTION_DAYS[tier],
-    orgId: user.orgId ?? '',
+    orgId: user.orgId,
   };
 }
 
@@ -202,24 +204,18 @@ export const generateWebReadToken = action({
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
     const user = await requireEnabledActionUser(ctx);
+    await rateLimiter.limit(ctx, 'generateTinybirdJwt', { key: user._id, throws: true });
 
-    if (!adminToken) {
-      throw new Error('TINYBIRD_ADMIN_TOKEN environment variable is not set');
-    }
-
-    if (!workspaceId) {
-      throw new Error('TINYBIRD_WORKSPACE_ID environment variable is not set');
-    }
-
-    const scopes = withRowSecurityParams(
-      buildWebReadScopes(args.pipe),
-      await getUserRowSecurityParams(ctx, user),
+    buildWebReadScopes(args.pipe);
+    if (!user.orgId) throw new Error('Active organization membership required');
+    const secret = process.env.PIPES_API_SHARED_SECRET;
+    if (!secret) throw new Error('PIPES_API_SHARED_SECRET environment variable is not set');
+    const result = await signPipesAccessGrant(
+      { userId: user._id, orgId: user.orgId, pipe: args.pipe },
+      secret,
+      WEB_READ_TOKEN_TTL_SECONDS,
     );
-
-    return signTinybirdToken(scopes, {
-      ttlSeconds: WEB_READ_TOKEN_TTL_SECONDS,
-      name: `web_read_jwt_${Date.now()}`,
-    });
+    return { ...result, name: `web_read_grant_${Date.now()}` };
   },
 });
 
@@ -293,6 +289,34 @@ async function getApiKeyString(ctx: ActionCtx, userId: Id<'users'>): Promise<str
   const apiKeys = await ctx.runQuery(internal.apiKeys.listForUser, { userId });
   return joinAnalyticsKeyIds(apiKeys);
 }
+
+export const authorizePipesQuery = internalAction({
+  args: {
+    userId: v.id('users'),
+    orgId: v.id('organizations'),
+    pipe: v.string(),
+  },
+  returns: v.union(v.null(), v.object({ token: v.string(), expiresAt: v.number() })),
+  handler: async (ctx, args) => {
+    const [user, activeMembership] = await Promise.all([
+      ctx.runQuery(internal.auth.users.getUserById, { id: args.userId }),
+      ctx.runQuery(internal.auth.users.hasActiveOrganizationMembership, {
+        userId: args.userId,
+      }),
+    ]);
+    if (!user?.enabled || user.orgId !== args.orgId || !activeMembership) return null;
+
+    const scopes = withRowSecurityParams(
+      buildWebReadScopes(args.pipe),
+      await getUserRowSecurityParams(ctx, user),
+    );
+    const result = await signTinybirdToken(scopes, {
+      ttlSeconds: PIPES_UPSTREAM_TOKEN_TTL_SECONDS,
+      name: `pipes_api_jwt_${Date.now()}`,
+    });
+    return { token: result.token, expiresAt: result.expiresAt };
+  },
+});
 
 // Internal action for MCP. The backend resolves owned key ids to analytics ids.
 export const generateTokenInternal = internalAction({

@@ -112,6 +112,11 @@ describe('ensureOrgHasSubscription', () => {
     const schedulerRunAfter = vi.fn().mockResolvedValue('scheduler_id');
     const ctx = {
       db: {
+        get: vi.fn().mockResolvedValue({
+          _id: 'org_1',
+          name: 'Test organization',
+          ownerId: 'user_1',
+        }),
         insert: dbInsert,
         query: vi.fn().mockReturnValue({
           withIndex: vi.fn().mockReturnThis(),
@@ -146,6 +151,11 @@ describe('ensureOrgHasSubscription', () => {
     const schedulerRunAfter = vi.fn().mockResolvedValue('scheduler_id');
     const ctx = {
       db: {
+        get: vi.fn().mockResolvedValue({
+          _id: 'org_1',
+          name: 'Test organization',
+          ownerId: 'user_1',
+        }),
         insert: dbInsert,
         query: vi.fn().mockReturnValue({
           withIndex: vi.fn().mockReturnThis(),

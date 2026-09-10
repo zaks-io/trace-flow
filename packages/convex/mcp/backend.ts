@@ -35,6 +35,11 @@ export function createMcpBackend(ctx: ActionCtx, userId: Id<'users'>): McpBacken
 
   return {
     mintToken: async (scopes, apiKeyIds, retentionDays) => {
+      const activeMembership = await ctx.runQuery(
+        internal.auth.users.hasActiveOrganizationMembership,
+        { userId },
+      );
+      if (!activeMembership) throw new Error('Active organization membership required');
       const keys = await getKeys();
       const now = Date.now();
       const ids = new Set(apiKeyIds);
@@ -55,7 +60,12 @@ export function createMcpBackend(ctx: ActionCtx, userId: Id<'users'>): McpBacken
     resolveKeyIds: async (requestedIds) => resolveApiKeyIds(await unexpiredMeta(), requestedIds),
     getUserContext: async (): Promise<McpUserContext | null> => {
       const user = await ctx.runQuery(internal.auth.users.getUserById, { id: userId });
-      if (!user) return null;
+      if (
+        !user ||
+        !(await ctx.runQuery(internal.auth.users.hasActiveOrganizationMembership, { userId }))
+      ) {
+        return null;
+      }
       const subscription = user.orgId
         ? await ctx.runQuery(internal.billing.subscriptions.getByOrgId, { orgId: user.orgId })
         : null;

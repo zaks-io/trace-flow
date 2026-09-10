@@ -5,6 +5,7 @@ export const BODY_ACCESS_TOKEN_TTL_SECONDS = 60;
 
 export interface BodyAccessTokenClaims {
   sub: string;
+  userId: string;
   orgId: string;
   requestId: string;
   scope: typeof BODY_ACCESS_TOKEN_SCOPE;

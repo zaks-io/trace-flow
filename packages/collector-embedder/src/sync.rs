@@ -147,6 +147,24 @@ pub fn load_archive_run_config(
             return Err(err).context("load archive enrollment");
         }
     };
+    archive_run_config_from_enrollment(
+        enrollment_path,
+        spool_dir,
+        archive_url,
+        key_store,
+        enrollment,
+        cleanup_required,
+    )
+}
+
+fn archive_run_config_from_enrollment(
+    enrollment_path: PathBuf,
+    spool_dir: PathBuf,
+    archive_url: String,
+    key_store: Arc<dyn ArchiveKeyStore>,
+    enrollment: ArchiveEnrollmentRecord,
+    cleanup_required: bool,
+) -> Result<Option<ArchiveRunConfig>> {
     let policy = enrollment.policy().context("load archive enrollment")?;
     if cleanup_required {
         return Ok(Some(ArchiveRunConfig {
@@ -169,6 +187,42 @@ pub fn load_archive_run_config(
         policy,
         authorized_sources: enrollment.authorized_sources,
     }))
+}
+
+pub fn prepare_confirmed_archive(
+    paths: &Paths,
+    org_id: &str,
+    archive_url: String,
+    key_store: Arc<dyn ArchiveKeyStore>,
+    enrollment: ArchiveEnrollmentRecord,
+) -> (Option<ArchiveRunConfig>, Option<String>) {
+    let spool_dir = paths.archive_spool_dir(org_id);
+    let result = archive_run_config_from_enrollment(
+        paths.archive_enrollment_file(org_id),
+        spool_dir.clone(),
+        archive_url,
+        key_store,
+        enrollment,
+        cleanup_obligation_exists(&spool_dir),
+    );
+    match result {
+        Ok(config) => (config, None),
+        Err(err) => (None, Some(err.to_string())),
+    }
+}
+
+pub fn prepare_desktop_confirmed_archive(
+    paths: &Paths,
+    org_id: &str,
+    enrollment: ArchiveEnrollmentRecord,
+) -> (Option<ArchiveRunConfig>, Option<String>) {
+    prepare_confirmed_archive(
+        paths,
+        org_id,
+        crate::defaults::archive_url(),
+        Arc::new(OsKeyStore),
+        enrollment,
+    )
 }
 
 /// Desktop production path: OS keyring spool key, baked/overridden Archive URL.

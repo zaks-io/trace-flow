@@ -22,7 +22,11 @@ export const authorizeSandboxInference = action({
     }
 
     const creator = await getEnabledUserById(ctx, run.creatorUserId);
-    if (creator.orgId !== run.orgId) {
+    const hasActiveOrganizationMembership = await ctx.runQuery(
+      internal.auth.users.hasActiveOrganizationMembership,
+      { userId: run.creatorUserId },
+    );
+    if (creator.orgId !== run.orgId || !hasActiveOrganizationMembership) {
       return { ok: false as const, reason: 'unauthorized' as const, status: null, model: null };
     }
     await requireAnalystProEntitlement(ctx, run.orgId);

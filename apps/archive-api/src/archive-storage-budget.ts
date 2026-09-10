@@ -37,6 +37,15 @@ import {
   type ArchiveKeyRotationHealth,
 } from './archive-key-rotation-state';
 import { axiomConfigFromEnv, createWorkerLogger } from '@trace-flow/logging';
+import {
+  assertArchiveErasureStarted,
+  assertArchiveWritable,
+  beginArchiveErasureState,
+  clearArchiveBudgetState,
+  registerArchiveLedger,
+  registeredArchiveLedgers,
+  removeRegisteredArchiveLedgers,
+} from './archive-erasure-state';
 
 export {
   ARCHIVE_STORAGE_CAP_BYTES,
@@ -66,6 +75,7 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     objects: StorageBudgetObject[];
   }): Promise<StorageBudgetReservation> {
     return this.enqueueExclusive(async () => {
+      await assertArchiveWritable(this.ctx.storage);
       try {
         const result = await reserveBudgetStorage(this.ctx.storage, this.env, input);
         await this.scheduleAlarmIfNeeded();
@@ -87,6 +97,7 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     objects: StorageBudgetObject[];
   }): Promise<StorageBudgetSnapshot> {
     return this.enqueueExclusive(async () => {
+      await assertArchiveWritable(this.ctx.storage);
       const result = commitBudgetStorage(this.ctx.storage, input);
       await this.scheduleAlarmIfNeeded();
       return result;
@@ -98,6 +109,7 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     objects: StorageBudgetObject[];
   }): Promise<StorageBudgetSnapshot> {
     return this.enqueueExclusive(async () => {
+      await assertArchiveWritable(this.ctx.storage);
       const result = releaseBudgetStorage(this.ctx.storage, input);
       await this.scheduleAlarmIfNeeded();
       return result;
@@ -109,14 +121,18 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     acknowledgedAt: number;
   }): Promise<StorageBudgetSnapshot> {
     return this.enqueueExclusive(async () => {
+      await assertArchiveWritable(this.ctx.storage);
       const result = acknowledgeBudgetStorage(this.ctx.storage, input);
       await this.scheduleAlarmIfNeeded();
       return result;
     });
   }
 
-  getStorageBudget(input: { orgId: string }): StorageBudgetSnapshot {
-    return snapshot(this.ctx.storage, budgetState(this.ctx.storage, input.orgId));
+  getStorageBudget(input: { orgId: string }): Promise<StorageBudgetSnapshot> {
+    return this.enqueueExclusive(async () => {
+      await assertArchiveWritable(this.ctx.storage);
+      return snapshot(this.ctx.storage, budgetState(this.ctx.storage, input.orgId));
+    });
   }
 
   startKeyRotation(input: {
@@ -127,6 +143,7 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     activationId: string;
   }): Promise<ArchiveKeyRotationHealth> {
     return this.enqueueExclusive(async () => {
+      await assertArchiveWritable(this.ctx.storage);
       budgetState(this.ctx.storage, input.orgId);
       const state = startStoredRotation(this.ctx.storage, input);
       await this.scheduleAlarmIfNeeded();
@@ -139,7 +156,10 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     limit?: number;
     injectFailure?: ArchiveKeyRotationFailureInjection;
   }): Promise<ArchiveKeyRotationHealth> {
-    return this.enqueueExclusive(() => this.runKeyRotationAdvance(input));
+    return this.enqueueExclusive(async () => {
+      await assertArchiveWritable(this.ctx.storage);
+      return await this.runKeyRotationAdvance(input);
+    });
   }
 
   private async runKeyRotationAdvance(input: {
@@ -166,18 +186,25 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     }
   }
 
-  getKeyRotationHealth(input: { orgId: string }): ArchiveKeyRotationHealth {
-    budgetState(this.ctx.storage, input.orgId);
-    return rotationHealth(input.orgId, readRotationState(this.ctx.storage));
+  getKeyRotationHealth(input: { orgId: string }): Promise<ArchiveKeyRotationHealth> {
+    return this.enqueueExclusive(async () => {
+      await assertArchiveWritable(this.ctx.storage);
+      budgetState(this.ctx.storage, input.orgId);
+      return rotationHealth(input.orgId, readRotationState(this.ctx.storage));
+    });
   }
 
-  countKeyVersionReferences(input: { orgId: string; keyVersion: number }): number {
-    budgetState(this.ctx.storage, input.orgId);
-    return countKeyVersionReferences(this.ctx.storage, input.keyVersion);
+  countKeyVersionReferences(input: { orgId: string; keyVersion: number }): Promise<number> {
+    return this.enqueueExclusive(async () => {
+      await assertArchiveWritable(this.ctx.storage);
+      budgetState(this.ctx.storage, input.orgId);
+      return countKeyVersionReferences(this.ctx.storage, input.keyVersion);
+    });
   }
 
   startReconciliation(input: { orgId: string }): Promise<ReconciliationState> {
     return this.enqueueExclusive(async () => {
+      await assertArchiveWritable(this.ctx.storage);
       const result = startBudgetReconciliation(this.ctx.storage, input.orgId);
       await this.scheduleAlarmIfNeeded();
       return result;
@@ -189,6 +216,44 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     limit?: number;
   }): Promise<{ complete: boolean; generation: number; cursor?: string }> {
     return this.queueReconciliationPage(input, true);
+  }
+
+  registerLedger(input: { orgId: string; ledgerId: string }): Promise<void> {
+    return this.enqueueExclusive(async () => {
+      budgetState(this.ctx.storage, input.orgId);
+      await registerArchiveLedger(this.ctx.storage, input.orgId, input.ledgerId);
+    });
+  }
+
+  beginArchiveErasure(input: { orgId: string }): Promise<void> {
+    return this.enqueueExclusive(async () => {
+      budgetState(this.ctx.storage, input.orgId);
+      await beginArchiveErasureState(this.ctx.storage, input.orgId);
+      await this.ctx.storage.deleteAlarm();
+    });
+  }
+
+  listArchiveLedgers(input: {
+    orgId: string;
+    cursor?: string;
+    limit?: number;
+  }): Promise<{ ledgerIds: string[]; cursor?: string }> {
+    return this.enqueueExclusive(() =>
+      registeredArchiveLedgers(this.ctx.storage, input.orgId, input.cursor, input.limit),
+    );
+  }
+
+  removeArchiveLedgers(input: { orgId: string; ledgerIds: string[] }): Promise<void> {
+    return this.enqueueExclusive(() =>
+      removeRegisteredArchiveLedgers(this.ctx.storage, input.orgId, input.ledgerIds),
+    );
+  }
+
+  finishArchiveErasure(input: { orgId: string }): Promise<void> {
+    return this.enqueueExclusive(async () => {
+      await assertArchiveErasureStarted(this.ctx.storage, input.orgId);
+      await clearArchiveBudgetState(this.ctx.storage);
+    });
   }
 
   flushStatusOutbox(): Promise<boolean> {
@@ -233,6 +298,15 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
 
   async alarm(): Promise<void> {
     await this.enqueueExclusive(async () => {
+      try {
+        await assertArchiveWritable(this.ctx.storage);
+      } catch (error) {
+        if (error instanceof ArchiveContractError && error.errorClass === 'archive_deleting') {
+          await this.ctx.storage.deleteAlarm();
+          return;
+        }
+        throw error;
+      }
       await this.runFlushStatusOutbox();
       await this.runAlarmMaintenance();
       await this.scheduleAlarmIfNeeded();
@@ -334,7 +408,10 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     input: { orgId: string; limit?: number },
     forceStart: boolean,
   ): Promise<{ complete: boolean; generation: number; cursor?: string }> {
-    return this.enqueueExclusive(() => this.reconcilePage(input, forceStart));
+    return this.enqueueExclusive(async () => {
+      await assertArchiveWritable(this.ctx.storage);
+      return await this.reconcilePage(input, forceStart);
+    });
   }
 
   private async reconcilePage(

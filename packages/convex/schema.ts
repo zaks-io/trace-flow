@@ -81,6 +81,7 @@ export default defineSchema({
     orgId: v.optional(v.id('organizations')),
     name: v.optional(v.string()),
   })
+    .index('by_key', ['key'])
     .index('by_user_id', ['userId'])
     .index('by_org_id', ['orgId']),
 

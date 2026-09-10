@@ -11,7 +11,7 @@ import {
   BODY_ACCESS_TOKEN_SCOPE,
   BODY_ACCESS_TOKEN_TTL_SECONDS,
 } from '@trace-flow/types';
-import { extractSub, requireEnabledUser } from './auth/users';
+import { extractSub, getActiveOrganizationMembership, requireEnabledUser } from './auth/users';
 import { rateLimiter } from './rateLimits';
 import { analyticsKeyId } from '@trace-flow/utils';
 import { NORMALIZED_API_KEY_SQL, sanitizeAnalyticsKeyIds, sqlStringLiteral } from './tinybirdSql';
@@ -130,6 +130,28 @@ export const currentSubject = internalQuery({
   },
 });
 
+export const authorizeSubject = internalQuery({
+  args: {
+    sub: v.string(),
+    userId: v.id('users'),
+    orgId: v.id('organizations'),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (
+      !user ||
+      !user.enabled ||
+      user.orgId !== args.orgId ||
+      extractSub(user.tokenIdentifier) !== args.sub
+    ) {
+      return false;
+    }
+    const membership = await getActiveOrganizationMembership(ctx, user);
+    return membership?.orgId === args.orgId;
+  },
+});
+
 export const issueToken = action({
   args: { requestId: v.string() },
   returns: v.object({
@@ -150,6 +172,7 @@ export const issueToken = action({
     const expiresAt = Math.floor(Date.now() / 1000) + BODY_ACCESS_TOKEN_TTL_SECONDS;
     const token = await new SignJWT({
       sub: subject.sub,
+      userId: subject.userId,
       orgId: subject.orgId,
       requestId: args.requestId,
       scope: BODY_ACCESS_TOKEN_SCOPE,

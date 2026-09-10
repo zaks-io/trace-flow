@@ -7,6 +7,9 @@
  */
 
 export const SANDBOX_TIMEOUT_WATCHDOG_GRACE_MS = 30_000;
+export const SANDBOX_MAX_CHECKPOINTS = 8;
+export const SANDBOX_MAX_COMPLETION_ATTEMPTS = 3;
+export const SANDBOX_COMPLETION_LEASE_MS = 60_000;
 // Liveness watchdog: the runner heartbeats every ~10s, so no event for this long
 // while the run is active means the container died (deploy rollout, eviction, crash).
 export const SANDBOX_LIVENESS_STALE_MS = 30_000;

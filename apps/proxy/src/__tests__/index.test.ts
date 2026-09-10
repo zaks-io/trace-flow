@@ -7,45 +7,11 @@ import {
 } from '@trace-flow/types';
 import { isTraceDeliveryEnvelope } from '@trace-flow/utils';
 import { decryptStoredBodyPayload } from '@trace-flow/utils';
+import { authorizeApiKeyRequest, mockUpstream } from './api-key-authorization.test-support';
 
 const WAIT_UNTIL_DELAY = 100;
 const TEST_BODY_ENCRYPTION_ROOT_KEY = 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
 const waitForAsyncOps = () => new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
-
-interface UpstreamMatcher {
-  method: string;
-  origin: string;
-  pathname: string;
-}
-
-/**
- * Replaces the removed `fetchMock` from `cloudflare:test`. Spies on
- * `globalThis.fetch` and replies only to the matched upstream; any other
- * request throws, preserving `fetchMock.disableNetConnect()` semantics.
- *
- * A real upstream consumes the forwarded body, so the mock does too. This also
- * verifies that forwarding preserves the request bytes.
- */
-function mockUpstream(
-  matcher: UpstreamMatcher,
-  status: number,
-  body: BodyInit,
-  responseInit?: ResponseInit,
-): ReturnType<typeof vi.spyOn> {
-  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-    const req = new Request(input, init);
-    const url = new URL(req.url);
-    if (
-      req.method === matcher.method &&
-      url.origin === matcher.origin &&
-      url.pathname === matcher.pathname
-    ) {
-      await req.arrayBuffer();
-      return new Response(body, { status, ...responseInit });
-    }
-    throw new Error(`unexpected fetch: ${req.method} ${req.url}`);
-  });
-}
 
 async function decryptStoredBodiesObject(object: R2ObjectBody): Promise<StoredBodiesPayload> {
   return decryptStoredBodiesEnvelope(await object.text());
@@ -96,6 +62,8 @@ describe('Proxy Worker Integration', () => {
     // mockUpstream() which overrides this implementation.
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const req = new Request(input, init);
+      const authorization = await authorizeApiKeyRequest(req.clone());
+      if (authorization) return authorization;
       throw new Error(`unexpected fetch: ${req.method} ${req.url}`);
     });
   });
@@ -435,7 +403,12 @@ describe('Proxy Worker Integration', () => {
       const keysBefore = new Set(
         (await env.STORAGE.list({ prefix: 'trace-deliveries/' })).objects.map((o) => o.key),
       );
-      vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('upstream unavailable'));
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        const request = new Request(input, init);
+        const authorization = await authorizeApiKeyRequest(request.clone());
+        if (authorization) return authorization;
+        throw new Error('upstream unavailable');
+      });
 
       const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
@@ -503,6 +476,8 @@ describe('Proxy Worker Integration', () => {
 
       vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
         const req = new Request(input, init);
+        const authorization = await authorizeApiKeyRequest(req.clone());
+        if (authorization) return authorization;
         const url = new URL(req.url);
         if (
           req.method === 'POST' &&
@@ -1148,6 +1123,8 @@ describe('Proxy Worker Integration', () => {
 
       vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
         const req = new Request(input, init);
+        const authorization = await authorizeApiKeyRequest(req.clone());
+        if (authorization) return authorization;
         const url = new URL(req.url);
         if (
           req.method === 'POST' &&

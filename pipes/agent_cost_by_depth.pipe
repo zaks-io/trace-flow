@@ -56,6 +56,7 @@ SQL >
         AND agent_depth = 0
         AND is_sidechain = 0
         AND EventAt >= start_dt
+        AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
         AND EventAt < end_dt
         {% if defined(sources) %}
         AND source IN splitByChar(',', {{ String(sources) }})

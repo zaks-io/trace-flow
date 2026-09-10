@@ -12,6 +12,7 @@ import type { Id } from '../_generated/dataModel';
 import { RETENTION_DAYS } from '@trace-flow/types';
 import { fetchPipe as fetchPipeShared } from '../tinybirdTracing';
 import { sendCostAlertWebhookNotification } from './costAlertWebhookDelivery';
+import { isLiveOrganization } from '../auth/userHelpers';
 import { analyticsKeyId } from '@trace-flow/utils';
 
 const EMAIL_FROM = process.env.EMAIL_FROM ?? 'Trace Flow <noreply@updates.trace-flow.dev>';
@@ -697,6 +698,13 @@ async function deliverEvent(args: {
     },
   };
 
+  const currentOrg = await ctx.runQuery(internal.auth.organizations.getByIdInternal, {
+    id: orgId,
+  });
+  if (!isLiveOrganization(currentOrg)) {
+    throw new Error('Organization is not active');
+  }
+
   try {
     if (channel.config.type === 'email') {
       await sendEmailNotification(
@@ -749,12 +757,12 @@ export const evaluateOrg = internalAction({
     });
     const org = runtime.org;
 
-    if (!org) {
+    if (!isLiveOrganization(org)) {
       await ctx.runMutation(internal.costAlerts.syncMonitor, {
         orgId: args.orgId,
         delayMs: null,
         lastEvaluatedAt: Date.now(),
-        lastError: 'Organization not found',
+        lastError: org ? 'Organization is not active' : 'Organization not found',
       });
       return null;
     }
@@ -892,7 +900,7 @@ export const sendTestChannel = internalAction({
     const org = runtime.org;
     const channel = runtime.channels.find((entry) => entry._id === args.channelId);
 
-    if (!org || !channel) {
+    if (!isLiveOrganization(org) || !channel) {
       throw new Error('Channel not found');
     }
 

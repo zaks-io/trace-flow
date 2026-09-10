@@ -94,3 +94,15 @@
   expected_http_status: 200
   parameters: org_id=org_1c&start_time_ms=1735689600000&end_time_ms=1735776000000&retention_days=20000
   expected_result: ''
+
+- name: expired_hourly_visibility
+  description: both usage and tool rollups enforce the signed visibility floor
+  expected_http_status: 200
+  parameters: org_id=org_1c&start_time_ms=1779235200000&end_time_ms=1779408000000&retention_days=7
+  expected_result: ''
+
+- name: expired_daily_visibility
+  description: both usage and tool rollups enforce the signed visibility floor
+  expected_http_status: 200
+  parameters: org_id=org_1c&start_time_ms=1776211200000&end_time_ms=1779667200000&retention_days=7
+  expected_result: ''

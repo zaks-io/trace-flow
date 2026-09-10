@@ -103,7 +103,7 @@ Set secrets through the owning platform only. Do not commit them.
 | ----------------- | --------------------------------------------------------------------------------- |
 | `proxy`           | `USAGE_SYNC_SECRET`, `SENTRY_DSN`, `AXIOM_TOKEN`, `BODY_ENCRYPTION_ROOT_KEY`      |
 | `proxy-consumer`  | `TINYBIRD_TOKEN`, `SENTRY_DSN`, `AXIOM_TOKEN`                                     |
-| `pipes-api`       | `SENTRY_DSN`, `AXIOM_TOKEN`                                                       |
+| `pipes-api`       | `PIPES_API_SHARED_SECRET`, `SENTRY_DSN`, `AXIOM_TOKEN`                            |
 | `api`             | `SENTRY_DSN`, `AXIOM_TOKEN`, `BODY_ENCRYPTION_ROOT_KEY`, `BODY_ACCESS_JWT_SECRET` |
 | `web`             | Auth0, Sentry, and app URL values supplied during build/deploy                    |
 | `mcp`             | Convex JWKS/read-side runtime values for MCP access                               |

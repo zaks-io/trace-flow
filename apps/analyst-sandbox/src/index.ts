@@ -133,6 +133,8 @@ async function resolvePiModelCost(env: Env, model: string): Promise<PiModelCost>
 
 /** Days a /workspace snapshot survives in R2 before automatic GC (matches an idle conversation). */
 const BACKUP_TTL_SECONDS = 7 * 24 * 60 * 60;
+const MAX_BACKUP_ERASURE_KEYS = 100;
+const BACKUP_ERASURE_PAGE_SIZE = 1000;
 
 /**
  * Hard ceiling on a snapshot archive. Workspaces hold sampled JSON + parsed
@@ -181,9 +183,11 @@ function jsonResponse(value: unknown, init?: ResponseInit): Response {
 // here, instead of a string that silently resolves to a dead function at runtime.
 const receiveEventsRef = api.analystSandbox.receiveSandboxEvents;
 const completeRunRef = api.analystSandbox.completeSandboxRun;
+const authorizeCompletionRef = api.analystSandbox.authorizeSandboxCompletion;
+const acknowledgeBackupCleanupRef = api.analystSandbox.acknowledgeSandboxBackupCleanup;
 const checkpointRunRef = api.analystSandbox.checkpointSandboxRun;
+const authorizeCheckpointRef = api.analystSandbox.authorizeSandboxCheckpoint;
 const executeToolRef = api.analystSandbox.executeSandboxToolCall;
-const verifyRunRef = api.analystSandbox.verifySandboxRunToken;
 const authorizeInferenceRef = api.analystSandboxInference.authorizeSandboxInference;
 const SANDBOX_RPC_TIMEOUT_MS = 8_000;
 const SANDBOX_CLEANUP_TIMEOUT_MS = 5_000;
@@ -192,6 +196,18 @@ const SANDBOX_START_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 12_000, 16_00
 function getConvex(env: Env) {
   if (!env.CONVEX_URL) throw new Error('CONVEX_URL is not configured');
   return new ConvexHttpClient(env.CONVEX_URL);
+}
+
+async function retryConvexCommit<T>(commit: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await commit();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 function getAnalystSandbox(env: Env, sandboxId: string, options: { keepAlive?: boolean } = {}) {
@@ -220,7 +236,11 @@ interface WorkspaceBackup {
  * outbound network call — the Worker does the R2 put. Returns the handle, or
  * null if it fails (callers treat null as "no snapshot", never as fatal).
  */
-async function snapshotWorkspace(env: Env, sandboxId: string): Promise<WorkspaceBackup | null> {
+async function snapshotWorkspace(
+  env: Env,
+  orgId: string,
+  sandboxId: string,
+): Promise<WorkspaceBackup | null> {
   try {
     const sandbox = getAnalystSandbox(env, sandboxId);
 
@@ -241,7 +261,7 @@ async function snapshotWorkspace(env: Env, sandboxId: string): Promise<Workspace
       );
     }
 
-    const key = `snapshots/${sandboxId}/${crypto.randomUUID()}.sqfs`;
+    const key = `snapshots/${orgId}/${sandboxId}/${crypto.randomUUID()}.sqfs`;
     const archive = await sandbox.readFileStream(SNAPSHOT_ARCHIVE_PATH);
     await env.BACKUP_BUCKET.put(key, archive, {
       httpMetadata: { contentType: 'application/octet-stream' },
@@ -272,6 +292,12 @@ async function restoreWorkspace(
       console.error('restoreWorkspace failed: snapshot object missing', backup.id);
       return false;
     }
+    const expiresAt = Number(object.customMetadata?.expiresAt);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      await env.BACKUP_BUCKET.delete(backup.id);
+      console.error('restoreWorkspace failed: snapshot expired', backup.id);
+      return false;
+    }
 
     await sandbox.writeFile(SNAPSHOT_ARCHIVE_PATH, object.body);
     const restore = await sandbox.exec(
@@ -285,6 +311,54 @@ async function restoreWorkspace(
     console.error('restoreWorkspace failed', error);
     return false;
   }
+}
+
+async function deleteBackupObjects(env: Env, ids: string[]): Promise<void> {
+  const uniqueIds = [...new Set(ids)];
+  if (uniqueIds.length === 0) return;
+  await env.BACKUP_BUCKET.delete(uniqueIds);
+}
+
+async function handleBackupErasure(request: Request, env: Env): Promise<Response> {
+  if (!isAuthorized(request.headers.get('authorization'), env.ANALYST_SANDBOX_SHARED_SECRET)) {
+    return jsonResponse({ ok: false, error: 'Unauthorized' }, { status: 401 });
+  }
+
+  let parsed: unknown;
+  try {
+    const raw = await readBodyWithLimit(request.body, 64 * 1024);
+    parsed = JSON.parse(new TextDecoder().decode(raw));
+  } catch (error) {
+    const status = error instanceof BodySizeLimitError ? 413 : 400;
+    return jsonResponse({ ok: false, error: 'Invalid erasure payload' }, { status });
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return jsonResponse({ ok: false, error: 'Invalid erasure payload' }, { status: 400 });
+  }
+  const body = parsed as { orgId?: unknown; backupIds?: unknown };
+  const orgId =
+    typeof body.orgId === 'string' && /^[a-z0-9_-]+$/iu.test(body.orgId) ? body.orgId : undefined;
+  const backupIds = Array.isArray(body.backupIds) ? body.backupIds : [];
+  if (
+    (!orgId && backupIds.length === 0) ||
+    backupIds.length > MAX_BACKUP_ERASURE_KEYS ||
+    backupIds.some((id) => typeof id !== 'string' || !id.startsWith('snapshots/'))
+  ) {
+    return jsonResponse({ ok: false, error: 'Invalid erasure payload' }, { status: 400 });
+  }
+
+  await deleteBackupObjects(env, backupIds as string[]);
+  if (!orgId) return jsonResponse({ ok: true, erased: true });
+
+  const listed = await env.BACKUP_BUCKET.list({
+    prefix: `snapshots/${orgId}/`,
+    limit: BACKUP_ERASURE_PAGE_SIZE,
+  });
+  await deleteBackupObjects(
+    env,
+    listed.objects.map((object) => object.key),
+  );
+  return jsonResponse({ ok: true, erased: !listed.truncated });
 }
 
 function bearerToken(request: Request): string | null {
@@ -476,6 +550,9 @@ async function handleWorkerRequest(
   }
   if (url.pathname === '/pi-runs/checkpoint') {
     return handlePiRunCheckpoint(request, env);
+  }
+  if (url.pathname === '/internal/backups/erase') {
+    return handleBackupErasure(request, env);
   }
   if (url.pathname === '/traceflow-data/tool') {
     return handleTraceflowTool(request, env);
@@ -789,46 +866,110 @@ async function handlePiRunComplete(
 
   // Verify the run token BEFORE snapshotting, so an unauthenticated caller can't spin up a
   // Sandbox and write an R2 archive on the strength of a bare (unverified) bearer header.
-  const verified = (await getConvex(env).action(verifyRunRef, {
+  const authorized = (await getConvex(env).action(authorizeCompletionRef, {
     runId: body.runId as SandboxRunId,
     token,
-  })) as { ok?: boolean };
-  if (!verified.ok) return jsonResponse({ ok: false, error: 'Unauthorized' }, { status: 401 });
+    status,
+  })) as {
+    ok?: boolean;
+    reason?: string;
+    sandboxId?: string;
+    reservation?: number;
+    allowSnapshot?: boolean;
+    terminalReplay?: boolean;
+    orgId?: string;
+    backupIdsToDelete?: string[];
+  };
+  if (!authorized.ok || !authorized.sandboxId) {
+    const statusCode = authorized.reason === 'unauthorized' ? 401 : 409;
+    return jsonResponse({ ok: false, error: 'Completion not accepted' }, { status: statusCode });
+  }
+  if (authorized.terminalReplay) {
+    try {
+      await cleanUpCompletedBackups(
+        env,
+        body.runId as SandboxRunId,
+        token,
+        authorized.backupIdsToDelete,
+      );
+    } catch (error) {
+      console.error('analyst_sandbox.pi_run_backup_cleanup_failed', error);
+      return jsonResponse(
+        { ok: false, error: 'Failed to clean up sandbox backup' },
+        { status: 502 },
+      );
+    }
+    return jsonResponse({ ok: true });
+  }
+  const sandboxId = authorized.sandboxId;
 
   // Snapshot /workspace (data + Pi session transcript) to R2 BEFORE teardown, but
   // only for a clean completion — a failed/timed-out run must not clobber the last
   // good snapshot. The serializable handle is stored on the thread by Convex so the
   // next question can rehydrate and resume.
   let backup: { id: string; dir: string; localBucket?: boolean } | null = null;
-  if (body.sandboxId && status === 'completed') {
-    backup = await snapshotWorkspace(env, body.sandboxId);
+  if (authorized.allowSnapshot && status === 'completed') {
+    if (!authorized.orgId) {
+      return jsonResponse({ ok: false, error: 'Completion not accepted' }, { status: 409 });
+    }
+    backup = await snapshotWorkspace(env, authorized.orgId, sandboxId);
   }
 
+  let completed: { ok?: boolean; backupIdsToDelete?: string[] };
   try {
-    await getConvex(env).action(completeRunRef, {
-      runId: body.runId as SandboxRunId,
-      token,
-      status,
-      resultText: body.resultText,
-      error: body.error,
-      backup: backup ?? undefined,
-    });
+    completed = (await retryConvexCommit(() =>
+      getConvex(env).action(completeRunRef, {
+        runId: body.runId as SandboxRunId,
+        token,
+        status,
+        resultText: body.resultText,
+        error: body.error,
+        sandboxId,
+        reservation: authorized.reservation,
+        backup: backup ?? undefined,
+      }),
+    )) as { ok?: boolean; backupIdsToDelete?: string[] };
   } catch (error) {
+    if (backup) await deleteBackupObjects(env, [backup.id]);
     console.error('analyst_sandbox.pi_run_complete_failed', error);
     return jsonResponse({ ok: false, error: 'Failed to complete run' }, { status: 502 });
   }
-
-  if (body.sandboxId) {
-    const sandbox = getAnalystSandbox(env, body.sandboxId);
-    ctx.waitUntil(
-      sandbox
-        .setKeepAlive(false)
-        .catch(() => undefined)
-        .then(() => sandbox.destroy().catch(() => undefined)),
+  try {
+    await cleanUpCompletedBackups(
+      env,
+      body.runId as SandboxRunId,
+      token,
+      completed.backupIdsToDelete,
     );
+  } catch (error) {
+    console.error('analyst_sandbox.pi_run_backup_cleanup_failed', error);
+    return jsonResponse({ ok: false, error: 'Failed to clean up sandbox backup' }, { status: 502 });
+  }
+  if (!completed.ok) {
+    return jsonResponse({ ok: false, error: 'Completion not accepted' }, { status: 409 });
   }
 
+  const sandbox = getAnalystSandbox(env, sandboxId);
+  ctx.waitUntil(
+    sandbox
+      .setKeepAlive(false)
+      .catch(() => undefined)
+      .then(() => sandbox.destroy().catch(() => undefined)),
+  );
+
   return jsonResponse({ ok: true });
+}
+
+async function cleanUpCompletedBackups(
+  env: Env,
+  runId: SandboxRunId,
+  token: string,
+  backupIds: string[] | undefined,
+): Promise<void> {
+  const ids = backupIds ?? [];
+  if (ids.length === 0) return;
+  await deleteBackupObjects(env, ids);
+  await getConvex(env).action(acknowledgeBackupCleanupRef, { runId, token, backupIds: ids });
 }
 
 async function handlePiRunCheckpoint(request: Request, env: Env): Promise<Response> {
@@ -838,30 +979,76 @@ async function handlePiRunCheckpoint(request: Request, env: Env): Promise<Respon
     runId?: string;
     sandboxId?: string;
   } | null;
-  if (!body?.runId || !body.sandboxId) {
+  if (!body?.runId) {
     return jsonResponse({ ok: false, error: 'Invalid checkpoint payload' }, { status: 400 });
   }
 
   // Verify the run token before doing expensive snapshot work (unauthenticated Sandbox spin-up
   // and R2 writes would otherwise happen before checkpointRunRef rejects the token).
-  const verified = (await getConvex(env).action(verifyRunRef, {
+  const authorized = (await getConvex(env).action(authorizeCheckpointRef, {
     runId: body.runId as SandboxRunId,
     token,
-  })) as { ok?: boolean };
-  if (!verified.ok) return jsonResponse({ ok: false, error: 'Unauthorized' }, { status: 401 });
+  })) as {
+    ok?: boolean;
+    sandboxId?: string;
+    reservation?: number;
+    orgId?: string;
+    backupIdsToDelete?: string[];
+  };
+  try {
+    await cleanUpCompletedBackups(
+      env,
+      body.runId as SandboxRunId,
+      token,
+      authorized.backupIdsToDelete,
+    );
+  } catch (error) {
+    console.error('analyst_sandbox.pi_run_backup_cleanup_failed', error);
+    return jsonResponse({ ok: false, error: 'Failed to clean up sandbox backup' }, { status: 502 });
+  }
+  if (
+    !authorized.ok ||
+    !authorized.sandboxId ||
+    authorized.reservation === undefined ||
+    !authorized.orgId
+  ) {
+    return jsonResponse({ ok: false, error: 'Unauthorized' }, { status: 401 });
+  }
+  const sandboxId = authorized.sandboxId;
+  const reservation = authorized.reservation;
 
-  const backup = await snapshotWorkspace(env, body.sandboxId);
+  const backup = await snapshotWorkspace(env, authorized.orgId, sandboxId);
   if (!backup) return jsonResponse({ ok: false, error: 'Snapshot failed' }, { status: 500 });
 
+  let committed: { ok?: boolean; backupIdsToDelete?: string[] };
   try {
-    await getConvex(env).action(checkpointRunRef, {
-      runId: body.runId as SandboxRunId,
-      token,
-      backup,
-    });
+    committed = (await retryConvexCommit(() =>
+      getConvex(env).action(checkpointRunRef, {
+        runId: body.runId as SandboxRunId,
+        token,
+        sandboxId,
+        reservation,
+        backup,
+      }),
+    )) as { ok?: boolean; backupIdsToDelete?: string[] };
   } catch (error) {
+    await deleteBackupObjects(env, [backup.id]);
     console.error('analyst_sandbox.pi_run_checkpoint_failed', error);
     return jsonResponse({ ok: false, error: 'Failed to checkpoint run' }, { status: 502 });
+  }
+  try {
+    await cleanUpCompletedBackups(
+      env,
+      body.runId as SandboxRunId,
+      token,
+      committed.backupIdsToDelete,
+    );
+  } catch (error) {
+    console.error('analyst_sandbox.pi_run_backup_cleanup_failed', error);
+    return jsonResponse({ ok: false, error: 'Failed to clean up sandbox backup' }, { status: 502 });
+  }
+  if (!committed.ok) {
+    return jsonResponse({ ok: false, error: 'Checkpoint not accepted' }, { status: 409 });
   }
 
   return jsonResponse({ ok: true });

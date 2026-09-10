@@ -6,6 +6,36 @@ import type { ProxyEnv } from '../context';
 
 const credential = 'credential-isolation-test';
 
+async function authorizeApiKeyRequest(request: Request): Promise<Response | null> {
+  const url = new URL(request.url);
+  if (url.origin !== 'https://convex.test' || url.pathname !== '/worker/authorize-api-key') {
+    return null;
+  }
+  const body: unknown = await request.json();
+  if (!body || typeof body !== 'object' || !('key' in body) || typeof body.key !== 'string') {
+    return Response.json({ authorized: false, reason: 'invalid' });
+  }
+  const raw = await env.API_KEYS.get(body.key);
+  if (!raw) return Response.json({ authorized: false, reason: 'invalid' });
+  const keyData: unknown = JSON.parse(raw);
+  if (
+    !keyData ||
+    typeof keyData !== 'object' ||
+    !('expiresAt' in keyData) ||
+    typeof keyData.expiresAt !== 'number' ||
+    keyData.expiresAt <= Date.now()
+  ) {
+    return Response.json({ authorized: false, reason: 'expired' });
+  }
+  return Response.json({
+    authorized: true,
+    expiresAt: keyData.expiresAt,
+    createdAt:
+      'createdAt' in keyData && typeof keyData.createdAt === 'number' ? keyData.createdAt : 0,
+    orgId: 'orgId' in keyData && typeof keyData.orgId === 'string' ? keyData.orgId : 'org-test',
+  });
+}
+
 describe('analytics credential boundary', () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -18,6 +48,13 @@ describe('analytics credential boundary', () => {
         expiresAt: Date.now() + 86400000,
       }),
     );
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const request = new Request(input, init);
+      return (
+        (await authorizeApiKeyRequest(request)) ??
+        new Response('unexpected upstream request', { status: 500 })
+      );
+    });
     const context = createExecutionContext();
     const bindings = { ...env, TRACE_DELIVERY_NAMESPACE: 'dev' } as unknown as ProxyEnv;
     const response = await worker.fetch(
@@ -59,6 +96,8 @@ describe('analytics credential boundary', () => {
       );
       vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
         const request = new Request(input, init);
+        const authorization = await authorizeApiKeyRequest(request);
+        if (authorization) return authorization;
         expect(request.headers.has('X-Trace-Flow-Api-Key')).toBe(false);
         await request.arrayBuffer();
         return new Response(
