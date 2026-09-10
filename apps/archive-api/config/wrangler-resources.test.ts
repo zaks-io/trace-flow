@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import { unstable_readConfig } from 'wrangler';
+import archiveConfig from '../wrangler.jsonc';
 
 const configPath = fileURLToPath(new URL('../wrangler.jsonc', import.meta.url));
 const agentIngestConfigPath = fileURLToPath(
@@ -33,6 +34,10 @@ const expected = {
 } as const;
 
 const requiredSecrets = ['ARCHIVE_API_SHARED_SECRET', 'ARCHIVE_KEY_WRAPPING_SECRET'];
+const expectedObservability = {
+  logs: { enabled: true, destinations: ['axiom-logs'], head_sampling_rate: 1 },
+  traces: { enabled: true, destinations: ['axiom-traces'], head_sampling_rate: 1 },
+};
 const durableObjectBindings = [
   ['ARCHIVE_SESSION_LEDGER', 'ArchiveSessionLedger'],
   ['STORAGE_BUDGET', 'StorageBudget'],
@@ -71,10 +76,7 @@ function assertArchiveEnvironment(actual: WranglerConfig, environment: Environme
     ARCHIVE_KEY_VERSION: '1',
   });
   assert.deepEqual(actual.secrets?.required, requiredSecrets);
-  assert.deepEqual(actual.observability, {
-    logs: { enabled: true, destinations: ['axiom-logs'], head_sampling_rate: 1 },
-    traces: { enabled: true, destinations: ['axiom-traces'], head_sampling_rate: 1 },
-  });
+  assert.deepEqual(actual.observability, expectedObservability);
 
   const credentials = oneBinding(actual.kv_namespaces, 'COLLECTOR_CREDS', environment);
   assert.equal(credentials.id, contract.credentialNamespace);
@@ -105,6 +107,11 @@ function assertMigrations(config: WranglerConfig): void {
 }
 
 describe('Archive API Wrangler resources', () => {
+  test('declares observability on each named Worker environment', () => {
+    assert.deepEqual(archiveConfig.env.preview.observability, expectedObservability);
+    assert.deepEqual(archiveConfig.env.production.observability, expectedObservability);
+  });
+
   test('declares the exact development, preview, and production contracts', () => {
     for (const environment of environments) {
       const config = readEnvironment(environment);
