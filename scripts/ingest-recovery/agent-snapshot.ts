@@ -51,16 +51,34 @@ async function populateSnapshot(
       snapshot.preserve(category, canonical, row, recovery.org);
     }
   }
+  const replacements = new Map<
+    number,
+    { category: string; factId: string; oldHash: string; newHash: string }
+  >();
   let after: unknown;
   do {
     const page = await recovery.call('listRebuildFacts', { operationId, after, limit: 100 });
     for (const fact of page.facts) {
-      if (fact.missingPayload || typeof fact.payload !== 'string') {
-        throw new Error(`Missing ledger payload; replay the collector before rebuilding`);
+      const payload = fact.payload ?? fact.replacement?.payload;
+      const payloadHash = fact.payload === null ? fact.replacement?.contentHash : fact.contentHash;
+      if (typeof payload !== 'string' || typeof payloadHash !== 'string')
+        throw new Error(
+          'Missing ledger payload and repair replacement; replay the collector before rebuilding',
+        );
+      if (stableHash(JSON.parse(payload)) !== payloadHash)
+        throw new Error('Ledger or repair replacement payload hash mismatch');
+      if (fact.payload === null) {
+        const recoveryId = fact.replacement?.recoveryId;
+        if (!Number.isSafeInteger(recoveryId) || recoveryId <= 0 || replacements.has(recoveryId))
+          throw new Error('Invalid repair replacement receipt');
+        replacements.set(recoveryId, {
+          category: fact.category,
+          factId: fact.factId,
+          oldHash: fact.contentHash,
+          newHash: payloadHash,
+        });
       }
-      if (stableHash(JSON.parse(fact.payload)) !== fact.contentHash)
-        throw new Error('Ledger payload hash mismatch');
-      snapshot.overlay(fact.category, fact.factId, fact.payload, fact.contentHash, recovery.org);
+      snapshot.overlay(fact.category, fact.factId, payload, fact.contentHash, recovery.org);
       if (fact.pending.some((row: any) => row.table === 'legacy')) {
         const legacy = LEGACY_DATASOURCES[fact.category as keyof typeof LEGACY_DATASOURCES];
         if (!legacy || !graph.facts.includes(legacy))
@@ -86,6 +104,17 @@ async function populateSnapshot(
         throw new Error('Repair base does not match the ledger');
       if (stableHash(JSON.parse(record.payload)) !== outcome.newHash)
         throw new Error('Repair payload hash mismatch');
+      const replacement = replacements.get(record.id);
+      if (replacement) {
+        if (
+          replacement.category !== outcome.category ||
+          replacement.factId !== outcome.factId ||
+          replacement.oldHash !== outcome.oldHash ||
+          replacement.newHash !== outcome.newHash
+        )
+          throw new Error('Repair replacement receipt does not match the ledger candidate');
+        replacements.delete(record.id);
+      }
       // Recovery IDs are durable arrival order. Superseded versions remain in the backup.
       snapshot.overlay(
         outcome.category,
@@ -97,6 +126,8 @@ async function populateSnapshot(
     }
     afterId = page.nextAfterId;
   } while (afterId);
+  if (replacements.size)
+    throw new Error('Repair replacement receipt is absent from the recovery snapshot');
   snapshot.meta('fingerprint', snapshot.fingerprint());
   snapshot.meta('complete', true);
 }

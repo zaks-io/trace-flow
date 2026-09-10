@@ -48,8 +48,17 @@ const ledger = [
   category,
   factId: identity(category as any, row, org),
   contentHash: stableHash(row),
-  payload: JSON.stringify(row),
-  missingPayload: false,
+  payload: row === old ? null : JSON.stringify(row),
+  missingPayload: row === old,
+  ...(row === old
+    ? {
+        replacement: {
+          contentHash: stableHash(corrected),
+          payload: JSON.stringify(corrected),
+          recoveryId: 1,
+        },
+      }
+    : {}),
   pending: [],
 }));
 const repair = {

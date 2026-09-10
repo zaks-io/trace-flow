@@ -147,6 +147,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
             if (existing) {
               const changedData = JSON.stringify(row);
               if (
+                !this.flushInProgress &&
                 this.pendingFacts.coalesce(
                   category,
                   factId,

@@ -345,6 +345,58 @@ describe('AgentFactBatcher logic', () => {
     expect(recovery.records).toHaveLength(0);
   });
 
+  it('preserves corrections for later rows held by a bisected flush', async () => {
+    vi.useRealTimers();
+    const rows = ['first', 'malformed', 'later', 'last'].map((message_pk) => ({
+      ...sparseBatch.rows.messages[0],
+      message_pk,
+      output_tokens: 1,
+    }));
+    let startInsert!: () => void;
+    let releaseInsert!: () => void;
+    const started = new Promise<void>((resolve) => {
+      startInsert = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseInsert = resolve;
+    });
+    vi.mocked(insertRows).mockImplementationOnce(async () => {
+      startInsert();
+      await release;
+    });
+    const corrected = { ...rows[2]!, output_tokens: 42 };
+    const changed = await runInDurableObject(
+      batcher,
+      async (instance: AgentFactBatcherInstance, state) => {
+        await instance.addFacts({ rows: { ...emptyBatchRows, messages: rows } });
+        await state.storage.deleteAlarm();
+        state.storage.sql.exec(
+          "UPDATE pending_facts SET data = '{' WHERE id = (SELECT id FROM pending_facts ORDER BY id LIMIT 1 OFFSET 1)",
+        );
+        const flushing = instance.alarm();
+        await started;
+        try {
+          return await instance.addFacts({ rows: { ...emptyBatchRows, messages: [corrected] } });
+        } finally {
+          releaseInsert();
+          await flushing;
+          await state.storage.deleteAlarm();
+        }
+      },
+    );
+    expect(changed).toMatchObject({ repairRows: 1, acceptedRows: 0 });
+    const recovery = await runInDurableObject(batcher, (instance: AgentFactBatcherInstance) =>
+      instance.listRecovery(),
+    );
+    expect(
+      recovery.records
+        .filter((record) => record.kind === 'repair')
+        .map((record) => JSON.parse(record.payload)),
+    ).toEqual([corrected]);
+    const inserted = vi.mocked(insertRows).mock.calls.flatMap((call) => call[0]);
+    expect(inserted).toContainEqual(rows[2]);
+  });
+
   it('loads at most 500 pending candidates per flush pass', async () => {
     await runInDurableObject(batcher, async (instance: AgentFactBatcherInstance, state) => {
       state.storage.sql.exec(`

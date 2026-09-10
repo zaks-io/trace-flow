@@ -2,6 +2,7 @@ import { requireRecoveryReason, splitUtf8Chunks } from '@trace-flow/tinybird-cli
 import type { TinybirdRecoveryStore } from '@trace-flow/tinybird-client';
 import type { DurableObjectStorage } from '@cloudflare/workers-types';
 import { CATEGORIES, ROW_IDENTITY_FIELDS, rowIdentity, stableHash, type Category } from './facts';
+import { backfillPendingFactIdentities } from './fact-pending-migration';
 import type {
   BeginFactRebuildInput,
   BeginFactRebuildResult,
@@ -76,11 +77,20 @@ interface StoredLedgerFact {
   data: string;
 }
 
+type StoredLedgerFactMetadata = Pick<StoredLedgerFact, 'category' | 'fact_id' | 'content_hash'>;
+
 interface StoredPendingFact {
   [key: string]: string | number | null;
   id: number;
   content_hash: string | null;
   data: string;
+}
+
+interface StoredRepairFallback {
+  [key: string]: string | number | null;
+  old_hash: string;
+  new_hash: string;
+  data: string | null;
 }
 
 type PreparedConfirmation = FactRebuildConfirmation & { rowData: string; rowSha256: string };
@@ -104,6 +114,10 @@ export class AgentFactMaintenance {
     this.storage.sql.exec(
       `CREATE INDEX IF NOT EXISTS idx_fact_ledger_missing_payload
        ON fact_ledger(category, fact_id) WHERE data IS NULL OR data = ''`,
+    );
+    this.storage.sql.exec(
+      `CREATE INDEX IF NOT EXISTS idx_fact_repairs_rebuild_fallback
+       ON fact_repairs(category, fact_id, old_hash, id DESC)`,
     );
     this.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS fact_rebuild_operations (
@@ -208,23 +222,14 @@ export class AgentFactMaintenance {
     }
     const active = this.activeOperation();
     if (active) throw new Error(`fact rebuild ${active.operation_id} is already active`);
-    const missingPayload = [
-      ...this.storage.sql.exec<{ found: number }>(
-        `SELECT 1 AS found FROM fact_ledger AS ledger
-         WHERE (ledger.data IS NULL OR ledger.data = '')
-           AND NOT EXISTS (
-             SELECT 1 FROM fact_ledger_payload_chunks AS chunks
-             WHERE chunks.category = ledger.category AND chunks.fact_id = ledger.fact_id
-           )
-         LIMIT 1`,
-      ),
-    ][0];
-    if (missingPayload) {
-      throw new Error(
-        'fact rebuild ledger payload is missing; replay the collector before beginning maintenance',
-      );
+    for (const row of this.missingLedgerPayloads()) {
+      if (!this.replacementFor(row, orgId)) {
+        throw new Error(
+          'fact rebuild ledger payload is missing; replay the collector before beginning maintenance',
+        );
+      }
     }
-    this.backfillPendingIdentities();
+    backfillPendingFactIdentities(this.storage, orgId);
     const expectedFactCount = this.storage.sql
       .exec<{ count: number }>('SELECT COUNT(*) AS count FROM fact_ledger')
       .one().count;
@@ -257,12 +262,12 @@ export class AgentFactMaintenance {
   }
 
   list(input: ListRebuildFactsInput): ListRebuildFactsResult {
-    this.requireActive(input.operationId, input.executorId);
+    const operation = this.requireActive(input.operationId, input.executorId);
     const limit = validateLimit(input.limit);
     const after = validateCursor(input.after);
     const rows = [
-      ...this.storage.sql.exec<StoredLedgerFact>(
-        `SELECT category, fact_id, content_hash, COALESCE(data, '') AS data
+      ...this.storage.sql.exec<StoredLedgerFactMetadata>(
+        `SELECT category, fact_id, content_hash
          FROM fact_ledger
          WHERE (category, fact_id) > (?, ?)
          ORDER BY category, fact_id LIMIT ?`,
@@ -274,7 +279,7 @@ export class AgentFactMaintenance {
     const facts: RebuildFact[] = [];
     let pageBytes = 64;
     for (const row of rows.slice(0, limit)) {
-      const fact = this.rebuildFact(row);
+      const fact = this.rebuildFact(row, operation.org_id);
       const factBytes = utf8Bytes(JSON.stringify(fact));
       if (facts.length > 0 && pageBytes + factBytes > PAYLOAD_CHUNK_BYTES) break;
       facts.push(fact);
@@ -636,8 +641,21 @@ export class AgentFactMaintenance {
     return resolved;
   }
 
-  private rebuildFact(row: StoredLedgerFact): RebuildFact {
-    const payload = this.loadLedgerPayload(row.category, row.fact_id, row.data);
+  private rebuildFact(row: StoredLedgerFactMetadata, orgId: string): RebuildFact {
+    const stored = [
+      ...this.storage.sql.exec<{ data: string }>(
+        `SELECT COALESCE(data, '') AS data FROM fact_ledger
+         WHERE category = ? AND fact_id = ?`,
+        row.category,
+        row.fact_id,
+      ),
+    ][0];
+    if (!stored) throw new Error('fact rebuild ledger changed while listing');
+    const ledger = { ...row, data: stored.data };
+    const payload = this.loadLedgerPayload(row.category, row.fact_id, stored.data);
+    const replacement = payload === null ? this.replacementFor(ledger, orgId) : undefined;
+    if (payload === null && !replacement)
+      throw new Error('fact rebuild ledger payload and validated replacement are missing');
     const pending = PENDING_TABLES.flatMap((table) =>
       [
         ...this.storage.sql.exec<StoredPendingFact>(
@@ -663,8 +681,70 @@ export class AgentFactMaintenance {
       contentHash: row.content_hash,
       payload,
       missingPayload: payload === null,
+      ...(replacement ? { replacement } : {}),
       pending,
     };
+  }
+
+  private missingLedgerPayloads(): Iterable<StoredLedgerFact> {
+    return this.storage.sql.exec<StoredLedgerFact>(
+      `SELECT category, fact_id, content_hash, COALESCE(data, '') AS data
+       FROM fact_ledger AS ledger
+       WHERE (ledger.data IS NULL OR ledger.data = '')
+         AND NOT EXISTS (
+           SELECT 1 FROM fact_ledger_payload_chunks AS chunks
+           WHERE chunks.category = ledger.category AND chunks.fact_id = ledger.fact_id
+         )
+       ORDER BY category, fact_id`,
+    );
+  }
+
+  private replacementFor(
+    ledger: StoredLedgerFact,
+    orgId: string,
+  ): { contentHash: string; payload: string; recoveryId: number } | undefined {
+    const repair = [
+      ...this.storage.sql.exec<StoredRepairFallback>(
+        `SELECT old_hash, new_hash, data FROM fact_repairs
+         WHERE category = ? AND fact_id = ? AND old_hash = ?
+         ORDER BY id DESC LIMIT 1`,
+        ledger.category,
+        ledger.fact_id,
+        ledger.content_hash,
+      ),
+    ][0];
+    if (repair?.old_hash !== ledger.content_hash) return undefined;
+    const dedupeKey = JSON.stringify([
+      ledger.category,
+      ledger.fact_id,
+      ledger.content_hash,
+      repair.new_hash,
+    ]);
+    const recoveryMatch = [
+      ...this.storage.sql.exec<{ id: number; state: string }>(
+        `SELECT id, state FROM recovery_records
+         WHERE kind = 'repair' AND dedupe_key = ? ORDER BY id DESC LIMIT 1`,
+        dedupeKey,
+      ),
+    ][0];
+    if (recoveryMatch?.state !== 'blocked') return undefined;
+    const record = this.recovery.get(recoveryMatch.id);
+    if (record.kind !== 'repair' || record.state !== 'blocked') return undefined;
+    const row = parsePayload(record.payload);
+    const outcome = parsePayload(record.outcome) as Record<string, unknown>;
+    if (
+      outcome.category !== ledger.category ||
+      outcome.factId !== ledger.fact_id ||
+      outcome.oldHash !== ledger.content_hash ||
+      outcome.newHash !== repair.new_hash ||
+      stableHash(row) !== repair.new_hash ||
+      rowIdentity(row, ROW_IDENTITY_FIELDS[ledger.category]) !== ledger.fact_id ||
+      (row as Record<string, unknown> | null)?.OrgId !== orgId
+    ) {
+      return undefined;
+    }
+    if (repair.data && repair.data !== record.payload) return undefined;
+    return { contentHash: repair.new_hash, payload: record.payload, recoveryId: record.id };
   }
 
   private loadPendingPayload(table: PendingTable, rowId: number, fallback: string): string | null {
@@ -678,28 +758,6 @@ export class AgentFactMaintenance {
       ),
     ];
     return chunks.length > 0 ? chunks.map((chunk) => chunk.data).join('') : null;
-  }
-
-  private backfillPendingIdentities(): void {
-    for (const table of PENDING_TABLES) {
-      for (const category of CATEGORIES) {
-        const fields = ROW_IDENTITY_FIELDS[category];
-        const identitySql = fields
-          .map((field) => `CAST(COALESCE(json_extract(data, '$.${field}'), '') AS TEXT)`)
-          .join(' || char(31) || ');
-        this.storage.sql.exec(
-          `UPDATE ${table} SET fact_id = ${identitySql}
-           WHERE fact_id IS NULL AND category = ? AND data <> '' AND json_valid(data)`,
-          category,
-        );
-      }
-      this.storage.sql.exec(
-        `UPDATE ${table} SET content_hash = (
-           SELECT content_hash FROM fact_ledger AS l
-           WHERE l.category = ${table}.category AND l.fact_id = ${table}.fact_id
-         ) WHERE fact_id IS NOT NULL AND content_hash IS NULL`,
-      );
-    }
   }
 
   private activeOperation(): StoredOperation | undefined {

@@ -971,7 +971,7 @@ mod tests {
     async fn archived_codex_transcripts_are_ingested_by_the_normal_fact_cycle() {
         let home = tempfile::TempDir::new().unwrap();
         let state = tempfile::TempDir::new().unwrap();
-        let archived = home.path().join(".codex/archived_sessions");
+        let archived = home.path().join(".codex").join("archived_sessions");
         std::fs::create_dir_all(&archived).unwrap();
         let transcript = archived.join("codex-session-001.jsonl");
         std::fs::write(&transcript, CODEX).unwrap();

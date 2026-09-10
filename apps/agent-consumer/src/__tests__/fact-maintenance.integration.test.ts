@@ -476,6 +476,121 @@ describe('agent fact rebuild maintenance', () => {
     ).resolves.toMatchObject({ status: 'quiescent' });
   });
 
+  it('exports the latest validated repair separately when the old ledger payload is missing', async () => {
+    const factId = rowIdentity(originalRow, ROW_IDENTITY_FIELDS.messages);
+    const firstReplacement = { ...originalRow, content: 'first changed replay' };
+    const latestReplacement = { ...originalRow, content: 'latest changed replay' };
+    await runInDurableObject(batcher, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO fact_ledger
+         (category, fact_id, content_hash, first_seen_at_ms, data, clean_target, legacy_target)
+         VALUES ('messages', ?, ?, 0, '', 1, 0)`,
+        factId,
+        stableHash(originalRow),
+      );
+    });
+    await expect(batcher.addFacts(batch(firstReplacement))).resolves.toMatchObject({
+      status: 'accepted',
+      repairRows: 1,
+    });
+    await expect(batcher.addFacts(batch(latestReplacement))).resolves.toMatchObject({
+      status: 'accepted',
+      repairRows: 1,
+    });
+    const blocked = await batcher.listRecovery({ state: 'blocked' });
+    const latestRecovery = blocked.records.at(-1)!;
+
+    await expect(
+      batcher.beginFactRebuild('org-1', {
+        operationId: 'rebuild-replacement',
+        executorId,
+        reason: rebuildReason,
+        tinybirdWorkspaceId,
+        tinybirdTokenFingerprints: [tinybirdTokenFingerprint],
+      }),
+    ).resolves.toMatchObject({ status: 'quiescent', expectedFactCount: 1 });
+    const page = await batcher.listRebuildFacts({
+      operationId: 'rebuild-replacement',
+      executorId,
+    });
+    expect(page.facts).toEqual([
+      expect.objectContaining({
+        category: 'messages',
+        factId,
+        contentHash: stableHash(originalRow),
+        payload: null,
+        missingPayload: true,
+        replacement: {
+          contentHash: stableHash(latestReplacement),
+          payload: JSON.stringify(latestReplacement),
+          recoveryId: latestRecovery.id,
+        },
+      }),
+    ]);
+    const ledgerHash = await runInDurableObject(
+      batcher,
+      (_instance, state) =>
+        state.storage.sql
+          .exec<{
+            content_hash: string;
+          }>(
+            'SELECT content_hash FROM fact_ledger WHERE category = ? AND fact_id = ?',
+            'messages',
+            factId,
+          )
+          .one().content_hash,
+    );
+    expect(ledgerHash).toBe(stableHash(originalRow));
+  });
+
+  it('does not accept a resolved repair as a missing-payload replacement', async () => {
+    const factId = rowIdentity(originalRow, ROW_IDENTITY_FIELDS.messages);
+    const replacement = { ...originalRow, content: 'resolved replacement' };
+    await runInDurableObject(batcher, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO fact_ledger
+         (category, fact_id, content_hash, first_seen_at_ms, data, clean_target, legacy_target)
+         VALUES ('messages', ?, ?, 0, '', 1, 0)`,
+        factId,
+        stableHash(originalRow),
+      );
+    });
+    await batcher.addFacts(batch(replacement));
+    await runInDurableObject(batcher, (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE recovery_records SET state = 'resolved', resolved_at_ms = 1,
+         resolution = 'retain-original', resolution_reason = 'test' WHERE kind = 'repair'`,
+      );
+    });
+    const beginError = await runInDurableObject(
+      batcher,
+      async (instance: AgentFactBatcherInstance) => {
+        try {
+          await instance.beginFactRebuild('org-1', {
+            operationId: 'rebuild-resolved-replacement',
+            executorId,
+            reason: rebuildReason,
+            tinybirdWorkspaceId,
+            tinybirdTokenFingerprints: [tinybirdTokenFingerprint],
+          });
+          return null;
+        } catch (error) {
+          return error instanceof Error ? error.message : String(error);
+        }
+      },
+    );
+    expect(beginError).toContain('replay the collector before beginning maintenance');
+    expect(
+      await runInDurableObject(
+        batcher,
+        (_instance, state) =>
+          state.storage.sql
+            .exec<{ count: number }>('SELECT COUNT(*) AS count FROM fact_rebuild_operations')
+            .one().count,
+      ),
+    ).toBe(0);
+  });
+
   it('stores an oversized confirmation by exact digest and resumes it idempotently', async () => {
     const oversizedRow = { ...originalRow, content: 'x'.repeat(2_100_000) };
     const factId = rowIdentity(oversizedRow, ROW_IDENTITY_FIELDS.messages);

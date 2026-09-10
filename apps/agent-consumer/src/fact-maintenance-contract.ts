@@ -45,6 +45,11 @@ export interface RebuildFact {
   contentHash: string;
   payload: string | null;
   missingPayload: boolean;
+  replacement?: {
+    contentHash: string;
+    payload: string;
+    recoveryId: number;
+  };
   pending: RebuildPendingFact[];
 }
 
