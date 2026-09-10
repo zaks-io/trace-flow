@@ -17,7 +17,13 @@ function fixture(receipt: 'matching' | 'absent' | 'mismatched') {
     true,
   );
   opened.push(snapshot);
-  const old = { OrgId: 'org', session_pk: 'session', message_pk: 'message', output_tokens: 1 };
+  const old = {
+    OrgId: 'org',
+    session_pk: 'session',
+    message_pk: 'message',
+    IngestedAt: '2026-09-10T10:00:00.000Z',
+    output_tokens: 1,
+  };
   const corrected = { ...old, output_tokens: 42 };
   const factId = identity('messages', old, 'org');
   const oldHash = stableHash(old);
@@ -77,6 +83,135 @@ function fixture(receipt: 'matching' | 'absent' | 'mismatched') {
     });
   return { snapshot, capture, factId, oldHash, newHash, corrected };
 }
+
+test('keeps the newest fact across ledger and repair order while preserving receipts', async () => {
+  const snapshot = new AgentSnapshot(
+    join(mkdtempSync(join(tmpdir(), 'agent-snapshot-order-test-')), 'snapshot.sqlite'),
+    true,
+  );
+  opened.push(snapshot);
+  const first = {
+    OrgId: 'org',
+    session_pk: 'session',
+    message_pk: 'message',
+    IngestedAt: '2026-09-10T10:00:01.000Z',
+    output_tokens: 1,
+  };
+  const newestSameContent = { ...first, IngestedAt: '2026-09-10 10:00:03.000' };
+  const delayedChange = {
+    ...first,
+    IngestedAt: '2026-09-10 10:00:02.000',
+    output_tokens: 42,
+  };
+  const factId = identity('messages', first, 'org');
+  const oldHash = stableHash(first);
+  const repairHash = stableHash(delayedChange);
+  const tinybird = {
+    host: 'https://example.test',
+    async *rows(table: string) {
+      if (table === DATASOURCES.messages) yield first;
+    },
+  } as unknown as AgentTinybirdClient;
+  const recovery = {
+    org: 'org',
+    matchedWorkspaceId: 'workspace',
+    async call(method: string) {
+      if (method === 'listRebuildFacts')
+        return {
+          facts: [
+            {
+              category: 'messages',
+              factId,
+              contentHash: oldHash,
+              payload: JSON.stringify(newestSameContent),
+              missingPayload: false,
+              pending: [],
+            },
+          ],
+        };
+      if (method === 'listRecovery')
+        return {
+          records: [
+            {
+              id: 1,
+              kind: 'repair',
+              payload: JSON.stringify(delayedChange),
+              outcome: JSON.stringify({
+                category: 'messages',
+                factId,
+                oldHash,
+                newHash: repairHash,
+              }),
+            },
+          ],
+        };
+      throw new Error(`Unexpected method ${method}`);
+    },
+  } as unknown as AgentRecoveryClient;
+
+  await captureSnapshot(snapshot, tinybird, recovery, 'operation', {
+    facts: Object.values(DATASOURCES),
+    derived: [],
+    definitionHashInput: 'graph',
+  });
+
+  expect(JSON.parse(snapshot.get('messages', factId)!.data)).toEqual(newestSameContent);
+  expect([...confirmations(snapshot, 'messages')]).toEqual([
+    {
+      category: 'messages',
+      factId,
+      expectedOldHash: oldHash,
+      newHash: oldHash,
+      row: newestSameContent,
+    },
+  ]);
+  expect(snapshot.db.query('SELECT COUNT(*) AS count FROM recovery').get()).toEqual({ count: 1 });
+});
+
+test('rejects an invalid snapshot timestamp', () => {
+  const snapshot = new AgentSnapshot(
+    join(mkdtempSync(join(tmpdir(), 'agent-snapshot-timestamp-test-')), 'snapshot.sqlite'),
+    true,
+  );
+  opened.push(snapshot);
+  expect(() =>
+    snapshot.preserve(
+      'messages',
+      DATASOURCES.messages,
+      {
+        OrgId: 'org',
+        session_pk: 'session',
+        message_pk: 'message',
+        IngestedAt: '2026-02-30 10:00:00.000',
+      },
+      'org',
+    ),
+  ).toThrow('invalid IngestedAt');
+});
+
+test('rejects conflicting equal timestamps across SQL and ISO formats', () => {
+  const snapshot = new AgentSnapshot(
+    join(mkdtempSync(join(tmpdir(), 'agent-snapshot-equal-time-test-')), 'snapshot.sqlite'),
+    true,
+  );
+  opened.push(snapshot);
+  const first = {
+    OrgId: 'org',
+    session_pk: 'session',
+    message_pk: 'message',
+    IngestedAt: '2026-09-10T10:00:00.000Z',
+    output_tokens: 1,
+  };
+  snapshot.preserve('messages', DATASOURCES.messages, first, 'org');
+  expect(() =>
+    snapshot.preserve(
+      'messages',
+      DATASOURCES.messages,
+      { ...first, IngestedAt: '2026-09-10 10:00:00.000', output_tokens: 42 },
+      'org',
+    ),
+  ).toThrow('Conflicting equal-time');
+});
 
 test('backs up a verified replacement while preserving the original ledger hash', async () => {
   const { snapshot, capture, factId, oldHash, newHash, corrected } = fixture('matching');

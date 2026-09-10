@@ -66,6 +66,23 @@ export function stableHash(value: unknown): string {
   return hash.toString(16).padStart(16, '0');
 }
 
+export function compareFactIngestedAt(left: unknown, right: unknown): number {
+  return factIngestedAtMs(left) - factIngestedAtMs(right);
+}
+
+export function factIngestedAtMs(value: unknown): number {
+  if (!isRecord(value) || typeof value.IngestedAt !== 'string') {
+    throw new Error('agent fact has invalid IngestedAt');
+  }
+  const normalized =
+    value.IngestedAt.replace(' ', 'T') + (value.IngestedAt.endsWith('Z') ? '' : 'Z');
+  const milliseconds = Date.parse(normalized);
+  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== normalized) {
+    throw new Error('agent fact has invalid IngestedAt');
+  }
+  return milliseconds;
+}
+
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(stableStringify).join(',')}]`;

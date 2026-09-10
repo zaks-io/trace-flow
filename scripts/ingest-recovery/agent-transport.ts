@@ -54,7 +54,7 @@ export class AgentRecoveryClient {
         tinybirdTokenFingerprints: this.tinybirdTokenFingerprints,
         tinybirdWorkspaceId: this.workspaceId,
       };
-    const response = await fetch(`${this.url}/${method}`, {
+    const request = {
       method: 'POST',
       redirect: 'error',
       headers: { 'Content-Type': 'application/json' },
@@ -64,8 +64,27 @@ export class AgentRecoveryClient {
         options,
         confirm: 'apply-recovery',
       }),
-      signal: AbortSignal.timeout(65_000),
-    });
+    } satisfies RequestInit;
+    const attempts = ['listRecovery', 'listRebuildFacts'].includes(method) ? 3 : 1;
+    let response: Response | undefined;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      this.assertExecutor?.();
+      try {
+        response = await fetch(`${this.url}/${method}`, {
+          ...request,
+          signal: AbortSignal.timeout(65_000),
+        });
+      } catch (error) {
+        if (attempt === attempts) throw error;
+      }
+      if (response && ![502, 503, 504].includes(response.status)) break;
+      if (attempt === attempts) break;
+      await response?.body?.cancel();
+      response = undefined;
+      console.warn(`Retrying recovery read ${method} after a temporary connection failure`);
+      await new Promise((resolve) => setTimeout(resolve, attempt * 1_000));
+    }
+    if (!response) throw new Error(`Recovery ${method} returned no response`);
     if (!response.ok) throw new Error(`Recovery ${method} failed with HTTP ${response.status}`);
     const result = (await response.json()) as any;
     if (method === 'beginFactRebuild') {

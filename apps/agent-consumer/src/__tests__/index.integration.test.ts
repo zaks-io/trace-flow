@@ -1,4 +1,4 @@
-import { captureMessage } from '@sentry/cloudflare';
+import { captureException } from '@sentry/cloudflare';
 import { env } from 'cloudflare:test';
 import type * as SentryCloudflare from '@sentry/cloudflare';
 import { describe, expect, it, vi } from 'vitest';
@@ -6,6 +6,7 @@ import worker from '../index';
 
 vi.mock('@sentry/cloudflare', async (importOriginal) => ({
   ...(await importOriginal<typeof SentryCloudflare>()),
+  captureException: vi.fn(),
   captureMessage: vi.fn(),
   withSentry: <T>(_options: unknown, handler: T): T => handler,
 }));
@@ -63,8 +64,9 @@ describe('DLQ preservation failure', () => {
       retryAll: vi.fn(),
       ackAll: vi.fn(),
     } as unknown as MessageBatch<unknown>;
+    const preservationError = new Error('durable storage unavailable');
     const unavailable = () => {
-      throw new Error('durable storage unavailable');
+      throw preservationError;
     };
     const failingEnv = {
       ...env,
@@ -73,9 +75,16 @@ describe('DLQ preservation failure', () => {
     await worker.queue(batch, failingEnv);
     expect(ack).not.toHaveBeenCalled();
     expect(retry).toHaveBeenCalledOnce();
-    expect(captureMessage).toHaveBeenCalledWith(
-      'agent_consumer.dead_letter_preservation_failed',
-      expect.objectContaining({ level: 'fatal' }),
-    );
+    expect(retry).toHaveBeenCalledWith({ delaySeconds: 60 });
+    expect(captureException).toHaveBeenCalledOnce();
+    expect(captureException).toHaveBeenCalledWith(preservationError, {
+      level: 'fatal',
+      tags: { operation: 'dlq_preserve' },
+      extra: {
+        queue: 'agent-ingest-dlq-dev',
+        messageId: 'preservation-failure',
+        attempts: 1,
+      },
+    });
   });
 });

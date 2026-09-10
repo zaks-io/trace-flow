@@ -91,6 +91,7 @@ interface StoredRepairFallback {
   old_hash: string;
   new_hash: string;
   data: string | null;
+  recovery_dedupe_key: string | null;
 }
 
 type PreparedConfirmation = FactRebuildConfirmation & { rowData: string; rowSha256: string };
@@ -705,7 +706,7 @@ export class AgentFactMaintenance {
   ): { contentHash: string; payload: string; recoveryId: number } | undefined {
     const repair = [
       ...this.storage.sql.exec<StoredRepairFallback>(
-        `SELECT old_hash, new_hash, data FROM fact_repairs
+        `SELECT old_hash, new_hash, data, recovery_dedupe_key FROM fact_repairs
          WHERE category = ? AND fact_id = ? AND old_hash = ?
          ORDER BY id DESC LIMIT 1`,
         ledger.category,
@@ -714,12 +715,9 @@ export class AgentFactMaintenance {
       ),
     ][0];
     if (repair?.old_hash !== ledger.content_hash) return undefined;
-    const dedupeKey = JSON.stringify([
-      ledger.category,
-      ledger.fact_id,
-      ledger.content_hash,
-      repair.new_hash,
-    ]);
+    const dedupeKey =
+      repair.recovery_dedupe_key ??
+      JSON.stringify([ledger.category, ledger.fact_id, ledger.content_hash, repair.new_hash]);
     const recoveryMatch = [
       ...this.storage.sql.exec<{ id: number; state: string }>(
         `SELECT id, state FROM recovery_records

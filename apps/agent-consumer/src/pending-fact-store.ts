@@ -1,7 +1,7 @@
 import { splitUtf8Chunks } from '@trace-flow/tinybird-client';
 import type { DurableObjectStorage } from '@cloudflare/workers-types';
 import type { AgentFactMaintenance } from './fact-maintenance';
-import type { Category } from './facts';
+import { compareFactIngestedAt, type Category } from './facts';
 
 const PAYLOAD_CHUNK_BYTES = 900_000;
 type PendingTable = 'pending_facts' | 'legacy_pending_facts';
@@ -42,10 +42,11 @@ export class PendingFactStore {
     factId: string,
     contentHash: string,
     data: string,
+    currentData: string,
     cleanTarget: number | null,
     legacyTarget: number | null,
-  ): boolean {
-    if (cleanTarget === null || legacyTarget === null) return false;
+  ): 'updated' | 'stale' | 'unavailable' {
+    if (cleanTarget === null || legacyTarget === null) return 'unavailable';
     const targets: PendingTable[] = [];
     if (cleanTarget === 1) targets.push('pending_facts');
     if (legacyTarget === 1) targets.push('legacy_pending_facts');
@@ -53,7 +54,8 @@ export class PendingFactStore {
       table,
       ids: this.coalescibleRows(table, category, factId),
     }));
-    if (pending.some(({ ids }) => ids.length !== 1)) return false;
+    if (pending.some(({ ids }) => ids.length !== 1)) return 'unavailable';
+    if (compareFactIngestedAt(JSON.parse(data), JSON.parse(currentData)) < 0) return 'stale';
     this.maintenance.storeLedgerPayload(category, factId, data);
     this.storage.sql.exec(
       'UPDATE fact_ledger SET content_hash = ? WHERE category = ? AND fact_id = ?',
@@ -62,7 +64,7 @@ export class PendingFactStore {
       factId,
     );
     for (const { table, ids } of pending) this.replace(table, ids[0]!, contentHash, data);
-    return true;
+    return 'updated';
   }
 
   private coalescibleRows(table: PendingTable, category: Category, factId: string): number[] {

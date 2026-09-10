@@ -29,6 +29,7 @@ const originalRow = {
   OrgId: 'org-1',
   session_pk: 'session-1',
   message_pk: 'message-1',
+  IngestedAt: '2026-09-10 12:00:00.000',
   content: 'original',
 };
 

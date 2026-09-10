@@ -20,7 +20,14 @@ const env = workerEnv as unknown as {
 
 const sparseBatch = {
   rows: {
-    messages: [{ OrgId: 'org-1', session_pk: 'session-1', message_pk: 'message-1' }],
+    messages: [
+      {
+        OrgId: 'org-1',
+        session_pk: 'session-1',
+        message_pk: 'message-1',
+        IngestedAt: '2024-01-01 00:00:00.000',
+      },
+    ],
     tool_events: [],
     file_events: [],
     capability_snapshots: [],
@@ -314,6 +321,7 @@ describe('AgentFactBatcher logic', () => {
               OrgId: 'org-1',
               session_pk: 'session-1',
               message_pk: 'message-1',
+              IngestedAt: '2024-01-01 00:00:01.000',
               content: 'changed',
             },
           ],
@@ -346,6 +354,68 @@ describe('AgentFactBatcher logic', () => {
       instance.listRecovery(),
     );
     expect(recovery.records).toHaveLength(0);
+  });
+
+  it('keeps the newest pending version when an intermediate change arrives later', async () => {
+    const first = {
+      ...sparseBatch.rows.messages[0],
+      IngestedAt: '2024-01-01 00:00:01.000',
+      output_tokens: 1,
+    };
+    const newestSameContent = { ...first, IngestedAt: '2024-01-01 00:00:03.000' };
+    const delayedChange = {
+      ...first,
+      IngestedAt: '2024-01-01 00:00:02.000',
+      output_tokens: 42,
+    };
+    const results = await runInDurableObject(
+      batcher,
+      async (instance: AgentFactBatcherInstance, state) => {
+        await instance.addFacts({ rows: { ...emptyBatchRows, messages: [first] } });
+        await state.storage.deleteAlarm();
+        const refreshed = await instance.addFacts({
+          rows: { ...emptyBatchRows, messages: [newestSameContent] },
+        });
+        await state.storage.deleteAlarm();
+        const stale = await instance.addFacts({
+          rows: { ...emptyBatchRows, messages: [delayedChange] },
+        });
+        await instance.alarm();
+        await state.storage.deleteAlarm();
+        return { refreshed, stale };
+      },
+    );
+
+    expect(results.refreshed).toMatchObject({ duplicateRows: 1, repairRows: 0 });
+    expect(results.stale).toMatchObject({ acceptedRows: 0, duplicateRows: 1, repairRows: 0 });
+    expect(insertRows).toHaveBeenCalledOnce();
+    expect(vi.mocked(insertRows).mock.calls[0]?.[0]).toEqual([newestSameContent]);
+    const recovery = await runInDurableObject(batcher, (instance: AgentFactBatcherInstance) =>
+      instance.listRecovery(),
+    );
+    expect(recovery.records).toHaveLength(0);
+  });
+
+  it('rejects an invalid timestamp without replacing pending data', async () => {
+    const first = { ...sparseBatch.rows.messages[0], output_tokens: 1 };
+    const invalid = { ...first, IngestedAt: 'not-a-timestamp', output_tokens: 42 };
+    const result = await runInDurableObject(
+      batcher,
+      async (instance: AgentFactBatcherInstance, state) => {
+        await instance.addFacts({ rows: { ...emptyBatchRows, messages: [first] } });
+        await state.storage.deleteAlarm();
+        const failed = await instance.addFacts({
+          rows: { ...emptyBatchRows, messages: [invalid] },
+        });
+        await instance.alarm();
+        await state.storage.deleteAlarm();
+        return failed;
+      },
+    );
+
+    expect(result.status).toBe('failed');
+    expect(insertRows).toHaveBeenCalledOnce();
+    expect(vi.mocked(insertRows).mock.calls[0]?.[0]).toEqual([first]);
   });
 
   it('preserves corrections for later rows held by a bisected flush', async () => {
@@ -617,6 +687,48 @@ describe('AgentFactBatcher logic', () => {
     expect(JSON.parse(recovery.records[0]!.payload)).toEqual(latest);
   });
 
+  it('refreshes a sent ledger watermark before preserving an intermediate repair', async () => {
+    const first = {
+      ...sparseBatch.rows.messages[0],
+      IngestedAt: '2024-01-01 00:00:01.000',
+      output_tokens: 1,
+    };
+    const newestSameContent = { ...first, IngestedAt: '2024-01-01 00:00:03.000' };
+    const delayedChange = {
+      ...first,
+      IngestedAt: '2024-01-01 00:00:02.000',
+      output_tokens: 42,
+    };
+    const result = await runInDurableObject(
+      batcher,
+      async (instance: AgentFactBatcherInstance, state) => {
+        await instance.addFacts({ rows: { ...emptyBatchRows, messages: [first] } });
+        await instance.alarm();
+        const refreshed = await instance.addFacts({
+          rows: { ...emptyBatchRows, messages: [newestSameContent] },
+        });
+        const repaired = await instance.addFacts({
+          rows: { ...emptyBatchRows, messages: [delayedChange] },
+        });
+        await state.storage.deleteAlarm();
+        const ledger = state.storage.sql
+          .exec<{ data: string }>('SELECT data FROM fact_ledger')
+          .one();
+        return { refreshed, repaired, ledger: JSON.parse(ledger.data) };
+      },
+    );
+
+    expect(result.refreshed).toMatchObject({ duplicateRows: 1, repairRows: 0 });
+    expect(result.repaired).toMatchObject({ acceptedRows: 0, repairRows: 1 });
+    expect(result.ledger).toEqual(newestSameContent);
+    expect(insertRows).toHaveBeenCalledOnce();
+    const recovery = await runInDurableObject(batcher, (instance: AgentFactBatcherInstance) =>
+      instance.listRecovery(),
+    );
+    expect(recovery.records).toHaveLength(1);
+    expect(JSON.parse(recovery.records[0]!.payload)).toEqual(delayedChange);
+  });
+
   it('locks a rebuild without mutating a pending identity while its insert is in flight', async () => {
     vi.useRealTimers();
     const first = { ...sparseBatch.rows.messages[0], output_tokens: 1 };
@@ -697,9 +809,7 @@ describe('AgentFactBatcher logic', () => {
         ...emptyBatchRows,
         messages: [
           {
-            OrgId: 'org-1',
-            session_pk: 'session-1',
-            message_pk: 'message-1',
+            ...sparseBatch.rows.messages[0],
             content: 'changed',
           },
         ],
@@ -725,6 +835,41 @@ describe('AgentFactBatcher logic', () => {
     );
     expect(result.repairs).toBe(1);
     expect(result.recovery.records).toHaveLength(1);
+  });
+
+  it('preserves a newer timestamp for repeated repair content', async () => {
+    const original = {
+      ...sparseBatch.rows.messages[0],
+      IngestedAt: '2024-01-01 08:00:00.000',
+      content: 'A',
+    };
+    const firstB = { ...original, IngestedAt: '2024-01-01 10:00:00.000', content: 'B' };
+    const c = { ...original, IngestedAt: '2024-01-01 11:00:00.000', content: 'C' };
+    const latestB = { ...original, IngestedAt: '2024-01-01T12:00:00.000Z', content: 'B' };
+    await runInDurableObject(batcher, async (instance: AgentFactBatcherInstance, state) => {
+      await instance.addFacts({ rows: { ...emptyBatchRows, messages: [original] } });
+      await instance.alarm();
+      await instance.addFacts({ rows: { ...emptyBatchRows, messages: [firstB] } });
+      await instance.addFacts({ rows: { ...emptyBatchRows, messages: [c] } });
+      await instance.addFacts({ rows: { ...emptyBatchRows, messages: [latestB] } });
+      await state.storage.deleteAlarm();
+    });
+
+    const result = await runInDurableObject(
+      batcher,
+      (instance: AgentFactBatcherInstance, state) => ({
+        repairs: state.storage.sql
+          .exec<{ count: number }>('SELECT COUNT(*) AS count FROM fact_repairs')
+          .one().count,
+        recovery: instance.listRecovery(),
+      }),
+    );
+    expect(result.repairs).toBe(3);
+    expect(result.recovery.records.map((record) => JSON.parse(record.payload))).toEqual([
+      firstB,
+      c,
+      latestB,
+    ]);
   });
 
   it('retains a multi-megabyte individual fact as rejected without sending it', async () => {
