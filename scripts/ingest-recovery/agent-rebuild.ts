@@ -11,6 +11,7 @@ import {
   LEGACY_DATASOURCES,
   ROW_IDENTITY_FIELDS,
   batches,
+  factBatches,
   quote,
   type Row,
 } from './agent-data';
@@ -120,7 +121,7 @@ export async function validateSnapshot(
           yield row;
         }
       };
-      for (const _group of batches(rows())) {
+      for (const _group of factBatches(category, rows())) {
         /* Validate every upload before any deletion. */
       }
     }
@@ -217,7 +218,7 @@ export async function rebuild(
       const rows = function* () {
         for (const record of snapshot.rows(category, table)) yield JSON.parse(record.data) as Row;
       };
-      for (const group of batches(rows())) {
+      for (const group of factBatches(category, rows())) {
         const key = `insert:${table}:${sequence++}`;
         if (journal.get(key)?.status === 'done') continue;
         if (journal.get(key)) {

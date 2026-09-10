@@ -5,9 +5,11 @@ import {
   CATEGORIES,
   DATASOURCES,
   LEGACY_DATASOURCES,
+  MAX_FACT_INSERT_PARTITIONS,
   ROW_IDENTITY_FIELDS,
   compareFactIngestedAt,
   factIngestedAtMs,
+  factPartitionKey,
   rowIdentity,
   stableHash,
   type Category,
@@ -152,4 +154,31 @@ export function* batches<T>(items: Iterable<T>, maxBytes = 850_000, maxRows = 10
     size += bytes;
   }
   if (group.length) yield group;
+}
+
+export function* factBatches(
+  category: Category,
+  items: Iterable<Row>,
+  maxBytes = 850_000,
+  maxRows = 100,
+): Generator<Row[]> {
+  for (const bounded of batches(items, maxBytes, maxRows)) {
+    let group: Row[] = [];
+    let partitions = new Set<string>();
+    for (const row of bounded) {
+      const partition = factPartitionKey(category, row);
+      if (
+        group.length > 0 &&
+        !partitions.has(partition) &&
+        partitions.size >= MAX_FACT_INSERT_PARTITIONS
+      ) {
+        yield group;
+        group = [];
+        partitions = new Set();
+      }
+      group.push(row);
+      partitions.add(partition);
+    }
+    if (group.length > 0) yield group;
+  }
 }

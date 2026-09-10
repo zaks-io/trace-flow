@@ -2,7 +2,14 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgentSnapshot, DATASOURCES, batches, identity, stableHash } from './agent-data';
+import {
+  AgentSnapshot,
+  DATASOURCES,
+  batches,
+  factBatches,
+  identity,
+  stableHash,
+} from './agent-data';
 import { normalized, AgentTinybirdClient } from './agent-transport';
 import { RebuildJournal, rebuild, reconcileDeleteJob, verifyFacts } from './agent-rebuild';
 import { confirmExistingInsert } from './agent-insert-proof';
@@ -17,6 +24,7 @@ const row = {
   session_pk: 'session',
   message_pk: 'message',
   IngestedAt: '2026-09-10 10:00:00.000',
+  EventAt: '2026-09-10 10:00:00.000',
   output_tokens: 1,
 };
 function fixture() {
@@ -68,6 +76,26 @@ describe('agent fact rebuild snapshot', () => {
     expect([...batches(['é'.repeat(5), 'é'.repeat(5)], 20)]).toHaveLength(2);
     expect([...batches([1, 2, 3], 100, 2)]).toEqual([[1, 2], [3]]);
     expect([...batches(['x'.repeat(100), 'small'], 20)]).toEqual([['x'.repeat(100)], ['small']]);
+  });
+  test('bounds fact uploads to 30 daily partitions while preserving order', () => {
+    const dates = Array.from({ length: 31 }, (_, index) =>
+      new Date(Date.UTC(2026, 0, index + 1)).toISOString(),
+    );
+    const rows = [...dates.slice(0, 30), dates[0]!, dates[30]!].map((EventAt, index) => ({
+      ...row,
+      message_pk: `message-${index}`,
+      EventAt,
+    }));
+    const groups = [...factBatches('messages', rows)];
+
+    expect(groups).toHaveLength(2);
+    expect(groups[0]).toHaveLength(31);
+    expect(groups.flat()).toEqual(rows);
+    for (const group of groups) {
+      expect(
+        new Set(group.map((fact) => String(fact.EventAt).slice(0, 10))).size,
+      ).toBeLessThanOrEqual(30);
+    }
   });
   test('normalizes storage representation without inventing absent values', () => {
     expect(

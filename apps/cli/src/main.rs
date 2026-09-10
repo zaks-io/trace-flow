@@ -211,6 +211,13 @@ async fn cmd_sync(since: &str, replay: bool) -> Result<()> {
     if total_failed > 0 {
         println!("Failed sessions kept their cursor and will retry on the next sync.");
     }
+    ensure_sync_succeeded(total_failed)
+}
+
+fn ensure_sync_succeeded(total_failed: u32) -> Result<()> {
+    if total_failed > 0 {
+        anyhow::bail!("sync failed for {total_failed} session(s)");
+    }
     Ok(())
 }
 
@@ -340,4 +347,18 @@ fn cmd_cursor_dryrun() -> Result<()> {
         pct(full)
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_sync_succeeded;
+
+    #[test]
+    fn failed_sessions_make_sync_return_an_error() {
+        assert!(ensure_sync_succeeded(0).is_ok());
+        assert_eq!(
+            ensure_sync_succeeded(2).unwrap_err().to_string(),
+            "sync failed for 2 session(s)"
+        );
+    }
 }

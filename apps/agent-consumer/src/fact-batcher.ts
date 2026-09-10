@@ -28,9 +28,11 @@ import {
   DATASOURCES,
   LEGACY_CATEGORIES,
   LEGACY_DATASOURCES,
+  MAX_FACT_INSERT_PARTITIONS,
   ROW_IDENTITY_FIELDS,
   compareFactIngestedAt,
   factIngestedAtMs,
+  factPartitionKey,
   rowIdentity,
   stableHash,
   type Category,
@@ -566,8 +568,10 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     if (rows.length === 0 || this.maintenance.isLocked()) return;
     const rowIds = rows.map((row) => row.id);
     let facts: unknown[];
+    let partitionBatches: StoredFactRow[][];
     try {
       facts = rows.map((row) => normalizePendingFact(category, JSON.parse(row.data)));
+      partitionBatches = splitRowsByPartitions(rows, facts, category);
     } catch (error) {
       if (rows.length > 1) {
         const middle = Math.ceil(rows.length / 2);
@@ -583,6 +587,13 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
         'rejected',
         serializeTinybirdFailure(error),
       );
+      return;
+    }
+
+    if (partitionBatches.length > 1) {
+      for (const batch of partitionBatches) {
+        await this.sendFactBatch(table, datasource, category, targetKey, batch);
+      }
       return;
     }
 
@@ -821,6 +832,32 @@ function splitRowsByBytes(rows: StoredFactRow[]): StoredFactRow[][] {
     }
     current.push(row);
     bytes += rowBytes;
+  }
+  if (current.length > 0) batches.push(current);
+  return batches;
+}
+
+function splitRowsByPartitions(
+  rows: StoredFactRow[],
+  facts: unknown[],
+  category: Category,
+): StoredFactRow[][] {
+  const batches: StoredFactRow[][] = [];
+  let current: StoredFactRow[] = [];
+  let partitions = new Set<string>();
+  for (let index = 0; index < rows.length; index++) {
+    const partition = factPartitionKey(category, facts[index]);
+    if (
+      current.length > 0 &&
+      !partitions.has(partition) &&
+      partitions.size >= MAX_FACT_INSERT_PARTITIONS
+    ) {
+      batches.push(current);
+      current = [];
+      partitions = new Set();
+    }
+    current.push(rows[index]!);
+    partitions.add(partition);
   }
   if (current.length > 0) batches.push(current);
   return batches;
