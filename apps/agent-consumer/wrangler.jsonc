@@ -49,7 +49,8 @@
         "queue": "agent-ingest-dev",
         "max_batch_size": 100,
         "max_batch_timeout": 5,
-        "max_concurrency": 10,
+        // History imports can put every batch on one organization Durable Object.
+        "max_concurrency": 1,
         "max_retries": 5,
         "dead_letter_queue": "agent-ingest-dlq-dev",
       },
@@ -100,7 +101,8 @@
             "queue": "agent-ingest-prod",
             "max_batch_size": 100,
             "max_batch_timeout": 5,
-            "max_concurrency": 10,
+            // Keep queued RPC bodies off the single organization Durable Object.
+            "max_concurrency": 1,
             "max_retries": 5,
             "dead_letter_queue": "agent-ingest-dlq-prod",
           },
