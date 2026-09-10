@@ -59,6 +59,7 @@ export function buildBodyAccessOwnershipSql(params: {
     `WHERE ${NORMALIZED_API_KEY_SQL} IN (${analyticsKeyIdLiterals.join(',')})`,
     `  AND JSONExtractString(SpanAttributes, 'gen_ai.request_id') = ${sqlStringLiteral(params.requestId)}`,
     'LIMIT 1',
+    'FORMAT JSON',
   ].join('\n');
 }
 
