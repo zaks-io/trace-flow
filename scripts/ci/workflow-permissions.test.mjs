@@ -10,6 +10,7 @@ function workflow(name) {
 
 const claude = workflow('claude');
 const preview = workflow('preview');
+const deploy = workflow('deploy');
 const authorize = new Function(
   'github',
   'context',
@@ -308,4 +309,17 @@ describe('credentialed CI checks', () => {
   test('main push retains the cloud schema check', () => {
     expect(new Function('github', `return (${cloudCheck});`)({ event_name: 'push' })).toBe(true);
   });
+});
+
+describe('production Worker secret boundary', () => {
+  test.each(['Deploy Raw API Worker', 'Deploy Pipes API Worker'])(
+    '%s scopes secret uploads and deployment to production',
+    (stepName) => {
+      const step = deploy.jobs['deploy-api'].steps.find(({ name }) => name === stepName);
+
+      expect(step.with.secrets).toBeTruthy();
+      expect(step.with.environment).toBe('production');
+      expect(step.with.command).toContain('deploy --env production');
+    },
+  );
 });
