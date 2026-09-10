@@ -6,6 +6,8 @@ import {
   DATASOURCES,
   LEGACY_DATASOURCES,
   ROW_IDENTITY_FIELDS,
+  compareFactIngestedAt,
+  factIngestedAtMs,
   rowIdentity,
   stableHash,
   type Category,
@@ -60,6 +62,7 @@ export class AgentSnapshot {
   }
 
   preserve(category: Category, datasource: string, row: Row, org: string): void {
+    factIngestedAtMs(row);
     const key = identity(category, row, org);
     this.db.query('INSERT INTO originals VALUES (?, ?)').run(datasource, JSON.stringify(row));
     this.target(category, key, datasource);
@@ -68,13 +71,11 @@ export class AgentSnapshot {
     // Cloud duplicates have no sequence beyond IngestedAt. Equal-time conflicting copies need review.
     if (existing) {
       const prior = JSON.parse(existing.data);
-      if (String(prior.IngestedAt) > String(row.IngestedAt)) return;
+      const versionOrder = compareFactIngestedAt(prior, row);
+      if (versionOrder > 0) return;
       const common = Object.keys(row).filter((key) => key in prior);
       const shared = (value: Row) => Object.fromEntries(common.map((key) => [key, value[key]]));
-      if (
-        prior.IngestedAt === row.IngestedAt &&
-        stableHash(shared(prior)) !== stableHash(shared(row))
-      ) {
+      if (versionOrder === 0 && stableHash(shared(prior)) !== stableHash(shared(row))) {
         throw new Error(`Conflicting equal-time cloud versions in ${category}; snapshot preserved`);
       }
     }
@@ -98,14 +99,18 @@ export class AgentSnapshot {
 
   overlay(category: Category, factId: string, payload: string, oldHash: string, org: string) {
     const row = JSON.parse(payload);
+    factIngestedAtMs(row);
     if (identity(category, row, org) !== factId) throw new Error('Ledger identity mismatch');
     this.target(category, factId, DATASOURCES[category]);
     const prior = this.get(category, factId);
+    const priorRow = prior ? JSON.parse(prior.data) : null;
+    const usePrior = priorRow !== null && compareFactIngestedAt(row, priorRow) < 0;
     // Preserve populated historical columns that were absent in an older collector payload.
-    const stored = prior ? { ...JSON.parse(prior.data), ...row } : row;
+    const stored = priorRow === null || usePrior ? (priorRow ?? row) : { ...priorRow, ...row };
+    const ledger = usePrior ? (prior!.ledger ?? prior!.data) : payload;
     this.db
       .query('INSERT OR REPLACE INTO desired VALUES (?, ?, ?, ?, ?)')
-      .run(category, factId, JSON.stringify(stored), payload, oldHash);
+      .run(category, factId, JSON.stringify(stored), ledger, oldHash);
   }
 
   target(category: Category, factId: string, datasource: string) {

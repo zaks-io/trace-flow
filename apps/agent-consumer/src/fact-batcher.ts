@@ -29,6 +29,8 @@ import {
   LEGACY_CATEGORIES,
   LEGACY_DATASOURCES,
   ROW_IDENTITY_FIELDS,
+  compareFactIngestedAt,
+  factIngestedAtMs,
   rowIdentity,
   stableHash,
   type Category,
@@ -139,10 +141,31 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
                 factId,
               ),
             ][0];
+            const rowData = JSON.stringify(row);
+            const existingPayload = existing
+              ? this.maintenance.loadLedgerPayload(category, factId, existing.data)
+              : null;
 
             if (existing?.content_hash === contentHash) {
-              const rowData = JSON.stringify(row);
-              if (this.maintenance.loadLedgerPayload(category, factId, existing.data) === null) {
+              if (existingPayload === null) {
+                this.maintenance.storeLedgerPayload(category, factId, rowData);
+              } else if (!this.flushInProgress) {
+                const coalesced = this.pendingFacts.coalesce(
+                  category,
+                  factId,
+                  contentHash,
+                  rowData,
+                  existingPayload,
+                  existing.clean_target,
+                  existing.legacy_target,
+                );
+                if (
+                  coalesced === 'unavailable' &&
+                  compareFactIngestedAt(row, JSON.parse(existingPayload)) >= 0
+                ) {
+                  this.maintenance.storeLedgerPayload(category, factId, rowData);
+                }
+              } else if (compareFactIngestedAt(row, JSON.parse(existingPayload)) >= 0) {
                 this.maintenance.storeLedgerPayload(category, factId, rowData);
               }
               duplicateRows++;
@@ -150,63 +173,92 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
             }
 
             if (existing) {
-              const changedData = JSON.stringify(row);
-              if (
-                !this.flushInProgress &&
-                this.pendingFacts.coalesce(
+              if (!this.flushInProgress && existingPayload !== null) {
+                const coalesced = this.pendingFacts.coalesce(
                   category,
                   factId,
                   contentHash,
-                  changedData,
+                  rowData,
+                  existingPayload,
                   existing.clean_target,
                   existing.legacy_target,
-                )
-              ) {
-                acceptedRows++;
-                continue;
+                );
+                if (coalesced !== 'unavailable') {
+                  if (coalesced === 'updated') acceptedRows++;
+                  else duplicateRows++;
+                  continue;
+                }
               }
               repairRows++;
-              const priorRepair = [
-                ...this.ctx.storage.sql.exec<{ id: number }>(
-                  `SELECT id FROM fact_repairs
-                 WHERE category = ? AND fact_id = ? AND old_hash = ? AND new_hash = ? LIMIT 1`,
+              const legacyRepairDedupeKey = JSON.stringify([
+                category,
+                factId,
+                existing.content_hash,
+                contentHash,
+              ]);
+              const repairDedupeKey = JSON.stringify([
+                category,
+                factId,
+                existing.content_hash,
+                contentHash,
+                factIngestedAtMs(row),
+              ]);
+              const legacyRepair = [
+                ...this.ctx.storage.sql.exec<{ data: string | null }>(
+                  `SELECT data FROM fact_repairs
+                   WHERE category = ? AND fact_id = ? AND old_hash = ? AND new_hash = ?
+                     AND recovery_dedupe_key IS NULL LIMIT 1`,
                   category,
                   factId,
                   existing.content_hash,
                   contentHash,
                 ),
               ][0];
-              if (!priorRepair) {
+              const dedupeKey =
+                legacyRepair?.data &&
+                compareFactIngestedAt(row, JSON.parse(legacyRepair.data)) === 0
+                  ? legacyRepairDedupeKey
+                  : repairDedupeKey;
+              const priorRepair = [
+                ...this.ctx.storage.sql.exec<{ id: number }>(
+                  `SELECT id FROM fact_repairs
+                   WHERE category = ? AND fact_id = ? AND old_hash = ? AND new_hash = ?
+                     AND recovery_dedupe_key = ? LIMIT 1`,
+                  category,
+                  factId,
+                  existing.content_hash,
+                  contentHash,
+                  dedupeKey,
+                ),
+              ][0];
+              if (!priorRepair && dedupeKey !== legacyRepairDedupeKey) {
                 this.ctx.storage.sql.exec(
-                  `INSERT INTO fact_repairs (category, fact_id, old_hash, new_hash, seen_at_ms, data)
-                   VALUES (?, ?, ?, ?, ?, ?)`,
+                  `INSERT INTO fact_repairs
+                   (category, fact_id, old_hash, new_hash, seen_at_ms, data, recovery_dedupe_key)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)`,
                   category,
                   factId,
                   existing.content_hash,
                   contentHash,
                   now,
-                  inlinePayload(changedData),
+                  inlinePayload(rowData),
+                  dedupeKey,
                 );
               }
               repairs.push({
-                payload: changedData,
+                payload: rowData,
                 outcome: JSON.stringify({
                   category,
                   factId,
                   oldHash: existing.content_hash,
                   newHash: contentHash,
-                  originalPayload: this.maintenance.loadLedgerPayload(
-                    category,
-                    factId,
-                    existing.data,
-                  ),
+                  originalPayload: existingPayload,
                 }),
-                dedupeKey: JSON.stringify([category, factId, existing.content_hash, contentHash]),
+                dedupeKey,
               });
               continue;
             }
 
-            const rowData = JSON.stringify(row);
             this.ctx.storage.sql.exec(
               `INSERT INTO fact_ledger
                (category, fact_id, content_hash, first_seen_at_ms, data, clean_target, legacy_target)
@@ -319,6 +371,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
       )
     `);
     this.ensureColumn('fact_repairs', 'data', 'TEXT');
+    this.ensureColumn('fact_repairs', 'recovery_dedupe_key', 'TEXT');
     this.ctx.storage.sql.exec(
       `CREATE INDEX IF NOT EXISTS idx_fact_repairs_lookup
        ON fact_repairs(category, fact_id, old_hash, new_hash)`,

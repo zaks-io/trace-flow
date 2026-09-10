@@ -38,6 +38,8 @@ export { processAgentBatch } from './consumer';
 export { AgentFactBatcher } from './fact-batcher';
 
 const AGENT_DLQ_NAMES = new Set(['agent-ingest-dlq-dev', 'agent-ingest-dlq-prod']);
+const DLQ_PRESERVATION_RETRY_DELAY_SECONDS = 60;
+const DLQ_PRESERVATION_MAX_RETRY_DELAY_SECONDS = 14_400;
 
 function getAgentBatcher(
   env: AgentConsumerEnv,
@@ -73,9 +75,14 @@ async function preserveDeadLetterBatch(
         tags: { operation: 'dlq_preserve' },
         extra: { shardId, messageId: message.id },
       });
-    } catch {
-      message.retry();
-      Sentry.captureMessage('agent_consumer.dead_letter_preservation_failed', {
+    } catch (error) {
+      message.retry({
+        delaySeconds: Math.min(
+          DLQ_PRESERVATION_RETRY_DELAY_SECONDS * 2 ** (message.attempts - 1),
+          DLQ_PRESERVATION_MAX_RETRY_DELAY_SECONDS,
+        ),
+      });
+      Sentry.captureException(error, {
         level: 'fatal',
         tags: { operation: 'dlq_preserve' },
         extra: { queue: batch.queue, messageId: message.id, attempts: message.attempts },
