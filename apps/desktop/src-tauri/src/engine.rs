@@ -27,11 +27,13 @@ use collector_embedder::keychain;
 use collector_embedder::sync::{self, ArchiveKeyStore, Window};
 use collector_embedder::{
     archive_policy, defaults, ArchiveEnrollmentRequest, ArchiveHistoryChoice, ArchiveSource,
-    ArchiveSourceChoice,
+    ArchiveSourceChoice, ArchiveTarget, ArchiveTargetError,
 };
 use tokio::sync::mpsc;
 
-use crate::settings::{ArchivePolicyDenial, ArchiveRequest, Settings, SettingsFile};
+use crate::settings::{
+    ArchivePolicyDenial, ArchiveRepairState, ArchiveRequest, Settings, SettingsFile,
+};
 use crate::state::{
     AppStateBus, ArchiveConnectionIdentity, ArchiveMenuState, ConnectionState, SourceCounts,
     SyncStatus,
@@ -191,6 +193,7 @@ async fn run_loop(
     refresh_connection(&bus);
     refresh_sources(&bus);
     refresh_archive(&bus);
+    publish_archive_repairs(&bus, &settings);
 
     if settings.syncing {
         tracing::info!("sync authorized before relaunch; resuming");
@@ -370,7 +373,7 @@ async fn enroll_archive_source(
             let run_immediately = apply_enrollment_success(settings, enrolled);
             persist(settings_file, settings);
             refresh_archive(bus);
-            clear_archive_error(bus);
+            publish_archive_recovery(bus, settings);
             bus.update(|state| state.archive.pending = None);
             if run_immediately {
                 run_authorized_cycle(bus, settings, archive_policy_memory).await;
@@ -453,6 +456,16 @@ fn clear_archive_error(bus: &AppStateBus) {
     bus.update(|state| state.archive.last_error = None);
 }
 
+fn clear_archive_repair_error(bus: &AppStateBus) {
+    bus.update(|state| {
+        if state.archive.last_error.as_deref().is_some_and(|error| {
+            error == "Claude archive needs repair" || error == "Codex archive needs repair"
+        }) {
+            state.archive.last_error = None;
+        }
+    });
+}
+
 /// One authorized pass. Until the one-time history backfill has actually reached ingest, every pass
 /// (a click, a tick, a relaunch catch-up) uses the wider `FIRST_BACKFILL` window, so a first backfill
 /// that failed (network down, then a relaunch) is retried rather than quietly replaced by an
@@ -465,6 +478,8 @@ async fn run_authorized_cycle(
     let window = window_for_authorized_cycle(settings);
     if let Some(outcome) = run_cycle(bus, window, archive_policy_memory).await {
         apply_authorized_cycle(settings, &outcome);
+        reconcile_archive_repairs(settings, &outcome);
+        update_archive_error_after_cycle(bus, settings, &outcome);
     }
     archive_policy_memory.update_settings(settings);
 }
@@ -542,10 +557,23 @@ struct CycleOutcome {
     /// Optional Archive enrollment/load or upload failure. Visible in status and retried next cycle,
     /// but must not block fact backfill.
     archive_setup_error: Option<String>,
-    /// True only when the Archive API returned a policy or an Archive cycle completed useful work.
-    /// A first-use unavailable response remains non-fatal for fact sync, but it is not a recovery
-    /// from a user enrollment failure.
+    archive_connection: Option<ArchiveConnectionIdentity>,
+    archive_target_errors: Vec<ArchiveTargetError>,
+    archive_validated_targets: Vec<ArchiveTarget>,
     archive_recovered: bool,
+}
+
+fn archive_repair_message(error: &ArchiveTargetError) -> Option<String> {
+    match error.error_class.as_str() {
+        "archive_historical_prefix_changed" | "archive_historical_prefix_shortened" => {
+            let source = match error.source {
+                ArchiveSource::Claude => "Claude",
+                ArchiveSource::Codex => "Codex",
+            };
+            Some(format!("{source} archive needs repair"))
+        }
+        _ => None,
+    }
 }
 
 /// Run one sync pass over all sources, mirroring the result into the state bus. A failed cycle records
@@ -691,15 +719,94 @@ async fn run_cycle(
 
     refresh_sources(bus);
     refresh_archive(bus);
-    if let Some(outcome) = &outcome {
-        clear_archive_error_after_cycle(bus, outcome);
-    }
     outcome
 }
 
-fn clear_archive_error_after_cycle(bus: &AppStateBus, outcome: &CycleOutcome) {
-    if outcome.archive_recovered {
+fn reconcile_archive_repairs(settings: &mut Settings, outcome: &CycleOutcome) {
+    let Some(connection) = &outcome.archive_connection else {
+        return;
+    };
+    if settings.archive_repairs.as_ref().is_some_and(|repairs| {
+        repairs.org_id != connection.org_id || repairs.collector_id != connection.collector_id
+    }) {
+        settings.archive_repairs = None;
+    }
+
+    let actionable: Vec<_> = outcome
+        .archive_target_errors
+        .iter()
+        .filter(|error| archive_repair_message(error).is_some())
+        .cloned()
+        .collect();
+    if settings.archive_repairs.is_none() && !actionable.is_empty() {
+        settings.archive_repairs = Some(ArchiveRepairState {
+            org_id: connection.org_id.clone(),
+            collector_id: connection.collector_id.clone(),
+            targets: Vec::new(),
+        });
+    }
+    let Some(repairs) = settings.archive_repairs.as_mut() else {
+        return;
+    };
+
+    repairs.targets.retain(|error| {
+        !outcome.archive_validated_targets.iter().any(|target| {
+            error.source == target.source
+                && error.source_session_id == target.source_session_id
+                && error.source_transcript_part_id == target.source_transcript_part_id
+        })
+    });
+    for error in actionable {
+        repairs.targets.retain(|existing| {
+            existing.source != error.source
+                || existing.source_session_id != error.source_session_id
+                || existing.source_transcript_part_id != error.source_transcript_part_id
+        });
+        repairs.targets.push(error);
+    }
+    if repairs.targets.is_empty() {
+        settings.archive_repairs = None;
+    }
+}
+
+fn publish_archive_repairs(bus: &AppStateBus, settings: &Settings) -> bool {
+    let connection = bus.snapshot().connection.archive_identity();
+    let message = settings
+        .archive_repairs
+        .as_ref()
+        .filter(|repairs| {
+            connection.as_ref().is_some_and(|connection| {
+                repairs.org_id == connection.org_id
+                    && repairs.collector_id == connection.collector_id
+            })
+        })
+        .and_then(|repairs| repairs.targets.iter().find_map(archive_repair_message));
+    if let Some(message) = message {
+        publish_archive_error(bus, message);
+        true
+    } else {
+        false
+    }
+}
+
+fn publish_archive_recovery(bus: &AppStateBus, settings: &Settings) {
+    if !publish_archive_repairs(bus, settings) {
         clear_archive_error(bus);
+    }
+}
+
+fn update_archive_error_after_cycle(
+    bus: &AppStateBus,
+    settings: &Settings,
+    outcome: &CycleOutcome,
+) {
+    if !publish_archive_repairs(bus, settings) {
+        if !outcome.archive_validated_targets.is_empty() {
+            clear_archive_repair_error(bus);
+        }
+        if outcome.archive_recovered {
+            clear_archive_error(bus);
+        }
     }
 }
 
@@ -781,6 +888,7 @@ fn run_cycle_blocking_with_policy_memory(
     now_ms: i64,
     isolation: CycleIsolation,
 ) -> (CycleOutcome, Option<ArchivePolicyObservation>) {
+    let archive_connection = Some(connection.clone());
     let ArchiveConnectionIdentity {
         org_id,
         collector_id,
@@ -798,6 +906,9 @@ fn run_cycle_blocking_with_policy_memory(
                     first_error: None,
                     setup_error: Some(format!("build runtime: {err}")),
                     archive_setup_error: None,
+                    archive_connection,
+                    archive_target_errors: Vec::new(),
+                    archive_validated_targets: Vec::new(),
                     archive_recovered: false,
                 },
                 None,
@@ -895,6 +1006,8 @@ fn run_cycle_blocking_with_policy_memory(
             let mut advanced = 0u32;
             let mut failed = 0u32;
             let mut first_error = None;
+            let mut archive_target_errors = Vec::new();
+            let mut archive_validated_targets = Vec::new();
             for (_source, r) in &outcome.reports {
                 advanced += r.advanced;
                 failed += r.failed;
@@ -904,6 +1017,17 @@ fn run_cycle_blocking_with_policy_memory(
             }
             if let Some(archive) = &outcome.archive {
                 tracing::info!(history = ?archive.history, "archive history progress");
+                for error in &archive.target_errors {
+                    tracing::warn!(
+                        error_class = %error.error_class,
+                        source = error.source.as_str(),
+                        source_session_id = %error.source_session_id,
+                        source_transcript_part_id = %error.source_transcript_part_id,
+                        "archive target failed"
+                    );
+                    archive_target_errors.push(error.clone());
+                }
+                archive_validated_targets.extend(archive.validated_targets.iter().cloned());
                 failed += archive.failed;
                 archive_recovered |= archive.first_error.is_none()
                     && (archive.uploaded > 0 || archive.captured > 0 || archive.purged);
@@ -917,6 +1041,9 @@ fn run_cycle_blocking_with_policy_memory(
                 first_error,
                 setup_error: None,
                 archive_setup_error,
+                archive_connection,
+                archive_target_errors,
+                archive_validated_targets,
                 archive_recovered,
             }
         }
@@ -927,6 +1054,9 @@ fn run_cycle_blocking_with_policy_memory(
             first_error: None,
             setup_error: Some(err.to_string()),
             archive_setup_error: None,
+            archive_connection,
+            archive_target_errors: Vec::new(),
+            archive_validated_targets: Vec::new(),
             archive_recovered,
         },
     };
@@ -1380,28 +1510,201 @@ mod archive_engine_tests {
         assert_eq!(error, None);
     }
 
-    #[test]
-    fn archive_error_clears_only_after_confirmed_archive_recovery() {
-        let bus = AppStateBus::new();
-        publish_archive_error(&bus, "service unavailable".to_string());
-        let mut outcome = CycleOutcome {
+    fn cycle_outcome(
+        errors: Vec<ArchiveTargetError>,
+        validated_targets: Vec<ArchiveTarget>,
+    ) -> CycleOutcome {
+        CycleOutcome {
             advanced: 1,
-            failed: 0,
+            failed: errors.len() as u32,
             first_error: None,
             setup_error: None,
             archive_setup_error: None,
+            archive_connection: Some(archive_identity("org_1", "collector_1")),
+            archive_target_errors: errors,
+            archive_validated_targets: validated_targets,
             archive_recovered: false,
-        };
+        }
+    }
 
-        clear_archive_error_after_cycle(&bus, &outcome);
+    fn target_error(
+        error_class: &str,
+        source: ArchiveSource,
+        session: &str,
+        part: &str,
+    ) -> ArchiveTargetError {
+        ArchiveTargetError {
+            error_class: error_class.to_string(),
+            source,
+            source_session_id: session.to_string(),
+            source_transcript_part_id: part.to_string(),
+        }
+    }
+
+    fn validated_target(source: ArchiveSource, session: &str, part: &str) -> ArchiveTarget {
+        ArchiveTarget {
+            source,
+            source_session_id: session.to_string(),
+            source_transcript_part_id: part.to_string(),
+        }
+    }
+
+    fn connected_bus() -> AppStateBus {
+        let bus = AppStateBus::new();
+        publish_connection(&bus, &saved_connection("org_1", "collector_1"));
+        bus
+    }
+
+    #[test]
+    fn successful_enrollment_clears_failed_enrollment_error_but_preserves_repair() {
+        let bus = connected_bus();
+        let mut settings = Settings::default();
+        publish_archive_error(&bus, "service unavailable".to_string());
+        publish_archive_recovery(&bus, &settings);
+        assert_eq!(bus.snapshot().archive.last_error, None);
+
+        let error = target_error(
+            "archive_historical_prefix_changed",
+            ArchiveSource::Codex,
+            "codex-1",
+            "codex:part:primary",
+        );
+        reconcile_archive_repairs(&mut settings, &cycle_outcome(vec![error], Vec::new()));
+        publish_archive_error(&bus, "service unavailable".to_string());
+        publish_archive_recovery(&bus, &settings);
         assert_eq!(
             bus.snapshot().archive.last_error.as_deref(),
-            Some("service unavailable")
+            Some("Codex archive needs repair")
+        );
+    }
+
+    #[test]
+    fn confirmed_policy_recovery_clears_transient_error_but_unconfirmed_cycle_does_not() {
+        let bus = connected_bus();
+        let settings = Settings::default();
+        publish_archive_error(&bus, "archive unavailable".to_string());
+        let mut outcome = cycle_outcome(Vec::new(), Vec::new());
+        update_archive_error_after_cycle(&bus, &settings, &outcome);
+        assert_eq!(
+            bus.snapshot().archive.last_error.as_deref(),
+            Some("archive unavailable")
         );
 
         outcome.archive_recovered = true;
-        clear_archive_error_after_cycle(&bus, &outcome);
+        update_archive_error_after_cycle(&bus, &settings, &outcome);
         assert_eq!(bus.snapshot().archive.last_error, None);
+    }
+
+    #[test]
+    fn missing_repair_target_stays_actionable_across_cycles_and_restart() {
+        let bus = connected_bus();
+        let mut settings = Settings::default();
+        let error = target_error(
+            "archive_historical_prefix_changed",
+            ArchiveSource::Codex,
+            "internal-session-id",
+            "codex:part:primary",
+        );
+        reconcile_archive_repairs(&mut settings, &cycle_outcome(vec![error], Vec::new()));
+        publish_archive_repairs(&bus, &settings);
+        assert_eq!(
+            bus.snapshot().archive.last_error.as_deref(),
+            Some("Codex archive needs repair")
+        );
+
+        reconcile_archive_repairs(&mut settings, &cycle_outcome(Vec::new(), Vec::new()));
+        let dir = TempDir::new().unwrap();
+        let file = SettingsFile::at(dir.path());
+        file.save(&settings).unwrap();
+        let restored = file.load().unwrap();
+        publish_archive_repairs(&bus, &restored);
+        assert_eq!(
+            bus.snapshot().archive.last_error.as_deref(),
+            Some("Codex archive needs repair")
+        );
+    }
+
+    #[test]
+    fn actionable_target_is_retained_after_an_unrelated_target_error() {
+        let bus = connected_bus();
+        let mut settings = Settings::default();
+        let errors = vec![
+            target_error(
+                "archive_io",
+                ArchiveSource::Claude,
+                "claude-1",
+                "claude:part:parent",
+            ),
+            target_error(
+                "archive_historical_prefix_shortened",
+                ArchiveSource::Codex,
+                "codex-1",
+                "codex:part:primary",
+            ),
+        ];
+        reconcile_archive_repairs(&mut settings, &cycle_outcome(errors, Vec::new()));
+        publish_archive_repairs(&bus, &settings);
+        assert_eq!(
+            bus.snapshot().archive.last_error.as_deref(),
+            Some("Codex archive needs repair")
+        );
+        assert_eq!(settings.archive_repairs.unwrap().targets.len(), 1);
+    }
+
+    #[test]
+    fn another_target_success_does_not_clear_repair() {
+        let bus = connected_bus();
+        let mut settings = Settings::default();
+        let error = target_error(
+            "archive_historical_prefix_changed",
+            ArchiveSource::Codex,
+            "codex-1",
+            "codex:part:primary",
+        );
+        reconcile_archive_repairs(&mut settings, &cycle_outcome(vec![error], Vec::new()));
+        reconcile_archive_repairs(
+            &mut settings,
+            &cycle_outcome(
+                Vec::new(),
+                vec![validated_target(
+                    ArchiveSource::Claude,
+                    "claude-1",
+                    "claude:part:parent",
+                )],
+            ),
+        );
+        publish_archive_repairs(&bus, &settings);
+        assert_eq!(
+            bus.snapshot().archive.last_error.as_deref(),
+            Some("Codex archive needs repair")
+        );
+    }
+
+    #[test]
+    fn exact_target_validation_clears_repair() {
+        let bus = connected_bus();
+        let mut settings = Settings::default();
+        let error = target_error(
+            "archive_historical_prefix_changed",
+            ArchiveSource::Codex,
+            "codex-1",
+            "codex:part:primary",
+        );
+        let target = validated_target(ArchiveSource::Codex, "codex-1", "codex:part:primary");
+        reconcile_archive_repairs(
+            &mut settings,
+            &cycle_outcome(vec![error], vec![target.clone()]),
+        );
+        publish_archive_repairs(&bus, &settings);
+        assert_eq!(
+            bus.snapshot().archive.last_error.as_deref(),
+            Some("Codex archive needs repair")
+        );
+        let recovered = cycle_outcome(Vec::new(), vec![target]);
+        reconcile_archive_repairs(&mut settings, &recovered);
+        update_archive_error_after_cycle(&bus, &settings, &recovered);
+        assert_eq!(bus.snapshot().archive.last_error, None);
+        assert!(settings.archive_repairs.is_none());
     }
 
     #[test]
@@ -1700,6 +2003,7 @@ mod archive_engine_tests {
             backfilled: false,
             archive_request: None,
             archive_policy_denial: None,
+            archive_repairs: None,
         };
         match (
             apply_authorized_cycle(&mut settings, &outcome),
@@ -1936,6 +2240,7 @@ mod archive_engine_tests {
             backfilled: false,
             archive_request: None,
             archive_policy_denial: None,
+            archive_repairs: None,
         };
         file.save(&settings).unwrap();
 
@@ -2029,6 +2334,7 @@ mod archive_engine_tests {
             backfilled: false,
             archive_request: None,
             archive_policy_denial: None,
+            archive_repairs: None,
         };
         file.save(&settings).unwrap();
 
@@ -2040,6 +2346,9 @@ mod archive_engine_tests {
                 first_error: None,
                 setup_error: None,
                 archive_setup_error: archive_diag.clone(),
+                archive_connection: Some(archive_identity("org_1", "collector_1")),
+                archive_target_errors: Vec::new(),
+                archive_validated_targets: Vec::new(),
                 archive_recovered: false,
             },
             CycleOutcome {
@@ -2048,6 +2357,9 @@ mod archive_engine_tests {
                 first_error: None,
                 setup_error: None,
                 archive_setup_error: archive_diag.clone(),
+                archive_connection: Some(archive_identity("org_1", "collector_1")),
+                archive_target_errors: Vec::new(),
+                archive_validated_targets: Vec::new(),
                 archive_recovered: false,
             },
             CycleOutcome {
@@ -2056,6 +2368,9 @@ mod archive_engine_tests {
                 first_error: None,
                 setup_error: None,
                 archive_setup_error: archive_diag,
+                archive_connection: Some(archive_identity("org_1", "collector_1")),
+                archive_target_errors: Vec::new(),
+                archive_validated_targets: Vec::new(),
                 archive_recovered: false,
             },
         ];
@@ -2091,6 +2406,7 @@ mod archive_engine_tests {
             backfilled: false,
             archive_request: None,
             archive_policy_denial: None,
+            archive_repairs: None,
         };
         let fatal = CycleOutcome {
             advanced: 0,
@@ -2098,6 +2414,9 @@ mod archive_engine_tests {
             first_error: None,
             setup_error: Some("open cursor store".to_string()),
             archive_setup_error: None,
+            archive_connection: Some(archive_identity("org_1", "collector_1")),
+            archive_target_errors: Vec::new(),
+            archive_validated_targets: Vec::new(),
             archive_recovered: false,
         };
         match (
@@ -2161,6 +2480,7 @@ mod archive_request_tests {
             backfilled: true,
             archive_request: Some(pending_request()),
             archive_policy_denial: None,
+            archive_repairs: None,
         };
         let expected_settings = settings.clone();
         let mut archive_policy_memory = ArchivePolicyMemory::default();
@@ -2236,6 +2556,7 @@ mod archive_request_tests {
                 backfilled: true,
                 archive_request: Some(pending_request()),
                 archive_policy_denial: None,
+                archive_repairs: None,
             };
             let run_immediately = apply_enrollment_success(&mut settings, true);
             assert_eq!(run_immediately, syncing);
@@ -2249,6 +2570,7 @@ mod archive_request_tests {
             backfilled: false,
             archive_request: Some(pending_request()),
             archive_policy_denial: None,
+            archive_repairs: None,
         };
         assert!(!apply_enrollment_success(&mut settings, false));
         assert!(settings.syncing);

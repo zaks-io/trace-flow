@@ -15,7 +15,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use collector_embedder::{ArchiveEnrollmentRecord, ArchiveHistoryChoice, ArchiveSource};
+use collector_embedder::{
+    ArchiveEnrollmentRecord, ArchiveHistoryChoice, ArchiveSource, ArchiveTargetError,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
@@ -33,6 +35,9 @@ pub struct Settings {
     pub archive_request: Option<ArchiveRequest>,
     /// Server-confirmed denial kept when the collector enrollment marker could not be replaced.
     pub archive_policy_denial: Option<ArchivePolicyDenial>,
+    /// Targets whose acknowledged Archive history no longer matches the local source. Full target
+    /// identity stays local so only validation of that same target can clear the repair state.
+    pub archive_repairs: Option<ArchiveRepairState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,6 +56,14 @@ pub struct ArchivePolicyDenial {
     pub org_id: String,
     pub collector_id: String,
     pub enrollment: ArchiveEnrollmentRecord,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ArchiveRepairState {
+    pub org_id: String,
+    pub collector_id: String,
+    pub targets: Vec<ArchiveTargetError>,
 }
 
 #[derive(Debug, Clone)]
@@ -121,6 +134,16 @@ mod tests {
                     reason: Some("not_activated".to_string()),
                 },
             }),
+            archive_repairs: Some(ArchiveRepairState {
+                org_id: "org_1".to_string(),
+                collector_id: "collector_1".to_string(),
+                targets: vec![ArchiveTargetError {
+                    error_class: "archive_historical_prefix_changed".to_string(),
+                    source: ArchiveSource::Codex,
+                    source_session_id: "session-1".to_string(),
+                    source_transcript_part_id: "codex:part:primary".to_string(),
+                }],
+            }),
         };
         file.save(&settings).unwrap();
         assert_eq!(file.load().unwrap(), settings);
@@ -137,6 +160,7 @@ mod tests {
         assert!(!settings.backfilled);
         assert!(settings.archive_request.is_none());
         assert!(settings.archive_policy_denial.is_none());
+        assert!(settings.archive_repairs.is_none());
     }
 
     #[test]

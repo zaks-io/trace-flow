@@ -32,6 +32,23 @@ pub struct DeferredArchiveSnapshot {
     pub minimum_observed_size: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ArchiveTarget {
+    pub source: ArchiveSource,
+    pub source_session_id: String,
+    pub source_transcript_part_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ArchiveTargetError {
+    pub error_class: String,
+    pub source: ArchiveSource,
+    pub source_session_id: String,
+    pub source_transcript_part_id: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArchiveInitialImport {
     NotApplicable,
@@ -59,6 +76,8 @@ pub struct ArchiveCycleReport {
     pub halted: bool,
     pub blocked: u32,
     pub first_error: Option<String>,
+    pub target_errors: Vec<ArchiveTargetError>,
+    pub validated_targets: Vec<ArchiveTarget>,
     pub history: Vec<ArchiveSourceHistoryReport>,
 }
 

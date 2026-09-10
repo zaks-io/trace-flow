@@ -31,6 +31,8 @@ async function refreshStatus() {
     label = 'Not connected';
   } else if (!status.credential_present || status.expired) {
     label = `Connected (${status.org_id}) — sign in again`;
+  } else if (status.archive_error) {
+    label = `Connected · ${status.org_id} · ${status.archive_error}`;
   } else {
     label = `Connected — ${status.org_id} — ${status.sync}`;
   }
