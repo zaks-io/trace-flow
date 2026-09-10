@@ -161,7 +161,7 @@ describe('large archive records', () => {
       observations: [firstMetadata],
       checkpoint: firstCheckpoint,
       complete_prefix_utf8: firstPrefixText,
-    } as unknown as ArchiveUploadRequest;
+    } satisfies ArchiveUploadRequest;
     const payload = `${largeRawRecord(
       currentScope.sourceSessionId,
       'large-13mib',
@@ -206,7 +206,7 @@ describe('large archive records', () => {
         prior_prefix_chain_sha256: firstCheckpoint.prefix_chain_sha256,
         appended_prefix_utf8: appendedPrefixText,
       },
-    } as unknown as ArchiveUploadRequest;
+    } satisfies ArchiveUploadRequest;
     const appendBody = JSON.stringify(appendUpload);
     const appendBodyBytes = new TextEncoder().encode(appendBody).byteLength;
     expect(appendBody).not.toContain('"payload":');

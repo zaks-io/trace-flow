@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as Sentry from '@sentry/cloudflare';
 import { microdollarsToDollars, type ModelPricing } from '@trace-flow/pricing';
 import { AGENT_INGEST_LIMITS, type AgentSource } from '@trace-flow/types';
-import { processAgentBatch } from '../consumer';
+import { processAgentBatch, processAgentRecoveryPayload } from '../consumer';
 import { AGENT_FACT_RPC_MAX_ROWS } from '../fact-rpc-batches';
 
 // withSentry initializes the client in the deployed Worker; here we mock the capture surface so the
@@ -597,5 +597,29 @@ describe('processAgentBatch', () => {
 
     expect(tb.inserts).toHaveLength(0);
     expect(msg.ack).toHaveBeenCalledOnce();
+  });
+});
+
+describe('processAgentRecoveryPayload', () => {
+  it('fails before staging facts whose OrgId is blank', async () => {
+    const { kv } = makeKv({ [PRICING_KEY]: PRICING });
+    const env = makeEnv(kv);
+    const addFacts = vi.fn();
+    env.AGENT_FACT_BATCHER = {
+      getByName: () => ({ addFacts }),
+    } as unknown as typeof env.AGENT_FACT_BATCHER;
+    const body = queueMessage({
+      tenancy: {
+        org_id: '',
+        user_id: 'user-1',
+        collector_id: 'collector-1',
+        collector_credential_id: 'cred-1',
+      },
+    });
+
+    await expect(processAgentRecoveryPayload(body, env)).rejects.toThrow(
+      'agent messages fact has blank OrgId',
+    );
+    expect(addFacts).not.toHaveBeenCalled();
   });
 });

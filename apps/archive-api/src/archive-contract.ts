@@ -41,26 +41,48 @@ export interface CompletedScanCheckpoint {
   first_observed_at: number;
 }
 
-export interface ArchiveAppendProof {
+export interface LegacyArchiveAppendProof {
   prior_prefix_chain_sha256: string;
-  appended_prefix_base64?: string;
-  appended_prefix_utf8?: string;
+  appended_prefix_base64: string;
+  appended_prefix_utf8?: never;
 }
 
-export interface ArchiveUploadRequest {
-  /** Present only for the compact UTF-8 proof form. Legacy requests omit it. */
-  archive_upload_wire_version?: number;
+export interface CompactArchiveObservation extends Omit<ArchiveObservation, 'payload'> {
+  payload?: never;
+}
+
+export interface CompactArchiveAppendProof {
+  prior_prefix_chain_sha256: string;
+  appended_prefix_base64?: never;
+  appended_prefix_utf8: string;
+}
+
+interface ArchiveUploadRequestBase {
   source_session_id: string;
-  observations: ArchiveObservation[];
   checkpoint: CompletedScanCheckpoint;
   prior_checkpoint?: CompletedScanCheckpoint;
+}
+
+export interface LegacyArchiveUploadRequest extends ArchiveUploadRequestBase {
+  archive_upload_wire_version?: never;
+  observations: ArchiveObservation[];
   /** Optional exact bytes for the completed source prefix, including blank lines and separators. */
   complete_prefix_base64?: string;
-  /** Exact UTF-8 prefix for wire v2. Mutually exclusive with complete_prefix_base64. */
-  complete_prefix_utf8?: string;
+  complete_prefix_utf8?: never;
   /** Bounded bytes appended after prior_checkpoint, never the cumulative source prefix. */
-  append_proof?: ArchiveAppendProof;
+  append_proof?: LegacyArchiveAppendProof;
 }
+
+export interface CompactArchiveUploadRequest extends ArchiveUploadRequestBase {
+  archive_upload_wire_version: typeof ARCHIVE_UPLOAD_WIRE_VERSION;
+  observations: CompactArchiveObservation[];
+  complete_prefix_base64?: never;
+  /** Exact UTF-8 prefix for wire v2. */
+  complete_prefix_utf8?: string;
+  append_proof?: CompactArchiveAppendProof;
+}
+
+export type ArchiveUploadRequest = LegacyArchiveUploadRequest | CompactArchiveUploadRequest;
 
 export interface ArchiveScope {
   orgId: string;

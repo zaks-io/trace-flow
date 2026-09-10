@@ -39,6 +39,7 @@ const BATCH_SIZE = 10_000;
 const MAX_NDJSON_BYTES = 900_000;
 // Agent dashboards do not need sub-minute ingest visibility; fewer larger inserts reduce part churn.
 const FLUSH_INTERVAL_MS = 60_000;
+const CAPPED_FLUSH_RETRY_MS = 1_000;
 const MAX_SQL_PARAMS = 90;
 const MAX_INSERT_ROWS = Math.floor(MAX_SQL_PARAMS / 3);
 const MAX_FLUSH_CANDIDATES = 500;
@@ -72,6 +73,10 @@ interface StoredFactRow {
   [key: string]: string | number;
   id: number;
   data: string;
+}
+
+interface StoredFactCandidate extends StoredFactRow {
+  candidate_count: number;
 }
 
 class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
@@ -404,11 +409,14 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     );
   }
 
-  private async scheduleFlush(): Promise<void> {
-    if (this.flushAlarmScheduled || this.maintenance.isLocked()) {
-      return;
+  private async scheduleFlush(delayMs = FLUSH_INTERVAL_MS): Promise<void> {
+    if (this.maintenance.isLocked()) return;
+    const alarmAt = Date.now() + delayMs;
+    if (this.flushAlarmScheduled) {
+      const currentAlarm = await this.ctx.storage.getAlarm();
+      if (currentAlarm !== null && currentAlarm <= alarmAt) return;
     }
-    await this.ctx.storage.setAlarm(Date.now() + FLUSH_INTERVAL_MS);
+    await this.ctx.storage.setAlarm(alarmAt);
     this.flushAlarmScheduled = true;
   }
 
@@ -418,20 +426,32 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     }
 
     this.flushInProgress = true;
+    let eligibleRowsRemain = false;
+    let flushCompleted = false;
     try {
       for (const category of CATEGORIES) {
         if (this.maintenance.isLocked()) break;
-        await this.flushCategory('pending_facts', DATASOURCES[category], category);
+        eligibleRowsRemain =
+          (await this.flushCategory('pending_facts', DATASOURCES[category], category)) ||
+          eligibleRowsRemain;
       }
       for (const category of LEGACY_CATEGORIES) {
         if (this.maintenance.isLocked()) break;
-        await this.flushCategory('legacy_pending_facts', LEGACY_DATASOURCES[category], category);
+        eligibleRowsRemain =
+          (await this.flushCategory(
+            'legacy_pending_facts',
+            LEGACY_DATASOURCES[category],
+            category,
+          )) || eligibleRowsRemain;
       }
+      flushCompleted = true;
     } finally {
       this.queuedRows = this.countPendingRows();
       this.flushInProgress = false;
       if (this.queuedRows > 0 && !this.maintenance.isLocked()) {
-        await this.scheduleFlush();
+        await this.scheduleFlush(
+          flushCompleted && eligibleRowsRemain ? CAPPED_FLUSH_RETRY_MS : FLUSH_INTERVAL_MS,
+        );
       }
       await this.logger.flush();
     }
@@ -441,14 +461,15 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     table: 'pending_facts' | 'legacy_pending_facts',
     datasource: string,
     category: Category,
-  ): Promise<void> {
+  ): Promise<boolean> {
     this.deleteSentFacts(table, category);
 
     const targetKey = `${table}:${category}`;
     const rows = [
-      ...this.ctx.storage.sql.exec<StoredFactRow>(
+      ...this.ctx.storage.sql.exec<StoredFactCandidate>(
         `WITH candidates AS (
            SELECT id, data, ROW_NUMBER() OVER (ORDER BY id) AS row_number,
+             COUNT(*) OVER () AS candidate_count,
              SUM(CASE WHEN data = '' THEN ? ELSE length(CAST(data AS BLOB)) + 1 END)
                OVER (ORDER BY id) AS cumulative_bytes
            FROM (
@@ -462,7 +483,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
              ORDER BY id LIMIT ?
            )
          )
-         SELECT id, data FROM candidates
+         SELECT id, data, candidate_count FROM candidates
          WHERE row_number = 1 OR cumulative_bytes <= ? ORDER BY id`,
         MAX_NDJSON_BYTES + 1,
         category,
@@ -471,11 +492,15 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
         MAX_NDJSON_BYTES,
       ),
     ].map((row) => ({ ...row, data: this.loadFactData(table, row.id, row.data) }));
+    const candidateCount = rows[0]?.candidate_count ?? 0;
+    const eligibleRowsRemain =
+      candidateCount === MAX_FLUSH_CANDIDATES || candidateCount > rows.length;
     for (const batch of splitRowsByBytes(rows)) {
-      if (this.maintenance.isLocked()) return;
+      if (this.maintenance.isLocked()) return eligibleRowsRemain;
       await this.sendFactBatch(table, datasource, category, targetKey, batch);
     }
     this.deleteSentFacts(table, category);
+    return eligibleRowsRemain;
   }
 
   private async sendFactBatch(

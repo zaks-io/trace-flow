@@ -30,7 +30,7 @@ pub struct CodexSessionFields {
     pub embedded_git: Option<GitMetadata>,
     /// `payload.git.commit_hash` — the HEAD sha Codex records (Claude transcripts carry none).
     pub git_head_sha: Option<String>,
-    /// Direct parent session identity from `payload.parent_thread_id`, when this is a child session.
+    /// Direct parent session identity from root or nested spawn metadata, when this is a child session.
     pub parent_thread_id: Option<String>,
     /// Exact nesting depth from `payload.source.subagent.thread_spawn.depth`. A parent id can exist
     /// without this field, so callers must not invent a depth when this is `None`.
@@ -75,11 +75,13 @@ pub fn codex_session_fields(records: &[Value]) -> CodexSessionFields {
         .filter(|s| !s.is_empty())
         .map(str::to_string);
     let cwd = nonempty_str(payload, "cwd");
-    let parent_thread_id = nonempty_str(payload, "parent_thread_id");
-    let agent_depth = payload
+    let thread_spawn = payload
         .get("source")
         .and_then(|source| source.get("subagent"))
-        .and_then(|subagent| subagent.get("thread_spawn"))
+        .and_then(|subagent| subagent.get("thread_spawn"));
+    let parent_thread_id = nonempty_str(payload, "parent_thread_id")
+        .or_else(|| thread_spawn.and_then(|spawn| nonempty_str(spawn, "parent_thread_id")));
+    let agent_depth = thread_spawn
         .and_then(|spawn| spawn.get("depth"))
         .and_then(Value::as_i64)
         .filter(|depth| *depth >= 0);
@@ -246,6 +248,24 @@ mod tests {
                 "id": "review-session",
                 "parent_thread_id": "parent-session",
                 "source": { "subagent": { "other": "guardian" } }
+            }
+        });
+        let f = codex_session_fields(&recs(json!([meta])));
+        assert_eq!(f.parent_thread_id.as_deref(), Some("parent-session"));
+        assert_eq!(f.agent_depth, None);
+    }
+
+    #[test]
+    fn reads_nested_parent_identity_without_inventing_depth() {
+        let meta = json!({
+            "type": "session_meta",
+            "payload": {
+                "id": "review-session",
+                "source": {
+                    "subagent": {
+                        "thread_spawn": { "parent_thread_id": "parent-session" }
+                    }
+                }
             }
         });
         let f = codex_session_fields(&recs(json!([meta])));

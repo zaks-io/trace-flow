@@ -55,6 +55,7 @@ impl BlockedArchiveRecord {
         let fingerprint_end = self.source_fingerprint_bytes as usize;
         self.policy_version == ARCHIVE_RECORD_POLICY_VERSION
             && self.observed_file_size == bytes.len() as u64
+            && self.source_fingerprint_bytes == self.observed_file_size
             && bytes.get(..fingerprint_end).is_some_and(|prefix| {
                 self.observed_file_sha256 == collector_archive::sha256(prefix).to_string()
             })

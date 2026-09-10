@@ -93,7 +93,7 @@ for (const receipt of ['absent', 'mismatched'] as const) {
   test(`does not complete a snapshot with a ${receipt} replacement receipt`, async () => {
     const { snapshot, capture } = fixture(receipt);
     await expect(capture()).rejects.toThrow('Repair replacement receipt');
-    expect(() => snapshot.meta('complete')).toThrow('metadata missing');
+    expect(snapshot.meta('complete')).toBe(false);
     expect(snapshot.db.query('SELECT COUNT(*) AS count FROM originals').get()).toEqual({
       count: 1,
     });

@@ -19,6 +19,7 @@ import {
   GENESIS_CHAIN_HASH,
   MAX_CHUNK_BYTES,
   MAX_UPLOAD_OBSERVATIONS,
+  type ArchiveObservation,
   type ArchiveScope,
   type ArchiveSource,
   type ArchiveUploadRequest,
@@ -127,7 +128,7 @@ export function base64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-export function exactPrefix(observations: ArchiveUploadRequest['observations']): Uint8Array {
+export function exactPrefix(observations: ArchiveObservation[]): Uint8Array {
   const lines = observations.map((item) => {
     const payload = payloadBytes(item);
     const line = new Uint8Array(payload.length + 1);
@@ -178,7 +179,7 @@ export async function checkpoint(
   source: ArchiveSource,
   session: string,
   part: string,
-  observations: ArchiveUploadRequest['observations'],
+  observations: ArchiveObservation[],
   observedFileSize?: number,
   firstObservedAt = 1_700_000_000_000,
 ): Promise<CompletedScanCheckpoint> {

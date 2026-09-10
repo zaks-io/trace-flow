@@ -21,6 +21,7 @@ pub(crate) async fn capture_snapshot<U: ArchiveUploader>(
     snapshot: &ArchiveSnapshot,
     report: &mut ArchiveCycleReport,
     cancel: Option<&CancellationToken>,
+    prefetched_source_bytes: Option<&[u8]>,
 ) -> Result<(), &'static str> {
     if spool.cleanup_required() {
         match spool.finish_cleanup(key_store) {
@@ -33,15 +34,22 @@ pub(crate) async fn capture_snapshot<U: ArchiveUploader>(
             }
         }
     }
-    let source_bytes = match snapshot_bytes(snapshot) {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            report.failed += 1;
-            record_error(report, "archive_io");
-            return Err("archive_io");
+    let loaded_source_bytes;
+    let source_bytes = match prefetched_source_bytes {
+        Some(bytes) => bytes,
+        None => {
+            loaded_source_bytes = match snapshot_bytes(snapshot) {
+                Ok(bytes) => bytes,
+                Err(_) => {
+                    report.failed += 1;
+                    record_error(report, "archive_io");
+                    return Err("archive_io");
+                }
+            };
+            loaded_source_bytes.as_ref()
         }
     };
-    if let Err(class) = persist_snapshot_bytes(spool, snapshot, &source_bytes, report, cancel) {
+    if let Err(class) = persist_snapshot_bytes(spool, snapshot, source_bytes, report, cancel) {
         if class == "purged" || class == "halt" {
             return Err(class);
         }
@@ -70,7 +78,7 @@ pub(crate) async fn capture_snapshot<U: ArchiveUploader>(
             spool,
             key_store,
             &pending,
-            Some(&source_bytes),
+            Some(source_bytes),
             cancel,
         )
         .await
@@ -240,13 +248,21 @@ pub(crate) fn persist_snapshot(
     snapshot: &ArchiveSnapshot,
     report: &mut ArchiveCycleReport,
     cancel: Option<&CancellationToken>,
+    prefetched_source_bytes: Option<&[u8]>,
 ) -> Result<(), &'static str> {
-    let bytes = snapshot_bytes(snapshot).map_err(|_| {
-        report.failed += 1;
-        record_error(report, "archive_io");
-        "archive_io"
-    })?;
-    persist_snapshot_bytes(spool, snapshot, &bytes, report, cancel)
+    let loaded_source_bytes;
+    let source_bytes = match prefetched_source_bytes {
+        Some(bytes) => bytes,
+        None => {
+            loaded_source_bytes = snapshot_bytes(snapshot).map_err(|_| {
+                report.failed += 1;
+                record_error(report, "archive_io");
+                "archive_io"
+            })?;
+            loaded_source_bytes.as_ref()
+        }
+    };
+    persist_snapshot_bytes(spool, snapshot, source_bytes, report, cancel)
 }
 
 fn persist_snapshot_bytes(
@@ -261,7 +277,7 @@ fn persist_snapshot_bytes(
     Ok(())
 }
 
-fn snapshot_bytes(snapshot: &ArchiveSnapshot) -> std::io::Result<Cow<'_, [u8]>> {
+pub(crate) fn snapshot_bytes(snapshot: &ArchiveSnapshot) -> std::io::Result<Cow<'_, [u8]>> {
     match &snapshot.deferred_file {
         Some(deferred) => read_capture_window(
             &deferred.path,
@@ -289,16 +305,26 @@ pub(crate) async fn upload_pending<U: ArchiveUploader>(
     source_bytes: Option<&[u8]>,
     cancel: Option<&CancellationToken>,
 ) -> Result<UploadOutcome, &'static str> {
-    if spool
+    if let Some(blocked) = spool
         .blocked_part(
             pending.source,
             &pending.source_session_id,
             &pending.source_transcript_part_id,
         )
         .map_err(|err| err.class())?
-        .is_some_and(|blocked| blocked.matches_pending(pending))
     {
-        return Ok(UploadOutcome::Blocked);
+        if blocked.matches_pending(pending) {
+            if source_bytes.is_none_or(|bytes| blocked.matches_source(bytes)) {
+                return Ok(UploadOutcome::Blocked);
+            }
+            spool
+                .clear_blocked_part(
+                    pending.source,
+                    &pending.source_session_id,
+                    &pending.source_transcript_part_id,
+                )
+                .map_err(|err| err.class())?;
+        }
     }
     match uploader.upload(pending.source, &pending.body, cancel).await {
         Ok(ack) => {

@@ -19,6 +19,7 @@ export async function captureSnapshot(
 ): Promise<void> {
   snapshot.db.exec('BEGIN IMMEDIATE');
   try {
+    snapshot.meta('complete', false);
     await populateSnapshot(snapshot, tinybird, recovery, operationId, graph);
   } finally {
     // Commit partial evidence on capture failure too; no cloud deletion starts until complete=true.

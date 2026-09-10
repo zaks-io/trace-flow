@@ -373,6 +373,31 @@ fn blocked_record_existing_metadata_values_remain_wire_compatible() {
 }
 
 #[test]
+fn partial_blocked_fingerprint_never_matches_a_complete_source() {
+    let prefix = b"{\"uuid\":\"blocked\"}\n";
+    let mut original = prefix.to_vec();
+    original.extend_from_slice(b"partial tail");
+    let blocked = collector_archive_sync::BlockedArchiveRecord {
+        source: ArchiveSource::Claude,
+        source_session_id: "session".to_string(),
+        source_transcript_part_id: "claude:part:parent".to_string(),
+        source_record_identity: None,
+        record_size_bytes: None,
+        limit_bytes: MAX_ARCHIVE_UPLOAD_BYTES as u64,
+        policy_version: ARCHIVE_RECORD_POLICY_VERSION.to_string(),
+        observed_file_size: original.len() as u64,
+        source_fingerprint_bytes: prefix.len() as u64,
+        observed_file_sha256: collector_archive::sha256(prefix).to_string(),
+        pending_body_sha256: None,
+    };
+    let mut changed_tail = original.clone();
+    changed_tail[prefix.len()] ^= 1;
+
+    assert!(!blocked.matches_source(&original));
+    assert!(!blocked.matches_source(&changed_tail));
+}
+
+#[test]
 fn crash_recovery_replays_the_same_pending_bytes() {
     let dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();
@@ -1220,6 +1245,7 @@ async fn server_stored_element_rejection_is_blocked_without_format_fallback() {
     let keys = MemoryKeyStore::new();
     let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
     let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    let current = snapshot(ArchiveSource::Claude, CLAUDE, 10);
     spool.persist_pending(&pending).unwrap();
     let uploader = ScriptedUploader::new([Err(ArchiveClientError::InvalidUpload {
         reason: "archive_element_exceeds_chunk_limit".to_string(),
@@ -1229,13 +1255,14 @@ async fn server_stored_element_rejection_is_blocked_without_format_fallback() {
         &uploader,
         &mut spool,
         &keys,
-        &[],
+        std::slice::from_ref(&current),
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
         None,
     )
     .await;
     assert_eq!(first.failed, 1);
+    assert_eq!(first.blocked, 1);
     assert_eq!(
         first.first_error.as_deref(),
         Some("archive_record_too_large")
@@ -1255,12 +1282,18 @@ async fn server_stored_element_rejection_is_blocked_without_format_fallback() {
         .expect("durable blocked record metadata");
     assert_eq!(blocked.source_record_identity, None);
     assert_eq!(blocked.record_size_bytes, None);
+    assert_eq!(blocked.observed_file_size, CLAUDE.len() as u64);
+    assert_eq!(blocked.source_fingerprint_bytes, CLAUDE.len() as u64);
+    assert_eq!(
+        blocked.observed_file_sha256,
+        collector_archive::sha256(CLAUDE).to_string()
+    );
 
     let second = run_archive_cycle(
         &uploader,
         &mut spool,
         &keys,
-        &[],
+        &[current],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
         None,

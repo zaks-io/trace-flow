@@ -130,11 +130,12 @@ fn custom_status_from_output(output_record: Option<&Value>) -> AgentEventStatus 
         return AgentEventStatus::Unknown;
     };
     let first_text = raw.as_str().or_else(|| {
-        raw.as_array()
-            .and_then(|blocks| blocks.first())
-            .filter(|block| block.get("type").and_then(Value::as_str) == Some("input_text"))
-            .and_then(|block| block.get("text"))
-            .and_then(Value::as_str)
+        raw.as_array().and_then(|blocks| {
+            blocks
+                .iter()
+                .filter(|block| block.get("type").and_then(Value::as_str) == Some("input_text"))
+                .find_map(|block| block.get("text").and_then(Value::as_str))
+        })
     });
     let Some(first_text) = first_text else {
         return AgentEventStatus::Unknown;
@@ -446,6 +447,23 @@ mod tests {
             let record = serde_json::json!({"payload":{"output":text}});
             assert_eq!(custom_status_from_output(Some(&record)), expected);
         }
+    }
+
+    #[test]
+    fn custom_block_output_reads_status_after_non_text_blocks() {
+        let record = serde_json::json!({
+            "payload": {
+                "output": [
+                    { "type": "input_image", "image_url": "data:image/png;base64,AA==" },
+                    input_text("Script failed\nOutput:\ncommand failed")
+                ]
+            }
+        });
+
+        assert_eq!(
+            custom_status_from_output(Some(&record)),
+            AgentEventStatus::Failure
+        );
     }
 
     #[test]

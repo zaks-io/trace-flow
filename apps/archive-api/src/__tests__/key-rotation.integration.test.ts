@@ -16,6 +16,7 @@ import {
   ArchiveContractError,
   ARCHIVE_FORMAT_VERSION,
   CHAIN_HASH_VERSION,
+  type ArchiveObservation,
   type ArchiveScope,
   type ArchiveUploadRequest,
 } from '../archive-contract';
@@ -145,7 +146,7 @@ async function observation(
   session: string,
   identity: string,
   payload: string,
-): Promise<ArchiveUploadRequest['observations'][number]> {
+): Promise<ArchiveObservation> {
   const bytes = new TextEncoder().encode(payload);
   return {
     archive_format_version: ARCHIVE_FORMAT_VERSION,
@@ -161,7 +162,7 @@ async function observation(
   };
 }
 
-async function checkpoint(session: string, observations: ArchiveUploadRequest['observations']) {
+async function checkpoint(session: string, observations: ArchiveObservation[]) {
   const lines = observations.map((item) => new TextEncoder().encode(`${item.payload}\n`));
   const prefix = new Uint8Array(lines.reduce((sum, line) => sum + line.length, 0));
   let offset = 0;
@@ -185,7 +186,7 @@ async function checkpoint(session: string, observations: ArchiveUploadRequest['o
   };
 }
 
-function exactPrefix(observations: ArchiveUploadRequest['observations']): Uint8Array {
+function exactPrefix(observations: ArchiveObservation[]): Uint8Array {
   const lines = observations.map((item) => {
     const payload = payloadBytes(item);
     const line = new Uint8Array(payload.length + 1);

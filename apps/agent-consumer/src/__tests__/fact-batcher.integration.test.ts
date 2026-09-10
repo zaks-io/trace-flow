@@ -56,8 +56,11 @@ describe('AgentFactBatcher logic', () => {
 
   const flushNow = () =>
     runInDurableObject(batcher, async (instance: AgentFactBatcherInstance, state) => {
-      await instance.alarm();
-      await state.storage.deleteAlarm();
+      try {
+        await instance.alarm();
+      } finally {
+        await state.storage.deleteAlarm();
+      }
     });
 
   it('waits for the low-volume flush interval before flushing sparse facts', async () => {
@@ -398,8 +401,11 @@ describe('AgentFactBatcher logic', () => {
   });
 
   it('loads at most 500 pending candidates per flush pass', async () => {
-    await runInDurableObject(batcher, async (instance: AgentFactBatcherInstance, state) => {
-      state.storage.sql.exec(`
+    vi.useRealTimers();
+    const scheduled = await runInDurableObject(
+      batcher,
+      async (instance: AgentFactBatcherInstance, state) => {
+        state.storage.sql.exec(`
         WITH RECURSIVE sequence(value) AS (
           SELECT 0 UNION ALL SELECT value + 1 FROM sequence WHERE value < 499
         )
@@ -412,18 +418,25 @@ describe('AgentFactBatcher logic', () => {
           ), 0
         FROM sequence
       `);
-      await instance.addFacts({
-        rows: {
-          ...emptyBatchRows,
-          messages: [{ OrgId: 'org-1', session_pk: 'bounded-flush', message_pk: 'message-500' }],
-        },
-      });
-      await state.storage.deleteAlarm();
-      await instance.alarm();
-      await state.storage.deleteAlarm();
-    });
+        await instance.addFacts({
+          rows: {
+            ...emptyBatchRows,
+            messages: [{ OrgId: 'org-1', session_pk: 'bounded-flush', message_pk: 'message-500' }],
+          },
+        });
+        await state.storage.deleteAlarm();
+        const before = Date.now();
+        await instance.alarm();
+        const alarm = await state.storage.getAlarm();
+        const after = Date.now();
+        await state.storage.deleteAlarm();
+        return { after, before, alarm };
+      },
+    );
 
     expect(vi.mocked(insertRows).mock.calls[0]?.[0]).toHaveLength(500);
+    expect(scheduled.alarm).toBeGreaterThanOrEqual(scheduled.before + 1_000);
+    expect(scheduled.alarm).toBeLessThanOrEqual(scheduled.after + 1_000);
     expect(
       await runInDurableObject(batcher, (instance: AgentFactBatcherInstance) =>
         instance.getStats(),
@@ -431,6 +444,159 @@ describe('AgentFactBatcher logic', () => {
     ).toMatchObject({ queuedRows: 1 });
     await flushNow();
     expect(vi.mocked(insertRows).mock.calls[1]?.[0]).toHaveLength(1);
+  });
+
+  it('retries promptly when the payload byte cap leaves eligible rows', async () => {
+    vi.useRealTimers();
+    const content = 'x'.repeat(500_000);
+    const scheduled = await runInDurableObject(
+      batcher,
+      async (instance: AgentFactBatcherInstance, state) => {
+        await instance.addFacts({
+          rows: {
+            ...emptyBatchRows,
+            messages: [
+              { OrgId: 'org-1', session_pk: 'byte-cap', message_pk: 'message-1', content },
+              { OrgId: 'org-1', session_pk: 'byte-cap', message_pk: 'message-2', content },
+            ],
+          },
+        });
+        await state.storage.deleteAlarm();
+        const before = Date.now();
+        await instance.alarm();
+        const alarm = await state.storage.getAlarm();
+        const after = Date.now();
+        await state.storage.deleteAlarm();
+        return { after, before, alarm };
+      },
+    );
+
+    expect(vi.mocked(insertRows).mock.calls[0]?.[0]).toHaveLength(1);
+    expect(scheduled.alarm).toBeGreaterThanOrEqual(scheduled.before + 1_000);
+    expect(scheduled.alarm).toBeLessThanOrEqual(scheduled.after + 1_000);
+  });
+
+  it('promotes an alarm scheduled by addFacts while a capped flush is in flight', async () => {
+    vi.useRealTimers();
+    let startInsert!: () => void;
+    let releaseInsert!: () => void;
+    const started = new Promise<void>((resolve) => {
+      startInsert = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseInsert = resolve;
+    });
+    vi.mocked(insertRows).mockImplementationOnce(async () => {
+      startInsert();
+      await release;
+    });
+
+    const scheduled = await runInDurableObject(
+      batcher,
+      async (instance: AgentFactBatcherInstance, state) => {
+        state.storage.sql.exec(`
+          WITH RECURSIVE sequence(value) AS (
+            SELECT 0 UNION ALL SELECT value + 1 FROM sequence WHERE value < 499
+          )
+          INSERT INTO pending_facts (category, fact_id, content_hash, data, created_at_ms)
+          SELECT 'messages', 'seed-' || value, 'hash-' || value,
+            json_object(
+              'OrgId', 'org-1',
+              'session_pk', 'alarm-promotion',
+              'message_pk', 'seed-' || value
+            ), 0
+          FROM sequence
+        `);
+        await instance.addFacts(sparseBatch);
+        await state.storage.deleteAlarm();
+        const before = Date.now();
+        const flushing = instance.alarm();
+        await started;
+        let normalAlarm: number | null = null;
+        try {
+          await instance.addFacts({
+            rows: {
+              ...emptyBatchRows,
+              messages: [
+                { OrgId: 'org-1', session_pk: 'alarm-promotion', message_pk: 'concurrent' },
+              ],
+            },
+          });
+          normalAlarm = await state.storage.getAlarm();
+        } finally {
+          releaseInsert();
+          await flushing;
+        }
+        const promotedAlarm = await state.storage.getAlarm();
+        const after = Date.now();
+        await state.storage.deleteAlarm();
+        return { after, before, normalAlarm, promotedAlarm };
+      },
+    );
+
+    expect(scheduled.normalAlarm).toBeGreaterThanOrEqual(
+      scheduled.before + AGENT_FACT_BATCHER_FLUSH_INTERVAL_MS,
+    );
+    expect(scheduled.promotedAlarm).toBeGreaterThanOrEqual(scheduled.before + 1_000);
+    expect(scheduled.promotedAlarm).toBeLessThanOrEqual(scheduled.after + 1_000);
+  });
+
+  it('keeps the normal backoff when a later category fails after a capped category', async () => {
+    vi.useRealTimers();
+    vi.mocked(insertRows)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new TinybirdInsertError(429, 'rate limited'));
+    const scheduled = await runInDurableObject(
+      batcher,
+      async (instance: AgentFactBatcherInstance, state) => {
+        state.storage.sql.exec(`
+          WITH RECURSIVE sequence(value) AS (
+            SELECT 0 UNION ALL SELECT value + 1 FROM sequence WHERE value < 499
+          )
+          INSERT INTO pending_facts (category, fact_id, content_hash, data, created_at_ms)
+          SELECT 'messages', 'seed-' || value, 'hash-' || value,
+            json_object(
+              'OrgId', 'org-1',
+              'session_pk', 'retry-backoff',
+              'message_pk', 'seed-' || value
+            ), 0
+          FROM sequence
+        `);
+        await instance.addFacts({
+          rows: {
+            ...emptyBatchRows,
+            tool_events: [
+              toolEventRow(batchContext(queueMessage()), toolEventFact({ tool_use_pk: 'later' })),
+            ],
+          },
+        });
+        await state.storage.deleteAlarm();
+        const before = Date.now();
+        let error = '';
+        try {
+          await instance.alarm();
+        } catch (cause) {
+          error = cause instanceof Error ? cause.message : String(cause);
+        }
+        const alarm = await state.storage.getAlarm();
+        const after = Date.now();
+        await state.storage.deleteAlarm();
+        return { after, before, alarm, error };
+      },
+    );
+
+    expect(scheduled.error).toContain('status=429');
+    expect(scheduled.alarm).toBeGreaterThanOrEqual(
+      scheduled.before + AGENT_FACT_BATCHER_FLUSH_INTERVAL_MS,
+    );
+    expect(scheduled.alarm).toBeLessThanOrEqual(
+      scheduled.after + AGENT_FACT_BATCHER_FLUSH_INTERVAL_MS,
+    );
+    expect(
+      await runInDurableObject(batcher, (instance: AgentFactBatcherInstance) =>
+        instance.getStats(),
+      ),
+    ).toMatchObject({ queuedRows: 1, blockedRecoveryRecords: 0 });
   });
 
   it('preserves a changed identity after its first insert as a repair', async () => {

@@ -45,6 +45,23 @@ print('locked',flush=True)
 sys.stdin.read()
 `;
 
+export async function readLockHandshake(stream: ReadableStream<Uint8Array>): Promise<boolean> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let response = '';
+  try {
+    while (!response.includes('\n')) {
+      const chunk = await reader.read();
+      if (chunk.done) return false;
+      response += decoder.decode(chunk.value, { stream: true });
+      if (response.length > 'locked\n'.length) return false;
+    }
+    return response === 'locked\n';
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export async function acquireExecutor(host: string, org: string, backup: string) {
   const directory = join(homedir(), '.local', 'state', 'trace-flow', 'recovery-locks');
   mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -52,27 +69,29 @@ export async function acquireExecutor(host: string, org: string, backup: string)
   const key = createHash('sha256')
     .update(JSON.stringify([host, org]))
     .digest('hex');
+  let lost = false;
   const process = Bun.spawn(
     ['python3', '-c', LOCK, join(directory, key), join(backup, 'executor.lock')],
     {
       stdin: 'pipe',
       stdout: 'pipe',
       stderr: 'pipe',
+      onExit() {
+        lost = true;
+      },
     },
   );
-  const reader = process.stdout.getReader();
-  const first = await reader.read();
-  if (first.done || new TextDecoder().decode(first.value).trim() !== 'locked') {
+  if (!(await readLockHandshake(process.stdout))) {
     process.stdin.end();
     await process.exited;
     throw new Error(
       'Another repair executor holds this organization or backup, or Python flock is unavailable',
     );
   }
-  reader.releaseLock();
   return {
     assertHeld() {
-      if (process.exitCode !== null) throw new Error('Repair executor lock was lost');
+      if (lost || process.exitCode !== null || process.signalCode)
+        throw new Error('Repair executor lock was lost');
     },
     async release() {
       process.stdin.end();

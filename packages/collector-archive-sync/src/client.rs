@@ -181,6 +181,8 @@ fn safe_server_reason(value: Option<String>) -> String {
             | "archive_upload_observation_limit"
             | "unsupported_archive_upload_wire_version"
             | "archive_element_exceeds_chunk_limit"
+            | "archive_commit_too_large"
+            | "archive_key_version_mismatch"
             | "storage_cap_exceeded"
             | "archive_commit_failed"
             | "key_configuration_invalid"
@@ -355,5 +357,18 @@ mod tests {
         assert_eq!(untrusted.http_status(), Some(503));
         assert_eq!(untrusted.safe_reason(), Some("unknown"));
         assert!(!format!("{untrusted:?}").contains("attacker text"));
+    }
+
+    #[test]
+    fn api_ledger_rejection_reasons_are_preserved() {
+        for reason in [
+            "archive_commit_too_large",
+            "archive_element_exceeds_chunk_limit",
+            "archive_key_version_mismatch",
+            "archive_upload_observation_limit",
+            "storage_cap_exceeded",
+        ] {
+            assert_eq!(safe_server_reason(Some(reason.to_string())), reason);
+        }
     }
 }

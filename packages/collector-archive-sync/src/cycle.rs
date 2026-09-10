@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use collector_archive::ArchiveSource;
 use tokio_util::sync::CancellationToken;
 
-use crate::capture::{capture_snapshot, persist_snapshot, upload_pending, UploadOutcome};
+use crate::capture::{
+    capture_snapshot, persist_snapshot, snapshot_bytes, upload_pending, UploadOutcome,
+};
 use crate::client::ArchiveUploader;
 use crate::history::{history_reports, ordered_part_work, ArchiveHistoryPlan, ArchiveWorkClass};
 use crate::key_store::ArchiveKeyStore;
@@ -120,13 +122,36 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
                 }
             }
         }
+        let mut snapshot_read_failed = false;
+        let source_bytes = if policy.uploads() && !part.pending.is_empty() {
+            part.snapshot
+                .and_then(|snapshot| match snapshot_bytes(snapshot) {
+                    Ok(bytes) => Some(bytes),
+                    Err(_) => {
+                        snapshot_read_failed = true;
+                        None
+                    }
+                })
+        } else {
+            None
+        };
         if policy.uploads() {
             let mut pending_failed = false;
+            let mut part_blocked = false;
             for pending in &part.pending {
-                match upload_pending(uploader, spool, key_store, pending, None, cancel).await {
+                match upload_pending(
+                    uploader,
+                    spool,
+                    key_store,
+                    pending,
+                    source_bytes.as_deref(),
+                    cancel,
+                )
+                .await
+                {
                     Ok(UploadOutcome::Advanced) => report.uploaded += 1,
                     Ok(UploadOutcome::Blocked) => {
-                        report.blocked += 1;
+                        part_blocked = true;
                         break;
                     }
                     Ok(UploadOutcome::Frozen) => report.frozen = true,
@@ -147,10 +172,24 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
                     break;
                 }
             }
+            if part_blocked {
+                report.blocked += 1;
+                if snapshot_read_failed {
+                    report.failed += 1;
+                    record_error(&mut report, "archive_io");
+                }
+                continue;
+            }
             if pending_failed {
                 if policy.captures() {
                     if let Some(snapshot) = part.snapshot {
-                        let _ = persist_snapshot(spool, snapshot, &mut report, cancel);
+                        let _ = persist_snapshot(
+                            spool,
+                            snapshot,
+                            &mut report,
+                            cancel,
+                            source_bytes.as_deref(),
+                        );
                     }
                 }
                 continue;
@@ -165,8 +204,16 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
         if !policy.captures() {
             continue;
         }
-        if let Err(class) =
-            capture_snapshot(uploader, spool, key_store, snapshot, &mut report, cancel).await
+        if let Err(class) = capture_snapshot(
+            uploader,
+            spool,
+            key_store,
+            snapshot,
+            &mut report,
+            cancel,
+            source_bytes.as_deref(),
+        )
+        .await
         {
             if class == "purged" {
                 report.purged = true;

@@ -392,7 +392,11 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
                 }
             }
         }
+        let aborted_early = report.aborted_early;
         reports.push((source, report));
+        if aborted_early {
+            break;
+        }
     }
 
     apply_archive_policy_after_cycle(cfg.archive.as_ref(), cfg.org_id, archive.as_mut(), &reports);
@@ -1010,6 +1014,36 @@ mod tests {
             .get(AgentSource::Codex, transcript.to_str().unwrap())
             .unwrap()
             .is_some());
+    }
+
+    #[tokio::test]
+    async fn cycle_fatal_ingest_error_stops_before_later_sources() {
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        write_home_transcripts(home.path());
+        let hits = Arc::new(Mutex::new(0u32));
+        let ingest_url = spawn_http({
+            let hits = Arc::clone(&hits);
+            move |_raw| {
+                *hits.lock().unwrap() += 1;
+                raw_response(401, "Unauthorized", r#"{"reason":"credential_revoked"}"#)
+            }
+        })
+        .await;
+
+        let outcome = run_fact_sync(
+            home.path(),
+            state.path(),
+            ingest_url,
+            false,
+            1_779_840_000_000,
+        )
+        .await;
+
+        assert_eq!(*hits.lock().unwrap(), 1);
+        assert_eq!(outcome.reports.len(), 1);
+        assert_eq!(outcome.reports[0].0, AgentSource::Claude);
+        assert!(outcome.reports[0].1.aborted_early);
     }
 
     #[tokio::test]

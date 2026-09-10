@@ -74,7 +74,7 @@ function groupRowsByOrg(rows: Accumulator): Map<string, Accumulator> {
   for (const category of CATEGORIES) {
     for (const row of rows[category]) {
       const orgId = rowOrgId(row);
-      if (!orgId) continue;
+      if (!orgId) throw new Error(`agent ${category} fact has blank OrgId`);
       let orgRows = byOrg.get(orgId);
       if (!orgRows) {
         orgRows = emptyAccumulator();

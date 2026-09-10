@@ -183,7 +183,7 @@ describe('Archive Session Ledger', () => {
       await envelope(currentScope, {
         archive_upload_wire_version: 2,
         source_session_id: currentScope.sourceSessionId,
-        observations: [metadata] as unknown as (typeof record)[],
+        observations: [metadata],
         checkpoint: await checkpoint('codex', currentScope.sourceSessionId, partFor('codex'), [
           record,
         ]),
