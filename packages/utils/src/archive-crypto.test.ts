@@ -22,7 +22,7 @@ const TRAILING_MALFORMED_OBJECT_KEY = 'archive/chunk-\uD800';
 const TRAILING_REPLACEMENT_OBJECT_KEY = 'archive/chunk-\uFFFD';
 const PAIRED_SURROGATE_ORG_ID = 'org_\uD83D\uDE00';
 const PAIRED_SURROGATE_OBJECT_KEY = 'archive/chunk-\uD83D\uDE00';
-const MAX_ARCHIVE_CHUNK_BYTES = 8_388_608;
+const MAX_ARCHIVE_CHUNK_BYTES = 16_777_216;
 const PLAINTEXT = new TextEncoder().encode('{"records":[{"content":"private archive"}]}');
 
 type ArchiveMetadataPatch = Partial<
@@ -37,6 +37,18 @@ function base64Bytes(length: number): string {
   const chars = new Array<string>(length);
   for (let index = 0; index < length; index++) chars[index] = String.fromCharCode(0);
   return btoa(chars.join(''));
+}
+
+function expectExactBytes(actual: Uint8Array, expected: Uint8Array): void {
+  expect(actual.byteLength).toBe(expected.byteLength);
+  let firstMismatch = -1;
+  for (let index = 0; index < expected.byteLength; index++) {
+    if (actual[index] !== expected[index]) {
+      firstMismatch = index;
+      break;
+    }
+  }
+  expect(firstMismatch, 'decrypted archive bytes differ').toBe(-1);
 }
 
 function mockRandomValues(...values: Uint8Array[]) {
@@ -138,15 +150,14 @@ describe('Conversation Archive cryptography', () => {
       keyVersion: 7,
     });
 
-    await expect(
-      decryptArchiveObject(envelope, {
-        key,
-        orgId: ORG_ID,
-        objectKey: OBJECT_KEY,
-        objectClass: 'chunk',
-        keyVersion: 7,
-      }),
-    ).resolves.toEqual(plaintext);
+    const decrypted = await decryptArchiveObject(envelope, {
+      key,
+      orgId: ORG_ID,
+      objectKey: OBJECT_KEY,
+      objectClass: 'chunk',
+      keyVersion: 7,
+    });
+    expectExactBytes(decrypted, plaintext);
   }, 30_000);
 
   it.each([47, 49])(
