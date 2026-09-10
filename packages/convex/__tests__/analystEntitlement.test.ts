@@ -628,6 +628,20 @@ describe('Analyst Pro entitlement', () => {
       allowSnapshot: false,
       backupIdsToDelete: ['prior-backup'],
     });
+    await expect(
+      world.t.action(api.analystSandbox.completeSandboxRun, {
+        runId,
+        token,
+        sandboxId: replay.sandboxId!,
+        status: 'completed',
+        backup: { id: 'final-backup', dir: '/workspace' },
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      transitioned: false,
+      backupAccepted: true,
+      backupIdsToDelete: ['prior-backup'],
+    });
     await world.t.action(api.analystSandbox.acknowledgeSandboxBackupCleanup, {
       runId,
       token,

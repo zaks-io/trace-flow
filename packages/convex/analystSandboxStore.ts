@@ -413,7 +413,10 @@ export const completeSandboxRunInternal = internalMutation({
     if (!isActiveSandboxRunStatus(run.status)) {
       const thread = args.backup ? await ctx.db.get(run.analystThreadId) : null;
       const backupAccepted = thread?.sandboxBackup?.id === args.backup?.id;
-      const backupIdsToDelete = backupAccepted ? [] : backupIds(args.backup?.id);
+      const backupIdsToDelete = backupIds(
+        ...(run.pendingBackupCleanupIds ?? []),
+        backupAccepted ? undefined : args.backup?.id,
+      );
       return {
         ok: run.status === args.status,
         transitioned: false,
