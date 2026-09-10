@@ -25,6 +25,7 @@ const sparseBatch = {
         OrgId: 'org-1',
         session_pk: 'session-1',
         message_pk: 'message-1',
+        EventAt: '2024-01-01 00:00:00.000',
         IngestedAt: '2024-01-01 00:00:00.000',
       },
     ],
@@ -130,6 +131,32 @@ describe('AgentFactBatcher logic', () => {
     ]);
   });
 
+  it('keeps each insert within 30 daily partitions without reordering rows', async () => {
+    const dates = Array.from({ length: 31 }, (_, index) =>
+      new Date(Date.UTC(2024, 0, index + 1)).toISOString().replace('T', ' ').replace('Z', ''),
+    );
+    const rows = [...dates.slice(0, 30), dates[0]!, dates[30]!].map((EventAt, index) => ({
+      ...sparseBatch.rows.messages[0],
+      message_pk: `partition-${index}`,
+      EventAt,
+    }));
+
+    await runInDurableObject(batcher, async (instance: AgentFactBatcherInstance, state) => {
+      await instance.addFacts({ rows: { ...emptyBatchRows, messages: rows } });
+      await state.storage.deleteAlarm();
+      await instance.alarm();
+      await state.storage.deleteAlarm();
+    });
+
+    const inserted = vi.mocked(insertRows).mock.calls.map((call) => call[0] as typeof rows);
+    expect(inserted).toHaveLength(2);
+    expect(inserted[0]).toHaveLength(31);
+    expect(inserted.flat()).toEqual(rows);
+    for (const group of inserted) {
+      expect(new Set(group.map((fact) => fact.EventAt.slice(0, 10))).size).toBeLessThanOrEqual(30);
+    }
+  });
+
   it('stores the exact normalized tool event payload when delivery is uncertain', async () => {
     const row = toolEventRow(batchContext(queueMessage()), toolEventFact({ status: 'failure' }));
     const pendingRow = { ...row } as Record<string, unknown>;
@@ -226,7 +253,13 @@ describe('AgentFactBatcher logic', () => {
     const later = {
       rows: {
         ...emptyBatchRows,
-        messages: [{ OrgId: 'org-1', session_pk: 'session-2', message_pk: 'message-2' }],
+        messages: [
+          {
+            ...sparseBatch.rows.messages[0],
+            session_pk: 'session-2',
+            message_pk: 'message-2',
+          },
+        ],
       },
     };
     vi.mocked(insertRows).mockResolvedValueOnce(undefined);
@@ -321,6 +354,7 @@ describe('AgentFactBatcher logic', () => {
               OrgId: 'org-1',
               session_pk: 'session-1',
               message_pk: 'message-1',
+              EventAt: '2024-01-01 00:00:01.000',
               IngestedAt: '2024-01-01 00:00:01.000',
               content: 'changed',
             },
@@ -484,14 +518,21 @@ describe('AgentFactBatcher logic', () => {
           json_object(
             'OrgId', 'org-1',
             'session_pk', 'bounded-flush',
-            'message_pk', 'seed-' || value
+            'message_pk', 'seed-' || value,
+            'EventAt', '2024-01-01 00:00:00.000'
           ), 0
         FROM sequence
       `);
         await instance.addFacts({
           rows: {
             ...emptyBatchRows,
-            messages: [{ OrgId: 'org-1', session_pk: 'bounded-flush', message_pk: 'message-500' }],
+            messages: [
+              {
+                ...sparseBatch.rows.messages[0],
+                session_pk: 'bounded-flush',
+                message_pk: 'message-500',
+              },
+            ],
           },
         });
         await state.storage.deleteAlarm();
@@ -526,8 +567,18 @@ describe('AgentFactBatcher logic', () => {
           rows: {
             ...emptyBatchRows,
             messages: [
-              { OrgId: 'org-1', session_pk: 'byte-cap', message_pk: 'message-1', content },
-              { OrgId: 'org-1', session_pk: 'byte-cap', message_pk: 'message-2', content },
+              {
+                ...sparseBatch.rows.messages[0],
+                session_pk: 'byte-cap',
+                message_pk: 'message-1',
+                content,
+              },
+              {
+                ...sparseBatch.rows.messages[0],
+                session_pk: 'byte-cap',
+                message_pk: 'message-2',
+                content,
+              },
             ],
           },
         });
@@ -573,7 +624,8 @@ describe('AgentFactBatcher logic', () => {
             json_object(
               'OrgId', 'org-1',
               'session_pk', 'alarm-promotion',
-              'message_pk', 'seed-' || value
+              'message_pk', 'seed-' || value,
+              'EventAt', '2024-01-01 00:00:00.000'
             ), 0
           FROM sequence
         `);
@@ -588,7 +640,11 @@ describe('AgentFactBatcher logic', () => {
             rows: {
               ...emptyBatchRows,
               messages: [
-                { OrgId: 'org-1', session_pk: 'alarm-promotion', message_pk: 'concurrent' },
+                {
+                  ...sparseBatch.rows.messages[0],
+                  session_pk: 'alarm-promotion',
+                  message_pk: 'concurrent',
+                },
               ],
             },
           });
@@ -628,7 +684,8 @@ describe('AgentFactBatcher logic', () => {
             json_object(
               'OrgId', 'org-1',
               'session_pk', 'retry-backoff',
-              'message_pk', 'seed-' || value
+              'message_pk', 'seed-' || value,
+              'EventAt', '2024-01-01 00:00:00.000'
             ), 0
           FROM sequence
         `);
@@ -879,7 +936,12 @@ describe('AgentFactBatcher logic', () => {
         rows: {
           ...emptyBatchRows,
           messages: [
-            { OrgId: 'org-1', session_pk: 'session-big', message_pk: 'message-big', content },
+            {
+              ...sparseBatch.rows.messages[0],
+              session_pk: 'session-big',
+              message_pk: 'message-big',
+              content,
+            },
           ],
         },
       }),

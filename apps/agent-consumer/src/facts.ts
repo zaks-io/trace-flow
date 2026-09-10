@@ -18,6 +18,8 @@ export const LEGACY_DATASOURCES = {
 
 export type Category = keyof typeof DATASOURCES;
 type LegacyCategory = keyof typeof LEGACY_DATASOURCES;
+// Tinybird rejects one insert that creates parts in more than 30 MergeTree partitions.
+export const MAX_FACT_INSERT_PARTITIONS = 30;
 
 export const CATEGORIES = Object.keys(DATASOURCES) as Category[];
 export const LEGACY_CATEGORIES = Object.keys(LEGACY_DATASOURCES) as LegacyCategory[];
@@ -71,14 +73,23 @@ export function compareFactIngestedAt(left: unknown, right: unknown): number {
 }
 
 export function factIngestedAtMs(value: unknown): number {
-  if (!isRecord(value) || typeof value.IngestedAt !== 'string') {
-    throw new Error('agent fact has invalid IngestedAt');
+  return factTimestampMs(value, 'IngestedAt');
+}
+
+export function factPartitionKey(category: Category, value: unknown): string {
+  const field = category === 'review_unit_attributions' ? 'DecidedAt' : 'EventAt';
+  return new Date(factTimestampMs(value, field)).toISOString().slice(0, 10);
+}
+
+function factTimestampMs(value: unknown, field: 'IngestedAt' | 'EventAt' | 'DecidedAt'): number {
+  if (!isRecord(value) || typeof value[field] !== 'string') {
+    throw new Error(`agent fact has invalid ${field}`);
   }
-  const normalized =
-    value.IngestedAt.replace(' ', 'T') + (value.IngestedAt.endsWith('Z') ? '' : 'Z');
+  const timestamp = value[field];
+  const normalized = timestamp.replace(' ', 'T') + (timestamp.endsWith('Z') ? '' : 'Z');
   const milliseconds = Date.parse(normalized);
   if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== normalized) {
-    throw new Error('agent fact has invalid IngestedAt');
+    throw new Error(`agent fact has invalid ${field}`);
   }
   return milliseconds;
 }
