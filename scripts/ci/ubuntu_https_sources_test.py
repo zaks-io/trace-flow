@@ -106,7 +106,8 @@ class UbuntuHttpsSourcesTest(unittest.TestCase):
             source = source_directory / "ubuntu.sources"
             original = (
                 "Types: deb\n"
-                "URIs: mirror+file:/etc/apt/blacksmith-ubuntu-mirrors.txt\n"
+                "URIs: https://security.ubuntu.com/ubuntu\n"
+                "  mirror+file:/etc/apt/blacksmith-ubuntu-mirrors.txt\n"
                 "Suites: noble\n"
             )
             source.write_text(original, encoding="utf-8")

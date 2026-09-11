@@ -32,6 +32,30 @@ def is_official_ubuntu_host(host: str) -> bool:
     } or normalized.endswith(".archive.ubuntu.com")
 
 
+def classify_source_lines(text: str, kind: SourceKind) -> list[tuple[str, bool]]:
+    classified: list[tuple[str, bool]] = []
+    in_uris_field = False
+    for line in text.splitlines(keepends=True):
+        stripped = line.lstrip()
+        if kind == "list":
+            eligible = re.match(r"deb(?:-src)?\s", stripped) is not None
+        elif kind == "sources":
+            if not line.strip():
+                in_uris_field = False
+                eligible = False
+            elif line[:1].isspace():
+                eligible = in_uris_field
+            elif re.match(r"[A-Za-z][A-Za-z0-9-]*:", line):
+                in_uris_field = line.lower().startswith("uris:")
+                eligible = in_uris_field
+            else:
+                eligible = False
+        else:
+            eligible = bool(stripped) and not stripped.startswith("#")
+        classified.append((line, eligible))
+    return classified
+
+
 def upgrade_source_text(text: str, kind: SourceKind) -> tuple[str, int, int]:
     replacements = 0
     official_uris = 0
@@ -60,24 +84,7 @@ def upgrade_source_text(text: str, kind: SourceKind) -> tuple[str, int, int]:
         return URL_PATTERN.sub(upgrade_url, active) + marker + comment
 
     upgraded_lines: list[str] = []
-    in_uris_field = False
-    for line in text.splitlines(keepends=True):
-        stripped = line.lstrip()
-        if kind == "list":
-            eligible = re.match(r"deb(?:-src)?\s", stripped) is not None
-        elif kind == "sources":
-            if not line.strip():
-                in_uris_field = False
-                eligible = False
-            elif line[:1].isspace():
-                eligible = in_uris_field
-            elif re.match(r"[A-Za-z][A-Za-z0-9-]*:", line):
-                in_uris_field = line.lower().startswith("uris:")
-                eligible = in_uris_field
-            else:
-                eligible = False
-        else:
-            eligible = bool(stripped) and not stripped.startswith("#")
+    for line, eligible in classify_source_lines(text, kind):
         upgraded_lines.append(upgrade_active_line(line) if eligible else line)
     return "".join(upgraded_lines), replacements, official_uris
 
@@ -95,11 +102,11 @@ def discover_source_files(apt_root: Path) -> list[tuple[Path, SourceKind]]:
     if blacksmith.is_file():
         files.append((blacksmith, "mirror"))
     elif any(
-        "mirror+file:/etc/apt/blacksmith-ubuntu-mirrors.txt" in line
+        "mirror+file:/etc/apt/blacksmith-ubuntu-mirrors.txt" in line.partition("#")[0]
         for path, kind in files
         if kind == "sources"
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.lstrip().lower().startswith("uris:")
+        for line, eligible in classify_source_lines(path.read_text(encoding="utf-8"), kind)
+        if eligible
     ):
         raise RuntimeError("referenced Blacksmith Ubuntu mirror configuration is missing")
     return files
