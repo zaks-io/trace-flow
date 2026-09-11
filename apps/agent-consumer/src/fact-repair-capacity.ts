@@ -27,7 +27,10 @@ export type {
   FactRepairCompactionCandidate,
   InspectFactRepairCapacityInput,
   InspectFactRepairCapacityResult,
+  QuiesceFactRepairCapacityInput,
+  QuiesceFactRepairCapacityResult,
 } from './fact-repair-capacity-contract';
+export { validateQuiescenceInput } from './fact-repair-capacity-contract';
 
 const MAX_OPERATION_PAYLOAD_BYTES = 4_000_000;
 

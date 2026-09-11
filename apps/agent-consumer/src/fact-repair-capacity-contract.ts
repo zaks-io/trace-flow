@@ -57,6 +57,18 @@ export interface CompactFactRepairDuplicatesResult {
   startupBlockedReason: string | null;
 }
 
+export interface QuiesceFactRepairCapacityInput {
+  expectedAlarmScheduledAtMs: number;
+  reason: string;
+}
+
+export interface QuiesceFactRepairCapacityResult {
+  clearedAlarmScheduledAtMs: number;
+  alarmScheduledAtMs: null;
+  databaseSizeBytes: number;
+  queuedRows: number;
+}
+
 export function validateInspectionInput(input: InspectFactRepairCapacityInput) {
   if (!input || typeof input !== 'object') throw new Error('invalid repair inspection input');
   const afterRepairId = input.afterRepairId ?? 0;
@@ -90,6 +102,20 @@ export function validateCompactionInput(input: CompactFactRepairDuplicatesInput)
     throw new Error('fact repair compaction candidates must be unique');
   }
   return candidates;
+}
+
+export function validateQuiescenceInput(input: QuiesceFactRepairCapacityInput) {
+  if (!input || typeof input !== 'object') {
+    throw new Error('invalid fact repair quiescence input');
+  }
+  if (
+    !Number.isSafeInteger(input.expectedAlarmScheduledAtMs) ||
+    input.expectedAlarmScheduledAtMs < 1
+  ) {
+    throw new Error('invalid expected fact repair alarm');
+  }
+  requireRecoveryReason(input.reason);
+  return input.expectedAlarmScheduledAtMs;
 }
 
 export function compactionFailure(
