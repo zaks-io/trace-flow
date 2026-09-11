@@ -1,3 +1,4 @@
+/* eslint-disable max-lines */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createExecutionContext, runInDurableObject } from 'cloudflare:test';
 import { ArchiveRecovery } from '../index';
@@ -77,19 +78,39 @@ async function captureLedgerError(
 }
 
 describe('operator archive repair', () => {
+  let auditBodies: Record<string, unknown>[];
+  let statusBodies: Record<string, unknown>[];
+  let statusFailuresRemaining: number;
+
   beforeEach(() => {
+    auditBodies = [];
+    statusBodies = [];
+    statusFailuresRemaining = 0;
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const request = new Request(input, init);
       const body = (await request
         .clone()
         .json()
-        .catch(() => null)) as { orgId?: string } | null;
+        .catch(() => null)) as Record<string, unknown> | null;
+      const pathname = new URL(request.url).pathname;
+      if (pathname === '/archive-api/audit-events') {
+        auditBodies.push(body ?? {});
+        return Response.json({ eventId: crypto.randomUUID(), created: true });
+      }
+      if (pathname === '/archive-api/session-integrity') {
+        if (statusFailuresRemaining > 0) {
+          statusFailuresRemaining -= 1;
+          return new Response(null, { status: 503 });
+        }
+        statusBodies.push(body ?? {});
+        return Response.json(body);
+      }
       const response = await fallbackArchiveKeyHttp(
-        new URL(request.url).pathname,
-        body?.orgId ?? '',
+        pathname,
+        typeof body?.orgId === 'string' ? body.orgId : '',
       );
       if (response) return response;
-      throw new Error(`unexpected request: ${new URL(request.url).pathname}`);
+      throw new Error(`unexpected request: ${pathname}`);
     });
   });
 
@@ -251,6 +272,7 @@ describe('operator archive repair', () => {
       await captureLedgerError(stub, (instance) =>
         instance.verifyArchiveRepairPage({
           scope: currentScope,
+          partId,
           operationId: malformedReferenceOperation,
           snapshotSha256,
           phase: 'before',
@@ -349,6 +371,32 @@ describe('operator archive repair', () => {
         chunkKind: 'rebase',
       }),
     ).toEqual(firstAck);
+    expect(
+      await captureLedgerError(stub, (instance) =>
+        instance.applyArchiveRepairChunk({
+          scope: currentScope,
+          upload: rebaseUpload,
+          operationId,
+          plan,
+          expected: { ...inspected.state, recordCount: inspected.state.recordCount + 1 },
+          chunkIndex: 0,
+          chunkKind: 'rebase',
+        }),
+      ),
+    ).toBe('archive_repair_precondition_failed');
+    expect(
+      await captureLedgerError(stub, (instance) =>
+        instance.applyArchiveRepairChunk({
+          scope: currentScope,
+          upload: rebaseUpload,
+          operationId,
+          plan,
+          expected: inspected.state,
+          chunkIndex: 0,
+          chunkKind: 'delta',
+        }),
+      ),
+    ).toBe('archive_repair_precondition_failed');
 
     const blocked = await call(stub, await envelope(currentScope, initialUpload));
     expect(blocked.response.status).toBe(409);
@@ -358,6 +406,26 @@ describe('operator archive repair', () => {
       scope: currentScope,
     })) as { state: Snapshot; integrity: unknown };
     expect(afterRebase.integrity).toBeNull();
+    expect(
+      await captureLedgerError(stub, (instance) =>
+        instance.verifyArchiveRepairPage({
+          scope: currentScope,
+          partId,
+          operationId,
+          snapshotSha256,
+          phase: 'after',
+          expected: afterRebase.state,
+        }),
+      ),
+    ).toBe('archive_verification_invalid');
+    expect(
+      await runInDurableObject(stub, (_instance, state) => [
+        ...state.storage.sql.exec(
+          "SELECT operation_id FROM ledger_verifications WHERE operation_id = ? AND phase = 'after'",
+          operationId,
+        ),
+      ]),
+    ).toHaveLength(0);
     expect(
       await captureLedgerError(stub, (instance) =>
         instance.applyArchiveRepairChunk({
@@ -409,6 +477,23 @@ describe('operator archive repair', () => {
       expected: finalState,
     });
     expect(post.verifiedManifestObjects).toBeGreaterThan(1);
+    statusFailuresRemaining = 1;
+    expect(
+      await captureLedgerError(stub, (instance) =>
+        instance.finalizeArchiveRepair({
+          scope: currentScope,
+          partId,
+          operationId,
+          snapshotSha256,
+          expected: finalState,
+        }),
+      ),
+    ).toBe('archive_integrity_status_publication_failed');
+    expect(statusBodies.filter((body) => body.repairOutcome === 'success')).toHaveLength(0);
+    const publicationBlocked = await call(stub, await envelope(currentScope, initialUpload));
+    expect(publicationBlocked.response.status).toBe(409);
+    expect(publicationBlocked.body).toEqual({ error: 'archive_repair_in_progress' });
+    await runInDurableObject(stub, (instance: ArchiveSessionLedger) => instance.alarm());
     expect(
       await recovery.finalizeArchiveRepair(partId, {
         scope: currentScope,
@@ -416,8 +501,54 @@ describe('operator archive repair', () => {
         snapshotSha256,
         expected: finalState,
       }),
-    ).toMatchObject({ status: 'finalized', replay: false });
-
+    ).toMatchObject({ status: 'finalized', replay: true });
+    const wrongSnapshotSha256 = await digest(new TextEncoder().encode('wrong snapshot'));
+    expect(
+      await runInDurableObject(stub, (instance: ArchiveSessionLedger) =>
+        instance
+          .finalizeArchiveRepair({
+            scope: currentScope,
+            partId,
+            operationId,
+            snapshotSha256: wrongSnapshotSha256,
+            expected: finalState,
+          })
+          .then(
+            () => null,
+            (error: unknown) => (error instanceof Error ? error.message : String(error)),
+          ),
+      ),
+    ).toBe('archive_repair_precondition_failed');
+    expect(
+      auditBodies.filter(
+        (body) =>
+          body.action === 'operator_repair_attempt' &&
+          body.operationId === `${operationId}:attempt_audit`,
+      ),
+    ).toHaveLength(1);
+    expect(
+      auditBodies.filter(
+        (body) =>
+          body.action === 'operator_repair_outcome' &&
+          body.operationId === `${operationId}:failure_audit`,
+      ),
+    ).toHaveLength(1);
+    expect(
+      auditBodies.filter(
+        (body) =>
+          body.action === 'operator_repair_outcome' &&
+          body.operationId === `${operationId}:success_audit`,
+      ),
+    ).toHaveLength(1);
+    expect(statusBodies.filter((body) => body.repairOutcome === 'success')).toContainEqual({
+      orgId: currentScope.orgId,
+      userId: currentScope.userId,
+      contributionId: currentScope.contributionId,
+      source: currentScope.source,
+      sourceSessionId: currentScope.sourceSessionId,
+      repairOutcome: 'success',
+    });
+    expect(JSON.stringify([...auditBodies, ...statusBodies])).not.toContain(changedFirst.payload);
     const liveRecord = await observation(
       'codex',
       currentScope.sourceSessionId,
@@ -864,6 +995,7 @@ describe('operator archive repair', () => {
       await runtimeEnv.ARCHIVE_STORAGE.put(corruptKey, '{}');
       const input = {
         scope: currentScope,
+        partId,
         operationId: crypto.randomUUID(),
         snapshotSha256: await digest(exactPrefix(records)),
         phase: 'before' as const,

@@ -82,7 +82,7 @@ export class ArchiveRecovery extends WorkerEntrypoint<ArchiveApiEnv> {
   verifyArchiveRepairPage(partId: string, options: Record<string, unknown>): Promise<unknown> {
     const scope = recoveryScope(options?.scope);
     assertTranscriptPartId(scope.source, partId);
-    return this.ledger(scope).verifyArchiveRepairPage(options as never);
+    return this.ledger(scope).verifyArchiveRepairPage({ ...options, partId } as never);
   }
 
   finalizeArchiveRepair(partId: string, options: Record<string, unknown>): Promise<unknown> {

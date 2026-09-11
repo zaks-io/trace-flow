@@ -21,6 +21,7 @@ import { intentDigest, parseCommitEnvelope } from './archive-ledger-support';
 import { readSessionIntegrity } from './archive-session-integrity';
 import { MAX_ARCHIVE_UPLOAD_BYTES } from './archive-request';
 import { validateCheckpoint } from './archive-contract-validation';
+import { hasPendingArchiveRepairSuccessPublications } from './archive-repair-publication';
 
 export interface ArchiveRepairChunkInput {
   scope: ArchiveScope;
@@ -281,12 +282,12 @@ export function readLatestArchiveRepairForPart(
 }
 
 export function assertNoActiveArchiveRepair(storage: DurableObjectStorage): void {
-  if (readActiveArchiveRepair(storage)) {
+  if (readActiveArchiveRepair(storage) || hasPendingArchiveRepairSuccessPublications(storage)) {
     throw new ArchiveContractError('archive_repair_in_progress');
   }
 }
 
-export function assertRepairPlanStable(
+function assertRepairPlanStable(
   storage: DurableObjectStorage,
   input: Pick<ParsedArchiveRepairChunk, 'plan' | 'planDigest'>,
 ): StoredArchiveRepair | null {
@@ -419,13 +420,11 @@ export function finalizeArchiveRepairState(
     throw new ArchiveContractError('archive_repair_precondition_failed');
   }
   const finalized: StoredArchiveRepair = { ...repair, status: 'finalized', finalState: expected };
-  storage.transactionSync(() => {
-    storage.sql.exec(
-      "UPDATE ledger_repairs SET status = 'finalized', data = ? WHERE operation_id = ? AND status = 'active'",
-      JSON.stringify(finalized),
-      operationId,
-    );
-  });
+  storage.sql.exec(
+    "UPDATE ledger_repairs SET status = 'finalized', data = ? WHERE operation_id = ? AND status = 'active'",
+    JSON.stringify(finalized),
+    operationId,
+  );
   return finalized;
 }
 

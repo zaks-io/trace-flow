@@ -16,6 +16,7 @@ import {
 import {
   ARCHIVE_CAP_BYTES,
   applyCollectorHeartbeat,
+  assertArchiveAuthorityReductionAllowed,
   assertArchiveMutationAllowed,
   isOrganizationDeleted,
   isOrganizationDeletionStarted,
@@ -33,6 +34,7 @@ import {
   isCollectorCredentialExpired,
   pickOldestDocument,
   projectLifecycle,
+  sourceAlreadyAuthorized,
   resolveServerLifecycle,
   serverStatusPayloadEquals,
   syncArchiveLifecycleForEntitlement,
@@ -582,6 +584,90 @@ export const upsertSessionIntegrity = internalMutation({
       source: args.source,
       sourceSessionId: args.sourceSessionId,
       errorClass: args.errorClass,
+      repairOutcome: args.repairOutcome,
+      updatedAt: now,
+    };
+  },
+});
+
+export const applySessionRepairOutcome = internalMutation({
+  args: {
+    contributionId: v.id('archiveContributions'),
+    expectedOrgId: v.id('organizations'),
+    expectedUserId: v.id('users'),
+    source: archiveSupportedSourceValidator,
+    sourceSessionId: v.string(),
+    repairOutcome: v.union(v.literal('failure'), v.literal('success')),
+  },
+  returns: archiveSessionIntegrityValidator,
+  handler: async (ctx, args) => {
+    const contribution = await ctx.db.get(args.contributionId);
+    if (contribution?.orgId !== args.expectedOrgId || contribution.userId !== args.expectedUserId) {
+      throw new Error('Archive contribution binding mismatch');
+    }
+    const org = await ctx.db.get(contribution.orgId);
+    const activation = await getArchiveActivation(ctx, contribution.orgId);
+    assertArchiveAuthorityReductionAllowed({ org, activation });
+    const enrollments = await ctx.db
+      .query('archiveEnrollments')
+      .withIndex('by_contribution', (q) => q.eq('contributionId', contribution._id))
+      .collect();
+    if (
+      !enrollments.some(
+        (enrollment) =>
+          enrollment.orgId === contribution.orgId &&
+          enrollment.userId === contribution.userId &&
+          sourceAlreadyAuthorized(enrollment.authorizedSources, args.source),
+      )
+    ) {
+      throw new Error('Source enrollment not found');
+    }
+
+    const now = Date.now();
+    const existingRows = await ctx.db
+      .query('archiveSessionIntegrity')
+      .withIndex('by_org_contribution_session', (q) =>
+        q
+          .eq('orgId', contribution.orgId)
+          .eq('contributionId', contribution._id)
+          .eq('source', args.source)
+          .eq('sourceSessionId', args.sourceSessionId),
+      )
+      .collect();
+    const existing = pickOldestDocument(existingRows);
+    const errorClass = args.repairOutcome === 'success' ? undefined : existing?.errorClass;
+    if (existing) {
+      if (existing.errorClass === errorClass && existing.repairOutcome === args.repairOutcome) {
+        return {
+          contributionId: existing.contributionId,
+          source: existing.source,
+          sourceSessionId: existing.sourceSessionId,
+          errorClass: existing.errorClass,
+          repairOutcome: existing.repairOutcome,
+          updatedAt: existing.updatedAt,
+        };
+      }
+      await ctx.db.patch(existing._id, {
+        errorClass,
+        repairOutcome: args.repairOutcome,
+        updatedAt: now,
+      });
+    } else {
+      await ctx.db.insert('archiveSessionIntegrity', {
+        orgId: contribution.orgId,
+        contributionId: contribution._id,
+        source: args.source,
+        sourceSessionId: args.sourceSessionId,
+        errorClass,
+        repairOutcome: args.repairOutcome,
+        updatedAt: now,
+      });
+    }
+    return {
+      contributionId: contribution._id,
+      source: args.source,
+      sourceSessionId: args.sourceSessionId,
+      errorClass,
       repairOutcome: args.repairOutcome,
       updatedAt: now,
     };

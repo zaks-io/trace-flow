@@ -392,7 +392,9 @@ export async function appendArchiveAuditEvent(
 ): Promise<{ eventId: Id<'archiveAuditEvents'>; created: boolean }> {
   const operationId = validateAuditOperationId(event.operationId);
   const now = event.now ?? Date.now();
-  const idempotentOutcome = event.action === 'integrity_failure' ? event.outcome : 'success';
+  const outcomeIsIdempotent =
+    event.action === 'integrity_failure' || event.action === 'operator_repair_outcome';
+  const idempotentOutcome = outcomeIsIdempotent ? event.outcome : 'success';
   const existingIdempotentEvent = await ctx.db
     .query('archiveAuditEvents')
     .withIndex('by_org_operation_action_outcome', (q) =>
@@ -408,7 +410,7 @@ export async function appendArchiveAuditEvent(
     existingSuccess: existingIdempotentEvent ? { action: existingIdempotentEvent.action } : null,
     incoming: { action: event.action, outcome: event.outcome },
   });
-  if (existingIdempotentEvent && (decision === 'replay' || event.action === 'integrity_failure')) {
+  if (existingIdempotentEvent && (decision === 'replay' || outcomeIsIdempotent)) {
     return { eventId: existingIdempotentEvent._id, created: false };
   }
 

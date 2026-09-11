@@ -35,6 +35,13 @@
           "remote": true,
         },
         {
+          // Preview deploys the agent consumer under its dev Worker name.
+          "binding": "AGENT_RECOVERY",
+          "service": "trace-flow-agent-consumer-dev",
+          "entrypoint": "TraceRecovery",
+          "remote": true,
+        },
+        {
           "binding": "ARCHIVE_RECOVERY",
           "service": "trace-flow-archive-api-preview",
           "entrypoint": "ArchiveRecovery",

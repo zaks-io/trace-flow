@@ -13,6 +13,7 @@ import { readLedgerSnapshot } from './archive-ledger-storage';
 import { storageBudgetObject } from './archive-r2';
 import { verifyObjects } from './archive-ledger-intent-recovery';
 import { ARCHIVE_ROTATION_RETRY_MS } from './archive-key-rotation-state';
+import { hasPendingArchiveRepairPublications } from './archive-repair-publication';
 
 export async function armLedgerRecovery(storage: DurableObjectStorage): Promise<void> {
   const scheduledAt = Date.now() + ARCHIVE_ROTATION_RETRY_MS;
@@ -24,7 +25,8 @@ export async function scheduleLedgerRecovery(storage: DurableObjectStorage): Pro
   if (
     hasPendingIntent(storage) ||
     hasPendingReleases(storage) ||
-    hasPendingBudgetCommits(storage)
+    hasPendingBudgetCommits(storage) ||
+    hasPendingArchiveRepairPublications(storage)
   ) {
     await armLedgerRecovery(storage);
   } else {

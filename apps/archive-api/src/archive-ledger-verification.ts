@@ -21,8 +21,9 @@ import { assertPlannedChain, canonicalElement } from './archive-chain';
 import { MAX_ENCRYPTED_ARCHIVE_OBJECT_BYTES } from './archive-key-reencryption';
 import { archiveObjectKey } from './archive-storage-key';
 import type { ArchiveRepairStateExpectation, LedgerSnapshot } from './archive-ledger-state';
-import { readLedgerSnapshot } from './archive-ledger-storage';
+import { readLedgerScan, readLedgerSnapshot } from './archive-ledger-storage';
 import { readArchiveRepair } from './archive-ledger-repair';
+import { hasPendingIntent } from './archive-ledger-intent';
 
 const MAX_LEDGER_ELEMENTS_PER_PAGE = 64;
 const MAX_MANIFEST_OBJECTS_PER_PAGE = 4;
@@ -702,7 +703,14 @@ export async function verifyArchiveLedgerPage(
   const repair = readArchiveRepair(storage, input.operationId);
   if (
     input.phase === 'after' &&
-    (repair?.status !== 'active' || repair.plan.snapshotSha256 !== input.snapshotSha256)
+    (repair?.status !== 'active' ||
+      repair.plan.snapshotSha256 !== input.snapshotSha256 ||
+      repair.appliedChunks !== repair.plan.chunkDigests.length ||
+      hasPendingIntent(storage) ||
+      !equalJson(
+        readLedgerScan(storage, repair.plan.partId)?.checkpoint,
+        repair.plan.finalCheckpoint,
+      ))
   ) {
     throw new ArchiveContractError('archive_verification_invalid');
   }

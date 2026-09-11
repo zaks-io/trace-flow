@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { publishArchiveIntegrityStatus } from '../archive-integrity-status';
+import {
+  publishArchiveIntegrityStatus,
+  publishArchiveRepairStatus,
+} from '../archive-integrity-status';
 
 const env = {
   CONVEX_SITE_URL: 'https://convex.test',
@@ -50,5 +53,33 @@ describe('archive integrity status publication', () => {
         errorClass: 'payload_hash_mismatch',
       }),
     ).rejects.toThrow('archive_integrity_status_publication_malformed');
+  });
+
+  it('publishes an exact contribution-bound repair result without payload data', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const request = new Request(input, init);
+      const body = await request.json<Record<string, unknown>>();
+      expect(body).toEqual({
+        orgId: 'org-1',
+        userId: 'user-1',
+        contributionId: 'contribution-1',
+        source: 'codex',
+        sourceSessionId: 'session-1',
+        repairOutcome: 'success',
+      });
+      expect(JSON.stringify(body)).not.toContain('payload');
+      return Response.json(body);
+    });
+
+    await expect(
+      publishArchiveRepairStatus(env, {
+        orgId: 'org-1',
+        userId: 'user-1',
+        contributionId: 'contribution-1',
+        source: 'codex',
+        sourceSessionId: 'session-1',
+        repairOutcome: 'success',
+      }),
+    ).resolves.toBeUndefined();
   });
 });

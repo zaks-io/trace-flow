@@ -151,6 +151,8 @@ async function commitArchiveSessionEnvelope(
             planDigest: repair.planDigest,
             chunkIndex: repair.chunkIndex,
             chunkDigest: uploadDigest,
+            chunkKind: repair.chunkKind,
+            expected: repair.expected,
           },
         }
       : {}),

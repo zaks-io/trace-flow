@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { api, internal } from '../_generated/api';
 import { ARCHIVE_CAP_BYTES, ARCHIVE_HEARTBEAT_FUTURE_SKEW_MS } from '../archiveLib';
-import { asUser, enableArchive, enrollInput, seedWorld } from './archiveControlPlaneTest.setup';
+import {
+  asUser,
+  disableArchive,
+  enableArchive,
+  enrollInput,
+  seedWorld,
+} from './archiveControlPlaneTest.setup';
 
 describe('archive control plane status and lifecycle', () => {
   it('projects status by organization without crossing collector or organization boundaries', async () => {
@@ -389,6 +395,66 @@ describe('archive control plane status and lifecycle', () => {
     expect(ownerStatus.integritySessions.map((row) => row.contributionId).sort()).toEqual(
       [ownerEnroll.contributionId, memberEnroll.contributionId].sort(),
     );
+  });
+
+  it('preserves integrity failures until an exact contribution-bound repair succeeds', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    const enrollment = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+    await world.t.mutation(internal.archiveInternal.upsertSessionIntegrity, {
+      collectorCredentialId: world.ownerCred,
+      source: 'claude',
+      sourceSessionId: 'repair-session',
+      errorClass: 'payload_hash_mismatch',
+    });
+
+    const failure = await world.t.mutation(internal.archiveInternal.applySessionRepairOutcome, {
+      contributionId: enrollment.contributionId,
+      expectedOrgId: world.owner.orgId,
+      expectedUserId: world.owner._id,
+      source: 'claude',
+      sourceSessionId: 'repair-session',
+      repairOutcome: 'failure',
+    });
+    expect(failure).toMatchObject({
+      errorClass: 'payload_hash_mismatch',
+      repairOutcome: 'failure',
+    });
+    await expect(
+      world.t.mutation(internal.archiveInternal.applySessionRepairOutcome, {
+        contributionId: enrollment.contributionId,
+        expectedOrgId: world.otherOwner.orgId,
+        expectedUserId: world.owner._id,
+        source: 'claude',
+        sourceSessionId: 'repair-session',
+        repairOutcome: 'success',
+      }),
+    ).rejects.toThrow('Archive contribution binding mismatch');
+    await owner.mutation(api.archive.unenroll, { enrollmentId: enrollment.enrollmentId });
+    disableArchive();
+
+    const success = await world.t.mutation(internal.archiveInternal.applySessionRepairOutcome, {
+      contributionId: enrollment.contributionId,
+      expectedOrgId: world.owner.orgId,
+      expectedUserId: world.owner._id,
+      source: 'claude',
+      sourceSessionId: 'repair-session',
+      repairOutcome: 'success',
+    });
+    expect(success.errorClass).toBeUndefined();
+    expect(success.repairOutcome).toBe('success');
+    await expect(
+      world.t.mutation(internal.archiveInternal.applySessionRepairOutcome, {
+        contributionId: enrollment.contributionId,
+        expectedOrgId: world.owner.orgId,
+        expectedUserId: world.owner._id,
+        source: 'claude',
+        sourceSessionId: 'repair-session',
+        repairOutcome: 'success',
+      }),
+    ).resolves.toEqual(success);
   });
 
   it('does not let enrollment overwrite Archive API lifecycle or durable bytes', async () => {

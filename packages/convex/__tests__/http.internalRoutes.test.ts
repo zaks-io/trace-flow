@@ -663,6 +663,9 @@ describe('convex/http.ts internal routes', () => {
 
   describe('POST /archive-api/session-integrity', () => {
     const COLLECTOR_CREDENTIAL_ID = 'n57axc8sefsfp6k28nx6c481js806pwv';
+    const CONTRIBUTION_ID = 'o57axc8sefsfp6k28nx6c481js806pwv';
+    const ORG_ID = 'k57axc8sefsfp6k28nx6c481js806pwv';
+    const USER_ID = 'j57axc8sefsfp6k28nx6c481js806pwv';
 
     beforeEach(() => {
       vi.stubEnv('ARCHIVE_API_SHARED_SECRET', 'archive-secret');
@@ -750,6 +753,69 @@ describe('convex/http.ts internal routes', () => {
         ctx,
       );
       expect(hashResponse.status).toBe(400);
+      expect(ctx.runMutation).toHaveBeenCalledOnce();
+    });
+
+    it('forwards an operator repair outcome through an exact contribution binding', async () => {
+      ctx.runMutation.mockResolvedValueOnce({
+        contributionId: CONTRIBUTION_ID,
+        source: 'codex',
+        sourceSessionId: 'session-1',
+        repairOutcome: 'success',
+        updatedAt: 123,
+      });
+      const response = await createApp(deps).request(
+        'http://localhost/archive-api/session-integrity',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer archive-secret',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            orgId: ORG_ID,
+            userId: USER_ID,
+            contributionId: CONTRIBUTION_ID,
+            source: 'codex',
+            sourceSessionId: 'session-1',
+            repairOutcome: 'success',
+            payload: 'must-not-forward',
+          }),
+        },
+        ctx,
+      );
+      expect(response.status).toBe(200);
+      expect(ctx.runMutation.mock.calls[0]?.[1]).toEqual({
+        contributionId: CONTRIBUTION_ID,
+        expectedOrgId: ORG_ID,
+        expectedUserId: USER_ID,
+        source: 'codex',
+        sourceSessionId: 'session-1',
+        repairOutcome: 'success',
+      });
+      expect(JSON.stringify(ctx.runMutation.mock.calls[0]?.[1])).not.toContain('must-not-forward');
+
+      const mixed = await createApp(deps).request(
+        'http://localhost/archive-api/session-integrity',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer archive-secret',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            orgId: ORG_ID,
+            userId: USER_ID,
+            contributionId: CONTRIBUTION_ID,
+            collectorCredentialId: COLLECTOR_CREDENTIAL_ID,
+            source: 'codex',
+            sourceSessionId: 'session-1',
+            repairOutcome: 'success',
+          }),
+        },
+        ctx,
+      );
+      expect(mixed.status).toBe(400);
       expect(ctx.runMutation).toHaveBeenCalledOnce();
     });
 

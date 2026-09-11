@@ -2234,6 +2234,26 @@ export declare const internal: {
     >;
   };
   archiveInternal: {
+    applySessionRepairOutcome: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        contributionId: Id<"archiveContributions">;
+        expectedOrgId: Id<"organizations">;
+        expectedUserId: Id<"users">;
+        repairOutcome: "failure" | "success";
+        source: "claude" | "codex";
+        sourceSessionId: string;
+      },
+      {
+        contributionId: Id<"archiveContributions">;
+        errorClass?: string;
+        repairOutcome?: string;
+        source: "claude" | "codex";
+        sourceSessionId: string;
+        updatedAt: number;
+      }
+    >;
     applyServerStatus: FunctionReference<
       "mutation",
       "internal",
