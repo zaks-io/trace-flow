@@ -38,7 +38,7 @@ import {
   stableHash,
   type Category,
 } from './facts';
-import { normalizePendingFact, PendingFactStore } from './pending-fact-store';
+import { isRecord, normalizePendingFact, PendingFactStore } from './pending-fact-store';
 import {
   FactRepairCapacity,
   isDatabaseCapacityError,
@@ -1047,10 +1047,6 @@ function validateWriteTargets(batch: AgentFactBatch): void {
     throw new Error(`no Tinybird write target for ${category}`);
   }
 }
-
-// Prettier would expand this guard and push the Durable Object past the enforced line budget.
-// prettier-ignore
-function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null; }
 
 export const AgentFactBatcher = Sentry.instrumentDurableObjectWithSentry(
   (env: AgentConsumerEnv) => ({
