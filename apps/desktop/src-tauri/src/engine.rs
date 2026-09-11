@@ -1106,10 +1106,12 @@ fn publish_connection(bus: &AppStateBus, connection: &Connection) -> bool {
             state.archive = ArchiveMenuState::default();
         }
         state.connection = next;
-        if let Some(message) =
-            repair_message_for_connection(state.archive_repairs.as_ref(), &state.connection)
-        {
-            state.archive.last_error = Some(message);
+        if changed {
+            if let Some(message) =
+                repair_message_for_connection(state.archive_repairs.as_ref(), &state.connection)
+            {
+                state.archive.last_error = Some(message);
+            }
         }
     });
     changed
@@ -1592,6 +1594,16 @@ mod archive_engine_tests {
             Some("Codex archive needs repair")
         );
         assert_eq!(bus.snapshot().sync, SyncStatus::Paused);
+
+        publish_archive_error(&bus, "service unavailable".to_string());
+        assert!(!publish_connection(
+            &bus,
+            &saved_connection("org_1", "collector_1")
+        ));
+        assert_eq!(
+            bus.snapshot().archive.last_error.as_deref(),
+            Some("service unavailable")
+        );
 
         publish_connection(&bus, &saved_connection("org_2", "collector_1"));
         assert_eq!(bus.snapshot().archive.last_error, None);
