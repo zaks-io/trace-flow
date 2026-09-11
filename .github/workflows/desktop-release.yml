@@ -217,6 +217,35 @@ jobs:
           projectPath: apps/desktop
           args: --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
 
+      - name: Notarize macOS disk image
+        if: matrix.name == 'macos'
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          set -euo pipefail
+          : "${APPLE_API_ISSUER:?APPLE_API_ISSUER is required}"
+          : "${APPLE_API_KEY:?APPLE_API_KEY is required}"
+          : "${APPLE_API_KEY_PATH:?APPLE_API_KEY_PATH is required}"
+
+          shopt -s nullglob
+          dmg_files=(target/aarch64-apple-darwin/release/bundle/dmg/*.dmg)
+          if [ "${#dmg_files[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one macOS disk image, found ${#dmg_files[@]}"
+            exit 1
+          fi
+          dmg_file=${dmg_files[0]}
+
+          xcrun notarytool submit "$dmg_file" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          xcrun stapler staple "$dmg_file"
+          xcrun stapler validate "$dmg_file"
+          codesign --verify --verbose=4 "$dmg_file"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg_file"
+
       - name: Upload artifacts (macOS)
         if: matrix.name == 'macos'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
