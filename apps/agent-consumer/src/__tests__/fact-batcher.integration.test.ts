@@ -813,6 +813,13 @@ describe('AgentFactBatcher logic', () => {
         const changed = await instance.addFacts({
           rows: { ...emptyBatchRows, messages: [latest] },
         });
+        const statsDuringInsert = instance.getStats();
+        const recoveryDuringInsert = instance.listRecovery();
+        const insertStateDuringInsert = state.storage.sql
+          .exec<{
+            state: string;
+          }>(`SELECT state FROM recovery_records WHERE kind = 'tinybird_insert'`)
+          .one().state;
         const rebuild = await instance.beginFactRebuild('org-1', {
           operationId: 'rebuild-during-insert',
           executorId: '11111111-1111-4111-8111-111111111111',
@@ -825,6 +832,9 @@ describe('AgentFactBatcher logic', () => {
         const values = {
           changed,
           rebuild,
+          insertStateDuringInsert,
+          recoveryDuringInsert,
+          statsDuringInsert,
           ledger: state.storage.sql
             .exec<{ content_hash: string }>('SELECT content_hash FROM fact_ledger')
             .one().content_hash,
@@ -839,6 +849,10 @@ describe('AgentFactBatcher logic', () => {
     );
 
     expect(hashes.changed).toMatchObject({ repairRows: 1, acceptedRows: 0 });
+    expect(hashes.insertStateDuringInsert).toBe('in_flight');
+    expect(hashes.statsDuringInsert.blockedRecoveryRecords).toBe(1);
+    expect(hashes.recoveryDuringInsert.records).toHaveLength(1);
+    expect(hashes.recoveryDuringInsert.records[0]?.kind).toBe('repair');
     expect(hashes.rebuild.status).toBe('retry-needed');
     expect(hashes.ledger).toBe(stableHash(first));
     expect(hashes.pending).toBe(stableHash(first));

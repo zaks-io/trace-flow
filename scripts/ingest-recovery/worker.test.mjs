@@ -122,6 +122,47 @@ test('fact rebuild methods require agent pipeline and explicit mutation confirma
   assert.equal(calls, 1);
 });
 
+test('fact repair inspection is agent-only and compaction requires mutation confirmation', async () => {
+  const calls = [];
+  const env = {
+    AGENT_RECOVERY: {
+      inspectFactRepairCapacity: async (shardId, options) => {
+        calls.push(['inspect', shardId, options]);
+        return { databaseSizeBytes: 10 };
+      },
+      compactFactRepairDuplicates: async (shardId, options) => {
+        calls.push(['compact', shardId, options]);
+        return { compacted: [] };
+      },
+    },
+  };
+  const body = {
+    pipeline: 'agent',
+    shardId: 'org-1',
+    options: { candidates: [{ repairId: 1, proofSha256: 'a'.repeat(64) }] },
+  };
+  assert.equal((await worker.fetch(request('inspectFactRepairCapacity', body), env)).status, 200);
+  assert.equal(
+    (await worker.fetch(request('inspectFactRepairCapacity', { ...body, pipeline: 'proxy' }), env))
+      .status,
+    400,
+  );
+  assert.equal((await worker.fetch(request('compactFactRepairDuplicates', body), env)).status, 400);
+  assert.equal(
+    (
+      await worker.fetch(
+        request('compactFactRepairDuplicates', { ...body, confirm: 'apply-recovery' }),
+        env,
+      )
+    ).status,
+    200,
+  );
+  assert.deepEqual(calls, [
+    ['inspect', 'org-1', body.options],
+    ['compact', 'org-1', body.options],
+  ]);
+});
+
 test('archive inspection is read-only while verification and repair require confirmation', async () => {
   const calls = [];
   const env = {
