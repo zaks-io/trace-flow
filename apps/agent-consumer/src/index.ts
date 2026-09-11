@@ -13,6 +13,7 @@
  */
 import * as Sentry from '@sentry/cloudflare';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
+import { sha256Hex } from '@trace-flow/utils';
 import type { AgentConsumerEnv } from './context';
 import { isQueueMessage, processAgentBatch, processAgentRecoveryPayload } from './consumer';
 import { WorkerEntrypoint } from 'cloudflare:workers';
@@ -33,6 +34,7 @@ import type {
   ReplayDlqInput,
 } from '@trace-flow/tinybird-client';
 import { requireRecoveryReason } from '@trace-flow/tinybird-client';
+import { normalizeDlqExcerptByteLimits } from './dlq-excerpt-repair';
 
 export { processAgentBatch } from './consumer';
 export { AgentFactBatcher } from './fact-batcher';
@@ -40,6 +42,16 @@ export { AgentFactBatcher } from './fact-batcher';
 const AGENT_DLQ_NAMES = new Set(['agent-ingest-dlq-dev', 'agent-ingest-dlq-prod']);
 const DLQ_PRESERVATION_RETRY_DELAY_SECONDS = 60;
 const DLQ_PRESERVATION_MAX_RETRY_DELAY_SECONDS = 14_400;
+
+interface ExcerptByteLimitRepair {
+  kind: 'excerpt-byte-limits';
+  expectedPayloadSha256: string;
+  expectedOrgId: string;
+}
+
+interface AgentReplayDlqInput extends ReplayDlqInput {
+  repair?: ExcerptByteLimitRepair;
+}
 
 function getAgentBatcher(
   env: AgentConsumerEnv,
@@ -128,20 +140,87 @@ export class TraceRecovery extends WorkerEntrypoint<AgentConsumerEnv> {
     return getAgentBatcher(this.env, shardId).completeFactRebuild(input);
   }
 
-  async replayDlq(shardId: string, input: ReplayDlqInput): Promise<RecoveryRecord> {
-    requireRecoveryReason(input.reason);
+  async replayDlq(shardId: string, input: AgentReplayDlqInput): Promise<RecoveryRecord> {
+    const reason = requireRecoveryReason(input.reason);
+    const repair = validateExcerptRepair(input.repair);
     const batcher = getAgentBatcher(this.env, shardId);
     await batcher.assertFactMaintenanceUnlocked();
     const record = await batcher.getRecovery(input.recoveryId);
     if (record.kind !== 'dlq' || record.state !== 'blocked')
       throw new Error('DLQ record is not blocked');
+    if (repair && (await sha256Hex(record.payload)) !== repair.expectedPayloadSha256) {
+      throw new Error('DLQ payload hash does not match the repair request');
+    }
     const value: unknown = JSON.parse(record.payload);
     if (!value || typeof value !== 'object' || Array.isArray(value))
       throw new Error('invalid DLQ payload');
     const payload = value as Record<string, unknown>;
-    await processAgentRecoveryPayload(payload.body, this.env);
-    return batcher.resolveDlq(input.recoveryId, input.reason);
+    if (!repair) {
+      await processAgentRecoveryPayload(payload.body, this.env);
+      return batcher.resolveDlq(input.recoveryId, reason);
+    }
+
+    const bodyOrgId = dlqBodyOrgId(payload.body);
+    if (bodyOrgId !== repair.expectedOrgId)
+      throw new Error('DLQ payload org does not match repair');
+    const normalized = normalizeDlqExcerptByteLimits(payload.body);
+    const originalBodySha256 = await sha256Hex(JSON.stringify(payload.body));
+    const correctedBodySha256 = await sha256Hex(JSON.stringify(normalized.body));
+    await processAgentRecoveryPayload(normalized.body, this.env);
+    return batcher.resolveDlq(
+      input.recoveryId,
+      JSON.stringify({
+        reason,
+        repair: {
+          kind: repair.kind,
+          expectedOrgId: repair.expectedOrgId,
+          originalPayloadSha256: repair.expectedPayloadSha256,
+          originalBodySha256,
+          correctedBodySha256,
+        },
+      }),
+    );
   }
+}
+
+function validateExcerptRepair(value: unknown): ExcerptByteLimitRepair | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('invalid DLQ repair request');
+  }
+  const repair = value as Record<string, unknown>;
+  const expectedKeys = ['expectedOrgId', 'expectedPayloadSha256', 'kind'];
+  if (
+    Object.keys(repair).length !== expectedKeys.length ||
+    expectedKeys.some((key) => !Object.hasOwn(repair, key)) ||
+    repair.kind !== 'excerpt-byte-limits' ||
+    typeof repair.expectedPayloadSha256 !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(repair.expectedPayloadSha256) ||
+    typeof repair.expectedOrgId !== 'string'
+  ) {
+    throw new Error('invalid DLQ repair request');
+  }
+  if (normalizeAgentShardId(repair.expectedOrgId) !== repair.expectedOrgId) {
+    throw new Error('invalid DLQ repair request');
+  }
+  return {
+    kind: repair.kind,
+    expectedPayloadSha256: repair.expectedPayloadSha256,
+    expectedOrgId: repair.expectedOrgId,
+  };
+}
+
+function dlqBodyOrgId(value: unknown): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('invalid DLQ payload body');
+  }
+  const tenancy = (value as Record<string, unknown>).tenancy;
+  if (!tenancy || typeof tenancy !== 'object' || Array.isArray(tenancy)) {
+    throw new Error('invalid DLQ payload tenancy');
+  }
+  const orgId = (tenancy as Record<string, unknown>).org_id;
+  if (typeof orgId !== 'string') throw new Error('invalid DLQ payload org');
+  return orgId;
 }
 
 export default Sentry.withSentry(
