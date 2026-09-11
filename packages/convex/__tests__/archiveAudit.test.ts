@@ -502,6 +502,28 @@ describe('archive audit control plane', () => {
       sourceSessionId: 'session-1',
       manifestRootHash: MANIFEST_ROOT,
     });
+    const failedRepair = await world.t.mutation(internal.archiveAuditInternal.appendSemanticEvent, {
+      binding: { kind: 'collector_credential', collectorCredentialId: world.ownerCred },
+      action: 'operator_repair_outcome',
+      outcome: 'failure',
+      operationId: 'repair:session-1:failed',
+      targetKind: 'session',
+      targetId: 'session-1',
+      source: 'claude',
+      sourceSessionId: 'session-1',
+    });
+    await expect(
+      world.t.mutation(internal.archiveAuditInternal.appendSemanticEvent, {
+        binding: { kind: 'collector_credential', collectorCredentialId: world.ownerCred },
+        action: 'operator_repair_outcome',
+        outcome: 'failure',
+        operationId: 'repair:session-1:failed',
+        targetKind: 'session',
+        targetId: 'session-1',
+        source: 'claude',
+        sourceSessionId: 'session-1',
+      }),
+    ).resolves.toEqual({ eventId: failedRepair.eventId, created: false });
 
     const events = await owner.query(api.archiveAudit.listEvents, {});
     expect(events.filter((event) => event.action === 'export_grant_issuance')).toHaveLength(1);

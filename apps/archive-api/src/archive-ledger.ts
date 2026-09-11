@@ -1,8 +1,20 @@
 import { DurableObject } from 'cloudflare:workers';
+import { axiomConfigFromEnv, createWorkerLogger } from '@trace-flow/logging';
 import type { ArchiveApiEnv } from './context';
 import { MAX_ARCHIVE_COMMIT_BYTES, readBoundedJson } from './archive-request';
-import { ArchiveContractError } from './archive-contract';
-import { commitArchiveSession } from './archive-ledger-commit';
+import {
+  ArchiveContractError,
+  assertDigest,
+  assertIdentifier,
+  assertSafeInteger,
+  assertTranscriptPartId,
+  type ArchiveScope,
+} from './archive-contract';
+import {
+  commitArchiveRepairChunk,
+  commitArchiveSession,
+  getCommittedManifestKeyMaterial,
+} from './archive-ledger-commit';
 import { assertIncomingObservationCount } from './archive-validation';
 import { statusFor } from './archive-ledger-support';
 import {
@@ -15,14 +27,40 @@ import {
   scheduleLedgerRecovery,
 } from './archive-ledger-recovery';
 import { ensurePendingReleaseSchema } from './archive-ledger-release-outbox';
-import { readLedgerSnapshot } from './archive-ledger-storage';
-import { readPendingIntent } from './archive-ledger-intent';
+import { readLedgerScan, readLedgerSnapshot } from './archive-ledger-storage';
+import { hasPendingIntent, readPendingIntent } from './archive-ledger-intent';
 import {
   assertArchiveWritable,
   clearLedgerSqlState,
   ledgerErasureOrgId,
   markLedgerErased,
 } from './archive-erasure-state';
+import {
+  archivedRepairFingerprintCount,
+  ensureArchiveRepairTables,
+  finalizeArchiveRepairState,
+  parseArchiveRepairRouting,
+  readActiveArchiveRepair,
+  readArchiveRepair,
+  readLatestArchiveRepairForPart,
+  type ArchiveRepairChunkInput,
+} from './archive-ledger-repair';
+import {
+  ensureArchiveVerificationTables,
+  verifyArchiveLedgerPage,
+  assertArchiveVerificationComplete,
+  type ArchiveVerificationInput,
+} from './archive-ledger-verification';
+import { readSessionIntegrity } from './archive-session-integrity';
+import { unwrapKey } from './archive-ledger-intent-recovery';
+import type { ArchiveRepairStateExpectation } from './archive-ledger-state';
+import {
+  deliverPendingArchiveRepairPublications,
+  enqueueArchiveRepairAttempt,
+  enqueueArchiveRepairFailure,
+  enqueueArchiveRepairSuccess,
+  ensureArchiveRepairPublicationTable,
+} from './archive-repair-publication';
 
 export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
   private commitQueue: Promise<void> = Promise.resolve();
@@ -64,6 +102,58 @@ export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
     );
     ensurePendingReleaseSchema(this.ctx.storage);
     ensureSessionIntegrityTable(this.ctx.storage);
+    ensureArchiveRepairTables(this.ctx.storage);
+    ensureArchiveVerificationTables(this.ctx.storage);
+    ensureArchiveRepairPublicationTable(this.ctx.storage);
+  }
+
+  private runExclusive<T>(work: () => T | Promise<T>): Promise<T> {
+    const turn = this.commitQueue.then(work);
+    this.commitQueue = turn.then(
+      () => undefined,
+      () => undefined,
+    );
+    return turn;
+  }
+
+  private repairLogger(operation: string) {
+    return createWorkerLogger({
+      service: 'archive-api',
+      request: new Request('https://archive-session-ledger/recovery'),
+      runtime: 'durable-object',
+      axiom: axiomConfigFromEnv(this.env),
+      context: { component: 'ledger', operation },
+    });
+  }
+
+  private async deliverRepairPublications(operation: string): Promise<void> {
+    const logger = this.repairLogger(operation);
+    try {
+      await deliverPendingArchiveRepairPublications(this.ctx.storage, this.env, logger);
+    } finally {
+      void logger.flush();
+    }
+  }
+
+  private async recordRepairFailure(input: {
+    scope: ArchiveScope;
+    operationId: string;
+    partId: string;
+    snapshotSha256: string;
+  }): Promise<void> {
+    enqueueArchiveRepairFailure(this.ctx.storage, input);
+    await armLedgerRecovery(this.ctx.storage);
+    try {
+      await this.deliverRepairPublications('archive_repair_failure');
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          event: 'archive_ledger.repair_publication_failed',
+          errorClass: error instanceof Error ? error.name : 'unknown_error',
+        }),
+      );
+    }
+    await scheduleLedgerRecovery(this.ctx.storage);
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -141,6 +231,7 @@ export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
       }
       let retry = true;
       try {
+        await this.deliverRepairPublications('archive_repair_publication_recovery');
         await resumeLedgerRecovery(this.ctx.storage, this.env);
       } catch (error) {
         if (
@@ -165,6 +256,245 @@ export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
       () => undefined,
     );
     await turn;
+  }
+
+  inspectArchivePart(input: { scope: ArchiveScope; partId: string }): Promise<unknown> {
+    return this.runExclusive(() => {
+      assertIdentifier(input.partId, 'archive_repair_invalid');
+      assertTranscriptPartId(input.scope.source, input.partId);
+      const state = readLedgerSnapshot(this.ctx.storage);
+      if (state.scope && JSON.stringify(state.scope) !== JSON.stringify(input.scope)) {
+        throw new ArchiveContractError('ledger_scope_mismatch');
+      }
+      const pending = readPendingIntent(this.ctx.storage);
+      const activeRepair = readActiveArchiveRepair(this.ctx.storage);
+      return {
+        state: {
+          generation: state.generation,
+          elementCount: state.elementCount,
+          recordCount: state.recordCount,
+          chainHead: state.chainHead,
+        },
+        scan: readLedgerScan(this.ctx.storage, input.partId)?.checkpoint ?? null,
+        integrity: readSessionIntegrity(this.ctx.storage, input.scope),
+        pendingIntent: pending
+          ? {
+              intentHash: pending.intentHash,
+              status: pending.status,
+              baseElementCount: pending.baseElementCount,
+              baseChainHead: pending.baseChainHead,
+              repairOperationId: pending.commit?.repair?.plan.operationId ?? null,
+            }
+          : null,
+        activeRepair,
+        latestRepair: readLatestArchiveRepairForPart(this.ctx.storage, input.partId),
+        preservedFingerprintCount: activeRepair
+          ? archivedRepairFingerprintCount(this.ctx.storage, activeRepair.plan.operationId)
+          : 0,
+      };
+    });
+  }
+
+  applyArchiveRepairChunk(input: ArchiveRepairChunkInput): Promise<unknown> {
+    return this.runExclusive(async () => {
+      await assertArchiveWritable(this.ctx.storage);
+      const routing = parseArchiveRepairRouting(input);
+      const state = readLedgerSnapshot(this.ctx.storage);
+      if (!state.scope || JSON.stringify(state.scope) !== JSON.stringify(routing.scope)) {
+        throw new ArchiveContractError('ledger_scope_mismatch');
+      }
+      const publication = {
+        scope: routing.scope,
+        operationId: input.operationId,
+        partId: routing.partId,
+        snapshotSha256: input.plan.snapshotSha256,
+      };
+      enqueueArchiveRepairAttempt(this.ctx.storage, publication);
+      await armLedgerRecovery(this.ctx.storage);
+      try {
+        await this.deliverRepairPublications('archive_repair_attempt');
+        if (!state.keyVersion) throw new ArchiveContractError('ledger_state_corrupt');
+        const keyMaterial = await getCommittedManifestKeyMaterial(
+          this.env,
+          routing.scope.orgId,
+          state.keyVersion,
+        );
+        const result = await commitArchiveRepairChunk(
+          this.ctx.storage,
+          this.env,
+          input,
+          keyMaterial,
+        );
+        await scheduleLedgerRecovery(this.ctx.storage);
+        return result;
+      } catch (error) {
+        await this.recordRepairFailure(publication);
+        throw error;
+      }
+    });
+  }
+
+  verifyArchiveRepairPage(
+    input: ArchiveVerificationInput & { scope: ArchiveScope; partId: string },
+  ): Promise<unknown> {
+    return this.runExclusive(async () => {
+      await assertArchiveWritable(this.ctx.storage);
+      assertIdentifier(input.operationId, 'archive_repair_invalid');
+      assertDigest(input.snapshotSha256, 'archive_repair_invalid');
+      for (const value of [
+        input.expected?.generation,
+        input.expected?.elementCount,
+        input.expected?.recordCount,
+      ]) {
+        assertSafeInteger(value, 'archive_repair_invalid');
+      }
+      assertDigest(input.expected?.chainHead, 'archive_repair_invalid');
+      assertTranscriptPartId(input.scope.source, input.partId);
+      const expected: ArchiveRepairStateExpectation = {
+        generation: input.expected.generation,
+        elementCount: input.expected.elementCount,
+        recordCount: input.expected.recordCount,
+        chainHead: input.expected.chainHead,
+      };
+      const state = readLedgerSnapshot(this.ctx.storage);
+      if (!state.scope || JSON.stringify(state.scope) !== JSON.stringify(input.scope)) {
+        throw new ArchiveContractError('ledger_scope_mismatch');
+      }
+      const publication = {
+        scope: input.scope,
+        operationId: input.operationId,
+        partId: input.partId,
+        snapshotSha256: input.snapshotSha256,
+      };
+      enqueueArchiveRepairAttempt(this.ctx.storage, publication);
+      await armLedgerRecovery(this.ctx.storage);
+      try {
+        await this.deliverRepairPublications('archive_repair_attempt');
+        const keyCache = new Map<number, CryptoKey>();
+        const result = await verifyArchiveLedgerPage(
+          this.ctx.storage,
+          this.env.ARCHIVE_STORAGE,
+          input.scope,
+          { ...input, expected },
+          async (keyVersion) => {
+            const cached = keyCache.get(keyVersion);
+            if (cached) return cached;
+            const material = await getCommittedManifestKeyMaterial(
+              this.env,
+              input.scope.orgId,
+              keyVersion,
+            );
+            const key = await unwrapKey(this.env, { scope: input.scope, ...material });
+            keyCache.set(keyVersion, key);
+            return key;
+          },
+        );
+        await scheduleLedgerRecovery(this.ctx.storage);
+        return result;
+      } catch (error) {
+        await this.recordRepairFailure(publication);
+        throw error;
+      }
+    });
+  }
+
+  finalizeArchiveRepair(input: {
+    scope: ArchiveScope;
+    partId: string;
+    operationId: string;
+    snapshotSha256: string;
+    expected: ArchiveRepairStateExpectation;
+  }): Promise<unknown> {
+    return this.runExclusive(async () => {
+      await assertArchiveWritable(this.ctx.storage);
+      assertIdentifier(input.operationId, 'archive_repair_invalid');
+      assertDigest(input.snapshotSha256, 'archive_repair_invalid');
+      for (const value of [
+        input.expected?.generation,
+        input.expected?.elementCount,
+        input.expected?.recordCount,
+      ]) {
+        assertSafeInteger(value, 'archive_repair_invalid');
+      }
+      assertDigest(input.expected?.chainHead, 'archive_repair_invalid');
+      const expected: ArchiveRepairStateExpectation = {
+        generation: input.expected.generation,
+        elementCount: input.expected.elementCount,
+        recordCount: input.expected.recordCount,
+        chainHead: input.expected.chainHead,
+      };
+      const state = readLedgerSnapshot(this.ctx.storage);
+      if (!state.scope || JSON.stringify(state.scope) !== JSON.stringify(input.scope)) {
+        throw new ArchiveContractError('ledger_scope_mismatch');
+      }
+      const repair = readArchiveRepair(this.ctx.storage, input.operationId);
+      if (!repair) throw new ArchiveContractError('archive_repair_precondition_failed');
+      if (
+        repair.plan.partId !== input.partId ||
+        repair.plan.snapshotSha256 !== input.snapshotSha256
+      ) {
+        throw new ArchiveContractError('archive_repair_precondition_failed');
+      }
+      if (repair.status === 'finalized') {
+        if (JSON.stringify(repair.finalState) !== JSON.stringify(expected)) {
+          throw new ArchiveContractError('archive_repair_precondition_failed');
+        }
+        await this.deliverRepairPublications('archive_repair_finalize_replay');
+        await scheduleLedgerRecovery(this.ctx.storage);
+        return { status: 'finalized', replay: true, state: expected };
+      }
+      const publication = {
+        scope: input.scope,
+        operationId: input.operationId,
+        partId: input.partId,
+        snapshotSha256: input.snapshotSha256,
+      };
+      enqueueArchiveRepairAttempt(this.ctx.storage, publication);
+      await armLedgerRecovery(this.ctx.storage);
+      try {
+        await this.deliverRepairPublications('archive_repair_attempt');
+        if (
+          hasPendingIntent(this.ctx.storage) ||
+          repair.appliedChunks !== repair.plan.chunkDigests.length ||
+          JSON.stringify(expected) !==
+            JSON.stringify({
+              generation: state.generation,
+              elementCount: state.elementCount,
+              recordCount: state.recordCount,
+              chainHead: state.chainHead,
+            }) ||
+          JSON.stringify(readLedgerScan(this.ctx.storage, repair.plan.partId)?.checkpoint) !==
+            JSON.stringify(repair.plan.finalCheckpoint)
+        ) {
+          throw new ArchiveContractError('archive_repair_precondition_failed');
+        }
+        assertArchiveVerificationComplete(
+          this.ctx.storage,
+          input.operationId,
+          'after',
+          input.snapshotSha256,
+          expected,
+        );
+        const manifestRootHash = /\/manifests\/([0-9a-f]{64})$/u.exec(state.manifestKey ?? '')?.[1];
+        if (!manifestRootHash) throw new ArchiveContractError('ledger_state_corrupt');
+        this.ctx.storage.transactionSync(() => {
+          finalizeArchiveRepairState(this.ctx.storage, input.operationId, expected);
+          enqueueArchiveRepairSuccess(this.ctx.storage, {
+            ...publication,
+            relevantCount: expected.recordCount,
+            manifestRootHash,
+          });
+        });
+      } catch (error) {
+        if (readArchiveRepair(this.ctx.storage, input.operationId)?.status !== 'finalized') {
+          await this.recordRepairFailure(publication);
+        }
+        throw error;
+      }
+      await this.deliverRepairPublications('archive_repair_success');
+      await scheduleLedgerRecovery(this.ctx.storage);
+      return { status: 'finalized', replay: false, state: expected };
+    });
   }
 
   eraseArchive(input: {

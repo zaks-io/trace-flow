@@ -38,6 +38,7 @@ const SAFE_LEDGER_REJECTION_REASONS = new Set([
   'archive_element_exceeds_chunk_limit',
   'archive_key_version_mismatch',
   'archive_upload_observation_limit',
+  'archive_repair_in_progress',
   'storage_cap_exceeded',
 ]);
 

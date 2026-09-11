@@ -72,6 +72,7 @@ export async function reconcileArchiveUpload(
   state: LedgerSnapshot,
   upload: ValidatedArchiveUpload,
   scan: ScanState | undefined,
+  options: { rebase?: boolean } = {},
 ): Promise<ReconciledUpload> {
   const incomingVersions = new Set<string>();
   for (const observation of upload.observations) {
@@ -82,7 +83,11 @@ export async function reconcileArchiveUpload(
     incomingVersions.add(fingerprint);
   }
 
-  if (scan && upload.checkpoint.observed_file_size < scan.checkpoint.observed_file_size) {
+  if (
+    scan &&
+    !options.rebase &&
+    upload.checkpoint.observed_file_size < scan.checkpoint.observed_file_size
+  ) {
     throw new ArchiveContractError('checkpoint_regressed');
   }
   const duplicateScan = scan && sameCheckpointLogicalPosition(scan.checkpoint, upload.checkpoint);
@@ -115,6 +120,14 @@ export async function reconcileArchiveUpload(
         upload.checkpoint,
         upload.priorCheckpoint,
         upload.appendProof,
+        upload.proofLines,
+      );
+    } else if (options.rebase) {
+      await assertPrefixHash(
+        upload.observations,
+        upload.checkpoint,
+        upload.completePrefix,
+        upload.priorCheckpoint,
         upload.proofLines,
       );
     } else {

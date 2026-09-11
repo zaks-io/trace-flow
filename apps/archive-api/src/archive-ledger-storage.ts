@@ -6,6 +6,7 @@ import {
 } from './archive-contract';
 import type { SourceFingerprint } from './archive-validation';
 import type { LedgerCommit, LedgerSnapshot, ScanState } from './archive-ledger-state';
+import { persistArchiveRepairCommit } from './archive-ledger-repair';
 
 function ensureLedgerTables(storage: DurableObjectStorage): void {
   storage.sql.exec(
@@ -176,6 +177,7 @@ export function readLedgerSnapshot(storage: DurableObjectStorage): LedgerSnapsho
 
 export function persistLedgerCommit(storage: DurableObjectStorage, commit: LedgerCommit): void {
   ensureLedgerTables(storage);
+  if (commit.repair) persistArchiveRepairCommit(storage, commit.repair);
   storage.sql.exec(
     'INSERT INTO ledger_state (id, data) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data',
     stateMetadata(commit),

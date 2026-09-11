@@ -1,5 +1,9 @@
 import type { HonoWithConvex } from 'convex-helpers/server/hono';
-import { isArchiveCanonicalIdentifier, isArchiveIntegrityErrorClass } from '@trace-flow/types';
+import {
+  isArchiveCanonicalIdentifier,
+  isArchiveIntegrityErrorClass,
+  type ArchiveIntegrityErrorClass,
+} from '@trace-flow/types';
 import type { ActionCtx } from '../_generated/server';
 import type { Id } from '../_generated/dataModel';
 import { internal } from '../_generated/api';
@@ -29,22 +33,56 @@ export function registerArchiveSessionIntegrityRoutes(app: HonoWithConvex<Action
       return c.json({ error: 'Invalid session integrity update' }, 400);
     }
     if (
-      !isConvexDocumentId(body.collectorCredentialId) ||
       (body.source !== 'claude' && body.source !== 'codex') ||
-      !isArchiveCanonicalIdentifier(body.sourceSessionId) ||
-      !isArchiveIntegrityErrorClass(body.errorClass)
+      !isArchiveCanonicalIdentifier(body.sourceSessionId)
     ) {
       logger.warn('convex.archive_session_integrity_request_invalid');
       await logger.flush();
       return c.json({ error: 'Invalid session integrity update' }, 400);
     }
 
+    const isRepair = body.repairOutcome === 'failure' || body.repairOutcome === 'success';
+    const validBinding = isRepair
+      ? isConvexDocumentId(body.contributionId) &&
+        isConvexDocumentId(body.orgId) &&
+        isConvexDocumentId(body.userId) &&
+        body.collectorCredentialId === undefined &&
+        body.errorClass === undefined
+      : isConvexDocumentId(body.collectorCredentialId) &&
+        isArchiveIntegrityErrorClass(body.errorClass) &&
+        body.contributionId === undefined &&
+        body.orgId === undefined &&
+        body.userId === undefined &&
+        body.repairOutcome === undefined;
+    if (!validBinding) {
+      logger.warn('convex.archive_session_integrity_request_invalid');
+      await logger.flush();
+      return c.json({ error: 'Invalid session integrity update' }, 400);
+    }
+    const source = body.source;
+    const sourceSessionId = body.sourceSessionId;
+
     try {
+      if (isRepair) {
+        const result = await c.env.runMutation(internal.archiveInternal.applySessionRepairOutcome, {
+          contributionId: body.contributionId as Id<'archiveContributions'>,
+          expectedOrgId: body.orgId as Id<'organizations'>,
+          expectedUserId: body.userId as Id<'users'>,
+          source,
+          sourceSessionId,
+          repairOutcome: body.repairOutcome as 'failure' | 'success',
+        });
+        logger.info('convex.archive_session_integrity_repair_applied', {
+          repairOutcome: body.repairOutcome,
+        });
+        await logger.flush();
+        return c.json(result);
+      }
       const result = await c.env.runMutation(internal.archiveInternal.upsertSessionIntegrity, {
         collectorCredentialId: body.collectorCredentialId as Id<'collectorCredentials'>,
-        source: body.source,
-        sourceSessionId: body.sourceSessionId,
-        errorClass: body.errorClass,
+        source,
+        sourceSessionId,
+        errorClass: body.errorClass as ArchiveIntegrityErrorClass,
       });
       logger.info('convex.archive_session_integrity_applied');
       await logger.flush();
