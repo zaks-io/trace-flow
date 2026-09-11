@@ -8,6 +8,7 @@ import * as Sentry from '@sentry/cloudflare';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { Hono } from 'hono';
 import type { ArchiveApiEnv } from './context';
+import type { StorageBudgetInspection } from './archive-storage-budget';
 import { createArchiveApiSentryOptions } from './sentry';
 import { handleCollectorEnrollment } from './collector-enrollment-handler';
 import { handleCollectorPolicy } from './collector-policy-handler';
@@ -61,6 +62,12 @@ export class ArchiveRecovery extends WorkerEntrypoint<ArchiveApiEnv> {
       JSON.stringify([scope.orgId, scope.contributionId, scope.source, scope.sourceSessionId]),
     );
     return this.env.ARCHIVE_SESSION_LEDGER.get(id);
+  }
+
+  getStorageBudget(orgId: string, options: { orgId?: unknown }): Promise<StorageBudgetInspection> {
+    assertIdentifier(orgId, 'archive_repair_invalid');
+    if (options?.orgId !== orgId) throw new ArchiveContractError('archive_repair_invalid');
+    return this.env.STORAGE_BUDGET.getByName(orgId).getStorageBudget({ orgId });
   }
 
   inspectArchivePart(partId: string, options: { scope?: unknown }): Promise<unknown> {

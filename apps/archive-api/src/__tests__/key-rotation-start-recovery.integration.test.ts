@@ -15,6 +15,7 @@ import { archiveObjectKey } from '../archive-storage-key';
 import type { StorageBudget } from '../archive-storage-budget';
 import { ACTIVATION_ID, FakeArchiveCustody, installCustody } from './key-rotation-custody-fixture';
 import { compress, cryptoKey, digest, wrapKey } from './key-rotation-crypto-fixture';
+import { initializeBudget } from './storage-budget-fixture';
 
 const SHARED = 'archive-status-test-secret';
 const runtimeEnv = workerEnv as unknown as ArchiveApiEnv;
@@ -82,7 +83,7 @@ async function putChunkWithNullCatalogVersion(
     customMetadata: archiveKeyVersionMetadata(1),
   });
   const bytes = new TextEncoder().encode(body).byteLength;
-  await stub.getStorageBudget({ orgId });
+  await initializeBudget(stub, orgId);
   await runInDurableObject(stub, (_instance, state) => {
     state.storage.sql.exec(
       "INSERT INTO storage_budget_objects (object_key, object_class, bytes, expires_at, status, key_version) VALUES (?, 'agent_archive_chunk', ?, NULL, 'committed', NULL)",

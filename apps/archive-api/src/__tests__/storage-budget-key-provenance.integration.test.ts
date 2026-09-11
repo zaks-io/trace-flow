@@ -7,7 +7,7 @@ import type { StorageBudget } from '../archive-storage-budget';
 import { commitBudgetStorage, reserveBudgetStorage } from '../archive-storage-budget-ledger';
 import { writeRotationState } from '../archive-key-rotation-state';
 import { ACTIVATION_ID } from './key-rotation-custody-fixture';
-import { budget, runtimeEnv, scope } from './storage-budget-fixture';
+import { budget, initializeBudget, runtimeEnv, scope } from './storage-budget-fixture';
 
 async function finishReconciliation(stub: DurableObjectStub<StorageBudget>, orgId: string) {
   let result = await stub.reconcileArchiveInventory({ orgId, limit: 1 });
@@ -26,7 +26,7 @@ describe('StorageBudget key provenance reconciliation', () => {
   it('rejects new retired-key references and absent commit transitions after later rotations', async () => {
     const orgId = `budget-retired-boundary-${crypto.randomUUID()}`;
     const stub = budget(orgId);
-    await stub.getStorageBudget({ orgId });
+    await initializeBudget(stub, orgId);
     const staleObject = {
       objectKey: `org/${orgId}/chunks/stale-v1`,
       objectClass: 'agent_archive_chunk' as const,
@@ -100,7 +100,7 @@ describe('StorageBudget key provenance reconciliation', () => {
     const stub = budget(orgId);
     const objectKey = await archiveObjectKey(currentScope, 'chunks', `sha256:${'1'.repeat(64)}`);
     await putInventoryObject(objectKey, 'legacy-encrypted-v2', 2);
-    await stub.getStorageBudget({ orgId });
+    await initializeBudget(stub, orgId);
     await runInDurableObject(stub, (_instance, state) => {
       state.storage.sql.exec(
         "INSERT INTO storage_budget_objects (object_key, object_class, bytes, expires_at, status, key_version) VALUES (?, 'agent_archive_chunk', ?, NULL, 'committed', NULL)",
@@ -122,7 +122,7 @@ describe('StorageBudget key provenance reconciliation', () => {
   it('restarts an in-flight legacy reconciliation after adding key provenance', async () => {
     const orgId = `budget-reconcile-schema-${crypto.randomUUID()}`;
     const stub = budget(orgId);
-    await stub.getStorageBudget({ orgId });
+    await initializeBudget(stub, orgId);
 
     const migrated = await runInDurableObject(stub, (_instance, state) => {
       state.storage.sql.exec('DROP TABLE storage_budget_reconciliation_objects');

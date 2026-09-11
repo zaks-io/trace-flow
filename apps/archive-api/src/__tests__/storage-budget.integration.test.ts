@@ -12,7 +12,13 @@ import { archiveObjectKey, archiveOrganizationPrefix } from '../archive-storage-
 import type { ArchiveApiEnv } from '../context';
 import { reconcileBudgetInventoryPage } from '../archive-storage-budget-reconciliation';
 import { rebaseStatusAfterConflict, reserveBudgetStorage } from '../archive-storage-budget-ledger';
-import { budget, inventoryKeys, runtimeEnv, scope } from './storage-budget-fixture';
+import {
+  budget,
+  initializeBudget,
+  inventoryKeys,
+  runtimeEnv,
+  scope,
+} from './storage-budget-fixture';
 
 const reconciliationLogger = createWorkerLogger({
   service: 'archive-api-test',
@@ -102,11 +108,15 @@ describe('StorageBudget Durable Object', () => {
       }
     });
     expect(mismatch).toBe('storage_object_metadata_mismatch');
-    await expect(secondStub.getStorageBudget({ orgId: secondOrg })).resolves.toMatchObject({
-      committedBytes: 0,
-      reservedBytes: 0,
-      availableBytes: ARCHIVE_STORAGE_CAP_BYTES,
+    const secondOrgError = await runInDurableObject(secondStub, async (instance: StorageBudget) => {
+      try {
+        await instance.getStorageBudget({ orgId: secondOrg });
+        return null;
+      } catch (caught) {
+        return caught instanceof Error ? caught.message : String(caught);
+      }
     });
+    expect(secondOrgError).toBe('storage_budget_uninitialized');
     await expect(firstStub.getStorageBudget({ orgId: firstOrg })).resolves.toMatchObject({
       committedBytes: 17,
       reservedBytes: 0,
@@ -534,7 +544,7 @@ describe('StorageBudget Durable Object', () => {
   it('keeps acknowledgement status blocked while the admission guard is active', async () => {
     const orgId = `budget-guard-status-${crypto.randomUUID()}`;
     const stub = budget(orgId);
-    await stub.getStorageBudget({ orgId });
+    await initializeBudget(stub, orgId);
     const failedProbe = object(`budget/status-head-failure-${crypto.randomUUID()}`, 1);
     const throwingBucket = {
       head: async () => {
@@ -680,7 +690,7 @@ describe('StorageBudget Durable Object', () => {
     const currentScope = scope(`budget-finalization-${crypto.randomUUID()}`);
     const orgId = currentScope.orgId;
     const stub = budget(orgId);
-    await stub.getStorageBudget({ orgId });
+    await initializeBudget(stub, orgId);
     const started = await stub.startReconciliation({ orgId });
     const generation = started.activeGeneration;
     if (generation === undefined) throw new Error('reconciliation did not start');

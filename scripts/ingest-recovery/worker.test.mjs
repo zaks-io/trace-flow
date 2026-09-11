@@ -158,6 +158,73 @@ test('archive inspection is read-only while verification and repair require conf
   ]);
 });
 
+test('forwards confirmed organization budget reads only to archive recovery', async () => {
+  const calls = [];
+  const orgId = 'k57axc8sefsfp6k28nx6c481js806pwv';
+  const env = {
+    ARCHIVE_RECOVERY: {
+      getStorageBudget: async (shardId, options) => {
+        calls.push([shardId, options]);
+        return { orgId, admissionUnsafe: true, reservedBytes: 29 };
+      },
+    },
+  };
+  const body = { pipeline: 'archive', shardId: orgId, options: { orgId } };
+
+  const response = await worker.fetch(request('getStorageBudget', body), env);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    orgId,
+    admissionUnsafe: true,
+    reservedBytes: 29,
+  });
+  assert.deepEqual(calls, [[orgId, { orgId }]]);
+  assert.equal(
+    (
+      await worker.fetch(request('getStorageBudget', { ...body, pipeline: 'agent' }), {
+        AGENT_RECOVERY: env.ARCHIVE_RECOVERY,
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await worker.fetch(
+        request('getStorageBudget', { ...body, options: { orgId: 'different-org' } }),
+        env,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await worker.fetch(
+        request('getStorageBudget', {
+          ...body,
+          shardId: 'invalid/org',
+          options: { orgId: 'invalid/org' },
+        }),
+        env,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(calls.length, 1);
+
+  const uninitialized = await worker.fetch(request('getStorageBudget', body), {
+    ARCHIVE_RECOVERY: {
+      getStorageBudget: async () => {
+        throw new Error('ArchiveContractError: storage_budget_uninitialized');
+      },
+    },
+  });
+  assert.equal(uninitialized.status, 409);
+  assert.deepEqual(await uninitialized.json(), {
+    error: 'archive_recovery_rejected',
+    reason: 'storage_budget_uninitialized',
+  });
+});
+
 test('does not log allowlisted archive rejections and keeps unknown responses generic', async () => {
   const body = {
     pipeline: 'archive',

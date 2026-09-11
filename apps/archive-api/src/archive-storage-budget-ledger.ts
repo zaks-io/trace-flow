@@ -43,6 +43,17 @@ export interface BudgetState {
   blockedReason?: 'storage_cap_exceeded';
 }
 
+interface StoredBudgetState extends Record<string, SqlStorageValue> {
+  org_id: string;
+  cap_bytes: number;
+  reserved_bytes: number;
+  committed_bytes: number;
+  mutation_version: number;
+  admission_guard_revision: number;
+  status_revision: number;
+  last_durable_acknowledged_at: number | null;
+}
+
 export function ensureBudgetSchema(storage: DurableObjectStorage): void {
   storage.sql.exec(`
     CREATE TABLE IF NOT EXISTS storage_budget_state (
@@ -99,35 +110,17 @@ export function ensureBudgetSchema(storage: DurableObjectStorage): void {
   }
 }
 
-export function budgetState(storage: DurableObjectStorage, orgId: string): BudgetState {
-  assertIdentifier(orgId, 'invalid_organization_id');
-  const existing = [
-    ...storage.sql.exec<{
-      org_id: string;
-      cap_bytes: number;
-      reserved_bytes: number;
-      committed_bytes: number;
-      mutation_version: number;
-      admission_guard_revision: number;
-      status_revision: number;
-      last_durable_acknowledged_at: number | null;
-    }>('SELECT * FROM storage_budget_state WHERE id = 1'),
+function storedBudgetState(storage: DurableObjectStorage): StoredBudgetState | undefined {
+  return [
+    ...storage.sql.exec<StoredBudgetState>('SELECT * FROM storage_budget_state WHERE id = 1'),
   ][0];
-  if (!existing) {
-    storage.sql.exec(
-      'INSERT INTO storage_budget_state (id, org_id, cap_bytes, reserved_bytes, committed_bytes, mutation_version, status_revision) VALUES (1, ?, ?, 0, 0, 0, 0)',
-      orgId,
-      ARCHIVE_STORAGE_CAP_BYTES,
-    );
-    return {
-      orgId,
-      reservedBytes: 0,
-      committedBytes: 0,
-      mutationVersion: 0,
-      admissionGuardRevision: 0,
-      statusRevision: 0,
-    };
-  }
+}
+
+function parseBudgetState(
+  storage: DurableObjectStorage,
+  orgId: string,
+  existing: StoredBudgetState,
+): BudgetState {
   if (existing.org_id !== orgId || existing.cap_bytes !== ARCHIVE_STORAGE_CAP_BYTES) {
     throw new ArchiveContractError('storage_budget_identity_mismatch');
   }
@@ -146,6 +139,34 @@ export function budgetState(storage: DurableObjectStorage, orgId: string): Budge
     lastDurableAcknowledgedAt: existing.last_durable_acknowledged_at ?? undefined,
     blockedReason: block?.reason,
   };
+}
+
+export function readBudgetState(storage: DurableObjectStorage, orgId: string): BudgetState {
+  assertIdentifier(orgId, 'invalid_organization_id');
+  const existing = storedBudgetState(storage);
+  if (!existing) throw new ArchiveContractError('storage_budget_uninitialized');
+  return parseBudgetState(storage, orgId, existing);
+}
+
+export function budgetState(storage: DurableObjectStorage, orgId: string): BudgetState {
+  assertIdentifier(orgId, 'invalid_organization_id');
+  const existing = storedBudgetState(storage);
+  if (!existing) {
+    storage.sql.exec(
+      'INSERT INTO storage_budget_state (id, org_id, cap_bytes, reserved_bytes, committed_bytes, mutation_version, status_revision) VALUES (1, ?, ?, 0, 0, 0, 0)',
+      orgId,
+      ARCHIVE_STORAGE_CAP_BYTES,
+    );
+    return {
+      orgId,
+      reservedBytes: 0,
+      committedBytes: 0,
+      mutationVersion: 0,
+      admissionGuardRevision: 0,
+      statusRevision: 0,
+    };
+  }
+  return parseBudgetState(storage, orgId, existing);
 }
 
 function objectClass(value: unknown): value is StorageBudgetObjectClass {
@@ -227,13 +248,15 @@ export function snapshot(
   ) as StorageBudgetSnapshot['byClass'];
   for (const row of storage.sql.exec<{
     object_class: StorageBudgetObjectClass;
-    bytes: number;
-    status: 'reserved' | 'committed';
-  }>('SELECT object_class, bytes, status FROM storage_budget_objects')) {
+    reserved_bytes: number;
+    committed_bytes: number;
+  }>(
+    "SELECT object_class, COALESCE(SUM(CASE WHEN status = 'reserved' THEN bytes ELSE 0 END), 0) AS reserved_bytes, COALESCE(SUM(CASE WHEN status = 'committed' THEN bytes ELSE 0 END), 0) AS committed_bytes FROM storage_budget_objects GROUP BY object_class",
+  )) {
     const bucket = byClass[row.object_class];
     if (!bucket) throw new ArchiveContractError('storage_budget_corrupt');
-    if (row.status === 'reserved') bucket.reservedBytes += row.bytes;
-    else bucket.committedBytes += row.bytes;
+    bucket.reservedBytes = row.reserved_bytes;
+    bucket.committedBytes = row.committed_bytes;
   }
   return {
     orgId: current.orgId,

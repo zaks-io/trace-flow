@@ -7,6 +7,7 @@ import {
   commitBudgetStorage,
   ensureBudgetSchema,
   parseStoredStatusPayload,
+  readBudgetState,
   releaseBudgetStorage,
   rebaseStatusAfterConflict,
   reserveBudgetStorage,
@@ -54,6 +55,13 @@ export {
   type StorageBudgetReservation,
   type StorageBudgetSnapshot,
 } from './archive-storage-budget-ledger';
+
+export interface StorageBudgetInspection extends StorageBudgetSnapshot {
+  admissionUnsafe: boolean;
+  mutationVersion: number;
+  admissionGuardRevision: number;
+  reconciliationState: ReconciliationState;
+}
 
 const STATUS_RETRY_MS = 5000;
 
@@ -128,10 +136,17 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     });
   }
 
-  getStorageBudget(input: { orgId: string }): Promise<StorageBudgetSnapshot> {
+  getStorageBudget(input: { orgId: string }): Promise<StorageBudgetInspection> {
     return this.enqueueExclusive(async () => {
       await assertArchiveWritable(this.ctx.storage);
-      return snapshot(this.ctx.storage, budgetState(this.ctx.storage, input.orgId));
+      const current = readBudgetState(this.ctx.storage, input.orgId);
+      return {
+        ...snapshot(this.ctx.storage, current),
+        admissionUnsafe: storageAdmissionUnsafe(this.ctx.storage),
+        mutationVersion: current.mutationVersion,
+        admissionGuardRevision: current.admissionGuardRevision,
+        reconciliationState: reconciliationState(this.ctx.storage),
+      };
     });
   }
 
