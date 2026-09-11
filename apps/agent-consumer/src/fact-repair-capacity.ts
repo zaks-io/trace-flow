@@ -31,6 +31,10 @@ export type {
 
 const MAX_OPERATION_PAYLOAD_BYTES = 4_000_000;
 
+export function isDatabaseCapacityError(reason: string): boolean {
+  return reason.includes('SQLITE_FULL') || reason.includes('Exceeded the maximum database size.');
+}
+
 export class FactRepairCapacity {
   private readonly proof: FactRepairProof;
 

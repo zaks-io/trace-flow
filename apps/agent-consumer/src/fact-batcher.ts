@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/cloudflare';
+import { sha256Hex } from '@trace-flow/utils';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { DurableObject } from 'cloudflare:workers';
 import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
@@ -40,6 +41,7 @@ import {
 import { PendingFactStore } from './pending-fact-store';
 import {
   FactRepairCapacity,
+  isDatabaseCapacityError,
   type CompactFactRepairDuplicatesInput,
   type CompactFactRepairDuplicatesResult,
   type InspectFactRepairCapacityInput,
@@ -99,6 +101,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   private pendingFacts: PendingFactStore;
   private repairCapacity: FactRepairCapacity;
   private startupRecoveryPending = true;
+  private startupFlushPending = false;
   private startupBlockedReason: string | null = null;
   private tinybirdTokenFingerprint = '';
   private logger = createLogger({
@@ -908,6 +911,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
           await this.ctx.storage.setAlarm(Date.now() + 1000);
         }
         this.flushAlarmScheduled = !this.maintenance.isLocked();
+        this.startupFlushPending = this.maintenance.isLocked();
       }
       return null;
     } catch (error) {
@@ -918,16 +922,22 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   }
 
   private ensureStartupRecovery(schedulePendingFlush = true): void {
-    if (!this.startupRecoveryPending) return;
-    this.recovery.recoverInterrupted();
-    this.startupRecoveryPending = false;
-    this.startupBlockedReason = null;
-    if (!schedulePendingFlush || this.queuedRows === 0 || this.maintenance.isLocked()) return;
+    if (this.startupRecoveryPending) {
+      this.recovery.recoverInterrupted();
+      this.startupRecoveryPending = false;
+      this.startupBlockedReason = null;
+      this.startupFlushPending = this.queuedRows > 0;
+    }
+    if (!schedulePendingFlush || !this.startupFlushPending || this.maintenance.isLocked()) return;
+    this.startupFlushPending = false;
     this.flushAlarmScheduled = true;
+    this.startupBlockedReason = null;
     this.ctx.waitUntil(
       this.scheduleFlush(1000).catch((error) => {
         this.flushAlarmScheduled = false;
-        throw error;
+        this.startupFlushPending = true;
+        this.startupBlockedReason = errorMessage(error);
+        Sentry.captureException(error);
       }),
     );
   }
@@ -938,17 +948,6 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
       throw new Error('fact repair compaction requires a quiescent batcher');
     }
   }
-}
-
-function isDatabaseCapacityError(reason: string): boolean {
-  return reason.includes('SQLITE_FULL') || reason.includes('Exceeded the maximum database size.');
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const digest = new Uint8Array(
-    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)),
-  );
-  return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function splitRowsByBytes(rows: StoredFactRow[]): StoredFactRow[][] {
@@ -1018,9 +1017,7 @@ function parseFactTargetKey(value: string): {
 }
 
 function normalizePendingFact(category: Category, row: unknown): unknown {
-  if (category !== 'tool_events' || !isRecord(row)) {
-    return row;
-  }
+  if (category !== 'tool_events' || !isRecord(row)) return row;
 
   return {
     ...row,

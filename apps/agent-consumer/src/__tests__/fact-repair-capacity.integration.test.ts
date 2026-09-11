@@ -1,7 +1,7 @@
 import { env as workerEnv } from 'cloudflare:workers';
 import { evictDurableObject, runInDurableObject } from 'cloudflare:test';
 import { TinybirdRecoveryStore } from '@trace-flow/tinybird-client';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import type { AgentFactBatcherInstance } from '../fact-batcher';
 import { FactRepairCapacity } from '../fact-repair-capacity';
 import { factIngestedAtMs, rowIdentity, stableHash } from '../facts';
@@ -87,6 +87,32 @@ it('keeps read-only capacity inspection available when restart recovery cannot w
     ).toBe('in_flight');
   });
 
+  await runInDurableObject(restarted, async (instance: AgentFactBatcherInstance, state) => {
+    const getAlarm = vi.spyOn(state.storage, 'getAlarm').mockResolvedValue(null);
+    const setAlarm = vi
+      .spyOn(state.storage, 'setAlarm')
+      .mockRejectedValueOnce(new Error('alarm storage unavailable'));
+    try {
+      instance.getStats();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(setAlarm).toHaveBeenCalledTimes(1);
+    } finally {
+      getAlarm.mockRestore();
+      setAlarm.mockRestore();
+    }
+  });
+  const failedSchedule = await restarted.inspectFactRepairCapacity('org-1', { limit: 1 });
+  expect(failedSchedule.startupBlockedReason).toBe('alarm storage unavailable');
+  expect(failedSchedule.alarmScheduledAtMs).toBeNull();
+  await runInDurableObject(restarted, async (_instance: AgentFactBatcherInstance, state) => {
+    state.storage.sql.exec(
+      `INSERT INTO recovery_records
+       (kind, state, classification, target, target_key, payload, outcome, created_at_ms)
+       VALUES ('tinybird_insert', 'in_flight', NULL, 'active-target',
+         'pending_facts:messages', '', '', 1)`,
+    );
+  });
+
   await restarted.getStats();
   const recoveredInspection = await restarted.inspectFactRepairCapacity('org-1', { limit: 1 });
   expect(recoveredInspection.startupBlockedReason).toBeNull();
@@ -96,9 +122,9 @@ it('keeps read-only capacity inspection available when restart recovery cannot w
       state.storage.sql
         .exec<{
           state: string;
-        }>(`SELECT state FROM recovery_records WHERE kind = 'tinybird_insert'`)
+        }>(`SELECT state FROM recovery_records WHERE target = 'active-target'`)
         .one().state,
-    ).toBe('blocked');
+    ).toBe('in_flight');
   });
 });
 
