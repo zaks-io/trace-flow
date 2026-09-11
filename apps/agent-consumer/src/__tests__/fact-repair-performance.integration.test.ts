@@ -40,18 +40,46 @@ it('reuses the loaded chunked recovery while preserving compacted proof validati
     expect(chunks.payload).toBeGreaterThan(1);
     expect(chunks.outcome).toBeGreaterThan(1);
 
-    const recovery = new TinybirdRecoveryStore(state.storage);
+    const recoveryRecordQueries: string[] = [];
+    const measuredSql = new Proxy(state.storage.sql, {
+      get(target, property) {
+        if (property === 'exec') {
+          const exec = target.exec.bind(target);
+          return (query: string, ...bindings: unknown[]) => {
+            if (query.includes('FROM recovery_records')) recoveryRecordQueries.push(query);
+            return exec(query, ...bindings);
+          };
+        }
+        return Reflect.get(target, property, target);
+      },
+    });
+    const measuredStorage: DurableObjectStorage = new Proxy(state.storage, {
+      get(target, property) {
+        if (property === 'sql') return measuredSql;
+        return Reflect.get(target, property, target);
+      },
+    });
+    const recovery = new TinybirdRecoveryStore(measuredStorage);
+    const expectOneRecoveryRecordQuery = () => {
+      expect(recoveryRecordQueries).toHaveLength(1);
+      recoveryRecordQueries.length = 0;
+    };
     const lookup = vi.spyOn(recovery, 'repairByDedupeKey');
     const proof = new FactRepairProof(recovery);
     const compactedRow = readRepair(state.storage, seeded.repairId);
     const compacted = await proof.verifyCompacted(compactedRow, 'org-1');
     expect(compacted.verified).toBe(true);
+    if (!compacted.verified) throw new Error(compacted.reason);
+    expect(compacted.value.recovery.payload).toBe(seeded.payload);
+    expect(compacted.value.recovery.outcome).toBe(seeded.outcome);
     expect(lookup).toHaveBeenCalledTimes(1);
+    expectOneRecoveryRecordQuery();
 
     lookup.mockClear();
     const inline = await proof.verify({ ...compactedRow, data: seeded.payload }, 'org-1');
     expect(inline).toEqual(compacted);
     expect(lookup).toHaveBeenCalledTimes(1);
+    expectOneRecoveryRecordQuery();
 
     lookup.mockClear();
     const compactedWrongOrg = await proof.verifyCompacted(compactedRow, 'org-2');
@@ -60,12 +88,19 @@ it('reuses the loaded chunked recovery while preserving compacted proof validati
       reason: 'repair outcome or current payload metadata differs',
     });
     expect(lookup).toHaveBeenCalledTimes(1);
+    expectOneRecoveryRecordQuery();
 
     lookup.mockClear();
     await expect(proof.verify({ ...compactedRow, data: seeded.payload }, 'org-2')).resolves.toEqual(
       compactedWrongOrg,
     );
     expect(lookup).toHaveBeenCalledTimes(1);
+    expectOneRecoveryRecordQuery();
+
+    lookup.mockClear();
+    expect(recovery.repairByDedupeKey('missing-repair')).toBeUndefined();
+    expect(lookup).toHaveBeenCalledTimes(1);
+    expectOneRecoveryRecordQuery();
   });
 });
 
@@ -154,7 +189,7 @@ function seedRepair(storage: DurableObjectStorage, current: TestMessage, previou
     originalPayload: JSON.stringify(previous),
   });
   const recovery = new TinybirdRecoveryStore(storage).preserveRepair(payload, outcome, dedupeKey);
-  return { repairId, recoveryId: recovery.id, payload };
+  return { repairId, recoveryId: recovery.id, payload, outcome };
 }
 
 function readRepair(storage: DurableObjectStorage, repairId: number): StoredFactRepair {

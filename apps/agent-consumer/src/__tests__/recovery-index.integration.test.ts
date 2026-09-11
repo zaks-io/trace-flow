@@ -66,6 +66,9 @@ it('indexes existing recovery records without deleting duplicate repairs and bou
     expect(lookup('duplicate')).toMatchObject({ rows: [{ id: 10001 }], rowsRead: 1 });
     expect(lookup('missing')).toEqual({ rows: [], rowsRead: 0 });
     expect(countBlocked()).toEqual({ count: 2, rowsRead: 2 });
+    expect(() => recovery.repairByDedupeKey('duplicate')).toThrow(
+      'repair recovery dedupe key is not unique',
+    );
 
     const repairPlan = sql
       .exec<{ detail: string }>(

@@ -232,14 +232,14 @@ export class TinybirdRecoveryStore {
 
   repairByDedupeKey(dedupeKey: string): RecoveryRecord | undefined {
     const matches = [
-      ...this.storage.sql.exec<{ id: number }>(
-        `SELECT id FROM recovery_records
+      ...this.storage.sql.exec<StoredRecoveryRecord>(
+        `SELECT * FROM recovery_records
          WHERE kind = 'repair' AND dedupe_key = ? ORDER BY id LIMIT 2`,
         dedupeKey,
       ),
     ];
     if (matches.length > 1) throw new Error('repair recovery dedupe key is not unique');
-    return matches[0] ? this.get(matches[0].id) : undefined;
+    return matches[0] ? this.toRecoveryRecord(matches[0]) : undefined;
   }
 
   repairSizeByDedupeKey(dedupeKey: string): RepairRecoverySize | undefined {
