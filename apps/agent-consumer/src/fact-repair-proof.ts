@@ -27,6 +27,12 @@ export interface VerifiedFactRepairDuplicate {
   proofSha256: string;
 }
 
+type VerifiableFactRepair = StoredFactRepair & {
+  category: Category;
+  data: string;
+  recovery_dedupe_key: string;
+};
+
 export type FactRepairVerification<T> =
   | { verified: true; value: T }
   | { verified: false; reason: string };
@@ -39,28 +45,7 @@ export class FactRepairProof {
     orgId: string,
   ): Promise<FactRepairVerification<VerifiedFactRepairDuplicate>> {
     const verification = this.verifySync(row, orgId);
-    if (!verification.verified) return verification;
-    return {
-      verified: true,
-      value: {
-        ...verification.value,
-        proofSha256: await sha256Hex(
-          JSON.stringify([
-            row.id,
-            row.category,
-            row.fact_id,
-            row.old_hash,
-            row.new_hash,
-            row.seen_at_ms,
-            row.recovery_dedupe_key,
-            row.data,
-            verification.value.recovery.id,
-            verification.value.recovery.payload,
-            verification.value.recovery.outcome,
-          ]),
-        ),
-      },
-    };
+    return this.withProof(row, verification);
   }
 
   async verifyCompacted(
@@ -71,18 +56,27 @@ export class FactRepairProof {
     if (!row.recovery_dedupe_key) return issue('recovery dedupe key is absent');
     const recovery = this.recovery.repairByDedupeKey(row.recovery_dedupe_key);
     if (!recovery) return issue('matching repair recovery is absent');
-    return this.verify({ ...row, data: recovery.payload }, orgId);
+    const hydrated = validateInlineRow({ ...row, data: recovery.payload });
+    if (!hydrated.verified) return hydrated;
+    return this.withProof(hydrated.value, this.verifyWithRecovery(hydrated.value, orgId, recovery));
   }
 
   verifySync(
     row: StoredFactRepair,
     orgId: string,
   ): FactRepairVerification<Omit<VerifiedFactRepairDuplicate, 'proofSha256'>> {
-    if (!row.data) return issue('inline payload is empty');
-    if (!row.recovery_dedupe_key) return issue('recovery dedupe key is absent');
-    if (!isCategory(row.category)) return issue('repair category is invalid');
-    const recovery = this.recovery.repairByDedupeKey(row.recovery_dedupe_key);
+    const verifiable = validateInlineRow(row);
+    if (!verifiable.verified) return verifiable;
+    const recovery = this.recovery.repairByDedupeKey(verifiable.value.recovery_dedupe_key);
     if (!recovery) return issue('matching repair recovery is absent');
+    return this.verifyWithRecovery(verifiable.value, orgId, recovery);
+  }
+
+  private verifyWithRecovery(
+    row: VerifiableFactRepair,
+    orgId: string,
+    recovery: RecoveryRecord,
+  ): FactRepairVerification<Omit<VerifiedFactRepairDuplicate, 'proofSha256'>> {
     if (
       recovery.kind !== 'repair' ||
       recovery.classification !== 'changed' ||
@@ -131,6 +125,34 @@ export class FactRepairProof {
       return issue(`repair payload or outcome is invalid: ${errorMessage(error)}`);
     }
   }
+
+  private async withProof(
+    row: StoredFactRepair,
+    verification: FactRepairVerification<Omit<VerifiedFactRepairDuplicate, 'proofSha256'>>,
+  ): Promise<FactRepairVerification<VerifiedFactRepairDuplicate>> {
+    if (!verification.verified) return verification;
+    return {
+      verified: true,
+      value: {
+        ...verification.value,
+        proofSha256: await sha256Hex(
+          JSON.stringify([
+            row.id,
+            row.category,
+            row.fact_id,
+            row.old_hash,
+            row.new_hash,
+            row.seen_at_ms,
+            row.recovery_dedupe_key,
+            row.data,
+            verification.value.recovery.id,
+            verification.value.recovery.payload,
+            verification.value.recovery.outcome,
+          ]),
+        ),
+      },
+    };
+  }
 }
 
 export function sameFactRepairMetadata(left: StoredFactRepair, right: StoredFactRepair): boolean {
@@ -159,6 +181,13 @@ export function errorMessage(error: unknown): string {
 
 function issue(reason: string): FactRepairVerification<never> {
   return { verified: false, reason };
+}
+
+function validateInlineRow(row: StoredFactRepair): FactRepairVerification<VerifiableFactRepair> {
+  if (!row.data) return issue('inline payload is empty');
+  if (!row.recovery_dedupe_key) return issue('recovery dedupe key is absent');
+  if (!isCategory(row.category)) return issue('repair category is invalid');
+  return { verified: true, value: row as VerifiableFactRepair };
 }
 
 function parseRecord(value: string): Record<string, unknown> {

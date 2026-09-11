@@ -76,8 +76,8 @@ export function validateInspectionInput(input: InspectFactRepairCapacityInput) {
   if (!Number.isSafeInteger(afterRepairId) || afterRepairId < 0) {
     throw new Error('invalid repair cursor');
   }
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_INSPECTION_LIMIT) {
-    throw new Error(`repair inspection limit must be between 1 and ${MAX_INSPECTION_LIMIT}`);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_OPERATION_ROWS) {
+    throw new Error(`repair inspection limit must be between 1 and ${MAX_OPERATION_ROWS}`);
   }
   return { afterRepairId, limit };
 }
@@ -90,9 +90,11 @@ export function validateCompactionInput(input: CompactFactRepairDuplicatesInput)
   if (
     !Array.isArray(input.candidates) ||
     input.candidates.length < 1 ||
-    input.candidates.length > 25
+    input.candidates.length > MAX_OPERATION_ROWS
   ) {
-    throw new Error('fact repair compaction requires between 1 and 25 candidates');
+    throw new Error(
+      `fact repair compaction requires between 1 and ${MAX_OPERATION_ROWS} candidates`,
+    );
   }
   const candidates = input.candidates.map((candidate) => ({
     repairId: validatePositiveInteger(candidate?.repairId, 'repair ID'),
@@ -150,4 +152,4 @@ function validateSha256(value: unknown, name: string): string {
 }
 
 const DEFAULT_INSPECTION_LIMIT = 10;
-const MAX_INSPECTION_LIMIT = 25;
+const MAX_OPERATION_ROWS = 100;
