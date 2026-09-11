@@ -231,4 +231,26 @@ test('does not log allowlisted archive rejections and keeps unknown responses ge
     unknownError,
   ]);
   assert.equal(JSON.stringify(logs[0].slice(0, 2)).includes('request-only'), false);
+
+  const nonErrorSecret = { token: 'non-error-secret' };
+  const { result: nonErrorResponse, logs: nonErrorLogs } = await captureConsoleError(() =>
+    worker.fetch(request('applyArchiveRepairChunk', body), {
+      ARCHIVE_RECOVERY: {
+        applyArchiveRepairChunk: async () => {
+          throw nonErrorSecret;
+        },
+      },
+    }),
+  );
+  assert.equal(nonErrorResponse.status, 502);
+  assert.equal(await nonErrorResponse.text(), 'Recovery failed; inspect the consumer logs');
+  assert.equal(nonErrorLogs.length, 1);
+  assert.equal(nonErrorLogs[0][0], 'recovery_bridge_rpc_failed');
+  assert.deepEqual(nonErrorLogs[0][1], {
+    pipeline: 'archive',
+    method: 'applyArchiveRepairChunk',
+  });
+  assert.equal(nonErrorLogs[0][2] instanceof Error, true);
+  assert.equal(nonErrorLogs[0][2].message, 'Recovery RPC threw a non-Error value');
+  assert.equal(JSON.stringify(nonErrorLogs[0]).includes(nonErrorSecret.token), false);
 });
