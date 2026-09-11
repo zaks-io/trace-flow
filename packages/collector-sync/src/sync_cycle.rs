@@ -5,7 +5,7 @@
 // tests with no network. Trace Flow owns the contract, IDs, pricing, redaction, and storage here.
 
 //! One sync cycle: turn a batch of in-scope sessions into POSTs, advancing each file's cursor **only
-//! after** its envelope is accepted (`2xx`).
+//! after** every envelope carrying it is accepted (`2xx`).
 //!
 //! The cycle is the headless core the embedder (Tauri desktop / CLI, Phase 5) and the 3d end-to-end
 //! run drive. Discovery — walking the filesystem, reading transcript bytes into [`SyncUnit`]s, and
@@ -28,6 +28,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::cursor::{ComposerCursor, CursorStore, CursorStoreError, FactCursor, FileCursor};
 use crate::envelope::{build_envelope, BatchMeta};
+use crate::fact_batches::{serialized_facts_bytes, split_facts};
 use crate::orchestrator::{Action, Orchestrator, Trigger};
 
 /// The watermark a [`SyncUnit`] commits on a `2xx`, by source shape. JSONL sources (Claude, Codex)
@@ -79,7 +80,7 @@ impl IngestClient for CollectorApiClient {
 
 /// One session's work for a cycle. The source is the cycle's (carried on [`BatchMeta`]); a unit holds
 /// the parsed transcript records to assemble, the identity context stamped onto every fact, and the
-/// cursor to persist **iff** the POST is accepted.
+/// cursor to persist **iff** every POST carrying its facts is accepted.
 pub struct SyncUnit {
     pub records: Vec<Value>,
     pub ctx: SessionContext,
@@ -91,7 +92,7 @@ pub struct SyncUnit {
 /// The outcome of one [`run_sync_cycle`].
 #[derive(Debug, Default)]
 pub struct CycleReport {
-    /// Units whose POST was accepted and whose cursor advanced.
+    /// Units whose complete upload was accepted and whose cursor advanced.
     pub advanced: u32,
     /// Units whose POST failed; their cursors were left untouched for the next cycle.
     pub failed: u32,
@@ -144,15 +145,14 @@ impl Default for SyncTuning {
     }
 }
 
-/// One prepared, ready-to-POST batch: the merged multi-session facts and the cursors to commit iff the
-/// POST is accepted. `units` is how many sessions it carries (for the report's advanced count).
+/// One prepared batch: the envelopes to POST and the cursors to commit iff every POST is accepted.
 struct PreparedBatch {
-    envelope: AgentIngestEnvelope,
+    envelopes: Vec<AgentIngestEnvelope>,
     cursors: Vec<UnitCursor>,
     fact_cursors: Vec<FactCursor>,
 }
 
-/// Run one sync cycle against `units` with default tuning. Advances a unit's cursor only after the
+/// Run one sync cycle against `units` with default tuning. Advances a unit's cursor only after every
 /// envelope carrying it is accepted.
 pub async fn run_sync_cycle<C: IngestClient>(
     client: &C,
@@ -296,23 +296,33 @@ pub async fn run_sync_cycle_tuned<C: IngestClient>(
 }
 
 /// POST one prepared batch, returning the batch back alongside the result so the caller can advance
-/// exactly its cursors on success. Owns the batch (moved into the future) so it can outlive the
-/// iterator while the upload is in flight.
+/// exactly its cursors after every envelope succeeds. Owns the batch (moved into the future) so it
+/// can outlive the iterator while the upload is in flight.
 async fn post_batch<C: IngestClient>(
     client: &C,
     batch: PreparedBatch,
     cancel: Option<&CancellationToken>,
 ) -> (PreparedBatch, IngestResult) {
-    let result = client.ingest(&batch.envelope, cancel).await;
-    (batch, result)
+    let mut accepted = None;
+    for envelope in &batch.envelopes {
+        match client.ingest(envelope, cancel).await {
+            Ok(result) => accepted = Some(result),
+            Err(error) => return (batch, Err(error)),
+        }
+    }
+    (
+        batch,
+        Ok(accepted.expect("a prepared batch always has an envelope")),
+    )
 }
 
 /// A **lazy** producer of multi-session [`PreparedBatch`]es: it assembles + merges sessions only as
 /// each batch is pulled, so peak memory tracks `max_concurrent_uploads` (the in-flight batches), not
 /// the whole sync window, and a pre-cancelled run does no assembly. Each unit's facts are assembled
 /// once and merged into the open batch; the batch closes when adding the next unit would exceed
-/// `max_sessions_per_batch` or `max_batch_bytes` (a lone oversized session still rides its own batch).
-/// One `collector_batch_id` is minted per yielded batch.
+/// `max_sessions_per_batch` or `max_batch_bytes`. A lone oversized session is split into sequential
+/// envelopes that share one local commit boundary, so a partial upload never advances its cursor.
+/// One `collector_batch_id` is minted per POST.
 ///
 /// A unit that assembles to zero facts still carries a cursor that must advance (an empty session is
 /// "seen, nothing to send"), so it is folded into a batch and rides along; the Worker treats an
@@ -357,16 +367,33 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
             let (facts, fact_cursors) = store.filter_unsent_facts(self.meta.source, facts)?;
             let facts_bytes = serialized_facts_bytes(&facts);
 
-            // If adding this unit would overflow the open (non-empty) batch, close and return it now —
-            // WITHOUT consuming `unit`, so it starts the next batch. Never split a single session.
+            // If adding this unit would overflow the open (non-empty) batch, close and return it now
+            // without consuming `unit`, so it starts the next batch.
             let would_overflow = !open_cursors.is_empty()
                 && (open_cursors.len() >= self.max_sessions
                     || open_bytes + facts_bytes > self.max_bytes);
             if would_overflow {
                 return Ok(Some(PreparedBatch {
-                    envelope: build_envelope(self.meta, (self.mint_batch_id)(), open_facts),
+                    envelopes: vec![build_envelope(
+                        self.meta,
+                        (self.mint_batch_id)(),
+                        open_facts,
+                    )],
                     cursors: open_cursors,
                     fact_cursors: open_fact_cursors,
+                }));
+            }
+
+            if open_cursors.is_empty() && facts_bytes > self.max_bytes {
+                self.next_unit += 1;
+                let envelopes = split_facts(facts, self.max_bytes)
+                    .into_iter()
+                    .map(|chunk| build_envelope(self.meta, (self.mint_batch_id)(), chunk))
+                    .collect();
+                return Ok(Some(PreparedBatch {
+                    envelopes,
+                    cursors: vec![unit.next_cursor.clone()],
+                    fact_cursors,
                 }));
             }
 
@@ -382,7 +409,11 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
             return Ok(None);
         }
         Ok(Some(PreparedBatch {
-            envelope: build_envelope(self.meta, (self.mint_batch_id)(), open_facts),
+            envelopes: vec![build_envelope(
+                self.meta,
+                (self.mint_batch_id)(),
+                open_facts,
+            )],
             cursors: open_cursors,
             fact_cursors: open_fact_cursors,
         }))
@@ -400,15 +431,6 @@ fn merge_facts(into: &mut AgentIngestFacts, mut from: AgentIngestFacts) {
     into.pull_request_links.append(&mut from.pull_request_links);
 }
 
-/// Measure serialized fact bytes before merging into an envelope. This intentionally overcounts some
-/// object-key overhead across sessions, which is safer than undercounting and repeatedly building
-/// request bodies the Worker or network path cannot drain.
-fn serialized_facts_bytes(facts: &AgentIngestFacts) -> usize {
-    serde_json::to_vec(facts)
-        .map(|bytes| bytes.len())
-        .unwrap_or(usize::MAX / 2)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,7 +438,7 @@ mod tests {
     use collector_contracts::AgentSource;
     use serde_json::json;
     use std::cell::{Cell, RefCell};
-    use std::collections::VecDeque;
+    use std::collections::{HashSet, VecDeque};
 
     /// An [`IngestClient`] that returns a scripted sequence of results and counts its calls, so a test
     /// can assert exactly how many POSTs the cycle made.
@@ -513,6 +535,31 @@ mod tests {
                 content_hash_head: "h".to_string(),
             }),
         }
+    }
+
+    fn multi_message_unit(path: &str, count: usize, model: &str) -> SyncUnit {
+        let mut unit = message_unit(path, model);
+        unit.records = (0..count)
+            .map(|index| {
+                json!({
+                    "type": "assistant",
+                    "timestamp": "2026-05-25T23:37:23.355Z",
+                    "message": {
+                        "id": format!("msg_{index}"),
+                        "model": model,
+                        "role": "assistant",
+                        "content": [{ "type": "text", "text": "hello" }],
+                        "usage": {
+                            "input_tokens": 10,
+                            "output_tokens": 20,
+                            "cache_read_input_tokens": 0,
+                            "cache_creation_input_tokens": 0
+                        }
+                    }
+                })
+            })
+            .collect();
+        unit
     }
 
     /// A Cursor-source unit committing a per-composer watermark, to exercise the [`UnitCursor::Composer`]
@@ -937,6 +984,158 @@ mod tests {
         assert_eq!(client.calls.get(), 2, "large serialized facts split");
         assert_eq!(report.advanced, 2);
         assert_eq!(report.failed, 0);
+    }
+
+    #[tokio::test]
+    async fn split_session_commits_only_after_every_envelope_succeeds() {
+        let store = CursorStore::open_in_memory("org").unwrap();
+        let mut mint = counter();
+        let model = "m".repeat(1_000);
+        let unit = multi_message_unit("/large.jsonl", 7, &model);
+        let sizing_unit = multi_message_unit("/sizing.jsonl", 2, &model);
+        let two_message_facts =
+            session_facts(AgentSource::Claude, &sizing_unit.records, &sizing_unit.ctx);
+        let tuning = SyncTuning {
+            max_sessions_per_batch: 10,
+            max_batch_bytes: serialized_facts_bytes(&two_message_facts),
+            max_concurrent_uploads: 1,
+        };
+
+        let probe_store = CursorStore::open_in_memory("probe-org").unwrap();
+        let probe = MockClient::new(std::iter::repeat_with(ok).take(20));
+        let mut probe_orchestrator = syncing_orchestrator();
+        run_sync_cycle_tuned(
+            &probe,
+            &probe_store,
+            &mut probe_orchestrator,
+            &meta(),
+            std::slice::from_ref(&unit),
+            &mut mint,
+            None,
+            tuning,
+        )
+        .await
+        .unwrap();
+        let part_count = probe.calls.get() as usize;
+        assert!(part_count > 2);
+
+        let first = MockClient::new([ok(), Err(IngestError::InternalError)]);
+        let mut first_orchestrator = syncing_orchestrator();
+        let (first_report, _) = run_sync_cycle_tuned(
+            &first,
+            &store,
+            &mut first_orchestrator,
+            &meta(),
+            std::slice::from_ref(&unit),
+            &mut mint,
+            None,
+            tuning,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(first_report.advanced, 0);
+        assert_eq!(first_report.failed, 1);
+        assert_eq!(first.calls.get(), 2);
+        assert!(store
+            .get(AgentSource::Claude, "/large.jsonl")
+            .unwrap()
+            .is_none());
+        let original_facts = session_facts(AgentSource::Claude, &unit.records, &unit.ctx);
+        assert_eq!(
+            store
+                .filter_unsent_facts(AgentSource::Claude, original_facts.clone())
+                .unwrap()
+                .0
+                .messages
+                .len(),
+            7,
+            "a partial remote acceptance must not hide local facts"
+        );
+
+        let final_failure = MockClient::new(
+            std::iter::repeat_with(ok)
+                .take(part_count - 1)
+                .chain(std::iter::once(Err(IngestError::InternalError))),
+        );
+        let mut final_failure_orchestrator = syncing_orchestrator();
+        let (final_failure_report, _) = run_sync_cycle_tuned(
+            &final_failure,
+            &store,
+            &mut final_failure_orchestrator,
+            &meta(),
+            std::slice::from_ref(&unit),
+            &mut mint,
+            None,
+            tuning,
+        )
+        .await
+        .unwrap();
+        assert_eq!(final_failure.calls.get() as usize, part_count);
+        assert_eq!(final_failure_report.advanced, 0);
+        assert_eq!(final_failure_report.failed, 1);
+        assert!(store
+            .get(AgentSource::Claude, "/large.jsonl")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            store
+                .filter_unsent_facts(AgentSource::Claude, original_facts.clone())
+                .unwrap()
+                .0
+                .messages
+                .len(),
+            7,
+            "a final-part failure must not hide locally accepted earlier parts"
+        );
+
+        let second = MockClient::new(std::iter::repeat_with(ok).take(20));
+        let mut second_orchestrator = syncing_orchestrator();
+        let (second_report, _) = run_sync_cycle_tuned(
+            &second,
+            &store,
+            &mut second_orchestrator,
+            &meta(),
+            std::slice::from_ref(&unit),
+            &mut mint,
+            None,
+            tuning,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(second_report.advanced, 1);
+        assert_eq!(second_report.failed, 0);
+        assert!(second.calls.get() > 1);
+        assert!(store
+            .get(AgentSource::Claude, "/large.jsonl")
+            .unwrap()
+            .is_some());
+        assert!(store
+            .filter_unsent_facts(AgentSource::Claude, original_facts.clone())
+            .unwrap()
+            .0
+            .messages
+            .is_empty());
+
+        let envelopes = second.envelopes.borrow();
+        let batch_ids: HashSet<_> = envelopes
+            .iter()
+            .map(|envelope| envelope.batch.collector_batch_id.as_str())
+            .collect();
+        assert_eq!(batch_ids.len(), envelopes.len());
+        assert!(envelopes
+            .iter()
+            .all(|envelope| { serialized_facts_bytes(&envelope.facts) <= tuning.max_batch_bytes }));
+        let message_ids: HashSet<_> = envelopes
+            .iter()
+            .flat_map(|envelope| envelope.facts.messages.iter())
+            .filter_map(|message| message.vendor_message_id.as_deref())
+            .collect();
+        assert_eq!(message_ids.len(), 7, "every original fact was preserved");
+        assert!(envelopes.iter().skip(1).all(|envelope| {
+            envelope.facts.messages.first() == original_facts.messages.first()
+        }));
     }
 
     #[tokio::test]

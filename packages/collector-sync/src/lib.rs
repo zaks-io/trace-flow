@@ -34,6 +34,7 @@ pub mod cursor;
 pub mod cursor_reader;
 pub mod discovery;
 pub mod envelope;
+mod fact_batches;
 pub mod git;
 pub mod git_remote;
 pub mod import;
