@@ -32,5 +32,5 @@ pub mod sync;
 
 pub use collector_archive_sync::{
     ArchiveAuthorizedSource, ArchiveEnrollmentRecord, ArchiveEnrollmentRequest,
-    ArchiveHistoryChoice, ArchiveSource, ArchiveSourceChoice,
+    ArchiveHistoryChoice, ArchiveSource, ArchiveSourceChoice, ArchiveTarget, ArchiveTargetError,
 };

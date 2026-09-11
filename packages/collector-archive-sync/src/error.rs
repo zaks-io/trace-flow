@@ -52,10 +52,35 @@ impl ArchiveSyncError {
             Self::RecordTooLarge { .. } => "archive_record_too_large",
             Self::Io(_) => "archive_io",
             Self::Crypto => "archive_crypto",
+            Self::Scan(collector_archive::JsonlError::HistoricalPrefixChanged) => {
+                "archive_historical_prefix_changed"
+            }
+            Self::Scan(collector_archive::JsonlError::HistoricalPrefixShortened) => {
+                "archive_historical_prefix_shortened"
+            }
             Self::Scan(_) => "archive_scan",
             Self::Archive(_) => "archive_contract",
             Self::Json(_) => "archive_state",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use collector_archive::JsonlError;
+
+    use super::ArchiveSyncError;
+
+    #[test]
+    fn historical_prefix_failures_have_actionable_classes() {
+        assert_eq!(
+            ArchiveSyncError::Scan(JsonlError::HistoricalPrefixChanged).class(),
+            "archive_historical_prefix_changed"
+        );
+        assert_eq!(
+            ArchiveSyncError::Scan(JsonlError::HistoricalPrefixShortened).class(),
+            "archive_historical_prefix_shortened"
+        );
     }
 }
 

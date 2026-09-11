@@ -167,6 +167,17 @@ mod tests {
     }
 
     #[test]
+    fn archive_repair_error_replaces_enrolled_status() {
+        let mut state = AppState::default();
+        state.archive.enrolled = true;
+        state.archive.sources = vec![(ArchiveSource::Codex, ArchiveHistoryChoice::AllHistory)];
+        state.archive.last_error = Some("Codex archive needs repair".to_string());
+
+        let view = archive_menu_view(&state);
+        assert_eq!(view.status, "Archive: Codex archive needs repair");
+    }
+
+    #[test]
     fn pending_and_denied_states_are_rendered_without_enabling_another_click() {
         let mut pending = AppState::default();
         pending.archive.pending = Some(ArchiveSource::Codex);

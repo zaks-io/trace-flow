@@ -1309,6 +1309,170 @@ async fn server_stored_element_rejection_is_blocked_without_format_fallback() {
 }
 
 #[tokio::test]
+async fn historical_prefix_failures_retain_target_context() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let original = br#"{"type":"session_meta","payload":{"id":"prefix-session"}}
+{"type":"event_msg","payload":{"value":"before"}}
+"#;
+    let original_snapshot = snapshot(ArchiveSource::Codex, original, 10);
+    let source_session_id = original_snapshot.source_session_id.clone();
+    let source_transcript_part_id = original_snapshot.source_transcript_part_id.clone();
+    let first = run_archive_cycle(
+        &AckingUploader::new(),
+        &mut spool,
+        &keys,
+        &[original_snapshot],
+        ArchivePolicy::Enrolled,
+        &plan_for(ALL_ARCHIVE_SOURCES),
+        None,
+    )
+    .await;
+    assert_eq!(first.uploaded, 1);
+    assert_eq!(first.failed, 0);
+
+    let mut changed = original.to_vec();
+    let marker = b"before";
+    let marker_start = changed
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .unwrap();
+    changed[marker_start..marker_start + marker.len()].copy_from_slice(b"change");
+    let changed_report = run_archive_cycle(
+        &AckingUploader::new(),
+        &mut spool,
+        &keys,
+        &[snapshot(ArchiveSource::Codex, &changed, 11)],
+        ArchivePolicy::Enrolled,
+        &plan_for(ALL_ARCHIVE_SOURCES),
+        None,
+    )
+    .await;
+    assert_eq!(changed_report.failed, 1);
+    assert_eq!(
+        changed_report.first_error.as_deref(),
+        Some("archive_historical_prefix_changed")
+    );
+    assert_eq!(changed_report.target_errors.len(), 1);
+    assert!(changed_report.validated_targets.is_empty());
+    let changed_error = changed_report.target_errors.first().unwrap();
+    assert_eq!(changed_error.source, ArchiveSource::Codex);
+    assert_eq!(changed_error.source_session_id, source_session_id);
+    assert_eq!(
+        changed_error.source_transcript_part_id,
+        source_transcript_part_id
+    );
+
+    let shortened_report = run_archive_cycle(
+        &AckingUploader::new(),
+        &mut spool,
+        &keys,
+        &[snapshot(
+            ArchiveSource::Codex,
+            &original[..original.len() - 1],
+            12,
+        )],
+        ArchivePolicy::Enrolled,
+        &plan_for(ALL_ARCHIVE_SOURCES),
+        None,
+    )
+    .await;
+    assert_eq!(shortened_report.failed, 1);
+    assert_eq!(
+        shortened_report.first_error.as_deref(),
+        Some("archive_historical_prefix_shortened")
+    );
+    assert_eq!(
+        shortened_report
+            .target_errors
+            .first()
+            .as_ref()
+            .map(|error| error.source_session_id.as_str()),
+        Some(source_session_id.as_str())
+    );
+
+    let recovered_report = run_archive_cycle(
+        &AckingUploader::new(),
+        &mut spool,
+        &keys,
+        &[snapshot(ArchiveSource::Codex, original, 13)],
+        ArchivePolicy::Enrolled,
+        &plan_for(ALL_ARCHIVE_SOURCES),
+        None,
+    )
+    .await;
+    assert_eq!(recovered_report.failed, 0);
+    assert!(recovered_report.target_errors.is_empty());
+    assert!(recovered_report.validated_targets.iter().any(|target| {
+        target.source == ArchiveSource::Codex
+            && target.source_session_id == source_session_id
+            && target.source_transcript_part_id == source_transcript_part_id
+    }));
+}
+
+#[tokio::test]
+async fn cycle_retains_every_historical_prefix_failure() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let first = br#"{"type":"session_meta","payload":{"id":"prefix-one"}}
+{"type":"event_msg","payload":{"value":"before"}}
+"#;
+    let second = br#"{"type":"session_meta","payload":{"id":"prefix-two"}}
+{"type":"event_msg","payload":{"value":"before"}}
+"#;
+    let initial = run_archive_cycle(
+        &AckingUploader::new(),
+        &mut spool,
+        &keys,
+        &[
+            snapshot(ArchiveSource::Codex, first, 10),
+            snapshot(ArchiveSource::Codex, second, 11),
+        ],
+        ArchivePolicy::Enrolled,
+        &plan_for(ALL_ARCHIVE_SOURCES),
+        None,
+    )
+    .await;
+    assert_eq!(initial.uploaded, 2);
+
+    let changed = |bytes: &[u8]| {
+        let mut changed = bytes.to_vec();
+        let start = changed
+            .windows(b"before".len())
+            .position(|window| window == b"before")
+            .unwrap();
+        changed[start..start + b"before".len()].copy_from_slice(b"change");
+        changed
+    };
+    let report = run_archive_cycle(
+        &AckingUploader::new(),
+        &mut spool,
+        &keys,
+        &[
+            snapshot(ArchiveSource::Codex, &changed(first), 12),
+            snapshot(ArchiveSource::Codex, &changed(second), 13),
+        ],
+        ArchivePolicy::Enrolled,
+        &plan_for(ALL_ARCHIVE_SOURCES),
+        None,
+    )
+    .await;
+
+    assert_eq!(report.failed, 2);
+    assert_eq!(report.target_errors.len(), 2);
+    assert!(report
+        .target_errors
+        .iter()
+        .any(|error| error.source_session_id == "prefix-one"));
+    assert!(report
+        .target_errors
+        .iter()
+        .any(|error| error.source_session_id == "prefix-two"));
+}
+
+#[tokio::test]
 async fn server_rejection_keeps_exact_single_record_metadata() {
     let dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();

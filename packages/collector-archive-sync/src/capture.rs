@@ -5,7 +5,9 @@ use tokio_util::sync::CancellationToken;
 use crate::ack::acknowledgement_matches;
 use crate::bound::build_bounded_pending;
 use crate::client::ArchiveUploader;
-use crate::cycle::{record_error, ArchiveCycleReport, ArchiveSnapshot};
+use crate::cycle::{
+    record_error, ArchiveCycleReport, ArchiveSnapshot, ArchiveTarget, ArchiveTargetError,
+};
 use crate::error::ArchiveSyncError;
 use crate::history::read_capture_window;
 use crate::key_store::ArchiveKeyStore;
@@ -85,6 +87,7 @@ pub(crate) async fn capture_snapshot<U: ArchiveUploader>(
         {
             Ok(UploadOutcome::Advanced) => {
                 report.uploaded += 1;
+                record_validated_target(report, snapshot);
             }
             Ok(UploadOutcome::Blocked) => {
                 report.blocked += 1;
@@ -117,7 +120,7 @@ fn persist_observed_slices(
     bytes: &[u8],
     report: &mut ArchiveCycleReport,
     cancel: Option<&CancellationToken>,
-) -> Result<u32, &'static str> {
+) -> Result<(u32, bool), &'static str> {
     match spool.blocked_part(
         snapshot.source,
         &snapshot.source_session_id,
@@ -125,7 +128,7 @@ fn persist_observed_slices(
     ) {
         Ok(Some(blocked)) if blocked.matches_source(bytes) => {
             report.blocked += 1;
-            return Ok(0);
+            return Ok((0, false));
         }
         Ok(Some(_)) => {
             if let Err(err) = spool.clear_blocked_part(
@@ -157,6 +160,7 @@ fn persist_observed_slices(
             return Err(err.class());
         }
     };
+    let validated_against_progress = progress.is_some();
     let existing = match spool.slices_for_part(
         snapshot.source,
         &snapshot.source_session_id,
@@ -177,8 +181,10 @@ fn persist_observed_slices(
         None => progress,
     };
     let mut persisted = 0u32;
+    let mut completed = true;
     loop {
         if cancel.is_some_and(CancellationToken::is_cancelled) {
+            completed = false;
             break;
         }
         let pending = match build_bounded_pending(
@@ -217,11 +223,11 @@ fn persist_observed_slices(
                 report.blocked += 1;
                 report.failed += 1;
                 record_error(report, "archive_record_too_large");
-                return Ok(persisted);
+                return Ok((persisted, validated_against_progress));
             }
             Err(err) => {
                 report.failed += 1;
-                record_error(report, err.class());
+                record_target_error(report, snapshot, err.class());
                 return Err(err.class());
             }
         };
@@ -240,7 +246,35 @@ fn persist_observed_slices(
         persisted += 1;
         prior = Some(pending_checkpoint(&pending)?);
     }
-    Ok(persisted)
+    Ok((persisted, validated_against_progress && completed))
+}
+
+fn record_target_error(
+    report: &mut ArchiveCycleReport,
+    snapshot: &ArchiveSnapshot,
+    error_class: &str,
+) {
+    record_error(report, error_class);
+    let error = ArchiveTargetError {
+        error_class: error_class.to_string(),
+        source: snapshot.source,
+        source_session_id: snapshot.source_session_id.clone(),
+        source_transcript_part_id: snapshot.source_transcript_part_id.clone(),
+    };
+    if !report.target_errors.contains(&error) {
+        report.target_errors.push(error);
+    }
+}
+
+fn record_validated_target(report: &mut ArchiveCycleReport, snapshot: &ArchiveSnapshot) {
+    let target = ArchiveTarget {
+        source: snapshot.source,
+        source_session_id: snapshot.source_session_id.clone(),
+        source_transcript_part_id: snapshot.source_transcript_part_id.clone(),
+    };
+    if !report.validated_targets.contains(&target) {
+        report.validated_targets.push(target);
+    }
 }
 
 pub(crate) fn persist_snapshot(
@@ -272,7 +306,11 @@ fn persist_snapshot_bytes(
     report: &mut ArchiveCycleReport,
     cancel: Option<&CancellationToken>,
 ) -> Result<(), &'static str> {
-    let persisted = persist_observed_slices(spool, snapshot, bytes, report, cancel)?;
+    let (persisted, validated_against_progress) =
+        persist_observed_slices(spool, snapshot, bytes, report, cancel)?;
+    if validated_against_progress {
+        record_validated_target(report, snapshot);
+    }
     report.captured += persisted;
     Ok(())
 }
