@@ -123,6 +123,12 @@ const CONFLICT_ERROR_CLASSES = new Set([
   'archive_key_version_retired',
   'archive_key_rotation_stale',
   'archive_deleting',
+  'archive_repair_in_progress',
+  'archive_repair_precondition_failed',
+  'archive_repair_plan_mismatch',
+  'archive_repair_chunk_mismatch',
+  'archive_verification_required',
+  'archive_verification_snapshot_mismatch',
 ]);
 
 const TRANSIENT_ERROR_CLASSES = new Set([

@@ -38,6 +38,36 @@ export interface LedgerCommit {
     fingerprints: SourceFingerprint[];
     replace: boolean;
   };
+  repair?: ArchiveRepairCommit;
+}
+
+export interface ArchiveRepairStateExpectation {
+  generation: number;
+  elementCount: number;
+  recordCount: number;
+  chainHead: string;
+}
+
+export interface ArchiveRepairPlan {
+  operationId: string;
+  partId: string;
+  expectedBase: ArchiveRepairStateExpectation;
+  expectedScan: ArchiveUploadRequest['checkpoint'];
+  expectedIntegrityOperationId: string | null;
+  finalCheckpoint: ArchiveUploadRequest['checkpoint'];
+  snapshotSha256: string;
+  reason: string;
+  chunkDigests: string[];
+}
+
+export interface ArchiveRepairCommit {
+  plan: ArchiveRepairPlan;
+  planDigest: string;
+  chunkIndex: number;
+  chunkDigest: string;
+  chunkKind: 'rebase' | 'delta';
+  priorState: ArchiveRepairStateExpectation;
+  priorScan: ArchiveUploadRequest['checkpoint'];
 }
 
 export interface CommitEnvelope {

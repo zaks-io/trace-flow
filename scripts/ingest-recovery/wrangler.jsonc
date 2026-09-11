@@ -18,6 +18,12 @@
       "entrypoint": "TraceRecovery",
       "remote": true,
     },
+    {
+      "binding": "ARCHIVE_RECOVERY",
+      "service": "trace-flow-archive-api-dev",
+      "entrypoint": "ArchiveRecovery",
+      "remote": true,
+    },
   ],
   "env": {
     "preview": {
@@ -26,6 +32,12 @@
           "binding": "PROXY_RECOVERY",
           "service": "trace-flow-consumer-preview",
           "entrypoint": "TraceRecovery",
+          "remote": true,
+        },
+        {
+          "binding": "ARCHIVE_RECOVERY",
+          "service": "trace-flow-archive-api-preview",
+          "entrypoint": "ArchiveRecovery",
           "remote": true,
         },
       ],
@@ -42,6 +54,12 @@
           "binding": "AGENT_RECOVERY",
           "service": "trace-flow-agent-consumer",
           "entrypoint": "TraceRecovery",
+          "remote": true,
+        },
+        {
+          "binding": "ARCHIVE_RECOVERY",
+          "service": "trace-flow-archive-api",
+          "entrypoint": "ArchiveRecovery",
           "remote": true,
         },
       ],

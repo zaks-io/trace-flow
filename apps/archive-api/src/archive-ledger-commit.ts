@@ -25,6 +25,14 @@ import {
 } from './archive-ledger-state';
 import { readLedgerScan, readLedgerSnapshot } from './archive-ledger-storage';
 import {
+  assertNoActiveArchiveRepair,
+  assertRepairChunkPreconditions,
+  parseArchiveRepairChunk,
+  readArchiveRepair,
+  type ParsedArchiveRepairChunk,
+} from './archive-ledger-repair';
+import { assertArchiveVerificationComplete } from './archive-ledger-verification';
+import {
   readIntent,
   readPendingIntent,
   markIntentReady,
@@ -68,6 +76,7 @@ export async function commitArchiveSession(
   await drainPendingReleases(storage, env);
   await drainPendingBudgetCommits(storage, env);
   const envelope = parseCommitEnvelope(value);
+  assertNoActiveArchiveRepair(storage);
   const existingFailure = readSessionIntegrity(storage, envelope.scope);
   if (existingFailure) throw new ArchiveSessionIntegrityError(existingFailure, false);
   try {
@@ -87,15 +96,29 @@ export async function commitArchiveSession(
   }
 }
 
+export async function commitArchiveRepairChunk(
+  storage: DurableObjectStorage,
+  env: ArchiveApiEnv,
+  value: unknown,
+  keyMaterial: { keyVersion: number; wrappedKey: string },
+): Promise<ArchiveAcknowledgement> {
+  await drainPendingReleases(storage, env);
+  await drainPendingBudgetCommits(storage, env);
+  const repair = await parseArchiveRepairChunk(value, keyMaterial);
+  return commitArchiveSessionEnvelope(storage, env, repair.envelope, repair);
+}
+
 async function commitArchiveSessionEnvelope(
   storage: DurableObjectStorage,
   env: ArchiveApiEnv,
   envelope: CommitEnvelope,
+  repair?: ParsedArchiveRepairChunk,
 ): Promise<ArchiveAcknowledgement> {
   assertIncomingObservationCount(envelope.upload);
   let state = readLedgerSnapshot(storage);
   state = assertScope(state, envelope.scope);
   const upload = await parseAndValidateUpload(envelope.upload, envelope.scope);
+  const uploadDigest = await intentDigest(archiveUploadIntentIdentity(upload));
   let scan = readLedgerScan(storage, upload.checkpoint.source_transcript_part_id);
   if (state.keyVersion !== undefined && envelope.keyVersion < state.keyVersion) {
     throw new ArchiveContractError('archive_key_version_mismatch');
@@ -121,6 +144,16 @@ async function commitArchiveSessionEnvelope(
   const intentHash = await intentDigest({
     scope: envelope.scope,
     upload: archiveUploadIntentIdentity(upload),
+    ...(repair
+      ? {
+          repair: {
+            operationId: repair.plan.operationId,
+            planDigest: repair.planDigest,
+            chunkIndex: repair.chunkIndex,
+            chunkDigest: uploadDigest,
+          },
+        }
+      : {}),
   });
   let priorIntent = readIntent(storage, intentHash);
   const budget = env.STORAGE_BUDGET.getByName(envelope.scope.orgId);
@@ -137,6 +170,20 @@ async function commitArchiveSessionEnvelope(
     state = assertScope(readLedgerSnapshot(storage), envelope.scope);
     scan = readLedgerScan(storage, upload.checkpoint.source_transcript_part_id);
   }
+  if (repair) {
+    assertRepairChunkPreconditions(storage, envelope.scope, state, scan, repair, uploadDigest);
+    if (!readArchiveRepair(storage, repair.plan.operationId)) {
+      assertArchiveVerificationComplete(
+        storage,
+        repair.plan.operationId,
+        'before',
+        repair.plan.snapshotSha256,
+        repair.plan.expectedBase,
+      );
+    }
+  } else {
+    assertNoActiveArchiveRepair(storage);
+  }
   if (
     priorIntent &&
     (priorIntent.baseElementCount !== state.elementCount ||
@@ -150,8 +197,12 @@ async function commitArchiveSessionEnvelope(
     state,
     upload,
     scan,
+    { rebase: repair?.chunkKind === 'rebase' },
   );
-  if (newElements.length === 0) return buildAcknowledgement(state, true, 0, false, []);
+  if (newElements.length === 0) {
+    if (repair) throw new ArchiveContractError('archive_repair_precondition_failed');
+    return buildAcknowledgement(state, true, 0, false, []);
+  }
   await assertPlannedChain(state.chainHead, state.elementCount, newElements);
 
   const ledgerElements = newElements.map((element) => {
@@ -254,6 +305,24 @@ async function commitArchiveSessionEnvelope(
       fingerprints: sourceFingerprints(upload.observations),
       replace: !upload.isDelta,
     },
+    ...(repair
+      ? {
+          repair: {
+            plan: repair.plan,
+            planDigest: repair.planDigest,
+            chunkIndex: repair.chunkIndex,
+            chunkDigest: uploadDigest,
+            chunkKind: repair.chunkKind,
+            priorState: {
+              generation: state.generation,
+              elementCount: state.elementCount,
+              recordCount: state.recordCount,
+              chainHead: state.chainHead,
+            },
+            priorScan: scan!.checkpoint,
+          },
+        }
+      : {}),
   };
   const expectedObjects = [
     ...plan.chunks.map((chunk) => ({
@@ -379,7 +448,7 @@ async function commitArchiveSessionEnvelope(
   return acknowledgement;
 }
 
-async function getCommittedManifestKeyMaterial(
+export async function getCommittedManifestKeyMaterial(
   env: ArchiveApiEnv,
   orgId: string,
   keyVersion: number,

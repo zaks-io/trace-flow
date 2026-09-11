@@ -110,3 +110,96 @@ test('fact rebuild methods require agent pipeline and explicit mutation confirma
   );
   assert.equal(calls, 1);
 });
+
+test('archive inspection is read-only while verification and repair require confirmation', async () => {
+  const calls = [];
+  const env = {
+    ARCHIVE_RECOVERY: {
+      inspectArchivePart: async (partId, options) => {
+        calls.push(['inspect', partId, options]);
+        return { generation: 1 };
+      },
+      verifyArchiveRepairPage: async (partId, options) => {
+        calls.push(['verify', partId, options]);
+        return { status: 'ledger' };
+      },
+    },
+  };
+  const body = {
+    pipeline: 'archive',
+    shardId: 'codex:part:primary',
+    options: { operationId: 'operation-1' },
+  };
+  assert.equal((await worker.fetch(request('inspectArchivePart', body), env)).status, 200);
+  assert.equal((await worker.fetch(request('verifyArchiveRepairPage', body), env)).status, 400);
+  assert.equal(
+    (
+      await worker.fetch(
+        request('verifyArchiveRepairPage', { ...body, confirm: 'apply-recovery' }),
+        env,
+      )
+    ).status,
+    200,
+  );
+  assert.deepEqual(calls, [
+    ['inspect', body.shardId, body.options],
+    ['verify', body.shardId, body.options],
+  ]);
+});
+
+test('returns an allowlisted archive rejection without exposing unknown remote errors', async () => {
+  const body = {
+    pipeline: 'archive',
+    shardId: 'codex:part:primary',
+    options: {},
+    confirm: 'apply-recovery',
+  };
+  const known = await worker.fetch(request('applyArchiveRepairChunk', body), {
+    ARCHIVE_RECOVERY: {
+      applyArchiveRepairChunk: async () => {
+        throw new Error('ArchiveContractError: archive_repair_precondition_failed');
+      },
+    },
+  });
+  assert.equal(known.status, 409);
+  assert.deepEqual(await known.json(), {
+    error: 'archive_recovery_rejected',
+    reason: 'archive_repair_precondition_failed',
+  });
+
+  const invalidPayload = await worker.fetch(request('applyArchiveRepairChunk', body), {
+    ARCHIVE_RECOVERY: {
+      applyArchiveRepairChunk: async () => {
+        throw new Error('ArchiveContractError: payload_hash_mismatch');
+      },
+    },
+  });
+  assert.equal(invalidPayload.status, 409);
+  assert.deepEqual(await invalidPayload.json(), {
+    error: 'archive_recovery_rejected',
+    reason: 'payload_hash_mismatch',
+  });
+
+  const tooLarge = await worker.fetch(request('applyArchiveRepairChunk', body), {
+    ARCHIVE_RECOVERY: {
+      applyArchiveRepairChunk: async () => {
+        throw new Error('ArchiveContractError: upload_too_large');
+      },
+    },
+  });
+  assert.equal(tooLarge.status, 413);
+  assert.deepEqual(await tooLarge.json(), {
+    error: 'archive_recovery_rejected',
+    reason: 'upload_too_large',
+  });
+
+  const unknown = await worker.fetch(request('applyArchiveRepairChunk', body), {
+    ARCHIVE_RECOVERY: {
+      applyArchiveRepairChunk: async () => {
+        throw new Error('secret customer payload');
+      },
+    },
+  });
+  assert.equal(unknown.status, 502);
+  assert.equal(await unknown.text(), 'Recovery failed; inspect the consumer logs');
+});
