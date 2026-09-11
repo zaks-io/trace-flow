@@ -1,4 +1,8 @@
-import type { AgentIngestQueueFacts, AgentIngestQueueMessage } from '@trace-flow/types';
+import {
+  validateAgentIngestQueueMessage,
+  type AgentIngestQueueFacts,
+  type AgentIngestQueueMessage,
+} from '@trace-flow/types';
 
 /**
  * Cloudflare Queues cap a single message at 128 KiB. We pack to a lower ceiling so the JSON envelope
@@ -37,6 +41,20 @@ export class QueueFactTooLargeError extends Error {
   }
 }
 
+export class QueueMessageContractError extends Error {
+  constructor(readonly field: string) {
+    super(`Generated queue message violates the queue contract at ${field}`);
+    this.name = 'QueueMessageContractError';
+  }
+}
+
+export function assertQueueMessagesValid(messages: readonly AgentIngestQueueMessage[]): void {
+  for (const message of messages) {
+    const field = validateAgentIngestQueueMessage(message);
+    if (field) throw new QueueMessageContractError(field);
+  }
+}
+
 function emptyFacts(): AgentIngestQueueFacts {
   return {
     messages: [],
@@ -48,7 +66,7 @@ function emptyFacts(): AgentIngestQueueFacts {
   };
 }
 
-export function assertFactsFitQueueMessages(
+function assertFactsFitQueueMessages(
   base: Omit<AgentIngestQueueMessage, 'facts'>,
   facts: AgentIngestQueueFacts,
   maxBytes: number = MAX_QUEUE_MESSAGE_BYTES,
