@@ -12,6 +12,7 @@ import type { StorageBudget } from '../archive-storage-budget';
 import { storageAdmissionUnsafe } from '../archive-storage-budget-ledger';
 import { ACTIVATION_ID, FakeArchiveCustody, installCustody } from './key-rotation-custody-fixture';
 import { compress, cryptoKey, digest, wrapKey } from './key-rotation-crypto-fixture';
+import { initializeBudget } from './storage-budget-fixture';
 
 const runtimeEnv = workerEnv as unknown as ArchiveApiEnv;
 
@@ -50,7 +51,7 @@ async function insertLegacyCatalogRow(
   objectKey: string,
   bytes: number,
 ) {
-  await stub.getStorageBudget({ orgId });
+  await initializeBudget(stub, orgId);
   await runInDurableObject(stub, (_instance, state) => {
     state.storage.sql.exec(
       "INSERT INTO storage_budget_objects (object_key, object_class, bytes, expires_at, status, key_version) VALUES (?, 'agent_archive_chunk', ?, NULL, 'committed', NULL)",

@@ -22,6 +22,7 @@ import type {
 } from './ledger.integration.fixtures';
 import { ACTIVATION_ID, FakeArchiveCustody, installCustody } from './key-rotation-custody-fixture';
 import { wrapKey } from './key-rotation-crypto-fixture';
+import { initializeBudget } from './storage-budget-fixture';
 
 async function requestFor(label: string) {
   const currentScope = scope('codex', `${label}-${crypto.randomUUID()}`);
@@ -168,6 +169,7 @@ describe('Archive Session Ledger release and alarm recovery', () => {
     const { currentScope, request } = await requestFor('cap-release');
     const ledger = newLedger(currentScope);
     const budget = runtimeEnv.STORAGE_BUDGET.getByName(currentScope.orgId);
+    await initializeBudget(budget, currentScope.orgId);
     const rejectedSnapshot = await budget.getStorageBudget({ orgId: currentScope.orgId });
     const rejectedReleaseEnv = {
       ...runtimeEnv,

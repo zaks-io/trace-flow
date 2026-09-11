@@ -1,11 +1,19 @@
+import { isArchiveCanonicalIdentifier } from '../../packages/types/src/archive.ts';
+
 const AGENT_METHODS = new Set(['beginFactRebuild', 'listRebuildFacts', 'completeFactRebuild']);
 const ARCHIVE_METHODS = new Set([
+  'getStorageBudget',
   'inspectArchivePart',
   'applyArchiveRepairChunk',
   'verifyArchiveRepairPage',
   'finalizeArchiveRepair',
 ]);
-const READ_METHODS = new Set(['listRecovery', 'listRebuildFacts', 'inspectArchivePart']);
+const READ_METHODS = new Set([
+  'listRecovery',
+  'listRebuildFacts',
+  'inspectArchivePart',
+  'getStorageBudget',
+]);
 const METHODS = new Set([
   'listRecovery',
   'reconcileRecovery',
@@ -37,6 +45,8 @@ const SAFE_ARCHIVE_REASONS = new Set([
   'pending_intent_head_mismatch',
   'pending_intent_mismatch',
   'storage_cap_exceeded',
+  'storage_budget_identity_mismatch',
+  'storage_budget_uninitialized',
   'upload_too_large',
 ]);
 
@@ -83,6 +93,12 @@ export default {
     if (ARCHIVE_METHODS.has(method) !== (input.pipeline === 'archive')) {
       return new Response('Archive recovery methods require the archive pipeline', { status: 400 });
     }
+    if (
+      method === 'getStorageBudget' &&
+      (!isArchiveCanonicalIdentifier(input.shardId) || input.options?.orgId !== input.shardId)
+    ) {
+      return new Response('Storage budget requires a confirmed organization', { status: 400 });
+    }
     if (!READ_METHODS.has(method) && input.confirm !== 'apply-recovery') {
       return new Response('Explicit apply-recovery confirmation is required', { status: 400 });
     }
@@ -108,6 +124,9 @@ export default {
                 : 409;
         return Response.json({ error: 'archive_recovery_rejected', reason }, { status });
       }
+      const diagnostic =
+        error instanceof Error ? error : new Error('Recovery RPC threw a non-Error value');
+      console.error('recovery_bridge_rpc_failed', { pipeline: input.pipeline, method }, diagnostic);
       return new Response('Recovery failed; inspect the consumer logs', { status: 502 });
     }
   },

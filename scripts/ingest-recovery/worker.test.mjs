@@ -9,6 +9,17 @@ const request = (method, body, headers = {}) =>
     body: JSON.stringify(body),
   });
 
+async function captureConsoleError(run) {
+  const originalConsoleError = console.error;
+  const logs = [];
+  console.error = (...args) => logs.push(args);
+  try {
+    return { result: await run(), logs };
+  } finally {
+    console.error = originalConsoleError;
+  }
+}
+
 test('returns full recovery payload from the selected private service', async () => {
   const payload = 'x'.repeat(100_000);
   const response = await worker.fetch(
@@ -147,25 +158,95 @@ test('archive inspection is read-only while verification and repair require conf
   ]);
 });
 
-test('returns an allowlisted archive rejection without exposing unknown remote errors', async () => {
+test('forwards confirmed organization budget reads only to archive recovery', async () => {
+  const calls = [];
+  const orgId = 'k57axc8sefsfp6k28nx6c481js806pwv';
+  const env = {
+    ARCHIVE_RECOVERY: {
+      getStorageBudget: async (shardId, options) => {
+        calls.push([shardId, options]);
+        return { orgId, admissionUnsafe: true, reservedBytes: 29 };
+      },
+    },
+  };
+  const body = { pipeline: 'archive', shardId: orgId, options: { orgId } };
+
+  const response = await worker.fetch(request('getStorageBudget', body), env);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    orgId,
+    admissionUnsafe: true,
+    reservedBytes: 29,
+  });
+  assert.deepEqual(calls, [[orgId, { orgId }]]);
+  assert.equal(
+    (
+      await worker.fetch(request('getStorageBudget', { ...body, pipeline: 'agent' }), {
+        AGENT_RECOVERY: env.ARCHIVE_RECOVERY,
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await worker.fetch(
+        request('getStorageBudget', { ...body, options: { orgId: 'different-org' } }),
+        env,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await worker.fetch(
+        request('getStorageBudget', {
+          ...body,
+          shardId: 'invalid/org',
+          options: { orgId: 'invalid/org' },
+        }),
+        env,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(calls.length, 1);
+
+  const uninitialized = await worker.fetch(request('getStorageBudget', body), {
+    ARCHIVE_RECOVERY: {
+      getStorageBudget: async () => {
+        throw new Error('ArchiveContractError: storage_budget_uninitialized');
+      },
+    },
+  });
+  assert.equal(uninitialized.status, 409);
+  assert.deepEqual(await uninitialized.json(), {
+    error: 'archive_recovery_rejected',
+    reason: 'storage_budget_uninitialized',
+  });
+});
+
+test('does not log allowlisted archive rejections and keeps unknown responses generic', async () => {
   const body = {
     pipeline: 'archive',
     shardId: 'codex:part:primary',
     options: {},
     confirm: 'apply-recovery',
   };
-  const known = await worker.fetch(request('applyArchiveRepairChunk', body), {
-    ARCHIVE_RECOVERY: {
-      applyArchiveRepairChunk: async () => {
-        throw new Error('ArchiveContractError: archive_repair_precondition_failed');
+  const { result: known, logs: knownLogs } = await captureConsoleError(() =>
+    worker.fetch(request('applyArchiveRepairChunk', body), {
+      ARCHIVE_RECOVERY: {
+        applyArchiveRepairChunk: async () => {
+          throw new Error('ArchiveContractError: archive_repair_precondition_failed');
+        },
       },
-    },
-  });
+    }),
+  );
   assert.equal(known.status, 409);
   assert.deepEqual(await known.json(), {
     error: 'archive_recovery_rejected',
     reason: 'archive_repair_precondition_failed',
   });
+  assert.deepEqual(knownLogs, []);
 
   const invalidPayload = await worker.fetch(request('applyArchiveRepairChunk', body), {
     ARCHIVE_RECOVERY: {
@@ -193,13 +274,50 @@ test('returns an allowlisted archive rejection without exposing unknown remote e
     reason: 'upload_too_large',
   });
 
-  const unknown = await worker.fetch(request('applyArchiveRepairChunk', body), {
-    ARCHIVE_RECOVERY: {
-      applyArchiveRepairChunk: async () => {
-        throw new Error('secret customer payload');
+  const unknownError = new Error('secret customer payload');
+  const unknownBody = {
+    ...body,
+    shardId: 'request-only-shard',
+    options: { requestOnly: 'request-only-options' },
+  };
+  const { result: unknown, logs } = await captureConsoleError(() =>
+    worker.fetch(request('applyArchiveRepairChunk', unknownBody), {
+      ARCHIVE_RECOVERY: {
+        applyArchiveRepairChunk: async () => {
+          throw unknownError;
+        },
       },
-    },
-  });
+    }),
+  );
   assert.equal(unknown.status, 502);
   assert.equal(await unknown.text(), 'Recovery failed; inspect the consumer logs');
+  assert.equal(logs.length, 1);
+  assert.deepEqual(logs[0], [
+    'recovery_bridge_rpc_failed',
+    { pipeline: 'archive', method: 'applyArchiveRepairChunk' },
+    unknownError,
+  ]);
+  assert.equal(JSON.stringify(logs[0].slice(0, 2)).includes('request-only'), false);
+
+  const nonErrorSecret = { token: 'non-error-secret' };
+  const { result: nonErrorResponse, logs: nonErrorLogs } = await captureConsoleError(() =>
+    worker.fetch(request('applyArchiveRepairChunk', body), {
+      ARCHIVE_RECOVERY: {
+        applyArchiveRepairChunk: async () => {
+          throw nonErrorSecret;
+        },
+      },
+    }),
+  );
+  assert.equal(nonErrorResponse.status, 502);
+  assert.equal(await nonErrorResponse.text(), 'Recovery failed; inspect the consumer logs');
+  assert.equal(nonErrorLogs.length, 1);
+  assert.equal(nonErrorLogs[0][0], 'recovery_bridge_rpc_failed');
+  assert.deepEqual(nonErrorLogs[0][1], {
+    pipeline: 'archive',
+    method: 'applyArchiveRepairChunk',
+  });
+  assert.equal(nonErrorLogs[0][2] instanceof Error, true);
+  assert.equal(nonErrorLogs[0][2].message, 'Recovery RPC threw a non-Error value');
+  assert.equal(JSON.stringify(nonErrorLogs[0]).includes(nonErrorSecret.token), false);
 });

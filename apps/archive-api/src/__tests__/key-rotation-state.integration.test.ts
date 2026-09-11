@@ -7,7 +7,7 @@ import {
 } from '../archive-key-rotation-state';
 import type { StorageBudget } from '../archive-storage-budget';
 import { ACTIVATION_ID } from './key-rotation-custody-fixture';
-import { budget } from './storage-budget-fixture';
+import { budget, initializeBudget } from './storage-budget-fixture';
 
 function succeededState(operationId: string, fromVersion: number): ArchiveKeyRotationState {
   return {
@@ -27,7 +27,7 @@ describe('archive key rotation state migration', () => {
   it('does not copy a previous operation legacy root into a later rotation', async () => {
     const orgId = `rotation-root-migration-${crypto.randomUUID()}`;
     const stub = budget(orgId);
-    await stub.getStorageBudget({ orgId });
+    await initializeBudget(stub, orgId);
 
     const roots = await runInDurableObject(stub, (_instance: StorageBudget, state) => {
       writeRotationState(state.storage, succeededState('rotation-1-2', 1));
