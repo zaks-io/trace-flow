@@ -9,6 +9,17 @@ const request = (method, body, headers = {}) =>
     body: JSON.stringify(body),
   });
 
+async function captureConsoleError(run) {
+  const originalConsoleError = console.error;
+  const logs = [];
+  console.error = (...args) => logs.push(args);
+  try {
+    return { result: await run(), logs };
+  } finally {
+    console.error = originalConsoleError;
+  }
+}
+
 test('returns full recovery payload from the selected private service', async () => {
   const payload = 'x'.repeat(100_000);
   const response = await worker.fetch(
@@ -147,25 +158,28 @@ test('archive inspection is read-only while verification and repair require conf
   ]);
 });
 
-test('returns an allowlisted archive rejection without exposing unknown remote errors', async () => {
+test('does not log allowlisted archive rejections and keeps unknown responses generic', async () => {
   const body = {
     pipeline: 'archive',
     shardId: 'codex:part:primary',
     options: {},
     confirm: 'apply-recovery',
   };
-  const known = await worker.fetch(request('applyArchiveRepairChunk', body), {
-    ARCHIVE_RECOVERY: {
-      applyArchiveRepairChunk: async () => {
-        throw new Error('ArchiveContractError: archive_repair_precondition_failed');
+  const { result: known, logs: knownLogs } = await captureConsoleError(() =>
+    worker.fetch(request('applyArchiveRepairChunk', body), {
+      ARCHIVE_RECOVERY: {
+        applyArchiveRepairChunk: async () => {
+          throw new Error('ArchiveContractError: archive_repair_precondition_failed');
+        },
       },
-    },
-  });
+    }),
+  );
   assert.equal(known.status, 409);
   assert.deepEqual(await known.json(), {
     error: 'archive_recovery_rejected',
     reason: 'archive_repair_precondition_failed',
   });
+  assert.deepEqual(knownLogs, []);
 
   const invalidPayload = await worker.fetch(request('applyArchiveRepairChunk', body), {
     ARCHIVE_RECOVERY: {
@@ -193,13 +207,28 @@ test('returns an allowlisted archive rejection without exposing unknown remote e
     reason: 'upload_too_large',
   });
 
-  const unknown = await worker.fetch(request('applyArchiveRepairChunk', body), {
-    ARCHIVE_RECOVERY: {
-      applyArchiveRepairChunk: async () => {
-        throw new Error('secret customer payload');
+  const unknownError = new Error('secret customer payload');
+  const unknownBody = {
+    ...body,
+    shardId: 'request-only-shard',
+    options: { requestOnly: 'request-only-options' },
+  };
+  const { result: unknown, logs } = await captureConsoleError(() =>
+    worker.fetch(request('applyArchiveRepairChunk', unknownBody), {
+      ARCHIVE_RECOVERY: {
+        applyArchiveRepairChunk: async () => {
+          throw unknownError;
+        },
       },
-    },
-  });
+    }),
+  );
   assert.equal(unknown.status, 502);
   assert.equal(await unknown.text(), 'Recovery failed; inspect the consumer logs');
+  assert.equal(logs.length, 1);
+  assert.deepEqual(logs[0], [
+    'recovery_bridge_rpc_failed',
+    { pipeline: 'archive', method: 'applyArchiveRepairChunk' },
+    unknownError,
+  ]);
+  assert.equal(JSON.stringify(logs[0].slice(0, 2)).includes('request-only'), false);
 });

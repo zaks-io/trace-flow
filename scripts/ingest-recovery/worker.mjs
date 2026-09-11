@@ -108,6 +108,7 @@ export default {
                 : 409;
         return Response.json({ error: 'archive_recovery_rejected', reason }, { status });
       }
+      console.error('recovery_bridge_rpc_failed', { pipeline: input.pipeline, method }, error);
       return new Response('Recovery failed; inspect the consumer logs', { status: 502 });
     }
   },
