@@ -1,5 +1,27 @@
 import { describe, it, expect } from 'vitest';
-import { redactText, redactValue, luhnValid } from './redaction';
+import { luhnValid, redactText, redactValue, truncateUtf8Bytes, utf8ByteLength } from './redaction';
+
+describe('UTF-8 bounds', () => {
+  it('measures encoded bytes', () => {
+    expect(utf8ByteLength('a😀é')).toBe(7);
+  });
+
+  it('truncates at a byte boundary without splitting a code point', () => {
+    expect(truncateUtf8Bytes('a😀é', 5)).toBe('a😀');
+    expect(truncateUtf8Bytes('a😀é', 4)).toBe('a');
+  });
+
+  it('preserves exact and shorter values', () => {
+    expect(truncateUtf8Bytes('éé', 4)).toBe('éé');
+    expect(truncateUtf8Bytes('éé', 5)).toBe('éé');
+  });
+
+  it('supports an empty byte budget and rejects invalid limits', () => {
+    expect(truncateUtf8Bytes('😀', 0)).toBe('');
+    expect(() => truncateUtf8Bytes('text', -1)).toThrow(RangeError);
+    expect(() => truncateUtf8Bytes('text', 1.5)).toThrow(RangeError);
+  });
+});
 
 describe('luhnValid', () => {
   it('accepts common test PAN', () => {

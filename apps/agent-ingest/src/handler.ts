@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 import { axiomConfigFromEnv, createWorkerLogger } from '@trace-flow/logging';
 import { currentSentryTraceContext } from '@trace-flow/utils/sentry-tracing';
-import { BodySizeLimitError, readBodyWithLimit } from '@trace-flow/utils';
+import { BodySizeLimitError, readBodyWithLimit, utf8ByteLength } from '@trace-flow/utils';
 import type {
   AgentIngestEnvelope,
   AgentIngestQueueFacts,
@@ -12,7 +12,12 @@ import { authenticateCollector } from './auth';
 import { checkCompatibility, getCompatibilityPolicy } from './policy';
 import { assembleQueueFacts } from './ids';
 import { ConvexUnreachableError, claimSessions } from './ownership';
-import { assertFactsFitQueueMessages, chunkFacts, QueueFactTooLargeError } from './chunker';
+import {
+  assertQueueMessagesValid,
+  chunkFacts,
+  QueueFactTooLargeError,
+  QueueMessageContractError,
+} from './chunker';
 import {
   MAX_COMMAND_EXCERPT,
   MAX_ERROR_EXCERPT,
@@ -186,9 +191,13 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
       sentry_trace_context: currentSentryTraceContext(),
     };
 
-    // Validate queue fit before claiming ownership so an impossible write cannot create a claim.
+    // Validate the exact transport chunks before claiming ownership so an impossible write cannot
+    // create a claim. Derived attribution rows may push the assembled total above the input envelope
+    // limit, so validating the unchunked aggregate would reject valid batches.
+    let candidateMessages: AgentIngestQueueMessage[];
     try {
-      assertFactsFitQueueMessages(base, queueFacts);
+      candidateMessages = chunkFacts(base, queueFacts);
+      assertQueueMessagesValid(candidateMessages);
     } catch (err) {
       if (err instanceof QueueFactTooLargeError) {
         logger.warn('agent_ingest.fact_too_large', {
@@ -197,6 +206,12 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
           max_bytes: err.maxBytes,
         });
         return c.json({ error: 'payload_too_large' }, 413);
+      }
+      if (err instanceof QueueMessageContractError) {
+        logger.error('agent_ingest.queue_contract_invalid', undefined, {
+          field: err.field,
+        });
+        return c.json({ error: 'internal_error' }, 500);
       }
       throw err;
     }
@@ -232,7 +247,11 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
       return c.json({ accepted: true, sessions: 0, skipped_conflict: conflicted.size }, 202);
     }
 
-    const messages = chunkFacts({ ...base, enqueued_at: Date.now() }, owned);
+    const enqueuedAt = Date.now();
+    const messages =
+      conflicted.size === 0
+        ? candidateMessages.map((message) => ({ ...message, enqueued_at: enqueuedAt }))
+        : chunkFacts({ ...base, enqueued_at: enqueuedAt }, owned);
 
     // Enqueue with sendBatch, not N parallel send()s. A multi-session envelope can chunk into hundreds
     // of queue messages; firing that many individual send() subrequests bursts past Cloudflare's
@@ -339,14 +358,14 @@ function reRedact(facts: AgentIngestEnvelope['facts']): void {
     t.error_excerpt = capExcerpt(errExcerpt.value, MAX_ERROR_EXCERPT);
     let remaining = Math.max(
       0,
-      MAX_TOOL_EXCERPT_TOTAL - t.command_excerpt.length - t.error_excerpt.length,
+      MAX_TOOL_EXCERPT_TOTAL - utf8ByteLength(t.command_excerpt) - utf8ByteLength(t.error_excerpt),
     );
     const navigationPath = redactField(t.navigation_path_hint ?? '');
     t.navigation_path_hint = capExcerpt(
       navigationPath.value,
       Math.min(MAX_NAVIGATION_HINT_EXCERPT, remaining),
     );
-    remaining = Math.max(0, remaining - t.navigation_path_hint.length);
+    remaining = Math.max(0, remaining - utf8ByteLength(t.navigation_path_hint));
     const navigationPattern = redactField(t.navigation_pattern_hint ?? '');
     t.navigation_pattern_hint = capExcerpt(
       navigationPattern.value,

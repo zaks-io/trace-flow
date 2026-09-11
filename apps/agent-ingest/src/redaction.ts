@@ -1,4 +1,5 @@
-import { redactText } from '@trace-flow/utils';
+import { AGENT_INGEST_LIMITS } from '@trace-flow/types';
+import { redactText, truncateUtf8Bytes } from '@trace-flow/utils';
 
 /**
  * Server-side re-redaction backstop. The Rust Collector parser (3a) is the primary redactor; this
@@ -21,10 +22,10 @@ import { redactText } from '@trace-flow/utils';
 
 const REDACTED = '[REDACTED]';
 
-export const MAX_COMMAND_EXCERPT = 1024;
-export const MAX_ERROR_EXCERPT = 4096;
-export const MAX_NAVIGATION_HINT_EXCERPT = 256;
-export const MAX_TOOL_EXCERPT_TOTAL = 5 * 1024;
+export const MAX_COMMAND_EXCERPT = AGENT_INGEST_LIMITS.maxCommandExcerptBytes;
+export const MAX_ERROR_EXCERPT = AGENT_INGEST_LIMITS.maxErrorExcerptBytes;
+export const MAX_NAVIGATION_HINT_EXCERPT = AGENT_INGEST_LIMITS.maxStoredNavigationHintBytes;
+export const MAX_TOOL_EXCERPT_TOTAL = AGENT_INGEST_LIMITS.maxToolExcerptBytes;
 
 /** Mask matchers keep the field; each replaces its capture and counts one toward `dropped`. */
 const HOME_PATH_PATTERN = /(\/(?:Users|home)\/)([^/\s]+)/g;
@@ -112,9 +113,7 @@ function countMarkers(text: string): number {
   return text.split(REDACTED).length - 1;
 }
 
-/** Truncates a (already redacted) excerpt to its column cap, by code point so a surrogate pair is
- *  never split into a lone surrogate (which would serialize as a replacement char). */
-export function capExcerpt(text: string, max: number): string {
-  if (text.length <= max) return text;
-  return [...text].slice(0, max).join('');
+/** Truncates an already-redacted excerpt to its UTF-8 byte cap. */
+export function capExcerpt(text: string, maxBytes: number): string {
+  return truncateUtf8Bytes(text, maxBytes);
 }

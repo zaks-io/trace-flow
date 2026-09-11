@@ -4,6 +4,29 @@
  */
 
 const REDACTED = '[REDACTED]';
+const utf8Encoder = new TextEncoder();
+
+export function utf8ByteLength(text: string): number {
+  return utf8Encoder.encode(text).byteLength;
+}
+
+/** Truncates UTF-8 text without splitting a Unicode code point. */
+export function truncateUtf8Bytes(text: string, maxBytes: number): string {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new RangeError('maxBytes must be a non-negative safe integer');
+  }
+  if (utf8ByteLength(text) <= maxBytes) return text;
+
+  let bytes = 0;
+  let end = 0;
+  for (const codePoint of text) {
+    const codePointBytes = utf8ByteLength(codePoint);
+    if (bytes + codePointBytes > maxBytes) break;
+    bytes += codePointBytes;
+    end += codePoint.length;
+  }
+  return text.slice(0, end);
+}
 
 /** Luhn check on a string of digits only. */
 export function luhnValid(digits: string): boolean {

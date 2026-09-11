@@ -29,6 +29,8 @@ export const AGENT_INGEST_LIMITS = {
   maxUrlBytes: 256 * 1_024,
   maxCommandExcerptBytes: 1_024,
   maxErrorExcerptBytes: 4_096,
+  maxToolExcerptBytes: 5 * 1_024,
+  maxStoredNavigationHintBytes: 256,
   // Ingest re-redacts these optional legacy fields to the 256-byte stored cap after validation.
   maxNavigationHintBytes: 4 * 1_024,
   maxRepoRelativePaths: 256,

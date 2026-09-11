@@ -1,11 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import type { AgentIngestQueueFacts, AgentIngestQueueMessage } from '@trace-flow/types';
+import {
+  validateAgentIngestQueueMessage,
+  type AgentIngestQueueFacts,
+  type AgentIngestQueueMessage,
+} from '@trace-flow/types';
 import {
   CATEGORIES,
   MAX_QUEUE_MESSAGE_BYTES,
   QueueFactTooLargeError,
+  assertQueueMessagesValid,
   chunkFacts,
 } from '../chunker';
+import { assembleQueueFacts } from '../ids';
+import { facts } from './factories';
 
 const base: Omit<AgentIngestQueueMessage, 'facts'> = {
   type: 'agent',
@@ -186,5 +193,35 @@ describe('chunkFacts', () => {
     expect(out[0]!.facts.messages).toHaveLength(1);
     expect(out[0]!.facts.tool_events).toHaveLength(1);
     expect(out[0]!.facts.file_events).toHaveLength(1);
+  });
+
+  it('validates chunks when derived rows push the assembled total above the envelope limit', async () => {
+    const { queueFacts: samples } = await assembleQueueFacts(facts(), 'claude');
+    const sampleAttribution = samples.review_unit_attributions?.[0];
+    if (!sampleAttribution) throw new Error('fixture did not derive a review attribution');
+    const assembled: AgentIngestQueueFacts = {
+      messages: Array(10_000).fill(samples.messages[0]!),
+      tool_events: Array(10_000).fill(samples.tool_events[0]!),
+      file_events: Array(5_000).fill(samples.file_events[0]!),
+      capability_snapshots: [],
+      pull_request_links: [],
+      review_unit_attributions: [sampleAttribution],
+    };
+
+    expect(validateAgentIngestQueueMessage({ ...base, facts: assembled })).toBe(
+      'queue_message.facts.total_count',
+    );
+    const chunks = chunkFacts(base, assembled);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(() => assertQueueMessagesValid(chunks)).not.toThrow();
+    expect(chunks.every((message) => validateAgentIngestQueueMessage(message) === null)).toBe(true);
+    expect(
+      chunks.reduce(
+        (total, message) =>
+          total +
+          CATEGORIES.reduce((count, category) => count + (message.facts[category]?.length ?? 0), 0),
+        0,
+      ),
+    ).toBe(25_001);
   });
 });
