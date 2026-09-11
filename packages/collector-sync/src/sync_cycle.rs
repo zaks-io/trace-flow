@@ -28,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::cursor::{ComposerCursor, CursorStore, CursorStoreError, FactCursor, FileCursor};
 use crate::envelope::{build_envelope, BatchMeta};
-use crate::fact_batches::{serialized_facts_bytes, split_facts};
+use crate::fact_batches::{serialized_facts_bytes, split_facts, SessionFactContext};
 use crate::orchestrator::{Action, Orchestrator, Trigger};
 
 /// The watermark a [`SyncUnit`] commits on a `2xx`, by source shape. JSONL sources (Claude, Codex)
@@ -364,7 +364,9 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
 
         while let Some(unit) = self.units.get(self.next_unit) {
             let facts = session_facts(self.meta.source, &unit.records, &unit.ctx);
-            let (facts, fact_cursors) = store.filter_unsent_facts(self.meta.source, facts)?;
+            let context = SessionFactContext::capture(&facts);
+            let (mut facts, fact_cursors) = store.filter_unsent_facts(self.meta.source, facts)?;
+            context.retain_for(&mut facts);
             let facts_bytes = serialized_facts_bytes(&facts);
 
             // If adding this unit would overflow the open (non-empty) batch, close and return it now
@@ -559,6 +561,21 @@ mod tests {
                 })
             })
             .collect();
+        unit
+    }
+
+    fn tool_unit(path: &str, tool_ids: &[&str]) -> SyncUnit {
+        let mut unit = message_unit(path, "claude-opus-4-7");
+        let mut content = vec![json!({ "type": "text", "text": "hello" })];
+        content.extend(tool_ids.iter().map(|id| {
+            json!({
+                "type": "tool_use",
+                "id": id,
+                "name": "Bash",
+                "input": { "command": "git status" }
+            })
+        }));
+        unit.records[0]["message"]["content"] = json!(content);
         unit
     }
 
@@ -804,6 +821,83 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(changed.envelopes.borrow()[0].facts.messages.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn incremental_non_message_facts_keep_the_original_attribution() {
+        let store = CursorStore::open_in_memory("org").unwrap();
+        let mut mint = counter();
+        let initial_unit = tool_unit("/a.jsonl", &["tool-1"]);
+        let initial = MockClient::new([ok()]);
+        let mut first_orchestrator = syncing_orchestrator();
+        run_sync_cycle(
+            &initial,
+            &store,
+            &mut first_orchestrator,
+            &meta(),
+            std::slice::from_ref(&initial_unit),
+            &mut mint,
+            None,
+        )
+        .await
+        .unwrap();
+        let attribution = initial.envelopes.borrow()[0].facts.messages[0].clone();
+
+        let appended_unit = tool_unit("/a.jsonl", &["tool-1", "tool-2"]);
+        let appended = MockClient::new([ok()]);
+        let mut second_orchestrator = syncing_orchestrator();
+        run_sync_cycle(
+            &appended,
+            &store,
+            &mut second_orchestrator,
+            &meta(),
+            std::slice::from_ref(&appended_unit),
+            &mut mint,
+            None,
+        )
+        .await
+        .unwrap();
+        {
+            let appended_envelopes = appended.envelopes.borrow();
+            assert_eq!(appended_envelopes[0].facts.messages, vec![attribution]);
+            assert_eq!(appended_envelopes[0].facts.tool_events.len(), 1);
+            assert_eq!(
+                appended_envelopes[0].facts.tool_events[0]
+                    .tool_use_id
+                    .as_deref(),
+                Some("tool-2")
+            );
+
+            let initial_envelopes = initial.envelopes.borrow();
+            let unique_messages: HashSet<_> = initial_envelopes
+                .iter()
+                .chain(appended_envelopes.iter())
+                .flat_map(|envelope| envelope.facts.messages.iter())
+                .map(|message| {
+                    (
+                        message.vendor_session_id.clone(),
+                        message.vendor_message_id.clone(),
+                    )
+                })
+                .collect();
+            assert_eq!(unique_messages.len(), 1);
+        }
+
+        let unchanged = MockClient::new([ok()]);
+        let mut third_orchestrator = syncing_orchestrator();
+        run_sync_cycle(
+            &unchanged,
+            &store,
+            &mut third_orchestrator,
+            &meta(),
+            &[appended_unit],
+            &mut mint,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(unchanged.envelopes.borrow()[0].facts.messages.is_empty());
+        assert!(unchanged.envelopes.borrow()[0].facts.tool_events.is_empty());
     }
 
     /// One session per envelope, one POST at a time — reproduces the pre-batching contract so the

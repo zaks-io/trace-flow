@@ -218,6 +218,37 @@ describe('assembleQueueFacts', () => {
     expect(edge.review_unit_key).toBe('');
   });
 
+  it('keeps the same ambiguous decision when a split part carries the full link context', async () => {
+    const links = [
+      {
+        ...facts().pull_request_links[0]!,
+        number: 42,
+        url: 'https://github.com/acme/repo/pull/42',
+      },
+      {
+        ...facts().pull_request_links[0]!,
+        source_event_id: 'event-2',
+        stable_turn_index: 7,
+        number: 43,
+        url: 'https://github.com/acme/repo/pull/43',
+      },
+    ];
+    const original = await assembleQueueFacts(facts({ pull_request_links: links }), 'claude');
+    const continuation = await assembleQueueFacts(
+      facts({
+        tool_events: [],
+        file_events: [],
+        capability_snapshots: [],
+        pull_request_links: links,
+      }),
+      'claude',
+    );
+
+    expect(firstReviewUnitAttribution(continuation.queueFacts)).toEqual(
+      firstReviewUnitAttribution(original.queueFacts),
+    );
+  });
+
   it('rejects a single review link when the repo identity does not match the session remote', async () => {
     const { queueFacts } = await assembleQueueFacts(
       facts({
