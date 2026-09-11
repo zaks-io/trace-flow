@@ -1,6 +1,12 @@
 import { isArchiveCanonicalIdentifier } from '../../packages/types/src/archive.ts';
 
-const AGENT_METHODS = new Set(['beginFactRebuild', 'listRebuildFacts', 'completeFactRebuild']);
+const AGENT_METHODS = new Set([
+  'beginFactRebuild',
+  'listRebuildFacts',
+  'completeFactRebuild',
+  'inspectFactRepairCapacity',
+  'compactFactRepairDuplicates',
+]);
 const ARCHIVE_METHODS = new Set([
   'getStorageBudget',
   'inspectArchivePart',
@@ -13,6 +19,7 @@ const READ_METHODS = new Set([
   'listRebuildFacts',
   'inspectArchivePart',
   'getStorageBudget',
+  'inspectFactRepairCapacity',
 ]);
 const METHODS = new Set([
   'listRecovery',

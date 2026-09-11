@@ -35,6 +35,12 @@ export interface ReconcileRecoveryInput {
   reason: string;
 }
 
+export interface RepairRecoverySize {
+  id: number;
+  payloadBytes: number;
+  outcomeBytes: number;
+}
+
 export interface ReplayDlqInput {
   recoveryId: number;
   reason: string;
@@ -63,6 +69,11 @@ export class TinybirdRecoveryStore {
   constructor(private readonly storage: DurableObjectStorage) {}
 
   initialize(): void {
+    this.initializeSchema();
+    this.recoverInterrupted();
+  }
+
+  initializeSchema(): void {
     this.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS recovery_records (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -121,20 +132,25 @@ export class TinybirdRecoveryStore {
     this.storage.sql.exec(
       'CREATE INDEX IF NOT EXISTS idx_recovery_items_row_target ON recovery_items(row_id, target_key)',
     );
+  }
+
+  recoverInterrupted(): void {
     const interrupted = [
       ...this.storage.sql.exec<{ id: number }>(
         `SELECT id FROM recovery_records WHERE state = 'in_flight'`,
       ),
     ];
-    for (const { id } of interrupted) {
-      this.storage.sql.exec(
-        `UPDATE recovery_records SET state = 'blocked', classification = 'uncertain', outcome = ?
-         WHERE id = ?`,
-        JSON.stringify({ reason: 'worker_restarted_with_in_flight_insert' }),
-        id,
-      );
-      this.storage.sql.exec('DELETE FROM recovery_outcome_chunks WHERE recovery_id = ?', id);
-    }
+    this.storage.transactionSync(() => {
+      for (const { id } of interrupted) {
+        this.storage.sql.exec(
+          `UPDATE recovery_records SET state = 'blocked', classification = 'uncertain', outcome = ?
+           WHERE id = ?`,
+          JSON.stringify({ reason: 'worker_restarted_with_in_flight_insert' }),
+          id,
+        );
+        this.storage.sql.exec('DELETE FROM recovery_outcome_chunks WHERE recovery_id = ?', id);
+      }
+    });
   }
 
   beginInsert(target: string, targetKey: string, payload: string, rowIds: number[]): number {
@@ -212,6 +228,50 @@ export class TinybirdRecoveryStore {
         dedupeKey,
       ),
     );
+  }
+
+  repairByDedupeKey(dedupeKey: string): RecoveryRecord | undefined {
+    const matches = [
+      ...this.storage.sql.exec<{ id: number }>(
+        `SELECT id FROM recovery_records
+         WHERE kind = 'repair' AND dedupe_key = ? ORDER BY id LIMIT 2`,
+        dedupeKey,
+      ),
+    ];
+    if (matches.length > 1) throw new Error('repair recovery dedupe key is not unique');
+    return matches[0] ? this.get(matches[0].id) : undefined;
+  }
+
+  repairSizeByDedupeKey(dedupeKey: string): RepairRecoverySize | undefined {
+    const matches = [
+      ...this.storage.sql.exec<{
+        id: number;
+        payload_bytes: number;
+        outcome_bytes: number;
+      }>(
+        `SELECT id,
+           CASE WHEN EXISTS (
+             SELECT 1 FROM recovery_payload_chunks WHERE recovery_id = recovery_records.id
+           ) THEN (
+             SELECT COALESCE(SUM(length(CAST(data AS BLOB))), 0)
+             FROM recovery_payload_chunks WHERE recovery_id = recovery_records.id
+           ) ELSE length(CAST(payload AS BLOB)) END AS payload_bytes,
+           CASE WHEN EXISTS (
+             SELECT 1 FROM recovery_outcome_chunks WHERE recovery_id = recovery_records.id
+           ) THEN (
+             SELECT COALESCE(SUM(length(CAST(data AS BLOB))), 0)
+             FROM recovery_outcome_chunks WHERE recovery_id = recovery_records.id
+           ) ELSE length(CAST(outcome AS BLOB)) END AS outcome_bytes
+         FROM recovery_records
+         WHERE kind = 'repair' AND dedupe_key = ? ORDER BY id LIMIT 2`,
+        dedupeKey,
+      ),
+    ];
+    if (matches.length > 1) throw new Error('repair recovery dedupe key is not unique');
+    const match = matches[0];
+    return match
+      ? { id: match.id, payloadBytes: match.payload_bytes, outcomeBytes: match.outcome_bytes }
+      : undefined;
   }
 
   preserveDlq(payload: string, outcome: string, dedupeKey: string): RecoveryRecord {

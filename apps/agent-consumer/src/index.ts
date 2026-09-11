@@ -35,6 +35,12 @@ import type {
 } from '@trace-flow/tinybird-client';
 import { requireRecoveryReason } from '@trace-flow/tinybird-client';
 import { normalizeDlqExcerptByteLimits } from './dlq-excerpt-repair';
+import type {
+  CompactFactRepairDuplicatesInput,
+  CompactFactRepairDuplicatesResult,
+  InspectFactRepairCapacityInput,
+  InspectFactRepairCapacityResult,
+} from './fact-repair-capacity';
 
 export { processAgentBatch } from './consumer';
 export { AgentFactBatcher } from './fact-batcher';
@@ -122,6 +128,22 @@ export class TraceRecovery extends WorkerEntrypoint<AgentConsumerEnv> {
 
   reconcileRecovery(shardId: string, input: ReconcileRecoveryInput): Promise<RecoveryRecord> {
     return getAgentBatcher(this.env, shardId).reconcileRecovery(input);
+  }
+
+  inspectFactRepairCapacity(
+    shardId: string,
+    input: InspectFactRepairCapacityInput,
+  ): Promise<InspectFactRepairCapacityResult> {
+    const orgId = normalizeAgentShardId(shardId);
+    return getAgentBatcher(this.env, orgId).inspectFactRepairCapacity(orgId, input);
+  }
+
+  compactFactRepairDuplicates(
+    shardId: string,
+    input: CompactFactRepairDuplicatesInput,
+  ): Promise<CompactFactRepairDuplicatesResult> {
+    const orgId = normalizeAgentShardId(shardId);
+    return getAgentBatcher(this.env, orgId).compactFactRepairDuplicates(orgId, input);
   }
 
   beginFactRebuild(shardId: string, input: BeginFactRebuildInput): Promise<BeginFactRebuildResult> {

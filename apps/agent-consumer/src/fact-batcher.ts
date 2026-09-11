@@ -38,6 +38,13 @@ import {
   type Category,
 } from './facts';
 import { PendingFactStore } from './pending-fact-store';
+import {
+  FactRepairCapacity,
+  type CompactFactRepairDuplicatesInput,
+  type CompactFactRepairDuplicatesResult,
+  type InspectFactRepairCapacityInput,
+  type InspectFactRepairCapacityResult,
+} from './fact-repair-capacity';
 
 const BATCH_SIZE = 10_000;
 const MAX_NDJSON_BYTES = 900_000;
@@ -90,6 +97,9 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   private recovery: TinybirdRecoveryStore;
   private maintenance: AgentFactMaintenance;
   private pendingFacts: PendingFactStore;
+  private repairCapacity: FactRepairCapacity;
+  private startupRecoveryPending = true;
+  private startupBlockedReason: string | null = null;
   private tinybirdTokenFingerprint = '';
   private logger = createLogger({
     service: 'agent-consumer',
@@ -103,15 +113,15 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     this.recovery = new TinybirdRecoveryStore(state.storage);
     this.maintenance = new AgentFactMaintenance(state.storage, this.recovery);
     this.pendingFacts = new PendingFactStore(state.storage, this.maintenance);
+    this.repairCapacity = new FactRepairCapacity(state.storage, this.recovery, () =>
+      this.maintenance.assertUnlocked(),
+    );
     void this.ctx.blockConcurrencyWhile(async () => {
       if (!this.env.TINYBIRD_TOKEN) throw new Error('TINYBIRD_TOKEN is required');
       this.tinybirdTokenFingerprint = await sha256Hex(this.env.TINYBIRD_TOKEN);
       this.initializeSchema();
       this.queuedRows = this.countPendingRows();
-      if (this.queuedRows > 0 && !this.maintenance.isLocked()) {
-        await this.ctx.storage.setAlarm(Date.now() + 1000);
-        this.flushAlarmScheduled = true;
-      }
+      this.startupBlockedReason = await this.retryStartupState();
     });
   }
 
@@ -119,10 +129,17 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     let acceptedRows = 0;
     let duplicateRows = 0;
     let repairRows = 0;
-    const repairs: { payload: string; outcome: string; dedupeKey: string }[] = [];
+    const repairs: {
+      payload: string;
+      outcome: string;
+      dedupeKey: string;
+      compactRepairId?: number;
+      orgId: string;
+    }[] = [];
     const now = Date.now();
 
     try {
+      this.ensureStartupRecovery();
       this.maintenance.assertUnlocked();
       validateWriteTargets(batch);
       this.ctx.storage.transactionSync(() => {
@@ -222,8 +239,8 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
                   ? legacyRepairDedupeKey
                   : repairDedupeKey;
               const priorRepair = [
-                ...this.ctx.storage.sql.exec<{ id: number }>(
-                  `SELECT id FROM fact_repairs
+                ...this.ctx.storage.sql.exec<{ id: number; data: string | null }>(
+                  `SELECT id, data FROM fact_repairs
                    WHERE category = ? AND fact_id = ? AND old_hash = ? AND new_hash = ?
                      AND recovery_dedupe_key = ? LIMIT 1`,
                   category,
@@ -233,7 +250,9 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
                   dedupeKey,
                 ),
               ][0];
+              let compactRepairId = priorRepair?.data ? priorRepair.id : undefined;
               if (!priorRepair && dedupeKey !== legacyRepairDedupeKey) {
+                const storedRepairPayload = inlinePayload(rowData);
                 this.ctx.storage.sql.exec(
                   `INSERT INTO fact_repairs
                    (category, fact_id, old_hash, new_hash, seen_at_ms, data, recovery_dedupe_key)
@@ -243,9 +262,17 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
                   existing.content_hash,
                   contentHash,
                   now,
-                  inlinePayload(rowData),
+                  storedRepairPayload,
                   dedupeKey,
                 );
+                if (storedRepairPayload) {
+                  compactRepairId = this.ctx.storage.sql
+                    .exec<{ id: number }>('SELECT last_insert_rowid() AS id')
+                    .one().id;
+                }
+              }
+              if (!isRecord(row) || typeof row.OrgId !== 'string') {
+                throw new Error('repair fact has no organization');
               }
               repairs.push({
                 payload: rowData,
@@ -257,6 +284,8 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
                   originalPayload: existingPayload,
                 }),
                 dedupeKey,
+                compactRepairId,
+                orgId: row.OrgId,
               });
               continue;
             }
@@ -303,7 +332,28 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
       });
 
       for (const repair of repairs) {
-        this.recovery.preserveRepair(repair.payload, repair.outcome, repair.dedupeKey);
+        const preserved = this.recovery.preserveRepair(
+          repair.payload,
+          repair.outcome,
+          repair.dedupeKey,
+        );
+        if (repair.compactRepairId !== undefined) {
+          try {
+            this.repairCapacity.compactPreservedRepair(
+              repair.compactRepairId,
+              repair.orgId,
+              preserved,
+            );
+          } catch (error) {
+            this.logger.error('agent_fact_batcher.repair_compaction_failed', error, {
+              repairId: repair.compactRepairId,
+            });
+            Sentry.captureException(error, {
+              tags: { operation: 'agent_fact_batcher.repair_compaction' },
+              extra: { repairId: repair.compactRepairId },
+            });
+          }
+        }
       }
 
       this.queuedRows = this.countPendingRows();
@@ -342,6 +392,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   }
 
   async alarm(): Promise<void> {
+    this.ensureStartupRecovery();
     this.flushAlarmScheduled = false;
     if (this.maintenance.isLocked()) return;
     await this.flush();
@@ -425,7 +476,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
       `CREATE INDEX IF NOT EXISTS idx_legacy_pending_facts_identity
        ON legacy_pending_facts(category, fact_id, id)`,
     );
-    this.recovery.initialize();
+    this.recovery.initializeSchema();
     this.maintenance.initialize();
   }
 
@@ -702,6 +753,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   }
 
   getStats(): AgentFactBatcherStats {
+    this.ensureStartupRecovery();
     return {
       queuedRows: this.queuedRows,
       blockedRecoveryRows: this.recovery.countBlockedRows(),
@@ -709,15 +761,36 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     };
   }
 
+  inspectFactRepairCapacity(
+    orgId: string,
+    input: InspectFactRepairCapacityInput,
+  ): Promise<InspectFactRepairCapacityResult> {
+    return this.repairCapacity.inspect(orgId, input, this.startupBlockedReason);
+  }
+
+  async compactFactRepairDuplicates(
+    orgId: string,
+    input: CompactFactRepairDuplicatesInput,
+  ): Promise<CompactFactRepairDuplicatesResult> {
+    this.maintenance.assertUnlocked();
+    const result = await this.repairCapacity.compact(orgId, input);
+    this.startupBlockedReason = await this.retryStartupState();
+    result.startupBlockedReason = this.startupBlockedReason;
+    return result;
+  }
+
   listRecovery(options: RecoveryPageOptions = {}): RecoveryPage {
+    this.ensureStartupRecovery();
     return this.recovery.list(options);
   }
 
   getRecovery(recoveryId: number): RecoveryRecord {
+    this.ensureStartupRecovery();
     return this.recovery.get(recoveryId);
   }
 
   async reconcileRecovery(input: ReconcileRecoveryInput): Promise<RecoveryRecord> {
+    this.ensureStartupRecovery();
     this.maintenance.assertUnlocked();
     if (!['confirm-written', 'confirm-not-written', 'retain-original'].includes(input.action)) {
       throw new Error('invalid recovery action');
@@ -753,10 +826,12 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   }
 
   preserveDlq(payload: string, outcome: string, dedupeKey: string): RecoveryRecord {
+    this.ensureStartupRecovery();
     return this.recovery.preserveDlq(payload, outcome, dedupeKey);
   }
 
   resolveDlq(recoveryId: number, reason: string): RecoveryRecord {
+    this.ensureStartupRecovery();
     this.maintenance.assertUnlocked();
     const record = this.recovery.get(recoveryId);
     if (record.kind !== 'dlq') throw new Error('recovery record is not a DLQ message');
@@ -764,6 +839,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   }
 
   assertFactMaintenanceUnlocked(): void {
+    this.ensureStartupRecovery();
     this.maintenance.assertUnlocked();
   }
 
@@ -771,6 +847,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     orgId: string,
     input: BeginFactRebuildInput,
   ): Promise<BeginFactRebuildResult> {
+    this.ensureStartupRecovery();
     const operation = this.maintenance.begin(orgId, input, {
       tokenFingerprint: this.tinybirdTokenFingerprint,
       host: this.env.TINYBIRD_HOST,
@@ -802,14 +879,44 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   }
 
   listRebuildFacts(input: ListRebuildFactsInput): ListRebuildFactsResult {
+    this.ensureStartupRecovery();
     return this.maintenance.list(input);
   }
 
   async completeFactRebuild(input: CompleteFactRebuildInput): Promise<CompleteFactRebuildResult> {
+    this.ensureStartupRecovery();
     const result = await this.maintenance.complete(input);
     this.queuedRows = this.countPendingRows();
     return result;
   }
+
+  private async retryStartupState(): Promise<string | null> {
+    try {
+      this.ensureStartupRecovery();
+      if (this.queuedRows > 0 && !this.maintenance.isLocked()) {
+        const alarm = await this.ctx.storage.getAlarm();
+        if (!this.maintenance.isLocked() && alarm === null) {
+          await this.ctx.storage.setAlarm(Date.now() + 1000);
+        }
+        this.flushAlarmScheduled = !this.maintenance.isLocked();
+      }
+      return null;
+    } catch (error) {
+      const reason = errorMessage(error);
+      if (!isDatabaseCapacityError(reason)) throw error;
+      return reason;
+    }
+  }
+
+  private ensureStartupRecovery(): void {
+    if (!this.startupRecoveryPending) return;
+    this.recovery.recoverInterrupted();
+    this.startupRecoveryPending = false;
+  }
+}
+
+function isDatabaseCapacityError(reason: string): boolean {
+  return reason.includes('SQLITE_FULL') || reason.includes('Exceeded the maximum database size.');
 }
 
 async function sha256Hex(value: string): Promise<string> {
@@ -917,6 +1024,10 @@ function validateWriteTargets(batch: AgentFactBatch): void {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : `non-Error value: ${String(error)}`;
 }
 
 export const AgentFactBatcher = Sentry.instrumentDurableObjectWithSentry(
