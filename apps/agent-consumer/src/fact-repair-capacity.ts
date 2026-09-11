@@ -274,8 +274,15 @@ export class FactRepairCapacity {
       if (!sameFactRepairRow(this.load(expected.id), expected)) {
         throw new Error('fact repair changed before compaction');
       }
-      const deleted = this.storage.sql.exec('DELETE FROM fact_repairs WHERE id = ?', expected.id);
-      if (deleted.rowsWritten !== 1) throw new Error('fact repair compaction delete failed');
+      const deleted = [
+        ...this.storage.sql.exec<{ id: number }>(
+          'DELETE FROM fact_repairs WHERE id = ? RETURNING id',
+          expected.id,
+        ),
+      ];
+      if (deleted.length !== 1 || deleted[0]?.id !== expected.id) {
+        throw new Error('fact repair compaction delete failed');
+      }
       this.storage.sql.exec(
         `INSERT INTO fact_repairs
          (id, category, fact_id, old_hash, new_hash, seen_at_ms, data, recovery_dedupe_key)
