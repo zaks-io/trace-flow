@@ -20,6 +20,8 @@ export interface FactRepairCapacityIssue {
 export interface InspectFactRepairCapacityResult {
   databaseSizeBytes: number;
   startupBlockedReason: string | null;
+  queuedRows: number;
+  alarmScheduledAtMs: number | null;
   highestRepairId: number | null;
   scannedRows: number;
   scannedDataBytes: number;

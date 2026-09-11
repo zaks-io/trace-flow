@@ -114,7 +114,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     this.maintenance = new AgentFactMaintenance(state.storage, this.recovery);
     this.pendingFacts = new PendingFactStore(state.storage, this.maintenance);
     this.repairCapacity = new FactRepairCapacity(state.storage, this.recovery, () =>
-      this.maintenance.assertUnlocked(),
+      this.assertCapacityCompactionAllowed(),
     );
     void this.ctx.blockConcurrencyWhile(async () => {
       if (!this.env.TINYBIRD_TOKEN) throw new Error('TINYBIRD_TOKEN is required');
@@ -761,20 +761,29 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     };
   }
 
-  inspectFactRepairCapacity(
+  async inspectFactRepairCapacity(
     orgId: string,
     input: InspectFactRepairCapacityInput,
   ): Promise<InspectFactRepairCapacityResult> {
-    return this.repairCapacity.inspect(orgId, input, this.startupBlockedReason);
+    const inspection = await this.repairCapacity.inspect(orgId, input, this.startupBlockedReason);
+    const alarmScheduledAtMs = await this.ctx.storage.getAlarm();
+    return {
+      ...inspection,
+      queuedRows: this.countPendingRows(),
+      alarmScheduledAtMs,
+    };
   }
 
   async compactFactRepairDuplicates(
     orgId: string,
     input: CompactFactRepairDuplicatesInput,
   ): Promise<CompactFactRepairDuplicatesResult> {
-    this.maintenance.assertUnlocked();
+    this.assertCapacityCompactionAllowed();
+    if ((await this.ctx.storage.getAlarm()) !== null) {
+      throw new Error('fact repair compaction requires no scheduled flush alarm');
+    }
+    this.assertCapacityCompactionAllowed();
     const result = await this.repairCapacity.compact(orgId, input);
-    this.startupBlockedReason = await this.retryStartupState();
     result.startupBlockedReason = this.startupBlockedReason;
     return result;
   }
@@ -912,6 +921,14 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     if (!this.startupRecoveryPending) return;
     this.recovery.recoverInterrupted();
     this.startupRecoveryPending = false;
+    this.startupBlockedReason = null;
+  }
+
+  private assertCapacityCompactionAllowed(): void {
+    this.maintenance.assertUnlocked();
+    if (this.flushInProgress || this.flushAlarmScheduled) {
+      throw new Error('fact repair compaction requires a quiescent batcher');
+    }
   }
 }
 

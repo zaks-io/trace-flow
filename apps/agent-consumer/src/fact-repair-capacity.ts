@@ -46,7 +46,7 @@ export class FactRepairCapacity {
     orgId: string,
     input: InspectFactRepairCapacityInput,
     startupBlockedReason: string | null,
-  ): Promise<InspectFactRepairCapacityResult> {
+  ): Promise<Omit<InspectFactRepairCapacityResult, 'queuedRows' | 'alarmScheduledAtMs'>> {
     const { afterRepairId, limit } = validateInspectionInput(input);
     const ids = [
       ...this.storage.sql.exec<{ id: number }>(

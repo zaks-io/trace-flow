@@ -52,6 +52,8 @@ it('keeps read-only capacity inspection available when restart recovery cannot w
   const restarted = env.AGENT_FACT_BATCHER.get(id);
   const inspection = await restarted.inspectFactRepairCapacity('org-1', { limit: 10 });
   expect(inspection.startupBlockedReason).toContain('Exceeded the maximum database size.');
+  expect(inspection.queuedRows).toBe(1);
+  expect(inspection.alarmScheduledAtMs).toBeNull();
   expect(inspection.candidates).toHaveLength(1);
   await runInDurableObject(restarted, async (_instance: AgentFactBatcherInstance, state) => {
     expect(await state.storage.getAlarm()).toBeNull();
@@ -72,13 +74,24 @@ it('keeps read-only capacity inspection available when restart recovery cannot w
       proofSha256,
     })),
   });
-  expect(compacted.startupBlockedReason).toBeNull();
+  expect(compacted.startupBlockedReason).toContain('Exceeded the maximum database size.');
   expect(compacted.compacted).toHaveLength(1);
-  expect(
-    (await restarted.inspectFactRepairCapacity('org-1', { limit: 1 })).startupBlockedReason,
-  ).toBeNull();
   await runInDurableObject(restarted, async (_instance: AgentFactBatcherInstance, state) => {
-    expect(await state.storage.getAlarm()).not.toBeNull();
+    expect(await state.storage.getAlarm()).toBeNull();
+    expect(
+      state.storage.sql
+        .exec<{
+          state: string;
+        }>(`SELECT state FROM recovery_records WHERE kind = 'tinybird_insert'`)
+        .one().state,
+    ).toBe('in_flight');
+  });
+
+  await restarted.getStats();
+  const recoveredInspection = await restarted.inspectFactRepairCapacity('org-1', { limit: 1 });
+  expect(recoveredInspection.startupBlockedReason).toBeNull();
+  expect(recoveredInspection.alarmScheduledAtMs).toBeNull();
+  await runInDurableObject(restarted, async (_instance: AgentFactBatcherInstance, state) => {
     expect(
       state.storage.sql
         .exec<{
@@ -144,6 +157,8 @@ it('inspects exact duplicate repair payloads without mutating recovery or alarms
     }),
   ]);
   expect(result.inspection.databaseSizeBytes).toBeGreaterThan(0);
+  expect(result.inspection.queuedRows).toBe(1);
+  expect(result.inspection.alarmScheduledAtMs).toBeNull();
   expect(result.inspection.highestRepairId).toBeGreaterThanOrEqual(result.seeded.repairId);
   expect(result.inspection.legacyRows).toBe(1);
   expect(result.inspection.issues).toEqual([]);
@@ -291,6 +306,26 @@ it('rechecks the maintenance gate after asynchronous proof generation', async ()
       payload: seeded.payload,
       outcome: seeded.outcome,
     });
+  });
+});
+
+it('refuses compaction while a flush alarm is scheduled', async () => {
+  const batcher = env.AGENT_FACT_BATCHER.get(env.AGENT_FACT_BATCHER.newUniqueId());
+  await runInDurableObject(batcher, async (instance: AgentFactBatcherInstance, state) => {
+    const seeded = seedRepair(state.storage, changed, original);
+    const inspection = await instance.inspectFactRepairCapacity('org-1', { limit: 10 });
+    await state.storage.setAlarm(Date.now() + 60_000);
+
+    await expect(
+      instance.compactFactRepairDuplicates('org-1', {
+        reason: 'scheduled alarm regression',
+        candidates: inspection.candidates.map(({ repairId, proofSha256 }) => ({
+          repairId,
+          proofSha256,
+        })),
+      }),
+    ).rejects.toThrow('fact repair compaction requires no scheduled flush alarm');
+    expect(readRepairData(state.storage, seeded.repairId)).toBe(seeded.payload);
   });
 });
 
