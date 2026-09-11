@@ -153,6 +153,8 @@ jobs:
               - 'tsconfig.json'
             workflows:
               - 'scripts/ci/workflow-permissions.test.mjs'
+              - 'scripts/ci/ubuntu_https_sources.py'
+              - 'scripts/ci/ubuntu_https_sources_test.py'
               - '.github/workflows/**'
             tinybird:
               - 'datasources/**'
@@ -178,8 +180,10 @@ jobs:
         with:
           fetch-depth: 2
       - uses: oven-sh/setup-bun@v2
-      - name: Test workflow permissions
-        run: bun test scripts/ci/workflow-permissions.test.mjs
+      - name: Test workflow helpers
+        run: |
+          bun test scripts/ci/workflow-permissions.test.mjs
+          python3 scripts/ci/ubuntu_https_sources_test.py
       - uses: devops-actions/actionlint@v0.1.12
 
   # Tinybird's recommended CI pattern (docs: forward/test-and-deploy/deployments/cicd): build + fixture
@@ -848,6 +852,7 @@ jobs:
       - name: Install Linux system dependencies
         if: matrix.name == 'linux'
         run: |
+          sudo "$(command -v python3)" scripts/ci/ubuntu_https_sources.py
           sudo apt-get update
           sudo apt-get install -y \
             libdbus-1-dev libssl-dev pkg-config \
