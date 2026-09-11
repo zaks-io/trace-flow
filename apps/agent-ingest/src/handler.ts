@@ -1,7 +1,8 @@
 import type { Context } from 'hono';
 import { axiomConfigFromEnv, createWorkerLogger } from '@trace-flow/logging';
 import { currentSentryTraceContext } from '@trace-flow/utils/sentry-tracing';
-import { BodySizeLimitError, readBodyWithLimit } from '@trace-flow/utils';
+import { BodySizeLimitError, readBodyWithLimit, utf8ByteLength } from '@trace-flow/utils';
+import { validateAgentIngestQueueMessage } from '@trace-flow/types';
 import type {
   AgentIngestEnvelope,
   AgentIngestQueueFacts,
@@ -201,6 +202,14 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
       throw err;
     }
 
+    const queueContractError = validateAgentIngestQueueMessage({ ...base, facts: queueFacts });
+    if (queueContractError) {
+      logger.error('agent_ingest.queue_contract_invalid', undefined, {
+        field: queueContractError,
+      });
+      return c.json({ error: 'internal_error' }, 500);
+    }
+
     let claims;
     try {
       claims = await claimSessions(
@@ -339,14 +348,14 @@ function reRedact(facts: AgentIngestEnvelope['facts']): void {
     t.error_excerpt = capExcerpt(errExcerpt.value, MAX_ERROR_EXCERPT);
     let remaining = Math.max(
       0,
-      MAX_TOOL_EXCERPT_TOTAL - t.command_excerpt.length - t.error_excerpt.length,
+      MAX_TOOL_EXCERPT_TOTAL - utf8ByteLength(t.command_excerpt) - utf8ByteLength(t.error_excerpt),
     );
     const navigationPath = redactField(t.navigation_path_hint ?? '');
     t.navigation_path_hint = capExcerpt(
       navigationPath.value,
       Math.min(MAX_NAVIGATION_HINT_EXCERPT, remaining),
     );
-    remaining = Math.max(0, remaining - t.navigation_path_hint.length);
+    remaining = Math.max(0, remaining - utf8ByteLength(t.navigation_path_hint));
     const navigationPattern = redactField(t.navigation_pattern_hint ?? '');
     t.navigation_pattern_hint = capExcerpt(
       navigationPattern.value,

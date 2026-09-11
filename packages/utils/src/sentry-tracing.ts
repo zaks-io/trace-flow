@@ -28,7 +28,10 @@ export const TRACE_FLOW_PROPAGATION_TARGETS: (string | RegExp)[] = [
 /** Trace headers of the currently active trace, for a producer to attach to a queue message. */
 export function currentSentryTraceContext(): SentryTraceContext {
   const traceData = Sentry.getTraceData();
-  return { 'sentry-trace': traceData['sentry-trace'], baggage: traceData.baggage };
+  return {
+    ...(traceData['sentry-trace'] ? { 'sentry-trace': traceData['sentry-trace'] } : {}),
+    ...(traceData.baggage ? { baggage: traceData.baggage } : {}),
+  };
 }
 
 interface TracedGroup<T> {

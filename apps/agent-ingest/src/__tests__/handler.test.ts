@@ -6,7 +6,7 @@ import type {
   AgentMessageFact,
   AgentToolEventFact,
 } from '@trace-flow/types';
-import { AGENT_INGEST_LIMITS } from '@trace-flow/types';
+import { AGENT_INGEST_LIMITS, validateAgentIngestQueueMessage } from '@trace-flow/types';
 import { app } from '../index';
 import { __resetPolicyCache, type CompatibilityPolicy } from '../policy';
 import type { AgentIngestEnv } from '../context';
@@ -714,5 +714,72 @@ describe('POST /v1/ingest', () => {
     expect(withRoom!.navigation_pattern_hint).toHaveLength(256);
     expect(noRoom!.navigation_path_hint).toBe('');
     expect(noRoom!.navigation_pattern_hint).toBe('');
+  });
+
+  it('caps expanded redactions and the shared excerpt budget by UTF-8 bytes', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    interceptClaim({ claim: 'claimed' });
+    const bounded = envelope({
+      facts: facts({
+        tool_events: [
+          toolEventFact({
+            command_excerpt: 'é'.repeat(512),
+            error_excerpt: `😀${'a@b.co '.repeat(584)}`,
+            navigation_path_hint: '😀path',
+            navigation_pattern_hint: '😀pattern',
+          }),
+        ],
+        file_events: [],
+        capability_snapshots: [],
+        pull_request_links: [],
+      }),
+    });
+
+    const res = await post(env, JSON.stringify(bounded), authHeaders);
+    expect(res.status).toBe(202);
+
+    const sentGroup = queueSend.mock.calls[0]![0] as { body: AgentIngestQueueMessage }[];
+    const message = sentGroup[0]!.body;
+    const tool = message.facts.tool_events[0]!;
+    const bytes = (value: string): number => new TextEncoder().encode(value).byteLength;
+    expect(bytes(tool.command_excerpt)).toBe(AGENT_INGEST_LIMITS.maxCommandExcerptBytes);
+    expect(bytes(tool.error_excerpt)).toBeLessThanOrEqual(AGENT_INGEST_LIMITS.maxErrorExcerptBytes);
+    expect(
+      bytes(tool.command_excerpt) +
+        bytes(tool.error_excerpt) +
+        bytes(tool.navigation_path_hint ?? '') +
+        bytes(tool.navigation_pattern_hint ?? ''),
+    ).toBeLessThanOrEqual(AGENT_INGEST_LIMITS.maxToolExcerptBytes);
+    expect(tool.error_excerpt).not.toContain('a@b.co');
+    expect(tool.error_excerpt).not.toContain('�');
+    expect(validateAgentIngestQueueMessage(message)).toBeNull();
+  });
+
+  it('rejects a generated queue contract violation before claiming ownership', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    const claim = vi.fn(() => new Response('{}', { status: 200 }));
+    claimResponder = claim;
+    const overflow = envelope({
+      facts: facts({
+        tool_events: [
+          toolEventFact({
+            error_excerpt: 'a@b.co',
+            dropped_sensitive: 0xffff_ffff,
+          }),
+        ],
+        file_events: [],
+        capability_snapshots: [],
+        pull_request_links: [],
+      }),
+    });
+
+    const res = await post(env, JSON.stringify(overflow), authHeaders);
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'internal_error' });
+    expect(claim).not.toHaveBeenCalled();
+    expect(queueSend).not.toHaveBeenCalled();
   });
 });

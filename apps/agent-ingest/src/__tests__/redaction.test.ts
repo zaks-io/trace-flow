@@ -58,10 +58,10 @@ describe('capExcerpt', () => {
     expect(capExcerpt('short', MAX_COMMAND_EXCERPT)).toBe('short');
   });
 
-  it('never splits a surrogate pair at the cap boundary', () => {
-    const out = capExcerpt('😀'.repeat(10), 5); // each emoji is 2 UTF-16 code units
-    expect([...out]).toHaveLength(5);
-    expect(out).toBe('😀'.repeat(5));
+  it('caps UTF-8 bytes without splitting a code point', () => {
+    const out = capExcerpt('😀'.repeat(10), 9);
+    expect(new TextEncoder().encode(out)).toHaveLength(8);
+    expect(out).toBe('😀'.repeat(2));
     expect(out).not.toContain('�');
   });
 });
