@@ -90,7 +90,7 @@ it('keeps read-only capacity inspection available when restart recovery cannot w
   await restarted.getStats();
   const recoveredInspection = await restarted.inspectFactRepairCapacity('org-1', { limit: 1 });
   expect(recoveredInspection.startupBlockedReason).toBeNull();
-  expect(recoveredInspection.alarmScheduledAtMs).toBeNull();
+  expect(recoveredInspection.alarmScheduledAtMs).not.toBeNull();
   await runInDurableObject(restarted, async (_instance: AgentFactBatcherInstance, state) => {
     expect(
       state.storage.sql

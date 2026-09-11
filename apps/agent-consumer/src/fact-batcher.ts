@@ -901,7 +901,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
 
   private async retryStartupState(): Promise<string | null> {
     try {
-      this.ensureStartupRecovery();
+      this.ensureStartupRecovery(false);
       if (this.queuedRows > 0 && !this.maintenance.isLocked()) {
         const alarm = await this.ctx.storage.getAlarm();
         if (!this.maintenance.isLocked() && alarm === null) {
@@ -917,11 +917,19 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     }
   }
 
-  private ensureStartupRecovery(): void {
+  private ensureStartupRecovery(schedulePendingFlush = true): void {
     if (!this.startupRecoveryPending) return;
     this.recovery.recoverInterrupted();
     this.startupRecoveryPending = false;
     this.startupBlockedReason = null;
+    if (!schedulePendingFlush || this.queuedRows === 0 || this.maintenance.isLocked()) return;
+    this.flushAlarmScheduled = true;
+    this.ctx.waitUntil(
+      this.scheduleFlush(1000).catch((error) => {
+        this.flushAlarmScheduled = false;
+        throw error;
+      }),
+    );
   }
 
   private assertCapacityCompactionAllowed(): void {
