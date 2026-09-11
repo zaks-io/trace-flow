@@ -67,6 +67,53 @@ it('keeps read-only capacity inspection available when restart recovery cannot w
     state.storage.sql.exec('DROP TRIGGER fail_restart_recovery');
   });
 
+  const expectedAlarmScheduledAtMs = Date.now() + 60_000;
+  const rowsBefore = await runInDurableObject(
+    restarted,
+    async (_instance: AgentFactBatcherInstance, state) => {
+      await state.storage.setAlarm(expectedAlarmScheduledAtMs);
+      return readCapacityRows(state.storage);
+    },
+  );
+  await runInDurableObject(restarted, async (instance: AgentFactBatcherInstance) => {
+    await expect(
+      instance.quiesceFactRepairCapacity({
+        expectedAlarmScheduledAtMs,
+        reason: '',
+      }),
+    ).rejects.toThrow('recovery reason is required');
+    await expect(
+      instance.quiesceFactRepairCapacity({
+        expectedAlarmScheduledAtMs: expectedAlarmScheduledAtMs + 1,
+        reason: 'clear the exact reviewed capacity alarm',
+      }),
+    ).rejects.toThrow('scheduled repair alarm does not match');
+  });
+  const quiesced = await restarted.quiesceFactRepairCapacity({
+    expectedAlarmScheduledAtMs,
+    reason: 'clear the exact reviewed capacity alarm',
+  });
+  expect(quiesced).toEqual(
+    expect.objectContaining({
+      alarmScheduledAtMs: null,
+      clearedAlarmScheduledAtMs: expectedAlarmScheduledAtMs,
+      queuedRows: 1,
+    }),
+  );
+  const afterQuiescence = await restarted.inspectFactRepairCapacity('org-1', { limit: 10 });
+  expect(afterQuiescence.startupBlockedReason).toContain('Exceeded the maximum database size.');
+  expect(afterQuiescence.alarmScheduledAtMs).toBeNull();
+  await runInDurableObject(restarted, async (_instance: AgentFactBatcherInstance, state) => {
+    expect(readCapacityRows(state.storage)).toEqual(rowsBefore);
+    expect(
+      state.storage.sql
+        .exec<{
+          state: string;
+        }>(`SELECT state FROM recovery_records WHERE kind = 'tinybird_insert'`)
+        .one().state,
+    ).toBe('in_flight');
+  });
+
   const compacted = await restarted.compactFactRepairDuplicates('org-1', {
     reason: 'free capacity after exact duplicate verification',
     candidates: inspection.candidates.map(({ repairId, proofSha256 }) => ({
@@ -125,6 +172,115 @@ it('keeps read-only capacity inspection available when restart recovery cannot w
         }>(`SELECT state FROM recovery_records WHERE target = 'active-target'`)
         .one().state,
     ).toBe('in_flight');
+  });
+});
+
+it('checks active flushes around alarm removal and preserves restart compaction fences', async () => {
+  const id = env.AGENT_FACT_BATCHER.newUniqueId();
+  const batcher = env.AGENT_FACT_BATCHER.get(id);
+  const expectedAlarmScheduledAtMs = Date.now() + 60_000;
+  const inspection = await runInDurableObject(
+    batcher,
+    async (instance: AgentFactBatcherInstance, state) => {
+      seedRepair(state.storage, changed, original);
+      state.storage.sql.exec(
+        `INSERT INTO pending_facts
+         (category, data, created_at_ms, sent_at_ms, fact_id, content_hash)
+         VALUES ('messages', '{}', 0, NULL, 'pending-id', 'pending-hash')`,
+      );
+      await state.storage.setAlarm(expectedAlarmScheduledAtMs);
+      const batcherState = instance as unknown as { flushInProgress: boolean };
+      batcherState.flushInProgress = true;
+      await expect(
+        instance.quiesceFactRepairCapacity({
+          expectedAlarmScheduledAtMs,
+          reason: 'reject an active capacity flush',
+        }),
+      ).rejects.toThrow('fact repair quiescence requires no active flush');
+      batcherState.flushInProgress = false;
+      const getAlarm = vi.spyOn(state.storage, 'getAlarm').mockImplementationOnce(async () => {
+        batcherState.flushInProgress = true;
+        return expectedAlarmScheduledAtMs;
+      });
+      try {
+        await expect(
+          instance.quiesceFactRepairCapacity({
+            expectedAlarmScheduledAtMs,
+            reason: 'reject a capacity flush that starts before removal',
+          }),
+        ).rejects.toThrow('fact repair flush started before alarm removal');
+      } finally {
+        getAlarm.mockRestore();
+        batcherState.flushInProgress = false;
+      }
+      const maintenance = (instance as unknown as { maintenance: { assertUnlocked(): void } })
+        .maintenance;
+      const lockBeforeDelete = vi
+        .spyOn(maintenance, 'assertUnlocked')
+        .mockImplementationOnce(() => {})
+        .mockImplementationOnce(() => {
+          throw new Error('fact maintenance is locked');
+        });
+      await expect(
+        instance.quiesceFactRepairCapacity({
+          expectedAlarmScheduledAtMs,
+          reason: 'detect a rebuild lock before alarm removal',
+        }),
+      ).rejects.toThrow('fact maintenance is locked');
+      lockBeforeDelete.mockRestore();
+      const deleteAlarm = vi
+        .spyOn(state.storage, 'deleteAlarm')
+        .mockImplementationOnce(async () => {
+          deleteAlarm.mockRestore();
+          await state.storage.deleteAlarm();
+          batcherState.flushInProgress = true;
+        });
+      await expect(
+        instance.quiesceFactRepairCapacity({
+          expectedAlarmScheduledAtMs,
+          reason: 'detect a capacity flush after alarm removal',
+        }),
+      ).rejects.toThrow('fact repair batcher did not become quiescent');
+      batcherState.flushInProgress = false;
+      await state.storage.setAlarm(expectedAlarmScheduledAtMs);
+      const lockAfterDelete = vi
+        .spyOn(maintenance, 'assertUnlocked')
+        .mockImplementationOnce(() => {})
+        .mockImplementationOnce(() => {})
+        .mockImplementationOnce(() => {
+          throw new Error('fact maintenance is locked');
+        });
+      await expect(
+        instance.quiesceFactRepairCapacity({
+          expectedAlarmScheduledAtMs,
+          reason: 'detect a rebuild lock after alarm removal',
+        }),
+      ).rejects.toThrow('fact maintenance is locked');
+      lockAfterDelete.mockRestore();
+      await state.storage.setAlarm(expectedAlarmScheduledAtMs);
+      const proof = await instance.inspectFactRepairCapacity('org-1', { limit: 1 });
+      await instance.quiesceFactRepairCapacity({
+        expectedAlarmScheduledAtMs,
+        reason: 'clear the exact reviewed capacity alarm',
+      });
+      return proof;
+    },
+  );
+  await evictDurableObject(batcher);
+
+  const restarted = env.AGENT_FACT_BATCHER.get(id);
+  const restartedInspection = await restarted.inspectFactRepairCapacity('org-1', { limit: 1 });
+  expect(restartedInspection.alarmScheduledAtMs).not.toBeNull();
+  await runInDurableObject(restarted, async (instance: AgentFactBatcherInstance) => {
+    await expect(
+      instance.compactFactRepairDuplicates('org-1', {
+        reason: 'must remain blocked after restart reschedules pending work',
+        candidates: inspection.candidates.map(({ repairId, proofSha256 }) => ({
+          repairId,
+          proofSha256,
+        })),
+      }),
+    ).rejects.toThrow('fact repair compaction requires a quiescent batcher');
   });
 });
 
@@ -606,6 +762,32 @@ function readRepairMetadata(storage: DurableObjectStorage, repairId: number) {
 
 function readRecovery(storage: DurableObjectStorage, recoveryId: number) {
   return new TinybirdRecoveryStore(storage).get(recoveryId);
+}
+
+function readCapacityRows(storage: DurableObjectStorage) {
+  return {
+    repairs: [
+      ...storage.sql.exec(
+        `SELECT id, category, fact_id, old_hash, new_hash, seen_at_ms, data,
+                recovery_dedupe_key
+         FROM fact_repairs ORDER BY id`,
+      ),
+    ],
+    pending: [
+      ...storage.sql.exec(
+        `SELECT id, category, data, created_at_ms, sent_at_ms, fact_id, content_hash
+         FROM pending_facts ORDER BY id`,
+      ),
+    ],
+    recovery: [
+      ...storage.sql.exec(
+        `SELECT id, kind, state, classification, target, target_key, dedupe_key,
+                payload, outcome, created_at_ms, resolved_at_ms, resolution,
+                resolution_reason
+         FROM recovery_records ORDER BY id`,
+      ),
+    ],
+  };
 }
 
 function emptyRows(message: typeof original) {

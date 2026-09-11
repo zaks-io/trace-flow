@@ -40,6 +40,8 @@ import type {
   CompactFactRepairDuplicatesResult,
   InspectFactRepairCapacityInput,
   InspectFactRepairCapacityResult,
+  QuiesceFactRepairCapacityInput,
+  QuiesceFactRepairCapacityResult,
 } from './fact-repair-capacity';
 
 export { processAgentBatch } from './consumer';
@@ -144,6 +146,14 @@ export class TraceRecovery extends WorkerEntrypoint<AgentConsumerEnv> {
   ): Promise<CompactFactRepairDuplicatesResult> {
     const orgId = normalizeAgentShardId(shardId);
     return getAgentBatcher(this.env, orgId).compactFactRepairDuplicates(orgId, input);
+  }
+
+  quiesceFactRepairCapacity(
+    shardId: string,
+    input: QuiesceFactRepairCapacityInput,
+  ): Promise<QuiesceFactRepairCapacityResult> {
+    const orgId = normalizeAgentShardId(shardId);
+    return getAgentBatcher(this.env, orgId).quiesceFactRepairCapacity(input);
   }
 
   beginFactRebuild(shardId: string, input: BeginFactRebuildInput): Promise<BeginFactRebuildResult> {

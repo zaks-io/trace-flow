@@ -134,12 +134,20 @@ test('fact repair inspection is agent-only and compaction requires mutation conf
         calls.push(['compact', shardId, options]);
         return { compacted: [] };
       },
+      quiesceFactRepairCapacity: async (shardId, options) => {
+        calls.push(['quiesce', shardId, options]);
+        return { alarmScheduledAtMs: null };
+      },
     },
   };
   const body = {
     pipeline: 'agent',
     shardId: 'org-1',
     options: { candidates: [{ repairId: 1, proofSha256: 'a'.repeat(64) }] },
+  };
+  const quiescenceBody = {
+    ...body,
+    options: { expectedAlarmScheduledAtMs: 123, reason: 'clear the exact reviewed alarm' },
   };
   assert.equal((await worker.fetch(request('inspectFactRepairCapacity', body), env)).status, 200);
   assert.equal(
@@ -149,6 +157,23 @@ test('fact repair inspection is agent-only and compaction requires mutation conf
   );
   assert.equal((await worker.fetch(request('compactFactRepairDuplicates', body), env)).status, 400);
   assert.equal(
+    (await worker.fetch(request('quiesceFactRepairCapacity', quiescenceBody), env)).status,
+    400,
+  );
+  assert.equal(
+    (
+      await worker.fetch(
+        request('quiesceFactRepairCapacity', {
+          ...quiescenceBody,
+          pipeline: 'proxy',
+          confirm: 'apply-recovery',
+        }),
+        env,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
     (
       await worker.fetch(
         request('compactFactRepairDuplicates', { ...body, confirm: 'apply-recovery' }),
@@ -157,9 +182,22 @@ test('fact repair inspection is agent-only and compaction requires mutation conf
     ).status,
     200,
   );
+  assert.equal(
+    (
+      await worker.fetch(
+        request('quiesceFactRepairCapacity', {
+          ...quiescenceBody,
+          confirm: 'apply-recovery',
+        }),
+        env,
+      )
+    ).status,
+    200,
+  );
   assert.deepEqual(calls, [
     ['inspect', 'org-1', body.options],
     ['compact', 'org-1', body.options],
+    ['quiesce', 'org-1', quiescenceBody.options],
   ]);
 });
 

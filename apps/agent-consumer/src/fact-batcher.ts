@@ -38,15 +38,18 @@ import {
   stableHash,
   type Category,
 } from './facts';
-import { PendingFactStore } from './pending-fact-store';
+import { normalizePendingFact, PendingFactStore } from './pending-fact-store';
 import {
   FactRepairCapacity,
   isDatabaseCapacityError,
+  validateQuiescenceInput,
   type CompactFactRepairDuplicatesInput,
   type CompactFactRepairDuplicatesResult,
   type InspectFactRepairCapacityInput,
   type InspectFactRepairCapacityResult,
+  type QuiesceFactRepairCapacityInput,
 } from './fact-repair-capacity';
+import { errorMessage } from './fact-repair-proof';
 
 const BATCH_SIZE = 10_000;
 const MAX_NDJSON_BYTES = 900_000;
@@ -82,15 +85,8 @@ export interface AgentFactBatcherStats {
   blockedRecoveryRecords: number;
 }
 
-interface StoredFactRow {
-  [key: string]: string | number;
-  id: number;
-  data: string;
-}
-
-interface StoredFactCandidate extends StoredFactRow {
-  candidate_count: number;
-}
+type StoredFactRow = Record<string, string | number> & { id: number; data: string };
+type StoredFactCandidate = StoredFactRow & { candidate_count: number };
 
 class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   private queuedRows = 0;
@@ -791,6 +787,30 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     return result;
   }
 
+  async quiesceFactRepairCapacity(input: QuiesceFactRepairCapacityInput) {
+    const expectedAlarm = validateQuiescenceInput(input);
+    this.maintenance.assertUnlocked();
+    if (this.flushInProgress) throw new Error('fact repair quiescence requires no active flush');
+    if (!this.countPendingRows()) throw new Error('repair quiescence requires pending facts');
+    const currentAlarm = await this.ctx.storage.getAlarm();
+    this.maintenance.assertUnlocked();
+    if (this.flushInProgress) throw new Error('fact repair flush started before alarm removal');
+    if (currentAlarm !== expectedAlarm) throw new Error('scheduled repair alarm does not match');
+    await this.ctx.storage.deleteAlarm();
+    this.flushAlarmScheduled = false;
+    const alarmScheduledAtMs = await this.ctx.storage.getAlarm();
+    this.maintenance.assertUnlocked();
+    if (this.flushInProgress || alarmScheduledAtMs !== null) {
+      throw new Error('fact repair batcher did not become quiescent');
+    }
+    return {
+      clearedAlarmScheduledAtMs: currentAlarm,
+      alarmScheduledAtMs,
+      databaseSizeBytes: this.ctx.storage.sql.databaseSize,
+      queuedRows: this.countPendingRows(),
+    };
+  }
+
   listRecovery(options: RecoveryPageOptions = {}): RecoveryPage {
     this.ensureStartupRecovery();
     return this.recovery.list(options);
@@ -1016,22 +1036,6 @@ function parseFactTargetKey(value: string): {
   return { table, category: category as Category };
 }
 
-function normalizePendingFact(category: Category, row: unknown): unknown {
-  if (category !== 'tool_events' || !isRecord(row)) return row;
-
-  return {
-    ...row,
-    error_category: row.error_category ?? 'unknown',
-    error_category_coverage:
-      row.error_category_coverage ?? (row.status === 'failure' ? 'unknown' : 'not_applicable'),
-    is_navigation: row.is_navigation ?? 0,
-    navigation_kind: row.navigation_kind ?? 'none',
-    navigation_hint_coverage: row.navigation_hint_coverage ?? 'unknown',
-    navigation_path_hint: row.navigation_path_hint ?? '',
-    navigation_pattern_hint: row.navigation_pattern_hint ?? '',
-  };
-}
-
 function validateWriteTargets(batch: AgentFactBatch): void {
   const writesClean = batch.writeClean !== false;
   const writesLegacy = batch.writeLegacy === true;
@@ -1044,13 +1048,9 @@ function validateWriteTargets(batch: AgentFactBatch): void {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : `non-Error value: ${String(error)}`;
-}
+// Prettier would expand this guard and push the Durable Object past the enforced line budget.
+// prettier-ignore
+function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null; }
 
 export const AgentFactBatcher = Sentry.instrumentDurableObjectWithSentry(
   (env: AgentConsumerEnv) => ({

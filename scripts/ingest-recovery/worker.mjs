@@ -6,6 +6,7 @@ const AGENT_METHODS = new Set([
   'completeFactRebuild',
   'inspectFactRepairCapacity',
   'compactFactRepairDuplicates',
+  'quiesceFactRepairCapacity',
 ]);
 const ARCHIVE_METHODS = new Set([
   'getStorageBudget',
