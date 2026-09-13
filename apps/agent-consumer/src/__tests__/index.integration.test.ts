@@ -2,7 +2,9 @@ import { captureException } from '@sentry/cloudflare';
 import { env } from 'cloudflare:test';
 import type * as SentryCloudflare from '@sentry/cloudflare';
 import { describe, expect, it, vi } from 'vitest';
+import type { AgentConsumerEnv } from '../context';
 import worker from '../index';
+import { queueMessage } from './factories';
 
 vi.mock('@sentry/cloudflare', async (importOriginal) => ({
   ...(await importOriginal<typeof SentryCloudflare>()),
@@ -42,6 +44,59 @@ describe('agent consumer DLQ', () => {
       classification: 'dead_letter',
     });
     expect(JSON.parse(recovery.records[0]?.payload ?? '{}')).toMatchObject({ body: message.body });
+  });
+
+  it('preserves valid messages in the shared recovery sink when the organization sink is full', async () => {
+    const messageId = `dead-letter-${crypto.randomUUID()}`;
+    const body = queueMessage();
+    const sharedSink = env.AGENT_FACT_BATCHER.getByName('org:__dlq__');
+    let durablyPreserved = false;
+    const preserveDlq = vi.fn(async (payload: string, outcome: string, dedupeKey: string) => {
+      const record = await sharedSink.preserveDlq(payload, outcome, dedupeKey);
+      durablyPreserved = true;
+      return record;
+    });
+    const getByName = vi.fn((name: string) => {
+      if (name !== 'org:__dlq__') {
+        throw new Error('Exceeded the maximum database size.');
+      }
+      return { preserveDlq };
+    });
+    const ack = vi.fn(() => expect(durablyPreserved).toBe(true));
+    const message = {
+      id: messageId,
+      timestamp: new Date(),
+      body,
+      attempts: 6,
+      ack,
+      retry: vi.fn(),
+    };
+    const batch = {
+      queue: 'agent-ingest-dlq-dev',
+      messages: [message],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
+      retryAll: vi.fn(),
+      ackAll: vi.fn(),
+    } as unknown as MessageBatch<unknown>;
+    const isolatedEnv = {
+      ...env,
+      AGENT_FACT_BATCHER: { getByName },
+    } as unknown as AgentConsumerEnv;
+
+    await worker.queue(batch, isolatedEnv);
+    durablyPreserved = false;
+    await worker.queue(batch, isolatedEnv);
+
+    expect(getByName).toHaveBeenCalledTimes(2);
+    expect(getByName).toHaveBeenNthCalledWith(1, 'org:__dlq__');
+    expect(getByName).toHaveBeenNthCalledWith(2, 'org:__dlq__');
+    expect(preserveDlq).toHaveBeenCalledTimes(2);
+    expect(ack).toHaveBeenCalledTimes(2);
+    expect(message.retry).not.toHaveBeenCalled();
+    const recovery = await sharedSink.listRecovery();
+    const records = recovery.records.filter((record) => record.payload.includes(messageId));
+    expect(records).toHaveLength(1);
+    expect(records[0]?.payload).toBe(JSON.stringify({ queue: batch.queue, messageId, body }));
   });
 });
 

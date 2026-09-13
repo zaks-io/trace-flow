@@ -96,8 +96,11 @@ Create a local JSON request file:
 }
 ```
 
-Proxy shard IDs are decimal shard numbers. For `"pipeline": "agent"`, `shardId` is
-the Organization ID; malformed agent DLQ messages are retained under `"__dlq__"`.
+Proxy shard IDs are decimal shard numbers. For `"pipeline": "agent"`, use the
+Organization ID for non-DLQ recovery. New agent DLQ messages are retained under
+`"__dlq__"` so their preservation remains independent of Organization fact-batcher
+capacity. Agent DLQ records written before this routing change may remain under their
+Organization ID; the same list and replay operations remain supported there.
 Fetch records into a protected local file, not logs or chat:
 
 ```sh

@@ -15,7 +15,7 @@ import * as Sentry from '@sentry/cloudflare';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { sha256Hex } from '@trace-flow/utils';
 import type { AgentConsumerEnv } from './context';
-import { isQueueMessage, processAgentBatch, processAgentRecoveryPayload } from './consumer';
+import { processAgentBatch, processAgentRecoveryPayload } from './consumer';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { AgentFactBatcherInstance } from './fact-batcher';
 import type {
@@ -83,7 +83,8 @@ async function preserveDeadLetterBatch(
 ): Promise<void> {
   for (const message of batch.messages) {
     try {
-      const shardId = isQueueMessage(message.body) ? message.body.tenancy.org_id : '__dlq__';
+      // Keep dead letters independent of an organization batcher that may be full or unavailable.
+      const shardId = '__dlq__';
       await getAgentBatcher(env, shardId).preserveDlq(
         JSON.stringify({ queue: batch.queue, messageId: message.id, body: message.body }),
         JSON.stringify({ reason: 'dead_letter_queue_delivery' }),
