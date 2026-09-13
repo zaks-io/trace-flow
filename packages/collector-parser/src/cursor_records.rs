@@ -82,8 +82,11 @@ pub struct ToolBlock<'a> {
     pub tool_call_id: Option<&'a str>,
     /// `toolFormerData.status`: `completed` / `error` / `cancelled` / `loading` / `""`.
     pub status: &'a str,
-    /// The absolute file path a file tool targeted (`params.targetFile` or `.effectiveUri`), or `None`.
+    /// The absolute or repo-relative file path a file tool targeted (`params.targetFile`,
+    /// `.effectiveUri`, or `.relativeWorkspacePath`), or `None`.
     pub target_file: Option<String>,
+    /// Whether `target_file` came from the newer `params.relativeWorkspacePath` fallback.
+    pub target_file_is_relative_workspace_path: bool,
     /// The shell command a terminal tool ran (`params.command`), or `None`.
     pub command: Option<String>,
     /// The tool's raw result text, when present — diagnostic output for a failed call.
@@ -105,11 +108,22 @@ pub fn tool_block(record: &Value) -> Option<ToolBlock<'_>> {
         return None;
     }
     let params = parse_params(tool);
-    let target_file = params
+    let canonical_target_file = params
         .get("targetFile")
         .or_else(|| params.get("effectiveUri"))
         .and_then(Value::as_str)
         .map(str::to_string);
+    let target_file_is_relative_workspace_path = canonical_target_file.is_none()
+        && params
+            .get("relativeWorkspacePath")
+            .and_then(Value::as_str)
+            .is_some();
+    let target_file = canonical_target_file.or_else(|| {
+        params
+            .get("relativeWorkspacePath")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    });
     let command = params
         .get("command")
         .and_then(Value::as_str)
@@ -122,6 +136,7 @@ pub fn tool_block(record: &Value) -> Option<ToolBlock<'_>> {
             .and_then(Value::as_str)
             .unwrap_or_default(),
         target_file,
+        target_file_is_relative_workspace_path,
         command,
         result: tool.get("result").and_then(Value::as_str),
     })
@@ -226,6 +241,48 @@ pub(crate) mod tests {
         assert_eq!(block.tool_call_id, Some("call-7"));
         assert_eq!(block.status, "completed");
         assert_eq!(block.target_file.as_deref(), Some("/work/repo/src/a.rs"));
+    }
+
+    #[test]
+    fn tool_block_reads_relative_workspace_path_after_canonical_fields() {
+        let relative = bubble(
+            "c",
+            "m",
+            2,
+            json!({ "toolFormerData": {
+                "name": "edit_file_v2",
+                "params": "{\"relativeWorkspacePath\":\"src/a.rs\"}",
+            } }),
+        );
+        let block = tool_block(&relative).unwrap();
+        assert_eq!(block.target_file.as_deref(), Some("src/a.rs"));
+        assert!(block.target_file_is_relative_workspace_path);
+
+        let canonical = bubble(
+            "c",
+            "m",
+            2,
+            json!({ "toolFormerData": {
+                "name": "edit_file_v2",
+                "params": "{\"targetFile\":\"/work/repo/src/a.rs\",\"relativeWorkspacePath\":\"wrong.rs\"}",
+            } }),
+        );
+        let block = tool_block(&canonical).unwrap();
+        assert_eq!(block.target_file.as_deref(), Some("/work/repo/src/a.rs"));
+        assert!(!block.target_file_is_relative_workspace_path);
+
+        let effective = bubble(
+            "c",
+            "m",
+            2,
+            json!({ "toolFormerData": {
+                "name": "edit_file_v2",
+                "params": "{\"effectiveUri\":\"/work/repo/src/b.rs\",\"relativeWorkspacePath\":\"wrong.rs\"}",
+            } }),
+        );
+        let block = tool_block(&effective).unwrap();
+        assert_eq!(block.target_file.as_deref(), Some("/work/repo/src/b.rs"));
+        assert!(!block.target_file_is_relative_workspace_path);
     }
 
     #[test]

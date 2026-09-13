@@ -33,7 +33,7 @@ use collector_contracts::facts::{
     AgentToolEventFact,
 };
 use collector_contracts::AgentSource;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
 
 // WAL + `synchronous=NORMAL` is the standard durable-desktop pairing: readers never block the
@@ -55,16 +55,17 @@ CREATE TABLE IF NOT EXISTS file_cursors (
 ) WITHOUT ROWID;
 -- The SQLite-source (Cursor) watermark. A Cursor sync unit is one *composer* (session) inside the
 -- single `state.vscdb`, not a file, so its cursor can't be a `file_cursors` row: there is no
--- byte_offset or head-hash, and the change signal is the composer's bubble count + newest bubble
--- timestamp (the DB analog of size + mtime). Separate table so neither cursor shape carries the
--- other's empty columns; same `(org_id, source, …)` org-isolation and advance-only-after-2xx
--- discipline as `file_cursors`.
+-- byte_offset. The change signal is a hash of its normalized bubbles, with bubble count and newest
+-- timestamp retained for diagnostics. Separate table so neither cursor shape carries the other's
+-- empty columns; same `(org_id, source, …)` org-isolation and advance-only-after-2xx discipline as
+-- `file_cursors`.
 CREATE TABLE IF NOT EXISTS composer_cursors (
     org_id         TEXT    NOT NULL,
     source         TEXT    NOT NULL,
     composer_id    TEXT    NOT NULL,
     bubble_count   INTEGER NOT NULL,
     max_created_at INTEGER NOT NULL,
+    content_hash   TEXT,
     PRIMARY KEY (org_id, source, composer_id)
 ) WITHOUT ROWID;
 -- Stable fact-level send state. File/composer cursors say a local source unit was accepted; this table
@@ -113,20 +114,21 @@ pub struct FileCursor {
     pub content_hash_head: String,
 }
 
-/// How far one Cursor composer (session) has been ingested. The two fields the reader compares to
-/// decide whether a composer gained or changed bubbles since the last successful upload — the
-/// SQLite-source analog of [`FileCursor`]'s size + mtime + head-hash.
+/// How far one Cursor composer (session) has been ingested. The reader compares its deterministic
+/// content hash, with count and timestamp retained as useful diagnostics and legacy change signals.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComposerCursor {
     /// The `composerData:` id. Local-only join key; the upload uses it as the vendor session id.
     pub composer_id: String,
-    /// Bubbles ingested so far. Catches an in-place bubble edit that keeps the newest timestamp
-    /// fixed. Signed `INTEGER` (rusqlite `i64`) — a composer never has a negative count, but the
-    /// column is shared with the timestamp's range discipline.
+    /// Bubbles ingested so far. Signed `INTEGER` (rusqlite `i64`) — a composer never has a negative
+    /// count, but the column is shared with the timestamp's range discipline.
     pub bubble_count: i64,
     /// Newest bubble `createdAt` (epoch ms) ingested so far. Catches appended bubbles that leave
     /// the count unchanged (a re-send that replaced one bubble with another).
     pub max_created_at: i64,
+    /// SHA-256 of the ordered bubble content after reader-injected composer metadata. `None` is a
+    /// legacy cursor and deliberately forces one reparse so same-count edits cannot remain hidden.
+    pub content_hash: Option<String>,
 }
 
 /// One fact the collector has successfully uploaded, keyed by the same stable identity inputs the
@@ -174,8 +176,9 @@ impl CursorStore {
         Self::init(Connection::open_in_memory()?, org_id.into())
     }
 
-    fn init(conn: Connection, org_id: String) -> Result<Self, CursorStoreError> {
+    fn init(mut conn: Connection, org_id: String) -> Result<Self, CursorStoreError> {
         conn.execute_batch(MIGRATION)?;
+        ensure_composer_content_hash(&mut conn)?;
         Ok(Self {
             conn,
             org_id,
@@ -389,7 +392,7 @@ impl CursorStore {
         composer_id: &str,
     ) -> Result<Option<ComposerCursor>, CursorStoreError> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT bubble_count, max_created_at FROM composer_cursors \
+            "SELECT bubble_count, max_created_at, content_hash FROM composer_cursors \
              WHERE org_id = ?1 AND source = ?2 AND composer_id = ?3",
         )?;
         let cursor = stmt
@@ -400,6 +403,7 @@ impl CursorStore {
                         composer_id: composer_id.to_string(),
                         bubble_count: row.get(0)?,
                         max_created_at: row.get(1)?,
+                        content_hash: row.get(2)?,
                     })
                 },
             )
@@ -414,7 +418,7 @@ impl CursorStore {
         source: AgentSource,
     ) -> Result<Vec<ComposerCursor>, CursorStoreError> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT composer_id, bubble_count, max_created_at FROM composer_cursors \
+            "SELECT composer_id, bubble_count, max_created_at, content_hash FROM composer_cursors \
              WHERE org_id = ?1 AND source = ?2 ORDER BY composer_id",
         )?;
         let rows = stmt.query_map(params![self.org_id, source_key(source)], |row| {
@@ -422,6 +426,7 @@ impl CursorStore {
                 composer_id: row.get(0)?,
                 bubble_count: row.get(1)?,
                 max_created_at: row.get(2)?,
+                content_hash: row.get(3)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -436,17 +441,19 @@ impl CursorStore {
     ) -> Result<(), CursorStoreError> {
         self.conn.execute(
             "INSERT INTO composer_cursors \
-                (org_id, source, composer_id, bubble_count, max_created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5) \
+                (org_id, source, composer_id, bubble_count, max_created_at, content_hash) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
              ON CONFLICT(org_id, source, composer_id) DO UPDATE SET \
                 bubble_count = excluded.bubble_count, \
-                max_created_at = excluded.max_created_at",
+                max_created_at = excluded.max_created_at, \
+                content_hash = excluded.content_hash",
             params![
                 self.org_id,
                 source_key(source),
                 cursor.composer_id,
                 cursor.bubble_count,
                 cursor.max_created_at,
+                cursor.content_hash,
             ],
         )?;
         Ok(())
@@ -556,6 +563,23 @@ impl CursorStore {
         }
         Ok(())
     }
+}
+
+fn ensure_composer_content_hash(conn: &mut Connection) -> Result<(), rusqlite::Error> {
+    let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let exists = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('composer_cursors') WHERE name = 'content_hash')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !exists {
+        transaction.execute(
+            "ALTER TABLE composer_cursors ADD COLUMN content_hash TEXT",
+            [],
+        )?;
+    }
+    transaction.commit()?;
+    Ok(())
 }
 
 /// The source's internal DB key. It is a *persisted* key, deliberately decoupled from the serde wire
@@ -684,7 +708,7 @@ fn identity<'a>(parts: impl IntoIterator<Item = &'a str>) -> String {
         .join("|")
 }
 
-fn content_hash<T: serde::Serialize>(value: &T) -> Result<String, CursorStoreError> {
+pub(crate) fn content_hash<T: serde::Serialize>(value: &T) -> Result<String, CursorStoreError> {
     let encoded = serde_json::to_vec(value)?;
     let digest = Sha256::digest(encoded);
     let mut out = String::with_capacity("sha256:".len() + digest.len() * 2);
@@ -842,6 +866,7 @@ mod tests {
             composer_id: id.to_string(),
             bubble_count: count,
             max_created_at,
+            content_hash: Some(format!("sha256:{id}:{count}:{max_created_at}")),
         }
     }
 
@@ -863,6 +888,44 @@ mod tests {
             store.get_composer(AgentSource::Cursor, "c-1").unwrap(),
             Some(c)
         );
+    }
+
+    #[test]
+    fn opening_a_legacy_composer_table_adds_a_nullable_hash_and_forces_reparse() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cursors.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE composer_cursors (
+                    org_id TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    composer_id TEXT NOT NULL,
+                    bubble_count INTEGER NOT NULL,
+                    max_created_at INTEGER NOT NULL,
+                    PRIMARY KEY (org_id, source, composer_id)
+                ) WITHOUT ROWID;
+                INSERT INTO composer_cursors
+                    (org_id, source, composer_id, bubble_count, max_created_at)
+                VALUES ('org_1', 'cursor', 'legacy', 2, 100);",
+            )
+            .unwrap();
+        }
+
+        let store = CursorStore::open(&path, "org_1").unwrap();
+        let legacy = store
+            .get_composer(AgentSource::Cursor, "legacy")
+            .unwrap()
+            .unwrap();
+        assert_eq!(legacy.content_hash, None);
+        assert!(store
+            .conn
+            .query_row(
+                "SELECT 1 FROM pragma_table_info('composer_cursors') WHERE name = 'content_hash'",
+                [],
+                |_| Ok(()),
+            )
+            .is_ok());
     }
 
     #[test]

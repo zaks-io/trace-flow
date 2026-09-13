@@ -66,7 +66,7 @@ enum Command {
         /// 7d, 30d, or 1y (history import).
         #[arg(long, default_value = "24h")]
         since: String,
-        /// Resend Claude and Codex facts in this window, preserving local cursor evidence.
+        /// Resend facts from every supported source in this window, preserving local cursor evidence.
         #[arg(long)]
         replay: bool,
     },
@@ -306,7 +306,7 @@ fn cmd_cursor_dryrun() -> Result<()> {
     // Admit every composer regardless of age: cutoff 0 via a first-incremental window at +24h.
     let window = ImportWindow::first_incremental(24 * 60 * 60 * 1000);
 
-    let units = assemble_cursor_units(&db, &paths.scratch_dir(), &store, window)
+    let units = assemble_cursor_units(&db, &paths.scratch_dir(), &store, window, false)
         .context("assemble cursor units")?;
 
     let (mut messages, mut tools, mut files, mut prs) = (0usize, 0usize, 0usize, 0usize);

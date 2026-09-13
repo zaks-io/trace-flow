@@ -104,8 +104,7 @@ pub struct RunConfig<'a> {
     pub org_id: &'a str,
     pub home: &'a Path,
     pub window: Window,
-    /// Explicitly resend Claude and Codex facts in the selected history window without deleting
-    /// local cursors. Cursor replay requires a full composer-selection path and is not claimed here.
+    /// Explicitly resend facts in the selected history window without deleting local cursors.
     pub replay: bool,
     /// `now` in epoch ms, injected so the window math is testable and the cursor seam stays clock-free.
     pub now_ms: i64,
@@ -364,7 +363,7 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
     for source in ingestable_sources() {
         let mut report = SourceReport::default();
         let roots = source_roots(cfg.home, source);
-        store.set_replay_facts(replay_facts_for_source(cfg.replay, source));
+        store.set_replay_facts(cfg.replay);
         if roots.is_empty() {
             let units = assemble_cursor_source_units(&store, &cfg, window, &mut report)?;
             if !units.is_empty() {
@@ -423,10 +422,6 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
         files_read,
         archive,
     })
-}
-
-fn replay_facts_for_source(replay: bool, source: AgentSource) -> bool {
-    replay && matches!(source, AgentSource::Claude | AgentSource::Codex)
 }
 
 fn resolve_paths(cfg: &RunConfig<'_>) -> Result<Paths> {
@@ -621,7 +616,7 @@ fn assemble_cursor_source_units(
         return Ok(Vec::new());
     };
     let paths = resolve_paths(cfg)?;
-    let units = assemble_cursor_units(&db, &paths.scratch_dir(), store, window)
+    let units = assemble_cursor_units(&db, &paths.scratch_dir(), store, window, cfg.replay)
         .context("assemble cursor units")?;
     // For the Cursor source, "files scanned" is the single state.vscdb; "selected" is the changed
     // composers the snapshot assembled.
@@ -702,14 +697,6 @@ mod tests {
     fn an_unknown_since_is_rejected() {
         assert!(window_from_since("2w").is_err());
         assert!(window_from_since("").is_err());
-    }
-
-    #[test]
-    fn explicit_replay_is_scoped_to_jsonl_sources() {
-        assert!(replay_facts_for_source(true, AgentSource::Claude));
-        assert!(replay_facts_for_source(true, AgentSource::Codex));
-        assert!(!replay_facts_for_source(true, AgentSource::Cursor));
-        assert!(!replay_facts_for_source(false, AgentSource::Claude));
     }
 
     #[test]
