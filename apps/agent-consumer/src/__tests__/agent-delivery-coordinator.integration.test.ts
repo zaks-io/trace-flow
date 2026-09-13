@@ -10,6 +10,8 @@ import {
   MAX_ACTIVE_AGENT_DELIVERIES,
   MAX_AGENT_DELIVERY_RETENTION_MS,
   MAX_AGENT_DIRTY_DAYS,
+  MAX_AGENT_SNAPSHOT_LEASE_MS,
+  MAX_AGENT_SNAPSHOT_DAYS,
 } from '../agent-delivery-coordinator';
 
 const env = workerEnv as unknown as {
@@ -255,6 +257,32 @@ describe('AgentDeliveryCoordinator', () => {
     ).rejects.toThrow('snapshot generation is not active');
   });
 
+  it('captures the newest seven days and leaves older work for the next generation', async () => {
+    const newestFirst = Array.from({ length: 15 }, (_, index) =>
+      new Date(Date.UTC(2026, 8, 13) - index * 86_400_000).toISOString().slice(0, 10),
+    );
+    await completeOne('delivery-many-days', newestFirst);
+
+    const first = await withCoordinator((coordinator) => coordinator.beginSnapshot({}));
+    expect(first.dirtyDays).toEqual([...newestFirst.slice(0, MAX_AGENT_SNAPSHOT_DAYS)].sort());
+    await withCoordinator((coordinator) =>
+      coordinator.finishSnapshot({ generation: first.generation }),
+    );
+    await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
+      {
+        dirtyDays: 15 - MAX_AGENT_SNAPSHOT_DAYS,
+      },
+    );
+
+    const second = await withCoordinator((coordinator) => coordinator.beginSnapshot({}));
+    expect(second).toEqual({
+      generation: first.generation + 1,
+      dirtyDays: [
+        ...newestFirst.slice(MAX_AGENT_SNAPSHOT_DAYS, MAX_AGENT_SNAPSHOT_DAYS * 2),
+      ].sort(),
+    });
+  });
+
   it('keeps the dirty set bounded across the full retention window', async () => {
     const days = Array.from({ length: MAX_AGENT_DIRTY_DAYS }, (_, index) => {
       const day = new Date(Date.UTC(2026, 8, 13) - index * 86_400_000);
@@ -283,6 +311,19 @@ describe('AgentDeliveryCoordinator', () => {
         coordinator.reserve(reservation('future', HASH_A, ['2026-09-14'])),
       ),
     ).rejects.toThrow('outside the retained fact window');
+
+    vi.setSystemTime(new Date('2027-09-14T12:00:00.000Z'));
+    await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
+      {
+        dirtyDays: 0,
+        incompleteDays: 0,
+      },
+    );
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.reserve(reservation('next-year', HASH_A, ['2027-09-14'])),
+      ),
+    ).resolves.toMatchObject({ status: 'reserved' });
   });
 
   it('expires a delivery only after its explicit retention deadline', async () => {
@@ -307,6 +348,14 @@ describe('AgentDeliveryCoordinator', () => {
     ).resolves.toEqual({ deliverySequence: 2, dirtyDays: ['2026-09-13'] });
     await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
       { activeDeliveries: 0, dirtyDays: 1, incompleteDays: 1 },
+    );
+
+    vi.setSystemTime(input.expiresAtMs + 366 * 86_400_000);
+    await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
+      {
+        dirtyDays: 0,
+        incompleteDays: 0,
+      },
     );
   });
 
@@ -364,6 +413,127 @@ describe('AgentDeliveryCoordinator', () => {
     await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
       { activeDeliveries: 0, lastDeliverySequence: 1 },
     );
+  });
+
+  it('recovers an abandoned snapshot lease without clearing dirty work', async () => {
+    await completeOne('delivery-dirty', ['2026-09-13']);
+    const first = await withCoordinator((coordinator) => coordinator.beginSnapshot({}));
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.assertSnapshotActive({ generation: first.generation }),
+      ),
+    ).resolves.toEqual({
+      generation: first.generation,
+      expiresAtMs: Date.now() + MAX_AGENT_SNAPSHOT_LEASE_MS,
+    });
+
+    vi.advanceTimersByTime(MAX_AGENT_SNAPSHOT_LEASE_MS);
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.assertSnapshotActive({ generation: first.generation }),
+      ),
+    ).rejects.toThrow('snapshot generation is not active');
+    await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
+      {
+        gatePhase: 'open',
+        activeSnapshotGeneration: null,
+        capturedSnapshotDays: 0,
+        dirtyDays: 1,
+      },
+    );
+    await expect(withCoordinator((coordinator) => coordinator.beginSnapshot({}))).resolves.toEqual({
+      generation: first.generation + 1,
+      dirtyDays: ['2026-09-13'],
+    });
+  });
+
+  it('abandons a snapshot whose oldest partition ages out before publication', async () => {
+    vi.setSystemTime(new Date('2026-09-13T23:58:00.000Z'));
+    await completeOne('delivery-oldest', ['2025-09-13']);
+    const snapshot = await withCoordinator((coordinator) => coordinator.beginSnapshot({}));
+
+    vi.advanceTimersByTime(3 * 60 * 1000);
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.assertSnapshotActive({ generation: snapshot.generation }),
+      ),
+    ).rejects.toThrow('snapshot generation is not active');
+    await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
+      {
+        gatePhase: 'open',
+        dirtyDays: 0,
+        capturedSnapshotDays: 0,
+      },
+    );
+  });
+
+  it('recovers an abandoned draining gate before admitting new work', async () => {
+    await completeOne('delivery-dirty', ['2026-09-12']);
+    await withCoordinator((coordinator) =>
+      coordinator.reserve(reservation('delivery-active', HASH_A, ['2026-09-13'])),
+    );
+    await withCoordinator((coordinator) => coordinator.requestSnapshot({}));
+    vi.advanceTimersByTime(MAX_AGENT_SNAPSHOT_LEASE_MS);
+
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.reserve(reservation('delivery-new', HASH_B, ['2026-09-13'])),
+      ),
+    ).resolves.toMatchObject({ status: 'reserved' });
+    await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
+      {
+        gatePhase: 'open',
+        activeDeliveries: 2,
+        dirtyDays: 1,
+      },
+    );
+  });
+
+  it('expands dirty days only for the write permit holder and enforces the union cap', async () => {
+    const days = Array.from({ length: MAX_AGENT_DIRTY_DAYS }, (_, index) =>
+      new Date(Date.UTC(2026, 8, 13) - index * 86_400_000).toISOString().slice(0, 10),
+    );
+    await withCoordinator((coordinator) =>
+      coordinator.reserve(reservation('delivery-owner', HASH_A, days)),
+    );
+    await withCoordinator((coordinator) =>
+      coordinator.reserve(reservation('delivery-waiting', HASH_B, ['2026-09-13'])),
+    );
+
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.expandDirtyDays({
+          deliveryId: 'delivery-waiting',
+          payloadSha256: HASH_B,
+          dirtyDays: ['2026-09-12'],
+        }),
+      ),
+    ).rejects.toBeInstanceOf(AgentDeliveryCoordinatorRetryableError);
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.expandDirtyDays({
+          deliveryId: 'delivery-owner',
+          payloadSha256: HASH_A,
+          dirtyDays: [days[0]!, days[0]!],
+        }),
+      ),
+    ).resolves.toEqual({ dirtyDays: [...days].sort() });
+
+    vi.advanceTimersByTime(86_400_000);
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.expandDirtyDays({
+          deliveryId: 'delivery-owner',
+          payloadSha256: HASH_A,
+          dirtyDays: ['2026-09-14'],
+        }),
+      ),
+    ).rejects.toThrow('dirty day limit reached');
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.getReservation({ deliveryId: 'delivery-owner' }),
+      ),
+    ).resolves.toMatchObject({ dirtyDays: [...days].sort() });
   });
 
   async function completeOne(deliveryId: string, dirtyDays: string[]): Promise<void> {
