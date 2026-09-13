@@ -105,6 +105,28 @@ async function liveEndpointPipes(options) {
   return definitions;
 }
 
+async function verifyWorkspaceOperator(options) {
+  const host = required(options.tinybirdHost, 'TB_HOST').replace(/\/$/, '');
+  const token = required(options.tinybirdToken, 'TB_TOKEN');
+  const expectedWorkspace = required(options.tinybirdWorkspace, 'TB_TARGET_WORKSPACE');
+  const [workspace, result] = await Promise.all([
+    jsonRequest(options.fetchImpl, new URL('/v1/workspace', host), token, 'Tinybird'),
+    jsonRequest(options.fetchImpl, new URL('/v0/tokens', host), token, 'Tinybird'),
+  ]);
+  if (workspace.name !== expectedWorkspace)
+    throw new Error('Tinybird operator credential resolved to the wrong workspace');
+  if (!Array.isArray(result.tokens)) throw new Error('Tinybird returned no token list');
+  const matches = result.tokens.filter((entry) => entry?.token === token);
+  if (
+    matches.length !== 1 ||
+    !Array.isArray(matches[0].scopes) ||
+    matches[0].scopes.length !== 1 ||
+    matches[0].scopes[0]?.type !== 'ADMIN'
+  ) {
+    throw new Error('Tinybird operator credential must be an ADMIN token');
+  }
+}
+
 function verifiedCommit(ref, options) {
   if (!COMMIT_SHA.test(ref) || /^0+$/.test(ref))
     throw new Error('Current Agent Tinybird ref must be an exact nonzero commit SHA');
@@ -131,14 +153,17 @@ export async function resolveAgentTinybirdCurrentRef(options = {}) {
   }
 
   verifiedCommit(ref, options);
+  const tinybird = {
+    ...options,
+    fetchImpl,
+    tinybirdHost: options.tinybirdHost ?? process.env.TB_HOST,
+    tinybirdToken: options.tinybirdToken ?? process.env.TB_TOKEN,
+    tinybirdWorkspace: options.tinybirdWorkspace ?? process.env.TB_TARGET_WORKSPACE,
+  };
+  await verifyWorkspaceOperator(tinybird);
   const [expected, live] = await Promise.all([
     Promise.resolve(expectedEndpointPipes(ref, options)),
-    liveEndpointPipes({
-      ...options,
-      fetchImpl,
-      tinybirdHost: options.tinybirdHost ?? process.env.TB_HOST,
-      tinybirdToken: options.tinybirdToken ?? process.env.TB_TOKEN,
-    }),
+    liveEndpointPipes(tinybird),
   ]);
   for (const [name, content] of expected) {
     if (!live.has(name))
