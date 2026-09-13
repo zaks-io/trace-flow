@@ -21,7 +21,7 @@ use collector_contracts::facts::AgentFileEventFact;
 use serde_json::Value;
 
 use crate::cursor_records::{bubble_id, composer_id, tool_block};
-use crate::paths::relativize_repo_path;
+use crate::paths::{relativize_repo_path, OUTSIDE_REPO};
 use crate::session_context::SessionContext;
 use crate::timestamp::rfc3339_to_epoch_ms;
 
@@ -58,6 +58,19 @@ fn bubble_event_at(record: &Value, ctx: &SessionContext) -> i64 {
         .unwrap_or(0)
 }
 
+fn normalize_cursor_file_path(
+    repo_root: &Path,
+    raw_path: &str,
+    is_relative_workspace_path: bool,
+) -> String {
+    // Cursor can place multiline tool body content in this fallback field. Reject controls before
+    // the shared path normalizer trims them so body content cannot become a file-path dimension.
+    if is_relative_workspace_path && raw_path.chars().any(char::is_control) {
+        return OUTSIDE_REPO.to_string();
+    }
+    relativize_repo_path(repo_root, raw_path)
+}
+
 /// Emits one [`AgentFileEventFact`] per file-touching tool call, in the reader's bubble order. The path is
 /// relativized against `ctx.repo_root`. Existing `targetFile` / `effectiveUri` facts retain their legacy
 /// session-global `source_block_index`. A newly recognized `relativeWorkspacePath` fact uses zero because
@@ -91,7 +104,11 @@ pub fn cursor_file_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentFi
                 .to_string(),
             vendor_message_id: bubble_id(record).map(str::to_string),
             source_block_index,
-            normalized_repo_path: relativize_repo_path(repo_root, raw_path),
+            normalized_repo_path: normalize_cursor_file_path(
+                repo_root,
+                raw_path,
+                block.target_file_is_relative_workspace_path,
+            ),
             operation,
             event_at: bubble_event_at(record, ctx),
             // The path is normalized, not redacted; nothing else is emitted.
@@ -108,7 +125,6 @@ pub fn cursor_file_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentFi
 mod tests {
     use super::*;
     use crate::cursor_records::tests::bubble;
-    use crate::paths::OUTSIDE_REPO;
     use serde_json::json;
 
     const REPO_ROOT: &str = "/work/trace-flow";
@@ -197,6 +213,35 @@ mod tests {
         assert_eq!(facts[0].operation, AgentFileOperation::Edit);
         assert_eq!(facts[0].normalized_repo_path, "src/auth.rs");
         assert_eq!(facts[0].source_block_index, 0);
+    }
+
+    #[test]
+    fn control_bearing_relative_workspace_path_emits_a_coarsened_edit_fact() {
+        let malformed_path = "src/auth.rs\nlet secret = value;\n";
+        let params = serde_json::to_string(&json!({
+            "relativeWorkspacePath": malformed_path
+        }))
+        .unwrap();
+        let records = [bubble(
+            "comp-1",
+            "gpt-5.2",
+            2,
+            json!({ "toolFormerData": {
+                "name": "write",
+                "status": "error",
+                "params": params,
+            } }),
+        )];
+
+        let facts = cursor_file_facts(&records, &ctx_with_root(REPO_ROOT));
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].operation, AgentFileOperation::Edit);
+        assert_eq!(facts[0].normalized_repo_path, OUTSIDE_REPO);
+        assert_eq!(facts[0].source_block_index, 0);
+        assert_eq!(
+            tool_block(&records[0]).unwrap().target_file.as_deref(),
+            Some(malformed_path)
+        );
     }
 
     #[test]
