@@ -10,6 +10,10 @@ on:
         description: 'Choose an environment to deploy to: <production>'
         required: true
         default: 'production'
+      agent_delivery_current_ref:
+        description: 'For a manual deploy: exact SHA of the currently deployed Tinybird project'
+        required: false
+        type: string
 
 concurrency:
   group: production-deploy
@@ -19,6 +23,29 @@ env:
   TURBO_LOG_VERBOSITY: 1
 
 jobs:
+  agent-delivery-current-ref:
+    name: Resolve Current Agent Tinybird Ref
+    runs-on: ubuntu-latest
+    outputs:
+      current_ref: ${{ steps.release.outputs.current_ref }}
+    steps:
+      - name: Resolve current deployed ref
+        id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          REQUESTED_CURRENT_REF: ${{ inputs.agent_delivery_current_ref }}
+        run: |
+          current_ref="$BEFORE_SHA"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            current_ref="$REQUESTED_CURRENT_REF"
+          fi
+          if [[ ! "$current_ref" =~ ^[0-9a-f]{40}$ || "$current_ref" == "0000000000000000000000000000000000000000" ]]; then
+            echo 'Refusing Agent Delivery migration without the exact currently deployed Tinybird SHA.' >&2
+            exit 1
+          fi
+          echo "current_ref=$current_ref" >> "$GITHUB_OUTPUT"
+
   ci:
     name: CI Checks
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -240,7 +267,7 @@ jobs:
   deploy-tinybird-schema:
     name: Deploy Tinybird Schema
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    needs: [ci]
+    needs: [ci, agent-delivery-current-ref]
     environment: Production
     permissions:
       contents: read
@@ -255,14 +282,14 @@ jobs:
           curl -fsSL https://tinybird.co | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      # Automatic production deploy is the non-destructive switch phase: clean endpoint pipes stay
-      # live while legacy rollback resources remain available without restoring legacy copy pipes.
-      # Cleanup is a separate explicit operator step after soak and parity.
-      - name: Deploy schema to trace_flow_prod (switch)
+      # Expansion preserves the exact endpoint definitions from the previously deployed main SHA.
+      # The migration job later switches endpoints only after it verifies the baseline and snapshots.
+      - name: Expand schema in trace_flow_prod
         run: ./scripts/deploy-agent-tinybird.sh
         env:
           TB_TARGET_WORKSPACE: trace_flow_prod
-          TINYBIRD_DEPLOY_PHASE: switch
+          TINYBIRD_DEPLOY_PHASE: expand
+          TINYBIRD_CURRENT_REF: ${{ needs.agent-delivery-current-ref.outputs.current_ref }}
           # Last main commit before the clean Tinybird resource cutover. The deploy job fetches full
           # history so expand/switch can restore legacy prod resources after this PR merges.
           TINYBIRD_LEGACY_REF: 11613a4619444adb0e27abc3df958cebb43cc280
@@ -272,6 +299,56 @@ jobs:
           # No Tinybird Local container here; offline `tb build` (dev_mode=local) is the PR-gate's job.
           # `tb --cloud deploy --check` validates against the live workspace before the apply.
           TB_SKIP_BUILD: 1
+
+  prepare-agent-delivery:
+    name: Prepare Agent Delivery Infrastructure
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    needs: [ci, deploy-tinybird-schema]
+    environment: Production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Provision delivery storage and snapshot queue
+        run: |
+          bun scripts/ci/provision-agent-delivery.mjs prod
+          bun scripts/setup-r2-lifecycle.ts trace-flow-agent-deliveries-prod
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Configure scoped Tinybird and delivery encryption secrets
+        run: |
+          secrets_directory=$(mktemp -d)
+          trap 'rm -rf "$secrets_directory"' EXIT
+          umask 077
+          consumer_secrets="$secrets_directory/consumer.env"
+          ingest_secrets="$secrets_directory/ingest.env"
+          test -n "$BODY_ENCRYPTION_ROOT_KEY"
+          bun scripts/ci/configure-agent-tinybird-tokens.mjs "$consumer_secrets"
+          printf 'BODY_ENCRYPTION_ROOT_KEY=%s\n' "$BODY_ENCRYPTION_ROOT_KEY" >> "$consumer_secrets"
+          printf 'BODY_ENCRYPTION_ROOT_KEY=%s\n' "$BODY_ENCRYPTION_ROOT_KEY" > "$ingest_secrets"
+          (cd apps/agent-consumer && bunx wrangler secret bulk "$consumer_secrets" --env production)
+          (cd apps/agent-ingest && bunx wrangler secret bulk "$ingest_secrets" --env production)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BODY_ENCRYPTION_ROOT_KEY: ${{ secrets.AGENT_DELIVERY_ENCRYPTION_ROOT_KEY }}
+          TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
+          TB_HOST: https://api.us-west-2.aws.tinybird.co
 
   deploy-proxy-consumer:
     name: Deploy Proxy Consumer Worker
@@ -394,7 +471,7 @@ jobs:
   deploy-agent-ingest:
     name: Deploy Agent Ingest Worker
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [ci, deploy-convex]
+    needs: [ci, deploy-convex, switch-agent-tinybird]
     environment: Production
     permissions:
       contents: read
@@ -425,13 +502,13 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/agent-ingest
-          command: deploy --env production --var CONVEX_SITE_URL:${{ needs.deploy-convex.outputs.convex_site_url }}
+          command: deploy --env production --var CONVEX_SITE_URL:${{ needs.deploy-convex.outputs.convex_site_url }} --var AGENT_INGEST_MAINTENANCE:false
           packageManager: bun
 
   deploy-agent-consumer:
     name: Deploy Agent Consumer Worker
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [ci, deploy-tinybird-schema]
+    needs: [ci, deploy-tinybird-schema, prepare-agent-delivery]
     environment: Production
     permissions:
       contents: read
@@ -464,6 +541,149 @@ jobs:
           workingDirectory: apps/agent-consumer
           command: deploy --env production
           packageManager: bun
+
+  deploy-agent-ingest-maintenance:
+    name: Pause Agent Ingest for Migration
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [ci, deploy-convex, agent-delivery-migration-status]
+    if: needs.agent-delivery-migration-status.outputs.migration_required == 'true'
+    environment: Production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Assert production config binds no dev resources
+        run: ./scripts/assert-agent-prod-resources.sh
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy retryable maintenance response
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/agent-ingest
+          command: deploy --env production --var CONVEX_SITE_URL:${{ needs.deploy-convex.outputs.convex_site_url }} --var AGENT_INGEST_MAINTENANCE:true
+          packageManager: bun
+
+  migrate-agent-ingestion:
+    name: Migrate Agent Ingestion Baseline
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs:
+      [
+        ci,
+        deploy-agent-ingest-maintenance,
+        agent-delivery-current-ref,
+        agent-delivery-migration-status,
+      ]
+    if: needs.agent-delivery-migration-status.outputs.migration_required == 'true'
+    environment: Production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Drain, build revision-1 baseline, index, and initial snapshots
+        run: |
+          bun scripts/ingest-recovery/migrate-agent-ingestion.ts \
+            --apply \
+            --previous-ref "$TINYBIRD_CURRENT_REF"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
+          TB_HOST: https://api.us-west-2.aws.tinybird.co
+          TINYBIRD_CURRENT_REF: ${{ needs.agent-delivery-current-ref.outputs.current_ref }}
+
+  switch-agent-tinybird:
+    name: Switch Agent Tinybird Endpoints
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    needs: [ci, agent-delivery-migration-status, migrate-agent-ingestion]
+    if: >-
+      always() &&
+      needs.ci.result == 'success' &&
+      needs.agent-delivery-migration-status.result == 'success' &&
+      (needs.agent-delivery-migration-status.outputs.migration_required == 'false' ||
+       needs.migrate-agent-ingestion.result == 'success')
+    environment: Production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Tinybird CLI
+        run: |
+          curl -fsSL https://tinybird.co | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Switch endpoints after verified migration
+        run: ./scripts/deploy-agent-tinybird.sh
+        env:
+          TB_TARGET_WORKSPACE: trace_flow_prod
+          TINYBIRD_DEPLOY_PHASE: switch
+          TINYBIRD_LEGACY_REF: 11613a4619444adb0e27abc3df958cebb43cc280
+          TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
+          TB_HOST: https://api.us-west-2.aws.tinybird.co
+          TB_VERSION_WARNING: 0
+          TB_SKIP_BUILD: 1
+
+  agent-delivery-migration-status:
+    name: Check Agent Delivery Migration Status
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    needs: [ci, deploy-agent-consumer, agent-delivery-current-ref]
+    environment: Production
+    permissions:
+      contents: read
+    outputs:
+      migration_required: ${{ steps.status.outputs.migration_required }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Read migration status
+        id: status
+        run: |
+          status_file=$(mktemp)
+          trap 'rm -f "$status_file"' EXIT
+          bun scripts/ingest-recovery/migrate-agent-ingestion.ts \
+            --status \
+            --previous-ref "$TINYBIRD_CURRENT_REF" > "$status_file"
+          migration_required=$(jq -er '.migration_required | if type == "boolean" then tostring else error("migration_required must be boolean") end' "$status_file")
+          echo "migration_required=$migration_required" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
+          TB_HOST: https://api.us-west-2.aws.tinybird.co
+          TINYBIRD_CURRENT_REF: ${{ needs.agent-delivery-current-ref.outputs.current_ref }}
 
   deploy-analyst-sandbox:
     name: Deploy Analyst Sandbox Worker
@@ -579,6 +799,8 @@ jobs:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     if: always()
     needs:
+      - agent-delivery-current-ref
+      - agent-delivery-migration-status
       - ci
       - deploy-convex
       - deploy-web
@@ -589,6 +811,10 @@ jobs:
       - deploy-mcp
       - deploy-agent-ingest
       - deploy-agent-consumer
+      - deploy-agent-ingest-maintenance
+      - migrate-agent-ingestion
+      - prepare-agent-delivery
+      - switch-agent-tinybird
       - deploy-analyst-sandbox
       - deploy-archive-api
     steps:
@@ -621,4 +847,4 @@ jobs:
         uses: linear/linear-release-action@c0cb8354a362c24c6d3e0948f37fd66d07588e3f # v0.14.5
         with:
           access_key: ${{ secrets.LINEAR_ACCESS_KEY }}
-          include_paths: apps/web/**,apps/proxy/**,apps/proxy-consumer/**,apps/api/**,apps/pipes-api/**,apps/mcp/**,apps/agent-ingest/**,apps/archive-api/**,apps/agent-consumer/**,apps/analyst-sandbox/**,packages/convex/**,packages/emails/**,packages/mcp-core/**,packages/types/**,packages/utils/**,packages/tinybird-client/**,packages/otel-conventions/**,packages/spans/**,packages/llm-providers/**,packages/pricing/**,packages/logging/**,datasources/**,pipes/**,scripts/assert-agent-prod-resources.sh,scripts/deploy-agent-tinybird.sh,scripts/ci/export-convex-outputs.sh,.github/workflows/deploy.yml,package.json,bun.lock,turbo.json
+          include_paths: apps/web/**,apps/proxy/**,apps/proxy-consumer/**,apps/api/**,apps/pipes-api/**,apps/mcp/**,apps/agent-ingest/**,apps/archive-api/**,apps/agent-consumer/**,apps/analyst-sandbox/**,packages/convex/**,packages/emails/**,packages/mcp-core/**,packages/types/**,packages/utils/**,packages/tinybird-client/**,packages/otel-conventions/**,packages/spans/**,packages/llm-providers/**,packages/pricing/**,packages/logging/**,datasources/**,pipes/**,scripts/assert-agent-prod-resources.sh,scripts/deploy-agent-tinybird.sh,scripts/ci/**,.github/workflows/deploy.yml,package.json,bun.lock,turbo.json

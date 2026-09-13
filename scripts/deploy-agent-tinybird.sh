@@ -28,8 +28,8 @@
 #   cleanup - deploy only repo resources and delete legacy Tinybird resources; prod requires approval.
 #
 # The repo can keep clean final names while prod expansion/switch use a generated temporary deploy tree
-# containing needed legacy files from TINYBIRD_LEGACY_REF. This keeps rollback possible without committing
-# old `_copy` or `_v2` files back into main.
+# containing needed legacy files from TINYBIRD_LEGACY_REF. Expand requires TINYBIRD_CURRENT_REF so it
+# preserves the endpoint definitions from the exact previously deployed commit.
 #
 # Usage:
 #   scripts/deploy-agent-tinybird.sh
@@ -107,6 +107,17 @@ legacy_ref_has_resources() {
   local ref="$1"
   local path
   for path in datasources/agent_messages.datasource pipes/agent_usage_summary.pipe; do
+    if ! git cat-file -e "$ref:$path" 2>/dev/null; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+current_ref_has_resources() {
+  local ref="$1"
+  local path
+  for path in datasources/agent_message_facts.datasource pipes/agent_usage_summary.pipe; do
     if ! git cat-file -e "$ref:$path" 2>/dev/null; then
       return 1
     fi
@@ -198,8 +209,16 @@ prepare_phase_project() {
     return 0
   fi
 
-  local legacy_ref
-  if ! legacy_ref="$(resolve_legacy_ref)"; then
+  local preserved_ref
+  if [[ "$phase" == "expand" ]]; then
+    preserved_ref="${TINYBIRD_CURRENT_REF:-}"
+    if [[ -z "$preserved_ref" ]] ||
+      ! git rev-parse --verify --quiet "$preserved_ref^{tree}" >/dev/null ||
+      ! current_ref_has_resources "$preserved_ref"; then
+      echo "Refusing expand deploy: TINYBIRD_CURRENT_REF must name the exact current Tinybird commit." >&2
+      exit 1
+    fi
+  elif ! preserved_ref="$(resolve_legacy_ref)"; then
     echo "Refusing $phase deploy: could not resolve TINYBIRD_LEGACY_REF." >&2
     echo "Set TINYBIRD_LEGACY_REF to the commit/ref containing the live legacy Tinybird resources." >&2
     exit 1
@@ -211,16 +230,16 @@ prepare_phase_project() {
   local restored=0
   local skipped=0
   while IFS= read -r path; do
-    if should_restore_legacy_path "$phase" "$legacy_ref" "$path"; then
-      restore_file_from_ref "$legacy_ref" "$path" "$TMP_DIR"
+    if should_restore_legacy_path "$phase" "$preserved_ref" "$path"; then
+      restore_file_from_ref "$preserved_ref" "$path" "$TMP_DIR"
       restored=$((restored + 1))
       continue
     fi
     skipped=$((skipped + 1))
-  done < <(git ls-tree -r --name-only "$legacy_ref" -- datasources pipes)
+  done < <(git ls-tree -r --name-only "$preserved_ref" -- datasources pipes)
 
   DEPLOY_DIR="$TMP_DIR"
-  echo "Prepared Tinybird $phase deploy tree from $legacy_ref ($restored legacy files restored, $skipped skipped)."
+  echo "Prepared Tinybird $phase deploy tree from $preserved_ref ($restored files restored, $skipped skipped)."
 }
 
 prepare_phase_project "$DEPLOY_PHASE"

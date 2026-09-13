@@ -16,6 +16,7 @@ env:
   TURBO_LOG_VERBOSITY: 1
   PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: 422b54e456c7446ea5ba4f9ef9a8c84e
   PREVIEW_ARCHIVE_BUCKET: trace-flow-agent-archive-preview
+  PREVIEW_AGENT_DELIVERY_BUCKET: trace-flow-agent-deliveries-dev
 
 permissions:
   contents: read
@@ -86,16 +87,19 @@ jobs:
 
             const expectedNamespace = process.env.PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID;
             const expectedBucket = process.env.PREVIEW_ARCHIVE_BUCKET;
-            if (!expectedNamespace || !expectedBucket) throw new Error("Trusted Preview resources are required");
+            const expectedDeliveryBucket = process.env.PREVIEW_AGENT_DELIVERY_BUCKET;
+            if (!expectedNamespace || !expectedBucket || !expectedDeliveryBucket) throw new Error("Trusted Preview resources are required");
 
             const findBinding = (items, name) => items?.find((item) => item.binding === name);
             const ingestNamespace = findBinding(agentIngestConfig.env?.preview?.kv_namespaces, "COLLECTOR_CREDS")?.id;
             const archiveNamespace = findBinding(archiveApiConfig.env?.preview?.kv_namespaces, "COLLECTOR_CREDS")?.id;
             const archiveBucket = findBinding(archiveApiConfig.env?.preview?.r2_buckets, "ARCHIVE_STORAGE")?.bucket_name;
+            const deliveryBucket = findBinding(agentIngestConfig.env?.preview?.r2_buckets, "AGENT_DELIVERIES")?.bucket_name;
 
             if (ingestNamespace !== expectedNamespace) throw new Error("Agent Ingest Preview namespace mismatch");
             if (archiveNamespace !== expectedNamespace) throw new Error("Archive API Preview namespace mismatch");
             if (archiveBucket !== expectedBucket) throw new Error("Archive API Preview bucket mismatch");
+            if (deliveryBucket !== expectedDeliveryBucket) throw new Error("Agent delivery Preview bucket mismatch");
           '
 
       - name: Install dependencies
@@ -181,16 +185,19 @@ jobs:
 
             const expectedNamespace = process.env.PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID;
             const expectedBucket = process.env.PREVIEW_ARCHIVE_BUCKET;
-            if (!expectedNamespace || !expectedBucket) throw new Error("Trusted Preview resources are required");
+            const expectedDeliveryBucket = process.env.PREVIEW_AGENT_DELIVERY_BUCKET;
+            if (!expectedNamespace || !expectedBucket || !expectedDeliveryBucket) throw new Error("Trusted Preview resources are required");
 
             const findBinding = (items, name) => items?.find((item) => item.binding === name);
             const ingestNamespace = findBinding(agentIngestConfig.env?.preview?.kv_namespaces, "COLLECTOR_CREDS")?.id;
             const archiveNamespace = findBinding(archiveApiConfig.env?.preview?.kv_namespaces, "COLLECTOR_CREDS")?.id;
             const archiveBucket = findBinding(archiveApiConfig.env?.preview?.r2_buckets, "ARCHIVE_STORAGE")?.bucket_name;
+            const deliveryBucket = findBinding(agentIngestConfig.env?.preview?.r2_buckets, "AGENT_DELIVERIES")?.bucket_name;
 
             if (ingestNamespace !== expectedNamespace) throw new Error("Agent Ingest Preview namespace mismatch");
             if (archiveNamespace !== expectedNamespace) throw new Error("Archive API Preview namespace mismatch");
             if (archiveBucket !== expectedBucket) throw new Error("Archive API Preview bucket mismatch");
+            if (deliveryBucket !== expectedDeliveryBucket) throw new Error("Agent delivery Preview bucket mismatch");
           '
 
       - name: Install dependencies
@@ -199,8 +206,10 @@ jobs:
       - name: Configure R2 retention
         run: |
           node --test scripts/ci/body-retention.test.mjs
+          bun scripts/ci/provision-agent-delivery.mjs dev
           bun scripts/setup-r2-lifecycle.ts \
             trace-flow-storage-dev \
+            trace-flow-agent-deliveries-dev \
             trace-flow-analyst-sandbox-backups-dev \
             trace-flow-analyst-sandbox-backups-preview
         env:
@@ -216,6 +225,7 @@ jobs:
               --filter='!@trace-flow/proxy' \
               --filter='!@trace-flow/mcp' \
               --filter='!@trace-flow/agent-ingest' \
+              --filter='!@trace-flow/agent-consumer' \
               --filter='!@trace-flow/archive-api' \
               --filter='!@trace-flow/analyst-sandbox' \
               --filter='!@trace-flow/pipes-api' \
@@ -254,23 +264,38 @@ jobs:
           secrets_file="$secrets_directory/archive-api.env"
           pipes_secrets_file="$secrets_directory/pipes-api.env"
           api_secrets_file="$secrets_directory/api.env"
+          agent_consumer_secrets_file="$secrets_directory/agent-consumer.env"
+          agent_ingest_secrets_file="$secrets_directory/agent-ingest.env"
           test -n "$ARCHIVE_API_SHARED_SECRET"
           test -n "$ARCHIVE_KEY_WRAPPING_SECRET"
           test -n "$PIPES_API_SHARED_SECRET"
           test -n "$BODY_ACCESS_JWT_SECRET"
+          test -n "$AGENT_DELIVERY_ENCRYPTION_ROOT_KEY"
+          test -n "$TINYBIRD_AGENT_DELIVERY_READ_TOKEN"
+          test -n "$TINYBIRD_AGENT_SNAPSHOT_TOKEN"
           {
             printf 'ARCHIVE_API_SHARED_SECRET=%s\n' "$ARCHIVE_API_SHARED_SECRET"
             printf 'ARCHIVE_KEY_WRAPPING_SECRET=%s\n' "$ARCHIVE_KEY_WRAPPING_SECRET"
           } > "$secrets_file"
           printf 'PIPES_API_SHARED_SECRET=%s\n' "$PIPES_API_SHARED_SECRET" > "$pipes_secrets_file"
           printf 'BODY_ACCESS_JWT_SECRET=%s\n' "$BODY_ACCESS_JWT_SECRET" > "$api_secrets_file"
+          {
+            printf 'BODY_ENCRYPTION_ROOT_KEY=%s\n' "$AGENT_DELIVERY_ENCRYPTION_ROOT_KEY"
+            printf 'TINYBIRD_AGENT_DELIVERY_READ_TOKEN=%s\n' "$TINYBIRD_AGENT_DELIVERY_READ_TOKEN"
+            printf 'TINYBIRD_AGENT_SNAPSHOT_TOKEN=%s\n' "$TINYBIRD_AGENT_SNAPSHOT_TOKEN"
+          } > "$agent_consumer_secrets_file"
+          printf 'BODY_ENCRYPTION_ROOT_KEY=%s\n' "$AGENT_DELIVERY_ENCRYPTION_ROOT_KEY" > "$agent_ingest_secrets_file"
           for attempt in 1 2 3; do
             if (
               cd apps/proxy && bunx wrangler deploy --env preview --var CONVEX_SITE_URL:"$CONVEX_SITE_URL"
             ) && (
               cd apps/mcp && bunx wrangler deploy --env preview
             ) && (
-              cd apps/agent-ingest && bunx wrangler deploy --env preview --var CONVEX_SITE_URL:"$CONVEX_SITE_URL"
+              cd apps/agent-consumer && bunx wrangler deploy --secrets-file "$agent_consumer_secrets_file"
+            ) && (
+              cd apps/agent-ingest && bunx wrangler deploy --env preview \
+                --secrets-file "$agent_ingest_secrets_file" \
+                --var CONVEX_SITE_URL:"$CONVEX_SITE_URL"
             ) && (
               cd apps/api && bunx wrangler deploy --env preview \
                 --secrets-file "$api_secrets_file" \
@@ -303,6 +328,9 @@ jobs:
           ARCHIVE_KEY_WRAPPING_SECRET: ${{ secrets.ARCHIVE_KEY_WRAPPING_SECRET }}
           PIPES_API_SHARED_SECRET: ${{ secrets.PIPES_API_SHARED_SECRET }}
           BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}
+          AGENT_DELIVERY_ENCRYPTION_ROOT_KEY: ${{ secrets.AGENT_DELIVERY_ENCRYPTION_ROOT_KEY }}
+          TINYBIRD_AGENT_DELIVERY_READ_TOKEN: ${{ secrets.TINYBIRD_AGENT_DELIVERY_READ_TOKEN }}
+          TINYBIRD_AGENT_SNAPSHOT_TOKEN: ${{ secrets.TINYBIRD_AGENT_SNAPSHOT_TOKEN }}
           CONVEX_URL: ${{ needs.deploy-convex.outputs.convex_url }}
           CONVEX_SITE_URL: ${{ needs.deploy-convex.outputs.convex_site_url }}
 

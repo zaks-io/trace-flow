@@ -230,6 +230,7 @@ describe('preview credential boundary', () => {
       '422b54e456c7446ea5ba4f9ef9a8c84e',
     );
     expect(preview.env.PREVIEW_ARCHIVE_BUCKET).toBe('trace-flow-agent-archive-preview');
+    expect(preview.env.PREVIEW_AGENT_DELIVERY_BUCKET).toBe('trace-flow-agent-deliveries-dev');
 
     const configure = preview.jobs['deploy-convex'].steps.find(
       (step) => step.name === 'Configure Archive API authorization',
@@ -258,6 +259,7 @@ describe('preview credential boundary', () => {
         ...process.env,
         PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: preview.env.PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID,
         PREVIEW_ARCHIVE_BUCKET: preview.env.PREVIEW_ARCHIVE_BUCKET,
+        PREVIEW_AGENT_DELIVERY_BUCKET: preview.env.PREVIEW_AGENT_DELIVERY_BUCKET,
       },
       stdout: 'pipe',
       stderr: 'pipe',
@@ -277,6 +279,7 @@ describe('preview credential boundary', () => {
         ...process.env,
         PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: 'wrong-namespace',
         PREVIEW_ARCHIVE_BUCKET: preview.env.PREVIEW_ARCHIVE_BUCKET,
+        PREVIEW_AGENT_DELIVERY_BUCKET: preview.env.PREVIEW_AGENT_DELIVERY_BUCKET,
       },
       stdout: 'pipe',
       stderr: 'pipe',
@@ -322,4 +325,62 @@ describe('production Worker secret boundary', () => {
       expect(step.with.command).toContain('deploy --env production');
     },
   );
+
+  test('keeps ingest in maintenance until the automatic migration and endpoint switch pass', () => {
+    const release = deploy.jobs['agent-delivery-current-ref'].steps.find(
+      (step) => step.name === 'Resolve current deployed ref',
+    );
+    expect(release.env.BEFORE_SHA).toBe('${{ github.event.before }}');
+    expect(release.run).toContain('exact currently deployed Tinybird SHA');
+    const expand = deploy.jobs['deploy-tinybird-schema'].steps.find(
+      (step) => step.name === 'Expand schema in trace_flow_prod',
+    );
+    expect(expand.env.TINYBIRD_DEPLOY_PHASE).toBe('expand');
+    expect(expand.env.TINYBIRD_CURRENT_REF).toBe(
+      '${{ needs.agent-delivery-current-ref.outputs.current_ref }}',
+    );
+    const pause = deploy.jobs['deploy-agent-ingest-maintenance'].steps.find(
+      (step) => step.name === 'Deploy retryable maintenance response',
+    );
+    expect(pause.with.command).toContain('AGENT_INGEST_MAINTENANCE:true');
+    const status = deploy.jobs['agent-delivery-migration-status'].steps.find(
+      (step) => step.name === 'Read migration status',
+    );
+    expect(status.run).toContain('--status');
+    expect(status.run).toContain('migration_required');
+    expect(deploy.jobs['deploy-agent-ingest-maintenance'].if).toContain(
+      "migration_required == 'true'",
+    );
+    const migrate = deploy.jobs['migrate-agent-ingestion'].steps.find(
+      (step) => step.name === 'Drain, build revision-1 baseline, index, and initial snapshots',
+    );
+    expect(migrate.run).toContain('migrate-agent-ingestion.ts');
+    expect(migrate.run).toContain('--apply');
+    expect(deploy.jobs['migrate-agent-ingestion'].if).toContain("migration_required == 'true'");
+    expect(deploy.jobs['switch-agent-tinybird'].needs).toContain('migrate-agent-ingestion');
+    expect(deploy.jobs['deploy-agent-ingest'].needs).toContain('switch-agent-tinybird');
+    const resume = deploy.jobs['deploy-agent-ingest'].steps.find(
+      (step) => step.name === 'Deploy Agent Ingest Worker',
+    );
+    expect(resume.with.command).toContain('AGENT_INGEST_MAINTENANCE:false');
+  });
+
+  test('maps the dedicated delivery key to both Workers and scoped tokens to the consumer', () => {
+    const configure = deploy.jobs['prepare-agent-delivery'].steps.find(
+      (step) => step.name === 'Configure scoped Tinybird and delivery encryption secrets',
+    );
+    expect(configure.env.BODY_ENCRYPTION_ROOT_KEY).toBe(
+      '${{ secrets.AGENT_DELIVERY_ENCRYPTION_ROOT_KEY }}',
+    );
+    expect(configure.run).toContain('apps/agent-consumer');
+    expect(configure.run).toContain('apps/agent-ingest');
+    const tokenScript = readFileSync(
+      new URL('./configure-agent-tinybird-tokens.mjs', import.meta.url),
+      'utf8',
+    );
+    expect(tokenScript).toContain('TINYBIRD_AGENT_DELIVERY_READ_TOKEN');
+    expect(tokenScript).toContain('TINYBIRD_AGENT_SNAPSHOT_TOKEN');
+    expect(configure.run).not.toContain('TINYBIRD_ADMIN_TOKEN');
+    expect(configure.run).not.toContain('TINYBIRD_AGENT_SNAPSHOT_CLEANUP_TOKEN');
+  });
 });
