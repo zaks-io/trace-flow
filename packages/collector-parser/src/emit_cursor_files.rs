@@ -8,11 +8,11 @@
 //! block into one [`AgentFileEventFact`]. Cursor names the file operation by the *tool*, not a patch verb
 //! (`read_file_v2` → `Read`, `edit_file_v2` / `search_replace` → `Edit`, `create_file` → `Create`,
 //! `delete_file` → `Delete`), and carries the path in the tool's `params.targetFile` / `effectiveUri`.
-//! Those paths are absolute (`/Users/<name>/…`), so [`relativize_repo_path`] is load-bearing: with the
-//! Cursor session's `repo_root` usually empty (no session `cwd`), every path collapses to
-//! [`OUTSIDE_REPO`](crate::paths::OUTSIDE_REPO) — the safe default that keeps a home dir/username out of
-//! every file fact. A tool with no touched path (a terminal command, a search) emits no file fact;
-//! those are captured as tool events instead.
+//! `targetFile` and `effectiveUri` paths are absolute (`/Users/<name>/…`), while newer Cursor records
+//! some paths as repo-relative `relativeWorkspacePath`. Every path passes through
+//! [`relativize_repo_path`]. An absolute path with no usable session repo root collapses to
+//! [`OUTSIDE_REPO`](crate::paths::OUTSIDE_REPO), while a safe relative path stays relative. A tool with
+//! no touched path (a terminal command, a search) emits no file fact; tool events still capture it.
 
 use std::path::Path;
 
@@ -59,8 +59,9 @@ fn bubble_event_at(record: &Value, ctx: &SessionContext) -> i64 {
 }
 
 /// Emits one [`AgentFileEventFact`] per file-touching tool call, in the reader's bubble order. The path is
-/// relativized against `ctx.repo_root`; `source_block_index` is a session-global counter so two ops of
-/// the same kind on one path (across two bubbles) stay distinct rows, mirroring the Codex file emitter.
+/// relativized against `ctx.repo_root`. Existing `targetFile` / `effectiveUri` facts retain their legacy
+/// session-global `source_block_index`. A newly recognized `relativeWorkspacePath` fact uses zero because
+/// a Cursor bubble contains one tool block and its stable `bubbleId` already scopes the ingest identity.
 ///
 /// # Panics
 /// Never. A malformed or unexpected record yields no fact (best-effort), not a panic.
@@ -79,19 +80,26 @@ pub fn cursor_file_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentFi
         let Some(raw_path) = block.target_file.as_deref() else {
             continue;
         };
+        let source_block_index = if block.target_file_is_relative_workspace_path {
+            0
+        } else {
+            block_index
+        };
         facts.push(AgentFileEventFact {
             vendor_session_id: composer_id(record)
                 .unwrap_or(&ctx.vendor_session_id)
                 .to_string(),
             vendor_message_id: bubble_id(record).map(str::to_string),
-            source_block_index: block_index,
+            source_block_index,
             normalized_repo_path: relativize_repo_path(repo_root, raw_path),
             operation,
             event_at: bubble_event_at(record, ctx),
             // The path is normalized, not redacted; nothing else is emitted.
             dropped_sensitive: 0,
         });
-        block_index += 1;
+        if !block.target_file_is_relative_workspace_path {
+            block_index += 1;
+        }
     }
     facts
 }
@@ -120,12 +128,19 @@ mod tests {
     }
 
     fn file_tool(name: &str, target: &str) -> Value {
+        file_tool_with_bubble_id(name, target, "bub-1")
+    }
+
+    fn file_tool_with_bubble_id(name: &str, target: &str, bubble_id: &str) -> Value {
         let params = serde_json::to_string(&json!({ "targetFile": target })).unwrap();
         bubble(
             "comp-1",
             "gpt-5.2",
             2,
-            json!({ "toolFormerData": { "name": name, "status": "completed", "params": params } }),
+            json!({
+                "bubbleId": bubble_id,
+                "toolFormerData": { "name": name, "status": "completed", "params": params }
+            }),
         )
     }
 
@@ -158,6 +173,103 @@ mod tests {
         let f = &cursor_file_facts(&records, &ctx_with_root(""))[0];
         assert_eq!(f.normalized_repo_path, OUTSIDE_REPO);
         assert!(!f.normalized_repo_path.contains("janedoe"));
+    }
+
+    #[test]
+    fn relative_workspace_edit_emits_a_safe_repo_relative_file_fact() {
+        let params = serde_json::to_string(&json!({
+            "relativeWorkspacePath": "src/auth.rs"
+        }))
+        .unwrap();
+        let records = [bubble(
+            "comp-1",
+            "gpt-5.2",
+            2,
+            json!({ "toolFormerData": {
+                "name": "edit_file_v2",
+                "status": "completed",
+                "params": params,
+            } }),
+        )];
+
+        let facts = cursor_file_facts(&records, &ctx_with_root(REPO_ROOT));
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].operation, AgentFileOperation::Edit);
+        assert_eq!(facts[0].normalized_repo_path, "src/auth.rs");
+        assert_eq!(facts[0].source_block_index, 0);
+    }
+
+    #[test]
+    fn relative_workspace_fact_does_not_rekey_existing_file_facts() {
+        let existing = [
+            file_tool_with_bubble_id("edit_file_v2", "/work/trace-flow/src/a.rs", "bub-a"),
+            file_tool_with_bubble_id("delete_file", "/work/trace-flow/src/b.rs", "bub-b"),
+        ];
+        let baseline = cursor_file_facts(&existing, &ctx_with_root(REPO_ROOT));
+
+        let params = serde_json::to_string(&json!({
+            "relativeWorkspacePath": "src/new.rs"
+        }))
+        .unwrap();
+        let added = bubble(
+            "comp-1",
+            "gpt-5.2",
+            2,
+            json!({
+                "bubbleId": "bub-new",
+                "toolFormerData": {
+                    "name": "edit_file_v2",
+                    "status": "completed",
+                    "params": params,
+                }
+            }),
+        );
+        let records = [added, existing[0].clone(), existing[1].clone()];
+        let with_added = cursor_file_facts(&records, &ctx_with_root(REPO_ROOT));
+
+        assert_eq!(with_added[0].source_block_index, 0);
+        assert_eq!(with_added[1..], baseline);
+    }
+
+    #[test]
+    fn unsafe_relative_workspace_paths_do_not_escape_into_file_facts() {
+        let params = serde_json::to_string(&json!({
+            "relativeWorkspacePath": "../../Users/janedoe/secret/.env"
+        }))
+        .unwrap();
+        let absolute = serde_json::to_string(&json!({
+            "relativeWorkspacePath": "/Users/janedoe/secret/.env"
+        }))
+        .unwrap();
+        let records = [
+            bubble(
+                "comp-1",
+                "gpt-5.2",
+                2,
+                json!({ "toolFormerData": {
+                    "name": "edit_file_v2",
+                    "status": "completed",
+                    "params": params,
+                } }),
+            ),
+            bubble(
+                "comp-1",
+                "gpt-5.2",
+                2,
+                json!({ "toolFormerData": {
+                    "name": "edit_file_v2",
+                    "status": "completed",
+                    "params": absolute,
+                } }),
+            ),
+        ];
+
+        let facts = cursor_file_facts(&records, &ctx_with_root(REPO_ROOT));
+        assert_eq!(facts.len(), 2);
+        for fact in facts {
+            assert_eq!(fact.normalized_repo_path, OUTSIDE_REPO);
+            assert!(!fact.normalized_repo_path.contains("janedoe"));
+        }
     }
 
     #[test]

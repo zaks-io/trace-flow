@@ -158,8 +158,11 @@ pending outbox or recovery records as cleanup.
 
 Claude and Codex parser upgrades reparse previously known local transcripts, including
 Codex `archived_sessions`. New history still follows the selected import window. An
-explicit `trace-flow sync --since 1y --replay` resends Claude and Codex facts while
-preserving the local cursor evidence. Set the collector endpoints to Cloud-Dev for
+explicit `trace-flow sync --since 1y --replay` resends Claude, Codex, and Cursor facts
+while preserving the local cursor evidence. Cursor snapshots include committed SQLite
+WAL records and retained messages without session headers. Content hashes detect edits
+even when message counts and creation timestamps stay unchanged; existing cursors
+without a hash trigger one reparse. Set the collector endpoints to Cloud-Dev for
 verification. Running that command against a saved production connection requires
 production approval. It does not prove that an asynchronously accepted fact reached
 Tinybird; compare persisted identities afterward.

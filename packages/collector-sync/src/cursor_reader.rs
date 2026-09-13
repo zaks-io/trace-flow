@@ -13,23 +13,22 @@
 //! [`SyncUnit`] the drive loop POSTs — so `run_sync_cycle` (batching, POST, advance-only-after-2xx) is
 //! reused unchanged. The unit's `next_cursor` is a [`UnitCursor::Composer`] watermark, not a file cursor.
 //!
-//! **Snapshot safety (ADR).** The live DB is never opened mutably and never checkpointed. We copy the
-//! `state.vscdb` + `-wal` + `-shm` trio to a scratch dir and open the *copy* with `immutable=1&mode=ro`,
-//! which tells SQLite the file will not change under it (no locking, no `-wal` writeback). Copying the
-//! WAL/SHM alongside the main DB keeps any un-checkpointed pages, so the snapshot is internally
-//! consistent. The scratch copy is deleted when the [`CursorSnapshot`] drops.
+//! **Snapshot safety (ADR).** The live DB is opened read-only and SQLite materializes one transactionally
+//! consistent scratch database with `VACUUM INTO`. That includes committed WAL pages without copying the
+//! live main/WAL/SHM files at different instants. The completed scratch DB is then opened with
+//! `immutable=1&mode=ro` and deleted when the [`CursorSnapshot`] drops.
 //!
 //! **`GLOB`, never `LIKE` (ADR).** `LIKE` is case-insensitive by default, which disables the `key` index
 //! and forces a full multi-GB scan. Every key scan here is a `GLOB` prefix (`composerData:*`,
 //! `bubbleId:<id>:*`) so the index is used; the composer id is GLOB-escaped before interpolation.
 //!
-//! **Whole-composer read, delta fact send.** A composer is changed iff its bubble count or newest
-//! bubble timestamp advanced past the stored watermark. A changed composer is re-assembled in full so
-//! session-level parsing stays correct; the sync cycle sends only new or changed fact hashes, and the
-//! server-side fact ledger blocks repeat physical Tinybird inserts.
+//! **Whole-composer read, delta fact send.** A deterministic hash of normalized bubble content detects
+//! composer changes, including edits that retain their count and timestamps. A changed composer is
+//! re-assembled in full so session-level parsing stays correct; the sync cycle sends only new or changed
+//! fact hashes, and the server-side fact ledger blocks repeat physical Tinybird inserts.
 
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::collections::BTreeMap;
+use std::path::Path;
 
 use collector_contracts::AgentSource;
 use collector_parser::cursor_session::{cursor_repo_hint, cursor_session_fields};
@@ -37,12 +36,12 @@ use collector_parser::session_context::SessionContext;
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
-use crate::cursor::{ComposerCursor, CursorStore, CursorStoreError};
+use crate::cursor::{content_hash, ComposerCursor, CursorStore, CursorStoreError};
 use crate::git_remote::normalize_git_remote;
 use crate::import::ImportWindow;
 use crate::sync_cycle::{SyncUnit, UnitCursor};
 
-/// A failure reading a Cursor `state.vscdb`: copying/opening the snapshot (`Io`), querying the SQLite
+/// A failure reading a Cursor `state.vscdb`: materializing/opening the snapshot (`Io`), querying SQLite
 /// store (`Sqlite`), or persisting/loading the per-composer watermark (`Store`). A malformed or skippable
 /// bubble is never an error — only an unusable DB or a broken cursor store is.
 #[derive(Debug, thiserror::Error)]
@@ -56,43 +55,40 @@ pub enum CursorReadError {
 }
 
 /// A read-only, point-in-time snapshot of a Cursor `state.vscdb`. Owns a private temp directory holding
-/// the copied db (+ `-wal`/`-shm` when present), opened `immutable`; the directory is removed on drop.
+/// the materialized database, opened `immutable`; the directory is removed on drop.
 pub struct CursorSnapshot {
     conn: Connection,
-    /// The private scratch dir holding the copy, auto-removed on drop. `None` for an in-memory test conn.
+    /// The private scratch dir holding the materialized DB, auto-removed on drop. `None` for a test conn.
     /// Held only for its `Drop`; the snapshot outlives the live DB even if it rotates underneath.
     _scratch: Option<tempfile::TempDir>,
 }
 
 impl CursorSnapshot {
-    /// Copy the live DB trio into a fresh private subdir of `scratch_dir` and open the copy read-only +
-    /// immutable. The private subdir means the copy can never collide with the source (even if
-    /// `scratch_dir` is the DB's own directory). `scratch_dir` must exist and have room for the DB (it
-    /// can be multi-GB).
+    /// Materialize the live DB into a fresh private subdir of `scratch_dir` and open the result read-only
+    /// and immutable. SQLite's read transaction includes committed WAL pages atomically. The private
+    /// subdir means the destination cannot collide with the source. `scratch_dir` must exist and have room
+    /// for the DB, which can be multi-GB.
     pub fn open(live_db: &Path, scratch_dir: &Path) -> Result<Self, CursorReadError> {
         let file_name = live_db
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("state.vscdb");
-        // A unique subdir per snapshot: isolates the copy from the source and from a concurrent pass, and
-        // its `Drop` removes the whole trio at once.
+        // A unique subdir per snapshot isolates the materialized DB from the source and a concurrent pass.
         let scratch = tempfile::Builder::new()
             .prefix("trace-flow-cursor-")
             .tempdir_in(scratch_dir)?;
 
-        // Copy the main DB plus its sidecars when they exist (a cleanly-closed DB has none). Order does
-        // not matter; SQLite reconstructs consistency from the trio at open.
         let copied_main = scratch.path().join(file_name);
-        fs::copy(live_db, &copied_main)?;
-        for suffix in ["-wal", "-shm"] {
-            let sidecar = sibling(live_db, suffix);
-            if sidecar.exists() {
-                fs::copy(
-                    &sidecar,
-                    scratch.path().join(format!("{file_name}{suffix}")),
-                )?;
-            }
-        }
+        let destination = copied_main.to_str().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Cursor snapshot destination is not valid UTF-8",
+            )
+        })?;
+        let live =
+            Connection::open_with_flags(live_db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        live.execute("VACUUM main INTO ?1", [destination])?;
+        drop(live);
 
         // `immutable=1` => SQLite assumes the file never changes: no locks, no `-wal` writeback. `mode=ro`
         // is belt-and-suspenders so an accidental write errors instead of mutating the snapshot.
@@ -123,13 +119,6 @@ impl CursorSnapshot {
             _scratch: None,
         }
     }
-}
-
-/// `<path><suffix>` as a sibling path (e.g. `state.vscdb` + `-wal` => `state.vscdb-wal`).
-fn sibling(path: &Path, suffix: &str) -> PathBuf {
-    let mut s = path.as_os_str().to_os_string();
-    s.push(suffix);
-    PathBuf::from(s)
 }
 
 /// One composer's session header, from a `composerData:<id>` row.
@@ -179,7 +168,8 @@ fn value_json(bytes: &[u8]) -> Value {
     serde_json::from_slice(bytes).unwrap_or(Value::Null)
 }
 
-/// List every composer in the snapshot via an index-using `GLOB 'composerData:*'` prefix scan.
+/// List every composer represented by either a header or retained bubbles. Headerless composers keep
+/// their real key-derived id and carry no invented model or start timestamp.
 ///
 /// # Errors
 /// [`CursorReadError::Sqlite`] if the prepared statement or row read fails. A row with an unreadable
@@ -194,7 +184,7 @@ pub fn list_composers(snap: &CursorSnapshot) -> Result<Vec<ComposerRow>, CursorR
         Ok((key, value))
     })?;
 
-    let mut composers = Vec::new();
+    let mut composers = BTreeMap::new();
     for row in rows {
         let (key, value) = row?;
         // The id is the key suffix; the value JSON repeats it as `composerId`, but the key is canonical.
@@ -209,13 +199,40 @@ pub fn list_composers(snap: &CursorSnapshot) -> Result<Vec<ComposerRow>, CursorR
             .and_then(Value::as_str)
             .map(str::to_string);
         let created_at_ms = parsed.get("createdAt").and_then(Value::as_i64);
-        composers.push(ComposerRow {
-            composer_id,
-            model_name,
-            created_at_ms,
-        });
+        composers.insert(
+            composer_id.clone(),
+            ComposerRow {
+                composer_id,
+                model_name,
+                created_at_ms,
+            },
+        );
     }
-    Ok(composers)
+
+    let mut bubble_keys = snap
+        .conn
+        .prepare("SELECT key FROM cursorDiskKV WHERE key GLOB 'bubbleId:*'")?;
+    let rows = bubble_keys.query_map([], |row| row.get::<_, String>(0))?;
+    for row in rows {
+        let key = row?;
+        let Some((composer_id, _bubble_id)) = key
+            .strip_prefix("bubbleId:")
+            .and_then(|suffix| suffix.split_once(':'))
+        else {
+            continue;
+        };
+        if composer_id.is_empty() {
+            continue;
+        }
+        composers
+            .entry(composer_id.to_string())
+            .or_insert_with(|| ComposerRow {
+                composer_id: composer_id.to_string(),
+                model_name: None,
+                created_at_ms: None,
+            });
+    }
+    Ok(composers.into_values().collect())
 }
 
 /// Read every bubble for one composer, ordered by `(createdAt, bubbleId)`, normalized into the records
@@ -277,24 +294,28 @@ fn max_bubble_created_at(bubbles: &[Value]) -> Option<i64> {
     bubbles.iter().filter_map(bubble_created_at_ms).max()
 }
 
-/// The change watermark for an assembled composer: bubble count + newest bubble `createdAt` (epoch ms).
-/// Both are needed — count catches an in-place bubble edit; max-createdAt catches an append that left the
-/// count unchanged. Mirrors the JSONL size+mtime+head-hash triple for a DB-backed session.
-fn watermark(composer_id: &str, bubbles: &[Value]) -> ComposerCursor {
-    ComposerCursor {
+/// The change watermark for an assembled composer. Hash the ordered normalized bubbles after header
+/// metadata injection so content edits and header changes are visible even when count and timestamps stay
+/// fixed. Count and newest timestamp remain useful diagnostics and legacy change signals.
+fn watermark(composer_id: &str, bubbles: &[Value]) -> Result<ComposerCursor, CursorStoreError> {
+    Ok(ComposerCursor {
         composer_id: composer_id.to_string(),
         bubble_count: bubbles.len() as i64,
         max_created_at: max_bubble_created_at(bubbles).unwrap_or(0),
-    }
+        content_hash: Some(content_hash(&bubbles)?),
+    })
 }
 
-/// Whether `next` is new or advanced past the `stored` watermark: never ingested, a changed bubble count,
-/// or a newer bubble. A composer whose watermark is unchanged is skipped (its facts are already landed).
+/// Whether `next` is new or differs from the stored watermark. A legacy cursor with no hash is always
+/// changed so its first hash-aware pass reparses instead of trusting incomplete count/timestamp signals.
 fn is_changed(stored: Option<&ComposerCursor>, next: &ComposerCursor) -> bool {
     match stored {
         None => true,
         Some(prev) => {
-            prev.bubble_count != next.bubble_count || next.max_created_at > prev.max_created_at
+            prev.content_hash.is_none()
+                || prev.content_hash != next.content_hash
+                || prev.bubble_count != next.bubble_count
+                || next.max_created_at != prev.max_created_at
         }
     }
 }
@@ -347,14 +368,13 @@ fn in_window(window: ImportWindow, session_start: Option<i64>, max_bubble: Optio
     }
 }
 
-/// Discover changed composers in the snapshot and assemble each into a [`SyncUnit`]. A composer is skipped
-/// when its most-recent activity is outside `window` or its watermark is unchanged since the last
-/// successful ingest. Sync (no async): the reader does no git shell-out — Cursor repo attribution comes
-/// from inside the bubbles. The session-grain model rides each record as `__model` (the emitters read it
-/// there), so `SessionContext` carries no model field.
+/// Discover changed composers in the snapshot and assemble each into a [`SyncUnit`]. Previously unseen
+/// composers must fall inside `window`. Known composers compare their hash regardless of `createdAt`,
+/// which is a creation timestamp rather than a modification timestamp. Replay additionally selects known,
+/// unchanged composers inside the requested window. Sync (no async): the reader does no git shell-out.
 ///
 /// # Errors
-/// [`CursorReadError`]: `Io` if the snapshot copy fails, `Sqlite` if a snapshot query fails, `Store` if
+/// [`CursorReadError`]: `Io` if snapshot materialization fails, `Sqlite` if a query fails, `Store` if
 /// loading a composer's stored watermark fails. A malformed bubble within a composer is skipped, not an
 /// error.
 pub fn assemble_cursor_units(
@@ -362,23 +382,24 @@ pub fn assemble_cursor_units(
     scratch_dir: &Path,
     store: &CursorStore,
     window: ImportWindow,
+    replay: bool,
 ) -> Result<Vec<SyncUnit>, CursorReadError> {
     let snap = CursorSnapshot::open(live_db, scratch_dir)?;
     let mut units = Vec::new();
     for composer in list_composers(&snap)? {
         let records = read_bubbles(&snap, &composer)?;
-        // Window filter on the session's most-recent activity (start or newest bubble), so a long-lived
-        // session that started before the window but is still active stays in scope.
-        if !in_window(
+        let in_window = in_window(
             window,
             composer.created_at_ms,
             max_bubble_created_at(&records),
-        ) {
-            continue;
-        }
+        );
         let stored = store.get_composer(AgentSource::Cursor, &composer.composer_id)?;
-        let next = watermark(&composer.composer_id, &records);
-        if !is_changed(stored.as_ref(), &next) {
+        let next = watermark(&composer.composer_id, &records)?;
+        let selected = match stored.as_ref() {
+            None => in_window,
+            Some(_) => is_changed(stored.as_ref(), &next) || (replay && in_window),
+        };
+        if !selected {
             continue;
         }
         let ctx = build_cursor_context(&records);
@@ -395,9 +416,9 @@ pub fn assemble_cursor_units(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
 
-    /// An in-memory `cursorDiskKV` fixture — no 3.8 GB file, no snapshot copy. Reader functions run
-    /// against this through `CursorSnapshot::from_conn`.
+    /// An in-memory `cursorDiskKV` fixture with no multi-GB file or snapshot materialization.
     /// The real `cursorDiskKV` schema (`key TEXT UNIQUE …, value BLOB`); the `UNIQUE` index is what the
     /// GLOB prefix scan rides, so the fixture must carry it for the index-plan canary to be meaningful.
     const CREATE_KV: &str =
@@ -481,6 +502,81 @@ mod tests {
         );
         assert_eq!(composers[0].created_at_ms, Some(1_700_000_000_000));
         assert_eq!(composers[1].model_name.as_deref(), Some("default"));
+    }
+
+    #[test]
+    fn list_composers_retains_headerless_bubble_sessions_without_inventing_metadata() {
+        let snap = fixture(&[bubble_row(
+            "headerless",
+            "b1",
+            2,
+            "2026-05-25T22:00:00.000Z",
+        )]);
+        let composers = list_composers(&snap).unwrap();
+        assert_eq!(
+            composers,
+            vec![ComposerRow {
+                composer_id: "headerless".to_string(),
+                model_name: None,
+                created_at_ms: None,
+            }]
+        );
+        let records = read_bubbles(&snap, &composers[0]).unwrap();
+        assert_eq!(records[0]["__composer_id"], json!("headerless"));
+        assert!(records[0]["__model"].is_null());
+        assert!(records[0].get("__started_at").is_none());
+        let ctx = build_cursor_context(&records);
+        assert_eq!(ctx.vendor_session_id, "headerless");
+        assert_eq!(ctx.vendor_started_at, None);
+        assert!(ctx.repo_root.is_empty());
+    }
+
+    #[test]
+    fn snapshot_includes_committed_wal_rows_without_mutating_the_source() {
+        let source_dir = tempfile::tempdir().unwrap();
+        let scratch_dir = tempfile::tempdir().unwrap();
+        let db_path = source_dir.path().join("state.vscdb");
+
+        let schema = Connection::open(&db_path).unwrap();
+        schema.execute_batch(CREATE_KV).unwrap();
+        schema.close().unwrap();
+
+        let writer = Connection::open(&db_path).unwrap();
+        writer.pragma_update(None, "journal_mode", "WAL").unwrap();
+        writer.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+        let main_before_insert = fs::read(&db_path).unwrap();
+        for (key, value) in [
+            composer_row("wal-composer", "gpt-5.2", 1_700_000_000_000),
+            bubble_row("wal-composer", "wal-bubble", 2, "2026-05-25T22:00:00.000Z"),
+        ] {
+            writer
+                .execute(
+                    "INSERT INTO cursorDiskKV (key, value) VALUES (?1, ?2)",
+                    rusqlite::params![key, value.to_string()],
+                )
+                .unwrap();
+        }
+
+        let wal_path = db_path.with_file_name("state.vscdb-wal");
+        assert_eq!(fs::read(&db_path).unwrap(), main_before_insert);
+        let main_before_snapshot = fs::read(&db_path).unwrap();
+        let wal_before_snapshot = fs::read(&wal_path).unwrap();
+        assert!(!wal_before_snapshot.is_empty());
+
+        let snapshot = CursorSnapshot::open(&db_path, scratch_dir.path()).unwrap();
+        let composers = list_composers(&snapshot).unwrap();
+        assert_eq!(composers.len(), 1);
+        assert_eq!(composers[0].composer_id, "wal-composer");
+        let bubbles = read_bubbles(&snapshot, &composers[0]).unwrap();
+        assert_eq!(bubbles.len(), 1);
+        assert_eq!(bubbles[0]["bubbleId"], json!("wal-bubble"));
+
+        assert_eq!(fs::read(&db_path).unwrap(), main_before_snapshot);
+        assert_eq!(fs::read(&wal_path).unwrap(), wal_before_snapshot);
+        let source_rows: i64 = writer
+            .query_row("SELECT COUNT(*) FROM cursorDiskKV", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(source_rows, 2);
     }
 
     #[test]
@@ -577,17 +673,19 @@ mod tests {
             json!({ "bubbleId": "b1", "createdAt": "2026-05-25T22:00:00.000Z" }),
             json!({ "bubbleId": "b2", "createdAt": 1_900_000_000_000i64 }),
         ];
-        let w = watermark("c1", &bubbles);
+        let w = watermark("c1", &bubbles).unwrap();
         assert_eq!(w.bubble_count, 2);
         assert_eq!(w.max_created_at, 1_900_000_000_000);
+        assert!(w.content_hash.as_deref().unwrap().starts_with("sha256:"));
     }
 
     #[test]
-    fn change_detection_is_count_or_max_created_at() {
+    fn change_detection_includes_content_hash_and_forces_legacy_reparse() {
         let base = ComposerCursor {
             composer_id: "c1".to_string(),
             bubble_count: 10,
             max_created_at: 1_000,
+            content_hash: Some("sha256:base".to_string()),
         };
         // Unchanged: same count and max.
         assert!(!is_changed(Some(&base), &base));
@@ -603,8 +701,46 @@ mod tests {
             ..base.clone()
         };
         assert!(is_changed(Some(&base), &newer));
+        // Same count and timestamp, edited content.
+        let edited = ComposerCursor {
+            content_hash: Some("sha256:edited".to_string()),
+            ..base.clone()
+        };
+        assert!(is_changed(Some(&base), &edited));
+        // Pre-migration cursors cannot prove content equality.
+        let legacy = ComposerCursor {
+            content_hash: None,
+            ..base.clone()
+        };
+        assert!(is_changed(Some(&legacy), &base));
         // Never ingested.
         assert!(is_changed(None, &base));
+    }
+
+    #[test]
+    fn watermark_hash_includes_injected_header_metadata() {
+        let first = [json!({
+            "bubbleId": "b1",
+            "type": 2,
+            "createdAt": "2026-05-25T22:00:00.000Z",
+            "text": "same",
+            "__composer_id": "c1",
+            "__model": "model-a",
+            "__started_at": 1_000
+        })];
+        let changed_header = [json!({
+            "bubbleId": "b1",
+            "type": 2,
+            "createdAt": "2026-05-25T22:00:00.000Z",
+            "text": "same",
+            "__composer_id": "c1",
+            "__model": "model-b",
+            "__started_at": 1_000
+        })];
+        assert_ne!(
+            watermark("c1", &first).unwrap().content_hash,
+            watermark("c1", &changed_header).unwrap().content_hash
+        );
     }
 
     #[test]
@@ -616,11 +752,12 @@ mod tests {
         ];
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("state.vscdb");
-        // Materialize the in-memory fixture to a real file so assemble_cursor_units' snapshot copy works.
+        // Materialize the fixture so assemble_cursor_units exercises the real snapshot path.
         write_db(&db_path, &snap_rows);
 
         let store = CursorStore::open_in_memory("org").unwrap();
-        let units = assemble_cursor_units(&db_path, dir.path(), &store, open_window()).unwrap();
+        let units =
+            assemble_cursor_units(&db_path, dir.path(), &store, open_window(), false).unwrap();
         assert_eq!(units.len(), 1);
         let UnitCursor::Composer(cursor) = &units[0].next_cursor else {
             panic!("cursor source assembles a composer cursor");
@@ -631,18 +768,110 @@ mod tests {
 
         // Advance the watermark and re-run: the unchanged composer is now skipped.
         store.advance_composer(AgentSource::Cursor, cursor).unwrap();
-        let again = assemble_cursor_units(&db_path, dir.path(), &store, open_window()).unwrap();
+        let again =
+            assemble_cursor_units(&db_path, dir.path(), &store, open_window(), false).unwrap();
         assert!(again.is_empty());
+
+        let replayed =
+            assemble_cursor_units(&db_path, dir.path(), &store, open_window(), true).unwrap();
+        assert_eq!(replayed.len(), 1);
     }
 
-    /// Write a `cursorDiskKV` DB to a real file (assemble_cursor_units snapshots a file, not an in-memory
-    /// conn), so the file-copy + immutable-open path is exercised end to end. The connection is closed
-    /// (dropped) before returning so all pages are flushed into the main file and the snapshot copy sees
-    /// them — a still-open writer could leave rows only in the `-wal`.
+    #[test]
+    fn known_same_count_edits_bypass_the_creation_window_but_unknown_old_sessions_do_not() {
+        let old = "2026-05-25T22:00:00.000Z";
+        let rows = vec![
+            composer_row("known", "gpt-5.2", 1_700_000_000_000),
+            (
+                "bubbleId:known:b1".to_string(),
+                json!({ "bubbleId": "b1", "type": 2, "createdAt": old, "text": "before" }),
+            ),
+        ];
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("state.vscdb");
+        write_db(&db_path, &rows);
+        let store = CursorStore::open_in_memory("org").unwrap();
+        let initial = assemble_cursor_units(&db_path, dir.path(), &store, open_window(), false)
+            .unwrap()
+            .pop()
+            .unwrap();
+        let UnitCursor::Composer(initial_cursor) = initial.next_cursor else {
+            panic!("cursor source assembles a composer cursor");
+        };
+        store
+            .advance_composer(AgentSource::Cursor, &initial_cursor)
+            .unwrap();
+
+        replace_row(
+            &db_path,
+            "bubbleId:known:b1",
+            json!({ "bubbleId": "b1", "type": 2, "createdAt": old, "text": "after" }),
+        );
+        replace_row(
+            &db_path,
+            "composerData:unknown",
+            json!({ "composerId": "unknown", "createdAt": 1_700_000_000_000i64 }),
+        );
+        replace_row(
+            &db_path,
+            "bubbleId:unknown:b1",
+            json!({ "bubbleId": "b1", "type": 2, "createdAt": old, "text": "old" }),
+        );
+
+        let recent_window = ImportWindow::first_incremental(9_000_000_000_000);
+        let selected =
+            assemble_cursor_units(&db_path, dir.path(), &store, recent_window, false).unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].ctx.vendor_session_id, "known");
+        let UnitCursor::Composer(next) = &selected[0].next_cursor else {
+            panic!("cursor source assembles a composer cursor");
+        };
+        assert_eq!(next.bubble_count, initial_cursor.bubble_count);
+        assert_eq!(next.max_created_at, initial_cursor.max_created_at);
+        assert_ne!(next.content_hash, initial_cursor.content_hash);
+    }
+
+    #[test]
+    fn legacy_hashless_known_composer_reparses_outside_the_creation_window() {
+        let rows = vec![
+            composer_row("legacy", "gpt-5.2", 1_700_000_000_000),
+            bubble_row("legacy", "b1", 2, "2026-05-25T22:00:00.000Z"),
+        ];
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("state.vscdb");
+        write_db(&db_path, &rows);
+        let store = CursorStore::open_in_memory("org").unwrap();
+        store
+            .advance_composer(
+                AgentSource::Cursor,
+                &ComposerCursor {
+                    composer_id: "legacy".to_string(),
+                    bubble_count: 1,
+                    max_created_at: collector_parser::timestamp::rfc3339_to_epoch_ms(
+                        "2026-05-25T22:00:00.000Z",
+                    )
+                    .unwrap(),
+                    content_hash: None,
+                },
+            )
+            .unwrap();
+
+        let units = assemble_cursor_units(
+            &db_path,
+            dir.path(),
+            &store,
+            ImportWindow::first_incremental(9_000_000_000_000),
+            false,
+        )
+        .unwrap();
+        assert_eq!(units.len(), 1);
+    }
+
+    /// Write a `cursorDiskKV` DB to a real file so snapshot materialization and immutable open run end to
+    /// end. The WAL-only test separately keeps a live writer open through snapshot creation.
     fn write_db(path: &Path, rows: &[(String, Value)]) {
         let conn = Connection::open(path).unwrap();
-        // DELETE journal mode keeps everything in the single main file (no separate `-wal` to copy),
-        // matching the simplest snapshot case; the real DB's WAL trio is covered by CursorSnapshot::open.
+        // DELETE journal mode keeps this fixture simple; the WAL-only case is covered above.
         conn.pragma_update(None, "journal_mode", "DELETE").unwrap();
         conn.execute_batch(CREATE_KV).unwrap();
         for (key, value) in rows {
@@ -652,6 +881,16 @@ mod tests {
             )
             .unwrap();
         }
+        conn.close().unwrap();
+    }
+
+    fn replace_row(path: &Path, key: &str, value: Value) {
+        let conn = Connection::open(path).unwrap();
+        conn.execute(
+            "INSERT INTO cursorDiskKV (key, value) VALUES (?1, ?2)",
+            rusqlite::params![key, value.to_string()],
+        )
+        .unwrap();
         conn.close().unwrap();
     }
 }

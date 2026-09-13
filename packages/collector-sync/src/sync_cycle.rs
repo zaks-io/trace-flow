@@ -589,6 +589,7 @@ mod tests {
                 composer_id: composer_id.to_string(),
                 bubble_count: 3,
                 max_created_at: 1_700_000_000_000,
+                content_hash: Some("sha256:composer".to_string()),
             }),
         }
     }
