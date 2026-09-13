@@ -38,10 +38,10 @@ describe('AgentDeliveryCoordinator dirty day links', () => {
   it('deduplicates undirected links and keeps both correction days in one snapshot', async () => {
     await reserve('delivery-linked', HASH_A, ['2026-09-13']);
     await withCoordinator((coordinator) =>
-      coordinator.expandDirtyDays({
+      coordinator.replaceDirtyDays({
         deliveryId: 'delivery-linked',
         payloadSha256: HASH_A,
-        dirtyDays: ['2026-09-01'],
+        dirtyDays: ['2026-09-01', '2026-09-13'],
       }),
     );
     await expect(

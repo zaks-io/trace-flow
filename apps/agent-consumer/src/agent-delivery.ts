@@ -31,6 +31,7 @@ interface DeliveryState {
   canonicalProof?: ExpectedCanonicalFact[];
   revision?: number;
   rowsSha256?: string;
+  plannedDirtyDays?: string[];
   categories: Partial<Record<Category, 'attempting' | 'done'>>;
   phase: 'registered' | 'committing' | 'complete' | 'expired';
 }
@@ -107,13 +108,31 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
       await this.ctx.storage.put('receipt', state);
     }
     await this.ctx.storage.setAlarm(Date.now() + 60_000);
-    const result = await this.coordinator(reference.org_id).reserve({
-      deliveryId: reference.key,
-      payloadSha256: reference.sha256,
-      dirtyDays: days,
-      createdAtMs: reference.created_at,
-      expiresAtMs: reference.expires_at,
-    });
+    const coordinator = this.coordinator(reference.org_id);
+    let result: Awaited<ReturnType<typeof coordinator.reserve>>;
+    try {
+      result = await coordinator.reserve({
+        deliveryId: reference.key,
+        payloadSha256: reference.sha256,
+        dirtyDays: days,
+        createdAtMs: reference.created_at,
+        expiresAtMs: reference.expires_at,
+      });
+    } catch (error) {
+      try {
+        const erasure = await coordinator.getErasureState({});
+        if (erasure !== null) {
+          const reservation = await coordinator.getReservation({ deliveryId: reference.key });
+          if (reservation === null) {
+            await this.removeBodies(state);
+            await this.clearReceipt();
+          }
+        }
+      } catch {
+        // Preserve the staged body when the coordinator cannot prove it is safe to discard.
+      }
+      throw error;
+    }
     state.revision = result.deliverySequence;
     await this.ctx.storage.put('receipt', state);
     return result.deliverySequence;
@@ -194,12 +213,22 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
           ),
         ),
       ].sort();
-      if (reservation && dirtyDays.length > 0)
-        await coordinator.expandDirtyDays({
+      if (state.plannedDirtyDays === undefined) {
+        state.plannedDirtyDays = dirtyDays;
+        await this.ctx.storage.put('receipt', state);
+      } else if (JSON.stringify(state.plannedDirtyDays) !== JSON.stringify(dirtyDays)) {
+        throw new Error('Stored delivery plan dirty days changed');
+      }
+      if (reservation) {
+        const replaced = await coordinator.replaceDirtyDays({
           deliveryId: reference.key,
           payloadSha256: reference.sha256,
           dirtyDays,
         });
+        if (JSON.stringify(replaced.dirtyDays) !== JSON.stringify(dirtyDays)) {
+          throw new Error('Coordinator delivery plan dirty days mismatch');
+        }
+      }
       const links = deliveryPartitionLinks(delivery);
       if (reservation && links.length > 0)
         await coordinator.linkDirtyDays({
@@ -281,9 +310,24 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     coordinator: ReturnType<AgentDeliveryBase['coordinator']>,
     hasReservation: boolean,
   ): Promise<void> {
-    if (hasReservation)
-      await coordinator.complete({ deliveryId: reference.key, payloadSha256: reference.sha256 });
-    await coordinator.scheduleSnapshot({ orgId: reference.org_id });
+    if (state.plannedDirtyDays === undefined) {
+      throw new Error('Committing delivery has no persisted dirty day plan');
+    }
+    const completed = hasReservation
+      ? await coordinator.complete({
+          deliveryId: reference.key,
+          payloadSha256: reference.sha256,
+        })
+      : undefined;
+    if (
+      completed &&
+      JSON.stringify(completed.dirtyDays) !== JSON.stringify(state.plannedDirtyDays)
+    ) {
+      throw new Error('Completed delivery dirty days do not match its persisted plan');
+    }
+    if (state.plannedDirtyDays.length > 0) {
+      await coordinator.scheduleSnapshot({ orgId: reference.org_id });
+    }
     const next = await coordinator.getNextDelivery();
     if (next) {
       const wake: AgentDeliveryReference = {

@@ -165,6 +165,7 @@ jobs:
               - 'pipes/**'
               - 'tests/**'
               - 'tinybird.config.json'
+              - 'scripts/ci/*tinybird-local-fixture-tests*'
               - 'scripts/deploy-agent-tinybird.sh'
               - 'scripts/tinybird-agent-signal-performance-report.sh'
               - 'scripts/verify-agent-signal-query-guardrails.mjs'
@@ -231,8 +232,7 @@ jobs:
             TINYBIRD_VALIDATE_DEPLOY_TREE_ONLY=1 \
           bash scripts/deploy-agent-tinybird.sh
           tb --local build
-          tb --local test run
-          bash scripts/tinybird-agent-signal-performance-report.sh --local
+          bash scripts/ci/run-tinybird-local-fixture-tests.sh
         env:
           TB_VERSION_WARNING: 0
 

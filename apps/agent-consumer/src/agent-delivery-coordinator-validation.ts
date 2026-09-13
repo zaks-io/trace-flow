@@ -79,9 +79,19 @@ export function validatePayloadSha256(value: unknown): string {
 }
 
 export function validateDaySet(value: unknown, label: string): string[] {
-  if (!Array.isArray(value) || value.length === 0) {
+  const days = validateCalendarDaySet(value, label);
+  if (days.length === 0) {
     throw new Error(`${label} must be a non-empty array`);
   }
+  return days;
+}
+
+export function validateDeliveryPlanDays(value: unknown): string[] {
+  return validateCalendarDaySet(value, 'delivery plan dirtyDays');
+}
+
+function validateCalendarDaySet(value: unknown, label: string): string[] {
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
   if (value.length > MAX_AGENT_DIRTY_DAYS) throw new Error(`${label} has too many days`);
   return [...new Set(value.map(validateCalendarDay))].sort();
 }

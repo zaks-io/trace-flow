@@ -118,6 +118,21 @@ export function readDeliveryDays(storage: DurableObjectStorage, deliveryId: stri
   ].map((row) => row.dirty_day);
 }
 
+export function replaceDeliveryDays(
+  storage: DurableObjectStorage,
+  deliveryId: string,
+  dirtyDays: string[],
+): void {
+  storage.sql.exec('DELETE FROM active_delivery_days WHERE delivery_id = ?', deliveryId);
+  for (const dirtyDay of dirtyDays) {
+    storage.sql.exec(
+      'INSERT INTO active_delivery_days (delivery_id, dirty_day) VALUES (?, ?)',
+      deliveryId,
+      dirtyDay,
+    );
+  }
+}
+
 export function markDirtyDays(
   storage: DurableObjectStorage,
   dirtyDays: string[],

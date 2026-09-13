@@ -236,7 +236,6 @@ function clearErasedCoordinatorMetadata(storage: DurableObjectStorage): void {
     DELETE FROM incomplete_days;
     DELETE FROM snapshot_days;
     DELETE FROM snapshot_progress;
-    DELETE FROM ingestion_migration;
     UPDATE coordinator_state
       SET gate_phase='open', active_snapshot_generation=NULL, gate_expires_at_ms=NULL
       WHERE singleton=1;

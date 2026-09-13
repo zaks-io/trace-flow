@@ -72,6 +72,22 @@ describe('legacy inline delivery migration', () => {
     expect(objects.size).toBe(0);
   });
 
+  it('does not fall back to the old batcher when erasure starts after its precheck', async () => {
+    const register = vi.fn(async () => {
+      throw new Error('agent ingestion erasure has started');
+    });
+    const { env, legacyState, process } = makeEnv({ migrationComplete: true, register });
+    const message = stubMessage(queueMessage());
+
+    await expect(processMigratedLegacyMessages([message], env)).resolves.toEqual([]);
+
+    expect(legacyState).not.toHaveBeenCalled();
+    expect(register).toHaveBeenCalledOnce();
+    expect(process).not.toHaveBeenCalled();
+    expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 60 });
+    expect(message.ack).not.toHaveBeenCalled();
+  });
+
   it('retries a frozen message failure without returning it to the old ledger', async () => {
     const { env } = makeEnv({ migrationComplete: false });
     const message = stubMessage(queueMessage());

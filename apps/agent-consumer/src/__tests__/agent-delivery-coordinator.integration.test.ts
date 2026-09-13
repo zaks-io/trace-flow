@@ -522,7 +522,7 @@ describe('AgentDeliveryCoordinator', () => {
     );
   });
 
-  it('expands dirty days only for the write permit holder and enforces the union cap', async () => {
+  it('replaces dirty days only for the write permit holder and enforces the union cap', async () => {
     vi.setSystemTime(new Date('2024-09-13T12:00:00.000Z'));
     const days = Array.from({ length: MAX_AGENT_DIRTY_DAYS }, (_, index) =>
       new Date(Date.UTC(2024, 8, 13) - index * 86_400_000).toISOString().slice(0, 10),
@@ -531,12 +531,12 @@ describe('AgentDeliveryCoordinator', () => {
       coordinator.reserve(reservation('delivery-owner', HASH_A, days)),
     );
     await withCoordinator((coordinator) =>
-      coordinator.reserve(reservation('delivery-waiting', HASH_B, ['2024-09-13'])),
+      coordinator.reserve(reservation('delivery-waiting', HASH_B, [days[days.length - 1]!])),
     );
 
     await expect(
       withCoordinator((coordinator) =>
-        coordinator.expandDirtyDays({
+        coordinator.replaceDirtyDays({
           deliveryId: 'delivery-waiting',
           payloadSha256: HASH_B,
           dirtyDays: ['2024-09-12'],
@@ -545,21 +545,24 @@ describe('AgentDeliveryCoordinator', () => {
     ).rejects.toBeInstanceOf(AgentDeliveryCoordinatorRetryableError);
     await expect(
       withCoordinator((coordinator) =>
-        coordinator.expandDirtyDays({
+        coordinator.replaceDirtyDays({
           deliveryId: 'delivery-owner',
           payloadSha256: HASH_A,
           dirtyDays: [days[0]!, days[0]!],
         }),
       ),
-    ).resolves.toEqual({ dirtyDays: [...days].sort() });
+    ).resolves.toEqual({ dirtyDays: [days[0]!] });
 
     vi.advanceTimersByTime(86_400_000);
+    const currentDays = Array.from({ length: MAX_AGENT_DIRTY_DAYS }, (_, index) =>
+      new Date(Date.UTC(2024, 8, 14) - index * 86_400_000).toISOString().slice(0, 10),
+    );
     await expect(
       withCoordinator((coordinator) =>
-        coordinator.expandDirtyDays({
+        coordinator.replaceDirtyDays({
           deliveryId: 'delivery-owner',
           payloadSha256: HASH_A,
-          dirtyDays: ['2024-09-14'],
+          dirtyDays: currentDays,
         }),
       ),
     ).rejects.toThrow('dirty day limit reached');
@@ -567,7 +570,33 @@ describe('AgentDeliveryCoordinator', () => {
       withCoordinator((coordinator) =>
         coordinator.getReservation({ deliveryId: 'delivery-owner' }),
       ),
-    ).resolves.toMatchObject({ dirtyDays: [...days].sort() });
+    ).resolves.toMatchObject({ dirtyDays: [days[0]!] });
+  });
+
+  it('allows an exact empty plan and promotes no dirty days', async () => {
+    await withCoordinator((coordinator) =>
+      coordinator.reserve(reservation('delivery-empty', HASH_A, ['2026-09-13'])),
+    );
+    await withCoordinator((coordinator) =>
+      coordinator.acquireWrite({ deliveryId: 'delivery-empty', payloadSha256: HASH_A }),
+    );
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.replaceDirtyDays({
+          deliveryId: 'delivery-empty',
+          payloadSha256: HASH_A,
+          dirtyDays: [],
+        }),
+      ),
+    ).resolves.toEqual({ dirtyDays: [] });
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.complete({ deliveryId: 'delivery-empty', payloadSha256: HASH_A }),
+      ),
+    ).resolves.toEqual({ deliverySequence: 2, dirtyDays: [] });
+    await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
+      { activeDeliveries: 0, dirtyDays: 0 },
+    );
   });
 
   async function completeOne(deliveryId: string, dirtyDays: string[]): Promise<void> {

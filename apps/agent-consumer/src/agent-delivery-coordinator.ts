@@ -47,12 +47,14 @@ import {
   pruneRetainedDayMetadata,
   readCoordinatorState,
   readDeliveryDays,
+  replaceDeliveryDays,
 } from './agent-delivery-coordinator-storage';
 import {
   assertExactKeys,
   assertNewReservationWindow,
   assertRetainedDaySet,
   validateDaySet,
+  validateDeliveryPlanDays,
   validateDeliveryId,
   validateGenerationInput,
   validatePayloadSha256,
@@ -246,15 +248,15 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     return earliestDeliveryId(this.ctx.storage) === reservation.delivery_id;
   }
 
-  expandDirtyDays(input: { deliveryId: string; payloadSha256: string; dirtyDays: string[] }): {
+  replaceDirtyDays(input: { deliveryId: string; payloadSha256: string; dirtyDays: string[] }): {
     dirtyDays: string[];
   } {
-    assertExactKeys(input, ['deliveryId', 'dirtyDays', 'payloadSha256'], 'expand dirty days');
+    assertExactKeys(input, ['deliveryId', 'dirtyDays', 'payloadSha256'], 'replace dirty days');
     const deliveryId = validateDeliveryId(input.deliveryId);
     const payloadSha256 = validatePayloadSha256(input.payloadSha256);
-    const additionalDays = validateDaySet(input.dirtyDays, 'expanded dirtyDays');
+    const dirtyDays = validateDeliveryPlanDays(input.dirtyDays);
     const now = Date.now();
-    assertRetainedDaySet(additionalDays, now);
+    assertRetainedDaySet(dirtyDays, now);
     return this.ctx.storage.transactionSync(() => {
       const reservation = requireStoredReservation(this.ctx.storage, deliveryId, payloadSha256);
       if (now >= reservation.expires_at_ms) throw new Error('active delivery has expired');
@@ -263,13 +265,7 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
           'active delivery does not hold write permit',
         );
       }
-      for (const dirtyDay of additionalDays) {
-        this.ctx.storage.sql.exec(
-          'INSERT OR IGNORE INTO active_delivery_days (delivery_id, dirty_day) VALUES (?, ?)',
-          deliveryId,
-          dirtyDay,
-        );
-      }
+      replaceDeliveryDays(this.ctx.storage, deliveryId, dirtyDays);
       assertDirtyDayCapacity(this.ctx.storage);
       return { dirtyDays: readDeliveryDays(this.ctx.storage, deliveryId) };
     });

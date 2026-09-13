@@ -11,7 +11,11 @@ import { makeKv } from './harness';
 const writes: Record<string, unknown>[][] = [];
 
 async function staged(
-  options: { legacySourceOrder?: boolean; message?: ReturnType<typeof queueMessage> } = {},
+  options: {
+    days?: string[];
+    legacySourceOrder?: boolean;
+    message?: ReturnType<typeof queueMessage>;
+  } = {},
 ) {
   const orgId = `test-${crypto.randomUUID()}`;
   const source =
@@ -34,7 +38,7 @@ async function staged(
   const host = env.AGENT_DELIVERY.getByName(reference.key);
   const revision = await host.register(
     reference,
-    [new Date().toISOString().slice(0, 10)],
+    options.days ?? [new Date().toISOString().slice(0, 10)],
     options.legacySourceOrder ? { legacySourceOrder: true } : undefined,
   );
   return {
@@ -43,6 +47,24 @@ async function staged(
     reference: { ...reference, delivery_revision: revision } as AgentDeliveryReference,
     orgId,
   };
+}
+
+async function unregistered() {
+  const orgId = `test-${crypto.randomUUID()}`;
+  const source = queueMessage({
+    tenancy: {
+      org_id: orgId,
+      user_id: 'user',
+      collector_id: 'collector',
+      collector_credential_id: 'credential',
+    },
+  });
+  const reference = await stageAgentDelivery({
+    storage: env.AGENT_DELIVERIES,
+    message: source,
+    encryption: { rootKeyBase64: env.BODY_ENCRYPTION_ROOT_KEY },
+  });
+  return { host: env.AGENT_DELIVERY.getByName(reference.key), orgId, reference };
 }
 
 async function recoverySource(costUsd = 12.34) {
@@ -226,13 +248,72 @@ describe('bounded delivery durability', () => {
     ).toBeNull();
     expect(
       await env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${stagedDelivery.orgId}`).getStats({}),
-    ).toMatchObject({ activeDeliveries: 0, incompleteDays: 0 });
+    ).toMatchObject({ activeDeliveries: 0, dirtyDays: 0, incompleteDays: 0 });
+    await runInDurableObject(
+      env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${stagedDelivery.orgId}`),
+      async (_instance, state) => {
+        expect(await state.storage.getAlarm()).toBeNull();
+      },
+    );
+    expect(
+      vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('repair_agent_')),
+    ).toBe(false);
     await runInDurableObject(stagedDelivery.host, async (_instance, state) => {
       expect(await state.storage.get('receipt')).toMatchObject({
         phase: 'complete',
         legacySourceOrder: true,
+        plannedDirtyDays: [],
       });
     });
+  });
+
+  it('promotes only retained plan days when a legacy delivery is partly superseded', async () => {
+    const enqueuedAt = Date.parse('2026-09-13T03:00:00.000Z');
+    const message = queueMessage({
+      enqueued_at: enqueuedAt,
+      facts: {
+        ...emptyQueueFacts(),
+        messages: [
+          messageFact({
+            message_pk: 'msg_old',
+            vendor_message_id: 'vm-old',
+            event_at: Date.parse('2026-09-12T01:00:00.000Z'),
+          }),
+          messageFact({
+            message_pk: 'msg_live',
+            vendor_message_id: 'vm-live',
+            event_at: Date.parse('2026-09-13T01:00:00.000Z'),
+          }),
+        ],
+      },
+    });
+    const stagedDelivery = await staged({
+      days: ['2026-09-12', '2026-09-13'],
+      legacySourceOrder: true,
+      message,
+    });
+    mockTransport(false, [
+      {
+        FactIdentity: `${stagedDelivery.orgId}\x1fs1\x1fmsg_old`,
+        EventDay: '2026-09-12',
+        DeliverySequence: 1,
+        ContentHash: 'f'.repeat(64),
+        IngestedAt: '2026-09-13 04:00:00.000',
+      },
+    ]);
+
+    await stagedDelivery.host.process(stagedDelivery.reference);
+
+    expect(writes.flat()).toHaveLength(1);
+    expect(writes[0]![0]).toMatchObject({ message_pk: 'msg_live' });
+    await expect(
+      env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${stagedDelivery.orgId}`).getStats({}),
+    ).resolves.toMatchObject({ activeDeliveries: 0, dirtyDays: 1, incompleteDays: 0 });
+    await expect(
+      env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${stagedDelivery.orgId}`).beginSnapshot({
+        claimId: crypto.randomUUID(),
+      }),
+    ).resolves.toMatchObject({ dirtyDays: ['2026-09-13'] });
   });
 
   it('rejects tampered queue references before reading or writing facts', async () => {
@@ -273,6 +354,61 @@ describe('bounded delivery durability', () => {
       expect(send).toHaveBeenCalledWith(reference);
       expect(await state.storage.getAlarm()).not.toBeNull();
     });
+  });
+
+  it('removes a late staged body when erasure permanently rejects its reservation', async () => {
+    const { host, reference } = await unregistered();
+    const reserveError = new Error('agent ingestion erasure has started');
+    const reserve = vi.fn().mockRejectedValue(reserveError);
+
+    await runInDurableObject(host, async (_instance, state) => {
+      const delivery = new AgentDelivery(state, {
+        ...env,
+        AGENT_DELIVERY_COORDINATOR: {
+          getByName: vi.fn(() => ({
+            reserve,
+            getErasureState: vi.fn(async () => ({ erasureStarted: true })),
+            getReservation: vi.fn(async () => null),
+          })),
+        } as unknown as typeof env.AGENT_DELIVERY_COORDINATOR,
+      });
+
+      await expect(
+        delivery.register(reference, [new Date().toISOString().slice(0, 10)]),
+      ).rejects.toThrow('agent ingestion erasure has started');
+      expect(await state.storage.get('receipt')).toBeUndefined();
+      expect(await state.storage.getAlarm()).toBeNull();
+    });
+    expect(await env.AGENT_DELIVERIES.head(reference.key)).toBeNull();
+  });
+
+  it('preserves a staged body when a failed reserve may already exist', async () => {
+    const { host, reference } = await unregistered();
+    const reserveError = new Error('reserve response was lost');
+    const reserve = vi.fn().mockRejectedValue(reserveError);
+
+    await runInDurableObject(host, async (_instance, state) => {
+      const delivery = new AgentDelivery(state, {
+        ...env,
+        AGENT_DELIVERY_COORDINATOR: {
+          getByName: vi.fn(() => ({
+            reserve,
+            getErasureState: vi.fn(async () => ({ erasureStarted: true })),
+            getReservation: vi.fn(async () => ({
+              deliveryId: reference.key,
+              payloadSha256: reference.sha256,
+            })),
+          })),
+        } as unknown as typeof env.AGENT_DELIVERY_COORDINATOR,
+      });
+
+      await expect(
+        delivery.register(reference, [new Date().toISOString().slice(0, 10)]),
+      ).rejects.toThrow('reserve response was lost');
+      expect(await state.storage.get('receipt')).toMatchObject({ phase: 'registered' });
+      expect(await state.storage.getAlarm()).not.toBeNull();
+    });
+    expect(await env.AGENT_DELIVERIES.head(reference.key)).not.toBeNull();
   });
 
   it('preserves canonical proof when an alarm retries an interrupted recovery registration', async () => {
@@ -369,7 +505,7 @@ describe('bounded delivery durability', () => {
           getByName: vi.fn(() => ({
             getReservation: vi.fn(async () => reservation),
             acquireWrite: vi.fn(async () => true),
-            expandDirtyDays: vi.fn(async () => undefined),
+            replaceDirtyDays: vi.fn(async ({ dirtyDays }) => ({ dirtyDays })),
             linkDirtyDays: vi.fn(async () => undefined),
             complete: vi.fn(async () => {
               reservation = null;

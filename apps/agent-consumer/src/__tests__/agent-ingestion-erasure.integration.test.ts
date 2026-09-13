@@ -13,6 +13,7 @@ const CLAIM_ID = 'claim-a';
 
 const env = workerEnv as unknown as AgentConsumerEnv;
 const PAYLOAD_SHA256 = 'a'.repeat(64);
+const MIGRATION_PROOF_SHA256 = 'b'.repeat(64);
 
 describe('agent ingestion erasure fence', () => {
   let storageHost: DurableObjectStub<AgentDeliveryCoordinatorInstance>;
@@ -83,6 +84,26 @@ describe('agent ingestion erasure fence', () => {
       activeDeliveries: 0,
       ready: true,
     });
+  });
+
+  it('keeps the completed migration routing fence after erasure becomes ready', async () => {
+    await withCoordinator((coordinator) => {
+      coordinator.seedIngestionMigration({
+        proofSha256: MIGRATION_PROOF_SHA256,
+        dirtyDays: [],
+      });
+      coordinator.completeIngestionMigration({ proofSha256: MIGRATION_PROOF_SHA256 });
+    });
+
+    await expect(
+      withCoordinator((coordinator) => coordinator.beginErasure({})),
+    ).resolves.toMatchObject({ ready: true });
+    await expect(
+      withCoordinator((coordinator) => coordinator.getIngestionMigrationState()),
+    ).resolves.toEqual({ proofSha256: MIGRATION_PROOF_SHA256, complete: true });
+    await expect(
+      withCoordinator((coordinator) => coordinator.beginErasure({})),
+    ).resolves.toMatchObject({ ready: true });
   });
 
   it('discards incomplete analytics after failed deliveries drain under the erasure fence', async () => {

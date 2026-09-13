@@ -151,13 +151,13 @@ SQL >
         ))), range(1, length(token_edges))) AS token_bucket_sum,
         round(arraySum(arraySlice(costs_desc, 1, top_count)), 6) AS top_10pct_cost_usd,
         top_count AS top_10pct_session_count,
-        if(
+        round(if(
             n <= 1 OR total_cost = 0,
             0.,
             greatest(0., least(1., (1. - 2. * arraySum(arrayMap(
                 (value, i) -> value * (n - i + 0.5), cost_vals, arrayEnumerate(cost_vals)
             )) / (n * total_cost)) * n / (n - 1)))
-        ) AS gini,
+        ), 4) AS gini,
         if(total_cost = 0, toUInt64(0), toUInt64(arrayFirstIndex(value -> value >= total_cost / 2, cumulative_cost))) AS half_spend_conv_count,
         arrayMap(rank -> if(n = 0, 0., rank / n), sample_ranks) AS lorenz_conv_pct,
         arrayMap(rank -> if(rank = 0 OR total_cost = 0, 0., cumulative_cost[rank] / total_cost), sample_ranks) AS lorenz_cost_pct
@@ -166,5 +166,6 @@ SQL >
 NODE endpoint
 SQL >
     SELECT * FROM distribution
+    WHERE session_count > 0 OR prior_session_count > 0
 
 TYPE ENDPOINT
