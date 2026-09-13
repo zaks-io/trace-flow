@@ -1,0 +1,37 @@
+DESCRIPTION >
+    Generation-scoped daily snapshot rows for agent_session_file_signals. Publishing a generation through
+    agent_snapshot_manifest makes a complete replacement visible without exposing partial copies.
+
+SCHEMA >
+    `OrgId` String,
+    `repo_fingerprint` String,
+    `session_pk` String,
+    `normalized_repo_path` String,
+    `source` AggregateFunction(argMax, String, DateTime64(3)),
+    `repo_source` AggregateFunction(argMax, String, DateTime64(3)),
+    `parser_version` AggregateFunction(argMax, String, DateTime64(3)),
+    `PathConfidenceRank` AggregateFunction(max, UInt8),
+    `FirstTouchedAt` AggregateFunction(min, DateTime64(3)),
+    `LastTouchedAt` AggregateFunction(max, DateTime64(3)),
+    `IngestedAt` AggregateFunction(max, DateTime64(3)),
+    `TouchCount` AggregateFunction(sum, UInt64),
+    `ReadCount` AggregateFunction(sum, UInt64),
+    `EditCount` AggregateFunction(sum, UInt64),
+    `WriteCount` AggregateFunction(sum, UInt64),
+    `DirectoryReadCount` AggregateFunction(sum, UInt64),
+    `MissingFileCount` AggregateFunction(sum, UInt64),
+    `CoverageDebtCount` AggregateFunction(sum, UInt64),
+    `StructuredFileEventCount` AggregateFunction(sum, UInt64),
+    `HintEventCount` AggregateFunction(sum, UInt64),
+    `SnapshotDay` Date,
+    `SnapshotGeneration` UInt64,
+    `CopyAttempt` UInt64,
+    `SourceContributor` LowCardinality(String)
+
+ENGINE "ReplacingMergeTree"
+ENGINE_SORTING_KEY "OrgId, SnapshotDay, SnapshotGeneration, SourceContributor, repo_fingerprint, session_pk, normalized_repo_path"
+ENGINE_VER "CopyAttempt"
+ENGINE_PARTITION_KEY "toYYYYMM(SnapshotDay)"
+ENGINE_TTL "toDateTime(SnapshotDay) + toIntervalYear(1) + toIntervalDay(1)"
+
+TOKEN "agent_snapshot_worker" APPEND

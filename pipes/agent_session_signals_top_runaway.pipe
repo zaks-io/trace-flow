@@ -19,7 +19,7 @@ SQL >
     SELECT
         repo_fingerprint,
         session_pk
-    FROM agent_session_signals
+    FROM agent_session_signals_published
     WHERE OrgId = {{ String(org_id, '') }}
         AND EventDate >= start_date
         AND EventDate <= end_date
@@ -102,7 +102,7 @@ SQL >
         greatest(0, toUnixTimestamp64Milli(last_event_at) - toUnixTimestamp64Milli(started_at)) AS duration_ms,
         toUnixTimestamp64Milli(started_at) AS started_at_ms,
         toUnixTimestamp64Milli(last_event_at) AS last_event_ms
-    FROM agent_session_signals
+    FROM agent_session_signals_published
     WHERE OrgId = {{ String(org_id, '') }}
         {% if defined(repos) %}
         AND has(arrayFilter(x -> x != '', arrayMap(x -> trim(x), splitByChar(',', {{ String(repos) }}))), repo_fingerprint)

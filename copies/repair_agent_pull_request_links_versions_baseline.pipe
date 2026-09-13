@@ -1,0 +1,46 @@
+DESCRIPTION >
+    One-time bounded migration of uniqueness-verified pull_request_links facts into the versioned canonical table.
+    DeliverySequence 1 is reserved for this baseline; live deliveries begin at 2.
+
+NODE baseline
+SQL >
+    %
+    SELECT
+        toUInt64(1) AS DeliverySequence,
+        lower(hex(SHA256(toJSONString(tuple(`OrgId`, `UserId`, `CollectorId`, `CollectorCredentialId`, `session_pk`, `pull_request_link_pk`, `repo_fingerprint`, `repo_source`, `source`, `parser_version`, `EventAt`, `IngestedAt`, `vendor_session_id`, `source_event_id`, `stable_turn_index`, `host`, `owner`, `repo`, `number`, `url`, `confidence`, `evidence`, `dropped_sensitive`))))) AS ContentHash,
+        toUInt8(0) AS IsDeleted,
+        `OrgId`,
+        `UserId`,
+        `CollectorId`,
+        `CollectorCredentialId`,
+        `session_pk`,
+        `pull_request_link_pk`,
+        `repo_fingerprint`,
+        `repo_source`,
+        `source`,
+        `parser_version`,
+        `EventAt`,
+        `IngestedAt`,
+        `vendor_session_id`,
+        `source_event_id`,
+        `stable_turn_index`,
+        `host`,
+        `owner`,
+        `repo`,
+        `number`,
+        `url`,
+        `confidence`,
+        `evidence`,
+        `dropped_sensitive`
+    FROM agent_pull_request_facts
+    WHERE OrgId = {{ String(org_id) }}
+      AND EventAt >= toDateTime({{ Date(start_day) }})
+      AND EventAt < toDateTime({{ Date(end_day) }}) + INTERVAL 1 DAY
+      AND {{ UInt64(copy_attempt) }} >= 1
+    SETTINGS max_threads = 1
+
+TYPE COPY
+TARGET_DATASOURCE agent_pull_request_fact_versions
+COPY_MODE append
+
+TOKEN agent_snapshot_migration READ

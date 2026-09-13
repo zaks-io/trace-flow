@@ -1,0 +1,19 @@
+DESCRIPTION >
+    Non-aggregating delivery receipts from agent_capability_snapshot_fact_versions. This view intentionally preserves
+    tombstones because a partition-moving correction is durable only when both rows arrive.
+
+NODE receipts
+SQL >
+    SELECT
+        OrgId,
+        DeliverySequence,
+        'capability_snapshots' AS Category,
+        concat(OrgId, char(31), session_pk, char(31), capability_snapshot_pk) AS FactIdentity,
+        toDate(EventAt) AS EventDay,
+        IsDeleted,
+        ContentHash,
+        now64(3) AS ReceivedAt
+    FROM agent_capability_snapshot_fact_versions
+
+TYPE MATERIALIZED
+DATASOURCE agent_delivery_receipts

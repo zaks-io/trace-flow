@@ -1,0 +1,19 @@
+DESCRIPTION >
+    Non-aggregating delivery receipts from agent_review_unit_attribution_versions. This view intentionally preserves
+    tombstones because a partition-moving correction is durable only when both rows arrive.
+
+NODE receipts
+SQL >
+    SELECT
+        OrgId,
+        DeliverySequence,
+        'review_unit_attributions' AS Category,
+        concat(OrgId, char(31), session_pk, char(31), review_unit_attribution_pk) AS FactIdentity,
+        toDate(DecidedAt) AS EventDay,
+        IsDeleted,
+        ContentHash,
+        now64(3) AS ReceivedAt
+    FROM agent_review_unit_attribution_versions
+
+TYPE MATERIALIZED
+DATASOURCE agent_delivery_receipts

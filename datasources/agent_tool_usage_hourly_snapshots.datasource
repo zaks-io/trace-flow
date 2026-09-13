@@ -1,0 +1,28 @@
+DESCRIPTION >
+    Generation-scoped daily snapshot rows for agent_tool_usage_hourly. Publishing a generation through
+    agent_snapshot_manifest makes a complete replacement visible without exposing partial copies.
+
+SCHEMA >
+    `BucketStart` DateTime,
+    `OrgId` String,
+    `source` LowCardinality(String),
+    `tool_name` LowCardinality(String),
+    `command_family` LowCardinality(String),
+    `repo_fingerprint` String,
+    `EventCount` AggregateFunction(count),
+    `SuccessCount` AggregateFunction(sum, UInt64),
+    `FailureCount` AggregateFunction(sum, UInt64),
+    `UnknownCount` AggregateFunction(sum, UInt64),
+    `DurationMsSum` AggregateFunction(sum, UInt64),
+    `SnapshotDay` Date,
+    `SnapshotGeneration` UInt64,
+    `CopyAttempt` UInt64,
+    `SourceContributor` LowCardinality(String)
+
+ENGINE "ReplacingMergeTree"
+ENGINE_SORTING_KEY "OrgId, SnapshotDay, SnapshotGeneration, SourceContributor, BucketStart, source, tool_name, command_family, repo_fingerprint"
+ENGINE_VER "CopyAttempt"
+ENGINE_PARTITION_KEY "toYYYYMM(SnapshotDay)"
+ENGINE_TTL "toDateTime(SnapshotDay) + toIntervalYear(1) + toIntervalDay(1)"
+
+TOKEN "agent_snapshot_worker" APPEND

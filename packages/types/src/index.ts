@@ -8,6 +8,7 @@ export * from './agent-ingest';
 export * from './agent-ingest-schema';
 export * from './agent-ingest-fact-schema';
 export * from './agent-ingest-validation';
+export * from './agent-delivery';
 export * from './feedback';
 export * from './body-access';
 export * from './archive';

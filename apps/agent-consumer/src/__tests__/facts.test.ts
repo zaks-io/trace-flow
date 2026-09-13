@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { factPartitionKey, stableHash } from '../facts';
+import { factIdentityListParam, factPartitionKey, stableHash } from '../facts';
+
+describe('factIdentityListParam', () => {
+  it('encodes the bounded comma-delimited format required by Tinybird Array parameters', () => {
+    expect(factIdentityListParam(['org\x1fs\x1fone', 'org\x1fs\x1ftwo'])).toBe(
+      'org\x1fs\x1fone,org\x1fs\x1ftwo',
+    );
+    expect(() => factIdentityListParam([])).toThrow('Invalid fact identity lookup');
+    expect(() => factIdentityListParam(['contains,a,comma'])).toThrow(
+      'Invalid fact identity lookup',
+    );
+    expect(() =>
+      factIdentityListParam(Array.from({ length: 33 }, (_, index) => `${index}`)),
+    ).toThrow('Invalid fact identity lookup');
+  });
+});
 
 describe('stableHash', () => {
   it('ignores ingestion time so replayed facts do not look like repairs', () => {

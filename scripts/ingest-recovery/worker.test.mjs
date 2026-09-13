@@ -122,6 +122,73 @@ test('fact rebuild methods require agent pipeline and explicit mutation confirma
   assert.equal(calls, 1);
 });
 
+test('persists the baseline migration window only through a confirmed agent mutation', async () => {
+  const calls = [];
+  const env = {
+    AGENT_RECOVERY: {
+      beginBaselineMigrationWindow: async (shardId, options) => {
+        calls.push([shardId, options]);
+        return options;
+      },
+    },
+  };
+  const body = {
+    pipeline: 'agent',
+    shardId: '__migration__',
+    options: { startDay: '2025-09-13', endDay: '2026-09-13' },
+  };
+
+  assert.equal(
+    (await worker.fetch(request('beginBaselineMigrationWindow', body), env)).status,
+    400,
+  );
+  assert.equal(
+    (
+      await worker.fetch(
+        request('beginBaselineMigrationWindow', { ...body, confirm: 'apply-recovery' }),
+        env,
+      )
+    ).status,
+    200,
+  );
+  assert.deepEqual(calls, [['__migration__', body.options]]);
+});
+
+test('forwards bounded frozen source inspection and reads without mutation confirmation', async () => {
+  const calls = [];
+  const env = {
+    AGENT_RECOVERY: {
+      inspectFrozenFactSources: async (shardId, options) => {
+        calls.push(['inspect', shardId, options]);
+        return [
+          { category: 'messages', factId: 'fact', sourceHash: 'a'.repeat(16), payloadBytes: 42 },
+        ];
+      },
+      readFrozenFactSources: async (shardId, options) => {
+        calls.push(['read', shardId, options]);
+        return [{ category: 'messages', factId: 'fact', payload: '{"private":true}' }];
+      },
+    },
+  };
+  const body = {
+    pipeline: 'agent',
+    shardId: 'org-1',
+    options: { facts: [{ category: 'messages', factId: 'fact' }] },
+  };
+
+  assert.deepEqual(
+    await (await worker.fetch(request('inspectFrozenFactSources', body), env)).json(),
+    [{ category: 'messages', factId: 'fact', sourceHash: 'a'.repeat(16), payloadBytes: 42 }],
+  );
+  assert.deepEqual(await (await worker.fetch(request('readFrozenFactSources', body), env)).json(), [
+    { category: 'messages', factId: 'fact', payload: '{"private":true}' },
+  ]);
+  assert.deepEqual(calls, [
+    ['inspect', 'org-1', body.options],
+    ['read', 'org-1', body.options],
+  ]);
+});
+
 test('fact repair inspection is agent-only and compaction requires mutation confirmation', async () => {
   const calls = [];
   const env = {

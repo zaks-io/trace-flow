@@ -20,7 +20,7 @@ SQL >
             round(priced_message_count / billable_message_count, 4)
         ) AS coverage_pct,
         round(sum(finalizeAggregation(CostUsd)), 6) AS estimated_cost_usd
-    FROM agent_usage_hourly
+    FROM agent_usage_hourly_published
     WHERE OrgId = {{ String(org_id, '') }}
         AND BucketStart >= start_dt
         AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})

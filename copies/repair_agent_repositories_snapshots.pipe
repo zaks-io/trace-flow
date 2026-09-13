@@ -1,0 +1,29 @@
+DESCRIPTION >
+    Bounded on-demand snapshot of agent_repositories from contributors: repositories.
+
+NODE snapshot
+SQL >
+    %
+    SELECT
+        OrgId,
+        repo_fingerprint,
+        argMaxState(normalized_git_remote, EventAt) AS normalized_git_remote,
+        argMaxState(repo_path_fallback, EventAt) AS repo_path_fallback,
+        argMaxState(toString(repo_source), EventAt) AS repo_source,
+        maxState(EventAt) AS LastSeenAt,
+        toDate(EventAt) AS SnapshotDay,
+        {{ UInt64(snapshot_generation) }} AS SnapshotGeneration,
+        {{ UInt64(copy_attempt) }} AS CopyAttempt,
+        'repositories' AS SourceContributor
+    FROM agent_message_fact_versions FINAL
+    WHERE OrgId = {{ String(org_id) }}
+      AND toDate(EventAt) IN {{ Array(snapshot_days, 'Date') }}
+      AND IsDeleted = 0
+    GROUP BY OrgId, repo_fingerprint, SnapshotDay
+    SETTINGS max_threads = 1
+
+TYPE COPY
+TARGET_DATASOURCE agent_repositories_snapshots
+COPY_MODE append
+
+TOKEN agent_snapshot_worker READ

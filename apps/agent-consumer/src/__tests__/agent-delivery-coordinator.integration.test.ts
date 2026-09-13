@@ -3,6 +3,7 @@ import { runInDurableObject } from 'cloudflare:test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentConsumerEnv } from '../context';
 import type { AgentFactBatcherInstance } from '../fact-batcher';
+import { finishSnapshotCopies } from './snapshot-coordinator-helpers';
 import {
   AgentDeliveryCoordinator,
   AgentDeliveryCoordinatorRetryableError,
@@ -13,6 +14,8 @@ import {
   MAX_AGENT_SNAPSHOT_LEASE_MS,
   MAX_AGENT_SNAPSHOT_DAYS,
 } from '../agent-delivery-coordinator';
+
+const CLAIM_ID = 'claim-a';
 
 const env = workerEnv as unknown as {
   AGENT_FACT_BATCHER: DurableObjectNamespace<AgentFactBatcherInstance>;
@@ -174,7 +177,9 @@ describe('AgentDeliveryCoordinator', () => {
 
   it('gates reservations until a successful snapshot clears captured days', async () => {
     await completeOne('delivery-1', ['2026-09-11', '2026-09-13']);
-    const snapshot = await withCoordinator((coordinator) => coordinator.beginSnapshot({}));
+    const snapshot = await withCoordinator((coordinator) =>
+      coordinator.beginSnapshot({ claimId: CLAIM_ID }),
+    );
     expect(snapshot).toEqual({ generation: 1, dirtyDays: ['2026-09-11', '2026-09-13'] });
 
     const blocked = await withCoordinator((coordinator) => {
@@ -188,7 +193,7 @@ describe('AgentDeliveryCoordinator', () => {
     expect(blocked).toBeInstanceOf(AgentDeliveryCoordinatorRetryableError);
 
     await expect(
-      withCoordinator((coordinator) => coordinator.finishSnapshot({ generation: 1 })),
+      withCoordinator((coordinator) => finishSnapshotCopies(coordinator, 1, CLAIM_ID)),
     ).resolves.toEqual({ generation: 1, clearedDirtyDays: 2 });
     await expect(
       withCoordinator((coordinator) =>
@@ -215,17 +220,19 @@ describe('AgentDeliveryCoordinator', () => {
       ),
     ).rejects.toBeInstanceOf(AgentDeliveryCoordinatorRetryableError);
     await expect(
-      withCoordinator((coordinator) => coordinator.beginSnapshot({})),
+      withCoordinator((coordinator) => coordinator.beginSnapshot({ claimId: CLAIM_ID })),
     ).rejects.toBeInstanceOf(AgentDeliveryCoordinatorRetryableError);
 
     await withCoordinator((coordinator) =>
       coordinator.complete({ deliveryId: active.deliveryId, payloadSha256: active.payloadSha256 }),
     );
-    await expect(withCoordinator((coordinator) => coordinator.beginSnapshot({}))).resolves.toEqual({
+    await expect(
+      withCoordinator((coordinator) => coordinator.beginSnapshot({ claimId: CLAIM_ID })),
+    ).resolves.toEqual({
       generation: 1,
       dirtyDays: ['2026-09-12', '2026-09-13'],
     });
-    await withCoordinator((coordinator) => coordinator.finishSnapshot({ generation: 1 }));
+    await withCoordinator((coordinator) => finishSnapshotCopies(coordinator, 1, CLAIM_ID));
     await expect(
       withCoordinator((coordinator) =>
         coordinator.reserve(reservation('delivery-new', HASH_A, ['2026-09-13'])),
@@ -235,11 +242,15 @@ describe('AgentDeliveryCoordinator', () => {
 
   it('retains dirty days after failure and uses a new generation on retry', async () => {
     await completeOne('delivery-1', ['2026-09-13']);
-    expect(await withCoordinator((coordinator) => coordinator.beginSnapshot({}))).toMatchObject({
+    expect(
+      await withCoordinator((coordinator) => coordinator.beginSnapshot({ claimId: CLAIM_ID })),
+    ).toMatchObject({
       generation: 1,
     });
     await expect(
-      withCoordinator((coordinator) => coordinator.failSnapshot({ generation: 1 })),
+      withCoordinator((coordinator) =>
+        coordinator.failSnapshot({ generation: 1, claimId: CLAIM_ID }),
+      ),
     ).resolves.toEqual({ generation: 1, retainedDirtyDays: 1 });
 
     expect(await withCoordinator((coordinator) => coordinator.getStats({}))).toMatchObject({
@@ -248,13 +259,15 @@ describe('AgentDeliveryCoordinator', () => {
       dirtyDays: 1,
       capturedSnapshotDays: 0,
     });
-    await expect(withCoordinator((coordinator) => coordinator.beginSnapshot({}))).resolves.toEqual({
+    await expect(
+      withCoordinator((coordinator) => coordinator.beginSnapshot({ claimId: CLAIM_ID })),
+    ).resolves.toEqual({
       generation: 2,
       dirtyDays: ['2026-09-13'],
     });
     await expect(
-      withCoordinator((coordinator) => coordinator.finishSnapshot({ generation: 1 })),
-    ).rejects.toThrow('snapshot generation is not active');
+      withCoordinator((coordinator) => finishSnapshotCopies(coordinator, 1, CLAIM_ID)),
+    ).rejects.toThrow('snapshot claim is not active');
   });
 
   it('captures the newest seven days and leaves older work for the next generation', async () => {
@@ -263,10 +276,12 @@ describe('AgentDeliveryCoordinator', () => {
     );
     await completeOne('delivery-many-days', newestFirst);
 
-    const first = await withCoordinator((coordinator) => coordinator.beginSnapshot({}));
+    const first = await withCoordinator((coordinator) =>
+      coordinator.beginSnapshot({ claimId: CLAIM_ID }),
+    );
     expect(first.dirtyDays).toEqual([...newestFirst.slice(0, MAX_AGENT_SNAPSHOT_DAYS)].sort());
     await withCoordinator((coordinator) =>
-      coordinator.finishSnapshot({ generation: first.generation }),
+      finishSnapshotCopies(coordinator, first.generation, CLAIM_ID),
     );
     await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
       {
@@ -274,7 +289,9 @@ describe('AgentDeliveryCoordinator', () => {
       },
     );
 
-    const second = await withCoordinator((coordinator) => coordinator.beginSnapshot({}));
+    const second = await withCoordinator((coordinator) =>
+      coordinator.beginSnapshot({ claimId: CLAIM_ID }),
+    );
     expect(second).toEqual({
       generation: first.generation + 1,
       dirtyDays: [
@@ -284,13 +301,18 @@ describe('AgentDeliveryCoordinator', () => {
   });
 
   it('keeps the dirty set bounded across the full retention window', async () => {
+    vi.setSystemTime(new Date('2024-09-13T12:00:00.000Z'));
     const days = Array.from({ length: MAX_AGENT_DIRTY_DAYS }, (_, index) => {
-      const day = new Date(Date.UTC(2026, 8, 13) - index * 86_400_000);
+      const day = new Date(Date.UTC(2024, 8, 13) - index * 86_400_000);
       return day.toISOString().slice(0, 10);
     });
-    for (const [index, day] of days.entries()) {
-      await completeOne(`delivery-${index}`, [day]);
-    }
+    await withCoordinator((coordinator) => {
+      for (const [index, day] of days.entries()) {
+        const deliveryId = `delivery-${index}`;
+        coordinator.reserve(reservation(deliveryId, HASH_A, [day]));
+        coordinator.complete({ deliveryId, payloadSha256: HASH_A });
+      }
+    });
     await completeOne('delivery-repeat', [days[0]!]);
 
     const stats = await withCoordinator((coordinator) => coordinator.getStats({}));
@@ -303,16 +325,16 @@ describe('AgentDeliveryCoordinator', () => {
 
     await expect(
       withCoordinator((coordinator) =>
-        coordinator.reserve(reservation('too-old', HASH_A, ['2025-09-12'])),
+        coordinator.reserve(reservation('too-old', HASH_A, ['2023-09-12'])),
       ),
     ).rejects.toThrow('outside the retained fact window');
     await expect(
       withCoordinator((coordinator) =>
-        coordinator.reserve(reservation('future', HASH_A, ['2026-09-14'])),
+        coordinator.reserve(reservation('future', HASH_A, ['2024-09-14'])),
       ),
     ).rejects.toThrow('outside the retained fact window');
 
-    vi.setSystemTime(new Date('2027-09-14T12:00:00.000Z'));
+    vi.setSystemTime(new Date('2025-09-14T12:00:00.000Z'));
     await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
       {
         dirtyDays: 0,
@@ -321,7 +343,7 @@ describe('AgentDeliveryCoordinator', () => {
     );
     await expect(
       withCoordinator((coordinator) =>
-        coordinator.reserve(reservation('next-year', HASH_A, ['2027-09-14'])),
+        coordinator.reserve(reservation('next-year', HASH_A, ['2025-09-14'])),
       ),
     ).resolves.toMatchObject({ status: 'reserved' });
   });
@@ -372,19 +394,21 @@ describe('AgentDeliveryCoordinator', () => {
     );
 
     await withCoordinator((coordinator) => coordinator.requestSnapshot({}));
-    await expect(withCoordinator((coordinator) => coordinator.beginSnapshot({}))).resolves.toEqual({
+    await expect(
+      withCoordinator((coordinator) => coordinator.beginSnapshot({ claimId: CLAIM_ID })),
+    ).resolves.toEqual({
       generation: 1,
       dirtyDays: ['2026-09-12'],
     });
-    await withCoordinator((coordinator) => coordinator.finishSnapshot({ generation: 1 }));
+    await withCoordinator((coordinator) => finishSnapshotCopies(coordinator, 1, CLAIM_ID));
     await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
       { dirtyDays: 1, incompleteDays: 1, gatePhase: 'open' },
     );
 
     await withCoordinator((coordinator) => coordinator.requestSnapshot({}));
-    await expect(withCoordinator((coordinator) => coordinator.beginSnapshot({}))).rejects.toThrow(
-      'no complete dirty days; recovery is required',
-    );
+    await expect(
+      withCoordinator((coordinator) => coordinator.beginSnapshot({ claimId: CLAIM_ID })),
+    ).rejects.toThrow('no complete dirty days; recovery is required');
     await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
       { dirtyDays: 1, incompleteDays: 1, gatePhase: 'open' },
     );
@@ -394,7 +418,9 @@ describe('AgentDeliveryCoordinator', () => {
         coordinator.resolveIncompleteDays({ dirtyDays: ['2026-09-13'] }),
       ),
     ).resolves.toEqual({ resolvedDirtyDays: 1 });
-    await expect(withCoordinator((coordinator) => coordinator.beginSnapshot({}))).resolves.toEqual({
+    await expect(
+      withCoordinator((coordinator) => coordinator.beginSnapshot({ claimId: CLAIM_ID })),
+    ).resolves.toEqual({
       generation: 2,
       dirtyDays: ['2026-09-13'],
     });
@@ -415,12 +441,14 @@ describe('AgentDeliveryCoordinator', () => {
     );
   });
 
-  it('recovers an abandoned snapshot lease without clearing dirty work', async () => {
+  it('resumes an expired snapshot claim without changing its generation or cursor', async () => {
     await completeOne('delivery-dirty', ['2026-09-13']);
-    const first = await withCoordinator((coordinator) => coordinator.beginSnapshot({}));
+    const first = await withCoordinator((coordinator) =>
+      coordinator.beginSnapshot({ claimId: CLAIM_ID }),
+    );
     await expect(
       withCoordinator((coordinator) =>
-        coordinator.assertSnapshotActive({ generation: first.generation }),
+        coordinator.assertSnapshotActive({ generation: first.generation, claimId: CLAIM_ID }),
       ),
     ).resolves.toEqual({
       generation: first.generation,
@@ -430,40 +458,52 @@ describe('AgentDeliveryCoordinator', () => {
     vi.advanceTimersByTime(MAX_AGENT_SNAPSHOT_LEASE_MS);
     await expect(
       withCoordinator((coordinator) =>
-        coordinator.assertSnapshotActive({ generation: first.generation }),
+        coordinator.assertSnapshotActive({ generation: first.generation, claimId: CLAIM_ID }),
       ),
-    ).rejects.toThrow('snapshot generation is not active');
+    ).rejects.toThrow('snapshot claim is not active');
     await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
       {
-        gatePhase: 'open',
-        activeSnapshotGeneration: null,
-        capturedSnapshotDays: 0,
+        gatePhase: 'snapshot',
+        activeSnapshotGeneration: first.generation,
+        capturedSnapshotDays: 1,
         dirtyDays: 1,
       },
     );
-    await expect(withCoordinator((coordinator) => coordinator.beginSnapshot({}))).resolves.toEqual({
-      generation: first.generation + 1,
+    await expect(
+      withCoordinator((coordinator) => coordinator.claimSnapshot({ claimId: 'claim-b' })),
+    ).resolves.toMatchObject({
+      generation: first.generation,
       dirtyDays: ['2026-09-13'],
+      nextCopyIndex: 0,
+      claimId: 'claim-b',
     });
   });
 
   it('abandons a snapshot whose oldest partition ages out before publication', async () => {
     vi.setSystemTime(new Date('2026-09-13T23:58:00.000Z'));
     await completeOne('delivery-oldest', ['2025-09-13']);
-    const snapshot = await withCoordinator((coordinator) => coordinator.beginSnapshot({}));
+    const snapshot = await withCoordinator((coordinator) =>
+      coordinator.beginSnapshot({ claimId: CLAIM_ID }),
+    );
 
     vi.advanceTimersByTime(3 * 60 * 1000);
     await expect(
       withCoordinator((coordinator) =>
-        coordinator.assertSnapshotActive({ generation: snapshot.generation }),
+        coordinator.assertSnapshotActive({ generation: snapshot.generation, claimId: CLAIM_ID }),
       ),
-    ).rejects.toThrow('snapshot generation is not active');
+    ).rejects.toThrow('snapshot contains days outside retention');
     await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
       {
-        gatePhase: 'open',
-        dirtyDays: 0,
-        capturedSnapshotDays: 0,
+        gatePhase: 'snapshot',
+        dirtyDays: 1,
+        capturedSnapshotDays: 1,
       },
+    );
+    await withCoordinator((coordinator) =>
+      coordinator.failSnapshot({ generation: snapshot.generation, claimId: CLAIM_ID }),
+    );
+    await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
+      { gatePhase: 'open', dirtyDays: 0, capturedSnapshotDays: 0 },
     );
   });
 
@@ -490,14 +530,15 @@ describe('AgentDeliveryCoordinator', () => {
   });
 
   it('expands dirty days only for the write permit holder and enforces the union cap', async () => {
+    vi.setSystemTime(new Date('2024-09-13T12:00:00.000Z'));
     const days = Array.from({ length: MAX_AGENT_DIRTY_DAYS }, (_, index) =>
-      new Date(Date.UTC(2026, 8, 13) - index * 86_400_000).toISOString().slice(0, 10),
+      new Date(Date.UTC(2024, 8, 13) - index * 86_400_000).toISOString().slice(0, 10),
     );
     await withCoordinator((coordinator) =>
       coordinator.reserve(reservation('delivery-owner', HASH_A, days)),
     );
     await withCoordinator((coordinator) =>
-      coordinator.reserve(reservation('delivery-waiting', HASH_B, ['2026-09-13'])),
+      coordinator.reserve(reservation('delivery-waiting', HASH_B, ['2024-09-13'])),
     );
 
     await expect(
@@ -505,7 +546,7 @@ describe('AgentDeliveryCoordinator', () => {
         coordinator.expandDirtyDays({
           deliveryId: 'delivery-waiting',
           payloadSha256: HASH_B,
-          dirtyDays: ['2026-09-12'],
+          dirtyDays: ['2024-09-12'],
         }),
       ),
     ).rejects.toBeInstanceOf(AgentDeliveryCoordinatorRetryableError);
@@ -525,7 +566,7 @@ describe('AgentDeliveryCoordinator', () => {
         coordinator.expandDirtyDays({
           deliveryId: 'delivery-owner',
           payloadSha256: HASH_A,
-          dirtyDays: ['2026-09-14'],
+          dirtyDays: ['2024-09-14'],
         }),
       ),
     ).rejects.toThrow('dirty day limit reached');

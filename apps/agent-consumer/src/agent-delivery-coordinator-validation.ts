@@ -1,10 +1,9 @@
+import { agentAnalyticsDayBounds } from '@trace-flow/utils';
 import {
   MAX_AGENT_DELIVERY_RETENTION_MS,
   MAX_AGENT_DIRTY_DAYS,
   type ReserveAgentDeliveryInput,
 } from './agent-delivery-coordinator-contract';
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function validateReservationInput(
   input: ReserveAgentDeliveryInput,
@@ -52,14 +51,8 @@ export function retainedDayBounds(now: number): {
   oldestDirtyDay: string;
   todayDirtyDay: string;
 } {
-  const current = new Date(now);
-  const todayMs = Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), current.getUTCDate());
-  return {
-    oldestDirtyDay: new Date(todayMs - (MAX_AGENT_DIRTY_DAYS - 1) * DAY_MS)
-      .toISOString()
-      .slice(0, 10),
-    todayDirtyDay: new Date(todayMs).toISOString().slice(0, 10),
-  };
+  const { oldestDay, today } = agentAnalyticsDayBounds(now);
+  return { oldestDirtyDay: oldestDay, todayDirtyDay: today };
 }
 
 export function validateDeliveryId(value: unknown): string {

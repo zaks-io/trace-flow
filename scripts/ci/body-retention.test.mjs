@@ -1,6 +1,38 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { analystBackupRetentionRules, bodyRetentionRules } from './body-retention.mjs';
+import {
+  agentDeliveryRetentionRules,
+  analystBackupRetentionRules,
+  bodyRetentionRules,
+} from './body-retention.mjs';
+
+test('bounds both encrypted agent copies without changing unrelated multipart rules', () => {
+  const multipart = {
+    id: 'multipart',
+    enabled: true,
+    conditions: { prefix: '' },
+    abortMultipartUploadsTransition: { condition: { type: 'Age', maxAge: 86_400 } },
+  };
+  const result = agentDeliveryRetentionRules([multipart]);
+  assert.equal(result.length, 3);
+  assert.deepEqual(result[0], multipart);
+  for (const rule of result.slice(1)) {
+    assert.equal(rule.deleteObjectsTransition.condition.maxAge, 345_600);
+  }
+  assert.deepEqual(agentDeliveryRetentionRules(result), result);
+  assert.throws(
+    () =>
+      agentDeliveryRetentionRules([
+        {
+          id: 'early',
+          enabled: true,
+          conditions: { prefix: '' },
+          deleteObjectsTransition: { condition: { type: 'Age', maxAge: 1 } },
+        },
+      ]),
+    /Unexpected deletion policy/,
+  );
+});
 
 test('narrows the managed expiration without removing unrelated rules', () => {
   const rules = [

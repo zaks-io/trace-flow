@@ -26,24 +26,29 @@ jobs:
   agent-delivery-current-ref:
     name: Resolve Current Agent Tinybird Ref
     runs-on: ubuntu-latest
+    environment: Production
+    permissions:
+      contents: read
+      deployments: read
     outputs:
       current_ref: ${{ steps.release.outputs.current_ref }}
     steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
       - name: Resolve current deployed ref
         id: release
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          BEFORE_SHA: ${{ github.event.before }}
+          GITHUB_TOKEN: ${{ github.token }}
           REQUESTED_CURRENT_REF: ${{ inputs.agent_delivery_current_ref }}
+          TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
+          TB_HOST: https://api.us-west-2.aws.tinybird.co
         run: |
-          current_ref="$BEFORE_SHA"
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            current_ref="$REQUESTED_CURRENT_REF"
-          fi
-          if [[ ! "$current_ref" =~ ^[0-9a-f]{40}$ || "$current_ref" == "0000000000000000000000000000000000000000" ]]; then
-            echo 'Refusing Agent Delivery migration without the exact currently deployed Tinybird SHA.' >&2
-            exit 1
-          fi
+          current_ref="$(bun scripts/ci/resolve-agent-tinybird-current-ref.mjs)"
           echo "current_ref=$current_ref" >> "$GITHUB_OUTPUT"
 
   ci:
@@ -152,6 +157,7 @@ jobs:
           test -n "$BODY_ACCESS_JWT_SECRET"
           bunx convex env set SENTRY_DSN "$SENTRY_DSN" --prod
           bunx convex env set SENTRY_ENVIRONMENT prod --prod
+          bunx convex env set AGENT_INGEST_URL https://collector.trace-flow.dev --prod
           printf '%s' "$PIPES_API_SHARED_SECRET" |
             bunx convex env set --prod PIPES_API_SHARED_SECRET
           printf '%s' "$BODY_ACCESS_JWT_SECRET" |
@@ -293,6 +299,7 @@ jobs:
           # Last main commit before the clean Tinybird resource cutover. The deploy job fetches full
           # history so expand/switch can restore legacy prod resources after this PR merges.
           TINYBIRD_LEGACY_REF: 11613a4619444adb0e27abc3df958cebb43cc280
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
           TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
           TB_VERSION_WARNING: 0
@@ -347,6 +354,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           BODY_ENCRYPTION_ROOT_KEY: ${{ secrets.AGENT_DELIVERY_ENCRYPTION_ROOT_KEY }}
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
           TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
 
@@ -609,6 +617,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
           TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
           TINYBIRD_CURRENT_REF: ${{ needs.agent-delivery-current-ref.outputs.current_ref }}
@@ -626,11 +635,14 @@ jobs:
     environment: Production
     permissions:
       contents: read
+      deployments: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - name: Install Tinybird CLI
         run: |
@@ -643,10 +655,50 @@ jobs:
           TB_TARGET_WORKSPACE: trace_flow_prod
           TINYBIRD_DEPLOY_PHASE: switch
           TINYBIRD_LEGACY_REF: 11613a4619444adb0e27abc3df958cebb43cc280
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
           TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
           TB_VERSION_WARNING: 0
           TB_SKIP_BUILD: 1
+
+      - name: Verify switched endpoint definitions
+        env:
+          REQUESTED_CURRENT_REF: ${{ github.sha }}
+          TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
+          TB_HOST: https://api.us-west-2.aws.tinybird.co
+        run: |
+          deployed_ref="$(bun scripts/ci/resolve-agent-tinybird-current-ref.mjs)"
+          test "$deployed_ref" = "$REQUESTED_CURRENT_REF"
+
+      - name: Record deployed Agent Tinybird ref
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const { data: deployment } = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+              task: 'deploy-agent-tinybird',
+              environment: 'Production',
+              description: 'Agent Tinybird endpoints switched successfully',
+              auto_merge: false,
+              required_contexts: [],
+              transient_environment: false,
+              production_environment: true,
+            });
+            if (!deployment.id) {
+              core.setFailed('GitHub did not create the Agent Tinybird deployment marker');
+              return;
+            }
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: deployment.id,
+              state: 'success',
+              environment: 'Production',
+              description: 'Live endpoint switch completed',
+              log_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
 
   agent-delivery-migration-status:
     name: Check Agent Delivery Migration Status
@@ -681,6 +733,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
           TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
           TINYBIRD_CURRENT_REF: ${{ needs.agent-delivery-current-ref.outputs.current_ref }}

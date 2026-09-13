@@ -1,6 +1,6 @@
 DESCRIPTION >
     Conversation start-size and over-threshold context metrics for agent conversations.
-    Reads the incremental context-token serving table only; raw transcript text and
+    Reads the generation-published context-token serving table only; raw transcript text and
     raw message facts are not on the request path.
 
 NODE scoped_call_buckets
@@ -33,7 +33,7 @@ SQL >
         sum(finalizeAggregation(CallCount)) AS call_count,
         sum(finalizeAggregation(OutputTokens)) AS output_tokens,
         sum(finalizeAggregation(CostUsd)) AS cost_usd
-    FROM agent_context_call_buckets_hourly
+    FROM agent_context_call_buckets_hourly_published
     WHERE OrgId = {{ String(org_id, '') }}
         AND BucketStart >= prior_start_dt
         AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
@@ -49,234 +49,82 @@ SQL >
         {% end %}
     GROUP BY period, group_value, attention_threshold_tokens, session_pk, context_tokens
 
-NODE call_rollups
+NODE annotated
 SQL >
     SELECT
-        period,
-        group_value,
-        attention_threshold_tokens,
-        sum(call_count) AS model_call_count,
-        round(quantileExactWeighted(0.1)(context_tokens, call_count), 0) AS context_p10,
-        round(quantileExactWeighted(0.5)(context_tokens, call_count), 0) AS context_p50,
-        round(quantileExactWeighted(0.9)(context_tokens, call_count), 0) AS context_p90,
-        round(quantileExactWeighted(0.95)(context_tokens, call_count), 0) AS context_p95,
-        max(context_tokens) AS context_max,
-        sumIf(call_count, context_tokens > attention_threshold_tokens) AS calls_over_threshold,
-        if(
-            model_call_count = 0,
-            CAST(NULL, 'Nullable(Float64)'),
-            round(calls_over_threshold / model_call_count, 4)
-        ) AS pct_calls_over_threshold,
-        sum(toUInt64(greatest(toInt64(context_tokens) - attention_threshold_tokens, 0)) * call_count) AS context_overage_tokens,
-        round(sumIf(cost_usd, context_tokens > attention_threshold_tokens), 6) AS cost_while_over_threshold,
-        sumIf(output_tokens, context_tokens > attention_threshold_tokens) AS output_tokens_while_over_threshold,
-        -- Per-turn context histogram, even 100K bins across the 0-1M model ceiling. Bin edges are
-        -- presentation (axis ticks), not thresholds: no headline metric derives from them. The top
-        -- bin is a >=900K catch-all so anything above 1M still lands somewhere.
-        sumIf(call_count, context_tokens < 100000) AS context_hist_bin_0,
-        sumIf(call_count, context_tokens >= 100000 AND context_tokens < 200000) AS context_hist_bin_1,
-        sumIf(call_count, context_tokens >= 200000 AND context_tokens < 300000) AS context_hist_bin_2,
-        sumIf(call_count, context_tokens >= 300000 AND context_tokens < 400000) AS context_hist_bin_3,
-        sumIf(call_count, context_tokens >= 400000 AND context_tokens < 500000) AS context_hist_bin_4,
-        sumIf(call_count, context_tokens >= 500000 AND context_tokens < 600000) AS context_hist_bin_5,
-        sumIf(call_count, context_tokens >= 600000 AND context_tokens < 700000) AS context_hist_bin_6,
-        sumIf(call_count, context_tokens >= 700000 AND context_tokens < 800000) AS context_hist_bin_7,
-        sumIf(call_count, context_tokens >= 800000 AND context_tokens < 900000) AS context_hist_bin_8,
-        sumIf(call_count, context_tokens >= 900000) AS context_hist_bin_9
+        *,
+        argMin(context_tokens, first_turn_index) OVER (
+            PARTITION BY period, group_value, attention_threshold_tokens, session_pk
+        ) AS first_call_context_tokens,
+        max(context_tokens) OVER (
+            PARTITION BY period, group_value, attention_threshold_tokens, session_pk
+        ) AS session_context_max,
+        sumIf(call_count, context_tokens > attention_threshold_tokens) OVER (
+            PARTITION BY period, group_value, attention_threshold_tokens, session_pk
+        ) AS session_calls_over_threshold,
+        row_number() OVER (
+            PARTITION BY period, group_value, attention_threshold_tokens, session_pk
+            ORDER BY first_turn_index, context_tokens
+        ) AS session_row
     FROM scoped_call_buckets
-    GROUP BY period, group_value, attention_threshold_tokens
-
-NODE session_rollups
-SQL >
-    SELECT
-        period,
-        group_value,
-        attention_threshold_tokens,
-        session_pk,
-        argMin(context_tokens, first_turn_index) AS first_call_context_tokens,
-        max(context_tokens) AS session_context_max,
-        sumIf(call_count, context_tokens > attention_threshold_tokens) AS calls_over_threshold
-    FROM scoped_call_buckets
-    GROUP BY period, group_value, attention_threshold_tokens, session_pk
-
-NODE session_aggregate
-SQL >
-    SELECT
-        period,
-        group_value,
-        attention_threshold_tokens,
-        count() AS session_count,
-        round(quantileExact(0.5)(first_call_context_tokens), 0) AS first_call_context_p50,
-        countIf(calls_over_threshold > 0) AS sessions_over_threshold,
-        if(
-            session_count = 0,
-            CAST(NULL, 'Nullable(Float64)'),
-            round(sessions_over_threshold / session_count, 4)
-        ) AS pct_sessions_over_threshold,
-        argMax(session_pk, (session_context_max, session_pk)) AS worst_session_pk,
-        max(session_context_max) AS worst_session_context_max,
-        argMax(calls_over_threshold, (session_context_max, session_pk)) AS worst_session_calls_over_threshold
-    FROM session_rollups
-    GROUP BY period, group_value, attention_threshold_tokens
-
-NODE period_rollups
-SQL >
-    SELECT
-        coalesce(c.period, s.period) AS period,
-        coalesce(c.group_value, s.group_value) AS group_value,
-        ifNull(c.attention_threshold_tokens, s.attention_threshold_tokens) AS attention_threshold_tokens,
-        ifNull(c.model_call_count, 0) AS model_call_count,
-        ifNull(s.session_count, 0) AS session_count,
-        ifNull(s.first_call_context_p50, 0) AS first_call_context_p50,
-        ifNull(c.context_p10, 0) AS context_p10,
-        ifNull(c.context_p50, 0) AS context_p50,
-        ifNull(c.context_p90, 0) AS context_p90,
-        ifNull(c.context_p95, 0) AS context_p95,
-        ifNull(c.context_max, 0) AS context_max,
-        ifNull(c.calls_over_threshold, 0) AS calls_over_threshold,
-        ifNull(c.pct_calls_over_threshold, 0.) AS pct_calls_over_threshold,
-        ifNull(s.sessions_over_threshold, 0) AS sessions_over_threshold,
-        ifNull(s.pct_sessions_over_threshold, 0.) AS pct_sessions_over_threshold,
-        ifNull(c.context_overage_tokens, 0) AS context_overage_tokens,
-        ifNull(c.cost_while_over_threshold, 0.) AS cost_while_over_threshold,
-        ifNull(c.output_tokens_while_over_threshold, 0) AS output_tokens_while_over_threshold,
-        ifNull(s.worst_session_pk, '') AS worst_session_pk,
-        ifNull(s.worst_session_context_max, 0) AS worst_session_context_max,
-        ifNull(s.worst_session_calls_over_threshold, 0) AS worst_session_calls_over_threshold,
-        ifNull(c.context_hist_bin_0, 0) AS context_hist_bin_0,
-        ifNull(c.context_hist_bin_1, 0) AS context_hist_bin_1,
-        ifNull(c.context_hist_bin_2, 0) AS context_hist_bin_2,
-        ifNull(c.context_hist_bin_3, 0) AS context_hist_bin_3,
-        ifNull(c.context_hist_bin_4, 0) AS context_hist_bin_4,
-        ifNull(c.context_hist_bin_5, 0) AS context_hist_bin_5,
-        ifNull(c.context_hist_bin_6, 0) AS context_hist_bin_6,
-        ifNull(c.context_hist_bin_7, 0) AS context_hist_bin_7,
-        ifNull(c.context_hist_bin_8, 0) AS context_hist_bin_8,
-        ifNull(c.context_hist_bin_9, 0) AS context_hist_bin_9
-    FROM call_rollups AS c
-    FULL OUTER JOIN session_aggregate AS s
-        ON c.period = s.period
-        AND c.group_value = s.group_value
-        AND c.attention_threshold_tokens = s.attention_threshold_tokens
-    SETTINGS join_use_nulls = 1
 
 NODE endpoint
 SQL >
     %
     SELECT
-        coalesce(c.group_value, p.group_value) AS group_value,
-        ifNull(c.attention_threshold_tokens, p.attention_threshold_tokens) AS attention_threshold_tokens,
-        ifNull(c.model_call_count, 0) AS model_call_count,
-        ifNull(p.model_call_count, 0) AS prior_model_call_count,
-        ifNull(c.session_count, 0) AS session_count,
-        ifNull(p.session_count, 0) AS prior_session_count,
-        ifNull(c.first_call_context_p50, 0) AS first_call_context_p50,
-        ifNull(p.first_call_context_p50, 0) AS prior_first_call_context_p50,
-        ifNull(c.context_p10, 0) AS context_p10,
-        ifNull(p.context_p10, 0) AS prior_context_p10,
-        ifNull(c.context_p50, 0) AS context_p50,
-        ifNull(p.context_p50, 0) AS prior_context_p50,
-        ifNull(c.context_p90, 0) AS context_p90,
-        ifNull(p.context_p90, 0) AS prior_context_p90,
-        ifNull(c.context_p95, 0) AS context_p95,
-        ifNull(p.context_p95, 0) AS prior_context_p95,
-        ifNull(c.context_max, 0) AS context_max,
-        ifNull(p.context_max, 0) AS prior_context_max,
-        ifNull(c.calls_over_threshold, 0) AS calls_over_threshold,
-        ifNull(p.calls_over_threshold, 0) AS prior_calls_over_threshold,
-        ifNull(c.pct_calls_over_threshold, 0.) AS pct_calls_over_threshold,
-        ifNull(p.pct_calls_over_threshold, 0.) AS prior_pct_calls_over_threshold,
-        ifNull(c.sessions_over_threshold, 0) AS sessions_over_threshold,
-        ifNull(p.sessions_over_threshold, 0) AS prior_sessions_over_threshold,
-        ifNull(c.pct_sessions_over_threshold, 0.) AS pct_sessions_over_threshold,
-        ifNull(p.pct_sessions_over_threshold, 0.) AS prior_pct_sessions_over_threshold,
-        ifNull(c.context_overage_tokens, 0) AS context_overage_tokens,
-        ifNull(p.context_overage_tokens, 0) AS prior_context_overage_tokens,
-        round(ifNull(c.cost_while_over_threshold, 0.), 6) AS cost_while_over_threshold,
-        round(ifNull(p.cost_while_over_threshold, 0.), 6) AS prior_cost_while_over_threshold,
-        ifNull(c.output_tokens_while_over_threshold, 0) AS output_tokens_while_over_threshold,
-        ifNull(p.output_tokens_while_over_threshold, 0) AS prior_output_tokens_while_over_threshold,
-        ifNull(c.worst_session_pk, '') AS worst_session_pk,
-        ifNull(c.worst_session_context_max, 0) AS worst_session_context_max,
-        ifNull(c.worst_session_calls_over_threshold, 0) AS worst_session_calls_over_threshold,
-        ifNull(c.context_hist_bin_0, 0) AS context_hist_bin_0,
-        ifNull(c.context_hist_bin_1, 0) AS context_hist_bin_1,
-        ifNull(c.context_hist_bin_2, 0) AS context_hist_bin_2,
-        ifNull(c.context_hist_bin_3, 0) AS context_hist_bin_3,
-        ifNull(c.context_hist_bin_4, 0) AS context_hist_bin_4,
-        ifNull(c.context_hist_bin_5, 0) AS context_hist_bin_5,
-        ifNull(c.context_hist_bin_6, 0) AS context_hist_bin_6,
-        ifNull(c.context_hist_bin_7, 0) AS context_hist_bin_7,
-        ifNull(c.context_hist_bin_8, 0) AS context_hist_bin_8,
-        ifNull(c.context_hist_bin_9, 0) AS context_hist_bin_9
-    FROM (
-        SELECT
-            group_value,
-            attention_threshold_tokens,
-            model_call_count,
-            session_count,
-            first_call_context_p50,
-            context_p10,
-            context_p50,
-            context_p90,
-            context_p95,
-            context_max,
-            calls_over_threshold,
-            pct_calls_over_threshold,
-            sessions_over_threshold,
-            pct_sessions_over_threshold,
-            context_overage_tokens,
-            cost_while_over_threshold,
-            output_tokens_while_over_threshold,
-            worst_session_pk,
-            worst_session_context_max,
-            worst_session_calls_over_threshold,
-            context_hist_bin_0,
-            context_hist_bin_1,
-            context_hist_bin_2,
-            context_hist_bin_3,
-            context_hist_bin_4,
-            context_hist_bin_5,
-            context_hist_bin_6,
-            context_hist_bin_7,
-            context_hist_bin_8,
-            context_hist_bin_9
-        FROM period_rollups
-        WHERE period = 'current'
-    ) AS c
-    FULL OUTER JOIN (
-        SELECT
-            group_value,
-            attention_threshold_tokens,
-            model_call_count,
-            session_count,
-            first_call_context_p50,
-            context_p10,
-            context_p50,
-            context_p90,
-            context_p95,
-            context_max,
-            calls_over_threshold,
-            pct_calls_over_threshold,
-            sessions_over_threshold,
-            pct_sessions_over_threshold,
-            context_overage_tokens,
-            cost_while_over_threshold,
-            output_tokens_while_over_threshold,
-            worst_session_pk,
-            worst_session_context_max,
-            worst_session_calls_over_threshold
-        FROM period_rollups
-        WHERE period = 'prior'
-    ) AS p
-        ON c.group_value = p.group_value
+        group_value,
+        attention_threshold_tokens,
+        sumIf(call_count, period = 'current') AS model_call_count,
+        sumIf(call_count, period = 'prior') AS prior_model_call_count,
+        countIf(period = 'current' AND session_row = 1) AS session_count,
+        countIf(period = 'prior' AND session_row = 1) AS prior_session_count,
+        if(session_count = 0, 0, round(quantileExactIf(0.5)(first_call_context_tokens, period = 'current' AND session_row = 1), 0)) AS first_call_context_p50,
+        if(prior_session_count = 0, 0, round(quantileExactIf(0.5)(first_call_context_tokens, period = 'prior' AND session_row = 1), 0)) AS prior_first_call_context_p50,
+        if(model_call_count = 0, 0, round(quantileExactWeightedIf(0.1)(context_tokens, call_count, period = 'current'), 0)) AS context_p10,
+        if(prior_model_call_count = 0, 0, round(quantileExactWeightedIf(0.1)(context_tokens, call_count, period = 'prior'), 0)) AS prior_context_p10,
+        if(model_call_count = 0, 0, round(quantileExactWeightedIf(0.5)(context_tokens, call_count, period = 'current'), 0)) AS context_p50,
+        if(prior_model_call_count = 0, 0, round(quantileExactWeightedIf(0.5)(context_tokens, call_count, period = 'prior'), 0)) AS prior_context_p50,
+        if(model_call_count = 0, 0, round(quantileExactWeightedIf(0.9)(context_tokens, call_count, period = 'current'), 0)) AS context_p90,
+        if(prior_model_call_count = 0, 0, round(quantileExactWeightedIf(0.9)(context_tokens, call_count, period = 'prior'), 0)) AS prior_context_p90,
+        if(model_call_count = 0, 0, round(quantileExactWeightedIf(0.95)(context_tokens, call_count, period = 'current'), 0)) AS context_p95,
+        if(prior_model_call_count = 0, 0, round(quantileExactWeightedIf(0.95)(context_tokens, call_count, period = 'prior'), 0)) AS prior_context_p95,
+        maxIf(context_tokens, period = 'current') AS context_max,
+        maxIf(context_tokens, period = 'prior') AS prior_context_max,
+        sumIf(call_count, period = 'current' AND context_tokens > attention_threshold_tokens) AS calls_over_threshold,
+        sumIf(call_count, period = 'prior' AND context_tokens > attention_threshold_tokens) AS prior_calls_over_threshold,
+        if(model_call_count = 0, 0., round(calls_over_threshold / model_call_count, 4)) AS pct_calls_over_threshold,
+        if(prior_model_call_count = 0, 0., round(prior_calls_over_threshold / prior_model_call_count, 4)) AS prior_pct_calls_over_threshold,
+        countIf(period = 'current' AND session_row = 1 AND session_calls_over_threshold > 0) AS sessions_over_threshold,
+        countIf(period = 'prior' AND session_row = 1 AND session_calls_over_threshold > 0) AS prior_sessions_over_threshold,
+        if(session_count = 0, 0., round(sessions_over_threshold / session_count, 4)) AS pct_sessions_over_threshold,
+        if(prior_session_count = 0, 0., round(prior_sessions_over_threshold / prior_session_count, 4)) AS prior_pct_sessions_over_threshold,
+        sumIf(toUInt64(greatest(toInt64(context_tokens) - attention_threshold_tokens, 0)) * call_count, period = 'current') AS context_overage_tokens,
+        sumIf(toUInt64(greatest(toInt64(context_tokens) - attention_threshold_tokens, 0)) * call_count, period = 'prior') AS prior_context_overage_tokens,
+        round(sumIf(cost_usd, period = 'current' AND context_tokens > attention_threshold_tokens), 6) AS cost_while_over_threshold,
+        round(sumIf(cost_usd, period = 'prior' AND context_tokens > attention_threshold_tokens), 6) AS prior_cost_while_over_threshold,
+        sumIf(output_tokens, period = 'current' AND context_tokens > attention_threshold_tokens) AS output_tokens_while_over_threshold,
+        sumIf(output_tokens, period = 'prior' AND context_tokens > attention_threshold_tokens) AS prior_output_tokens_while_over_threshold,
+        argMaxIf(session_pk, (session_context_max, session_pk), period = 'current' AND session_row = 1) AS worst_session_pk,
+        maxIf(session_context_max, period = 'current' AND session_row = 1) AS worst_session_context_max,
+        argMaxIf(session_calls_over_threshold, (session_context_max, session_pk), period = 'current' AND session_row = 1) AS worst_session_calls_over_threshold,
+        sumIf(call_count, period = 'current' AND context_tokens < 100000) AS context_hist_bin_0,
+        sumIf(call_count, period = 'current' AND context_tokens >= 100000 AND context_tokens < 200000) AS context_hist_bin_1,
+        sumIf(call_count, period = 'current' AND context_tokens >= 200000 AND context_tokens < 300000) AS context_hist_bin_2,
+        sumIf(call_count, period = 'current' AND context_tokens >= 300000 AND context_tokens < 400000) AS context_hist_bin_3,
+        sumIf(call_count, period = 'current' AND context_tokens >= 400000 AND context_tokens < 500000) AS context_hist_bin_4,
+        sumIf(call_count, period = 'current' AND context_tokens >= 500000 AND context_tokens < 600000) AS context_hist_bin_5,
+        sumIf(call_count, period = 'current' AND context_tokens >= 600000 AND context_tokens < 700000) AS context_hist_bin_6,
+        sumIf(call_count, period = 'current' AND context_tokens >= 700000 AND context_tokens < 800000) AS context_hist_bin_7,
+        sumIf(call_count, period = 'current' AND context_tokens >= 800000 AND context_tokens < 900000) AS context_hist_bin_8,
+        sumIf(call_count, period = 'current' AND context_tokens >= 900000) AS context_hist_bin_9
+    FROM annotated
+    GROUP BY group_value, attention_threshold_tokens
     ORDER BY
-        ifNull(c.context_overage_tokens, 0) DESC,
-        ifNull(c.pct_calls_over_threshold, 0.) DESC,
-        ifNull(c.model_call_count, 0) DESC,
+        context_overage_tokens DESC,
+        pct_calls_over_threshold DESC,
+        model_call_count DESC,
         group_value ASC
     LIMIT greatest(1, least({{ Int32(limit, 100) }}, 100))
-    OFFSET {{ Int32(offset, 0) }}
-    SETTINGS join_use_nulls = 1
+    OFFSET greatest(0, {{ Int32(offset, 0) }})
 
 TYPE ENDPOINT

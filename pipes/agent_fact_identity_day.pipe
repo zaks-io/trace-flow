@@ -1,0 +1,19 @@
+DESCRIPTION >
+    Bounded retained-day lookup for up to 32 complete row identities.
+
+NODE endpoint
+SQL >
+    %
+    SELECT FactIdentity, EventDay, DeliverySequence, ContentHash
+    FROM agent_fact_identity_days FINAL
+    WHERE OrgId = {{ String(org_id) }}
+      AND Category = {{ String(category) }}
+      AND FactIdentity IN {{ Array(identities, 'String') }}
+      AND EventDay >= {{ Date(oldest_day) }}
+      AND EventDay <= {{ Date(today_day) }}
+    ORDER BY FactIdentity
+    LIMIT 32
+
+TYPE ENDPOINT
+
+TOKEN agent_consumer_versions_append READ

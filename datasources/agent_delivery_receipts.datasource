@@ -1,0 +1,19 @@
+DESCRIPTION >
+    Short-lived per-delivery row receipts used only to resolve ambiguous write responses.
+    The identity includes the event day and deletion bit so a two-day correction is not
+    confirmed unless both the old-day tombstone and new-day row arrived.
+
+SCHEMA >
+    `OrgId` String,
+    `DeliverySequence` UInt64,
+    `Category` LowCardinality(String),
+    `FactIdentity` String,
+    `EventDay` Date,
+    `IsDeleted` UInt8,
+    `ContentHash` String,
+    `ReceivedAt` DateTime64(3)
+
+ENGINE "ReplacingMergeTree"
+ENGINE_SORTING_KEY "OrgId, DeliverySequence, Category, FactIdentity, EventDay, IsDeleted"
+ENGINE_PARTITION_KEY "toYYYYMMDD(ReceivedAt)"
+ENGINE_TTL "toDateTime(ReceivedAt) + toIntervalDay(4)"

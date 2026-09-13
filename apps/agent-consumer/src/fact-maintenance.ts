@@ -4,6 +4,13 @@ import type { DurableObjectStorage } from '@cloudflare/workers-types';
 import { CATEGORIES, ROW_IDENTITY_FIELDS, rowIdentity, stableHash, type Category } from './facts';
 import { backfillPendingFactIdentities } from './fact-pending-migration';
 import type {
+  FrozenFactIdentity,
+  FrozenFactSelector,
+  FrozenFactSource,
+  FrozenFactSourceMetadata,
+} from './frozen-fact-recovery';
+import { FrozenFactSourceReader } from './frozen-fact-source';
+import type {
   BeginFactRebuildInput,
   BeginFactRebuildResult,
   CompleteFactRebuildInput,
@@ -100,6 +107,7 @@ export class AgentFactMaintenance {
   constructor(
     private readonly storage: DurableObjectStorage,
     private readonly recovery: TinybirdRecoveryStore,
+    private readonly assertWritesAllowed: () => void = () => undefined,
   ) {}
 
   initialize(): void {
@@ -190,6 +198,7 @@ export class AgentFactMaintenance {
   ): Omit<BeginFactRebuildResult, 'status'> & {
     completed: boolean;
   } {
+    this.assertWritesAllowed();
     const operationId = validateOperationId(input.operationId);
     const executorId = validateExecutorId(input.executorId);
     const reason = requireRecoveryReason(input.reason);
@@ -264,6 +273,13 @@ export class AgentFactMaintenance {
 
   list(input: ListRebuildFactsInput): ListRebuildFactsResult {
     const operation = this.requireActive(input.operationId, input.executorId);
+    return this.listFrozen(operation.org_id, input);
+  }
+
+  listFrozen(
+    orgId: string,
+    input: Pick<ListRebuildFactsInput, 'after' | 'limit'>,
+  ): ListRebuildFactsResult {
     const limit = validateLimit(input.limit);
     const after = validateCursor(input.after);
     const rows = [
@@ -280,7 +296,7 @@ export class AgentFactMaintenance {
     const facts: RebuildFact[] = [];
     let pageBytes = 64;
     for (const row of rows.slice(0, limit)) {
-      const fact = this.rebuildFact(row, operation.org_id);
+      const fact = this.rebuildFact(row, orgId);
       const factBytes = utf8Bytes(JSON.stringify(fact));
       if (facts.length > 0 && pageBytes + factBytes > PAYLOAD_CHUNK_BYTES) break;
       facts.push(fact);
@@ -301,6 +317,14 @@ export class AgentFactMaintenance {
       result.serializedBytes = utf8Bytes(JSON.stringify(result));
     }
     return result;
+  }
+
+  readFrozen(orgId: string, input: { facts: FrozenFactSelector[] }): FrozenFactSource[] {
+    return new FrozenFactSourceReader(this.storage, this.recovery).read(orgId, input);
+  }
+
+  inspectFrozen(orgId: string, input: { facts: FrozenFactIdentity[] }): FrozenFactSourceMetadata[] {
+    return new FrozenFactSourceReader(this.storage, this.recovery).inspect(orgId, input);
   }
 
   async complete(input: CompleteFactRebuildInput): Promise<CompleteFactRebuildResult> {
@@ -354,6 +378,7 @@ export class AgentFactMaintenance {
     const confirmations = await Promise.all(
       input.confirmations.map((confirmation) => this.prepareConfirmation(confirmation)),
     );
+    this.assertWritesAllowed();
     let newlyConfirmed = 0;
     let operation!: StoredOperation;
     this.storage.transactionSync(() => {
@@ -395,6 +420,7 @@ export class AgentFactMaintenance {
   }
 
   private finalize(input: FinalizeFactRebuildInput): CompleteFactRebuildResult {
+    this.assertWritesAllowed();
     const operationId = validateOperationId(input.operationId);
     const executorId = validateExecutorId(input.executorId);
     const reason = requireRecoveryReason(input.reason);

@@ -482,6 +482,10 @@ export async function expectAgentFactSyncAccepted(
   collectorSecret: string,
 ): Promise<void> {
   __resetPolicyCache();
+  const factEnvelope = agentIngestEnvelope();
+  for (const rows of Object.values(factEnvelope.facts)) {
+    for (const fact of rows) fact.event_at = Date.now();
+  }
   const collectorKey = `collector:${await sha256Hex(collectorSecret)}`;
   const queueSend = vi.fn(async () => {});
   const agentEnv = {
@@ -499,6 +503,17 @@ export async function expectAgentFactSyncAccepted(
           : null,
     },
     AGENT_QUEUE: { sendBatch: queueSend },
+    AGENT_INGEST_MAINTENANCE: 'false',
+    AGENT_DELIVERIES: runtimeEnv.ARCHIVE_STORAGE,
+    AGENT_CONSUMER: {
+      canAcceptDeliveries: async () => true,
+      registerDelivery: async () => 2,
+      eraseOrganization: async () => {
+        throw new Error('Unexpected erasure');
+      },
+    },
+    BODY_ENCRYPTION_ROOT_KEY: btoa('a'.repeat(32)),
+    BODY_ENCRYPTION_KEY_ID: 'v1',
     AGENT_INGEST_LIMITER: { limit: async () => ({ success: true }) },
     CONVEX_SITE_URL: 'https://agent-convex.test',
     AGENT_INGEST_SHARED_SECRET: 'agent-shared-secret',
@@ -545,7 +560,7 @@ export async function expectAgentFactSyncAccepted(
           'Content-Type': 'application/json',
           'X-Trace-Flow-Collector-Secret': collectorSecret,
         },
-        body: JSON.stringify(agentIngestEnvelope()),
+        body: JSON.stringify(factEnvelope),
       }),
       agentEnv,
       ingestContext,
@@ -594,9 +609,6 @@ export {
   claudeFixture,
   codexFixture,
   rustWireSessionJson,
-  agentIngestApp,
-  __resetPolicyCache,
-  agentIngestEnvelope,
 };
 
 export type {

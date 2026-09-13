@@ -1,5 +1,9 @@
 import { isDeepStrictEqual } from 'node:util';
-import { analystBackupRetentionRules, bodyRetentionRules } from './ci/body-retention.mjs';
+import {
+  agentDeliveryRetentionRules,
+  analystBackupRetentionRules,
+  bodyRetentionRules,
+} from './ci/body-retention.mjs';
 
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 const apiToken = process.env.CLOUDFLARE_API_TOKEN;
@@ -11,6 +15,7 @@ if (
   buckets.some(
     (name) =>
       !/^trace-flow-storage-[a-z0-9-]+$/.test(name) &&
+      !/^trace-flow-agent-deliveries-(dev|prod)$/.test(name) &&
       !/^trace-flow-analyst-sandbox-backups-(dev|preview|production)$/.test(name),
   )
 ) {
@@ -38,9 +43,12 @@ async function lifecycle(bucket: string, body?: string) {
 for (const bucket of buckets) {
   const current = await lifecycle(bucket);
   const analystBackupBucket = bucket.startsWith('trace-flow-analyst-sandbox-backups-');
-  const rules = analystBackupBucket
-    ? analystBackupRetentionRules(current?.rules)
-    : bodyRetentionRules(current?.rules);
+  const agentDeliveryBucket = bucket.startsWith('trace-flow-agent-deliveries-');
+  const rules = agentDeliveryBucket
+    ? agentDeliveryRetentionRules(current?.rules)
+    : analystBackupBucket
+      ? analystBackupRetentionRules(current?.rules)
+      : bodyRetentionRules(current?.rules);
   if (!isDeepStrictEqual(current?.rules, rules)) {
     await lifecycle(bucket, JSON.stringify({ rules }));
   }
@@ -49,8 +57,10 @@ for (const bucket of buckets) {
     throw new Error(`R2 lifecycle verification failed for ${bucket}`);
   }
   console.log(
-    analystBackupBucket
-      ? `Verified seven-day Analyst snapshot expiration in ${bucket}`
-      : `Verified pending trace deliveries are excluded from expiration in ${bucket}`,
+    agentDeliveryBucket
+      ? `Verified four-day agent delivery object expiration in ${bucket}`
+      : analystBackupBucket
+        ? `Verified seven-day Analyst snapshot expiration in ${bucket}`
+        : `Verified pending trace deliveries are excluded from expiration in ${bucket}`,
   );
 }

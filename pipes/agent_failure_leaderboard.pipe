@@ -21,7 +21,7 @@ SQL >
             CAST(NULL, 'Nullable(Float64)'),
             round(failure_count / (success_count + failure_count), 4)
         ) AS failure_rate
-    FROM agent_tool_usage_hourly
+    FROM agent_tool_usage_hourly_published
     WHERE OrgId = {{ String(org_id, '') }}
         AND BucketStart >= start_dt
         AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})

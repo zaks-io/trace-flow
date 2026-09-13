@@ -1,0 +1,34 @@
+DESCRIPTION >
+    Bounded on-demand snapshot of agent_tool_usage_daily from contributors: tool_usage_daily.
+
+NODE snapshot
+SQL >
+    %
+    SELECT
+        toStartOfDay(toDateTime(EventAt)) AS BucketStart,
+        OrgId,
+        source,
+        tool_name,
+        command_family,
+        repo_fingerprint,
+        countState() AS EventCount,
+        sumState(toUInt64(status = 'success')) AS SuccessCount,
+        sumState(toUInt64(status = 'failure')) AS FailureCount,
+        sumState(toUInt64(status = 'unknown')) AS UnknownCount,
+        sumState(toUInt64(duration_ms)) AS DurationMsSum,
+        toDate(EventAt) AS SnapshotDay,
+        {{ UInt64(snapshot_generation) }} AS SnapshotGeneration,
+        {{ UInt64(copy_attempt) }} AS CopyAttempt,
+        'tool_usage_daily' AS SourceContributor
+    FROM agent_tool_event_fact_versions FINAL
+    WHERE OrgId = {{ String(org_id) }}
+      AND toDate(EventAt) IN {{ Array(snapshot_days, 'Date') }}
+      AND IsDeleted = 0
+    GROUP BY BucketStart, OrgId, source, tool_name, command_family, repo_fingerprint, SnapshotDay
+    SETTINGS max_threads = 1
+
+TYPE COPY
+TARGET_DATASOURCE agent_tool_usage_daily_snapshots
+COPY_MODE append
+
+TOKEN agent_snapshot_worker READ

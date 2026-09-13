@@ -1,0 +1,31 @@
+DESCRIPTION >
+    Generation-scoped daily snapshot rows for agent_context_call_buckets_hourly. Publishing a generation through
+    agent_snapshot_manifest makes a complete replacement visible without exposing partial copies.
+
+SCHEMA >
+    `BucketStart` DateTime,
+    `OrgId` String,
+    `source` LowCardinality(String),
+    `model` LowCardinality(String),
+    `repo_fingerprint` String,
+    `session_pk` String,
+    `context_tokens` UInt64,
+    `CallCount` AggregateFunction(count),
+    `ContextP50` AggregateFunction(quantileExact(0.5), UInt64),
+    `ContextP90` AggregateFunction(quantileExact(0.9), UInt64),
+    `ContextP95` AggregateFunction(quantileExact(0.95), UInt64),
+    `FirstTurnIndex` AggregateFunction(min, UInt32),
+    `OutputTokens` AggregateFunction(sum, UInt64),
+    `CostUsd` AggregateFunction(sum, Float64),
+    `SnapshotDay` Date,
+    `SnapshotGeneration` UInt64,
+    `CopyAttempt` UInt64,
+    `SourceContributor` LowCardinality(String)
+
+ENGINE "ReplacingMergeTree"
+ENGINE_SORTING_KEY "OrgId, SnapshotDay, SnapshotGeneration, SourceContributor, BucketStart, source, model, repo_fingerprint, session_pk, context_tokens"
+ENGINE_VER "CopyAttempt"
+ENGINE_PARTITION_KEY "toYYYYMM(SnapshotDay)"
+ENGINE_TTL "toDateTime(SnapshotDay) + toIntervalYear(1) + toIntervalDay(1)"
+
+TOKEN "agent_snapshot_worker" APPEND

@@ -1,6 +1,35 @@
 DESCRIPTION >
     Estimated authoring cost by directly attributed review unit. Cost and coverage
-    come from canonical Agent Session summaries, not attribution rows.
+    come from published Agent Session summaries, not attribution rows.
+
+NODE attributions
+SQL >
+    %
+    SELECT
+        session_pk,
+        argMax(review_unit_key, (DecidedAt, IngestedAt, review_unit_attribution_pk)) AS review_unit_key,
+        argMax(review_url, (DecidedAt, IngestedAt, review_unit_attribution_pk)) AS review_url,
+        argMax(review_host, (DecidedAt, IngestedAt, review_unit_attribution_pk)) AS review_host,
+        argMax(review_owner, (DecidedAt, IngestedAt, review_unit_attribution_pk)) AS review_owner,
+        argMax(review_repo, (DecidedAt, IngestedAt, review_unit_attribution_pk)) AS review_repo,
+        argMax(review_number, (DecidedAt, IngestedAt, review_unit_attribution_pk)) AS review_number,
+        argMax(repo_fingerprint, (DecidedAt, IngestedAt, review_unit_attribution_pk)) AS repo_fingerprint,
+        argMax(git_branch, (DecidedAt, IngestedAt, review_unit_attribution_pk)) AS git_branch,
+        argMax(attribution_method, (DecidedAt, IngestedAt, review_unit_attribution_pk)) AS attribution_method,
+        argMax(confidence, (DecidedAt, IngestedAt, review_unit_attribution_pk)) AS confidence,
+        argMax(status, (DecidedAt, IngestedAt, review_unit_attribution_pk)) AS status,
+        argMax(rule_version, (DecidedAt, IngestedAt, review_unit_attribution_pk)) AS rule_version
+    FROM agent_review_unit_attribution_versions AS rua FINAL
+    WHERE rua.OrgId = {{ String(org_id, '') }}
+      AND rua.IsDeleted = 0
+      AND rua.rule_version = 'direct_link_v1'
+    GROUP BY session_pk
+    HAVING status = 'attributed'
+      AND attribution_method = 'direct_link'
+      AND review_unit_key != ''
+      {% if defined(repos) %}
+      AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+      {% end %}
 
 NODE sessions
 SQL >
@@ -12,69 +41,38 @@ SQL >
         if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt
     SELECT
         session_pk,
-        source,
-        model,
-        message_count,
-        priced_message_count,
-        cost_usd,
-        last_event_ms
-    FROM (
-        SELECT
-            session_pk,
-            argMaxMerge(source) AS source,
-            argMaxMerge(model) AS model,
-            sumMerge(MessageCount) AS message_count,
-            sumMerge(PricedMessageCount) AS priced_message_count,
-            round(sumMerge(CostUsd), 6) AS cost_usd,
-            maxMerge(LastEventAt) AS last_event_at,
-            toUnixTimestamp64Milli(last_event_at) AS last_event_ms
-        FROM agent_session_summaries
-        WHERE OrgId = {{ String(org_id, '') }}
-        GROUP BY session_pk
-    )
-    WHERE message_count > 0
-        AND last_event_at >= start_dt
-        AND last_event_at >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
-        AND last_event_at < end_dt
-        {% if defined(sources) %}
-        AND source IN splitByChar(',', {{ String(sources) }})
-        {% end %}
-        {% if defined(models) %}
-        AND model IN splitByChar(',', {{ String(models) }})
-        {% end %}
+        argMaxMerge(source) AS source,
+        argMaxMerge(model) AS model,
+        sumMerge(MessageCount) AS message_count,
+        sumMerge(PricedMessageCount) AS priced_message_count,
+        round(sumMerge(CostUsd), 6) AS cost_usd,
+        maxMerge(LastEventAt) AS last_event_at,
+        toUnixTimestamp64Milli(last_event_at) AS last_event_ms
+    FROM agent_session_summaries_published
+    WHERE OrgId = {{ String(org_id, '') }}
+      AND session_pk IN (SELECT session_pk FROM attributions)
+    GROUP BY session_pk
+    HAVING message_count > 0
+      AND last_event_at >= start_dt
+      AND last_event_at >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+      AND last_event_at < end_dt
+      {% if defined(sources) %}
+      AND source IN splitByChar(',', {{ String(sources) }})
+      {% end %}
+      {% if defined(models) %}
+      AND model IN splitByChar(',', {{ String(models) }})
+      {% end %}
 
 NODE attributed_sessions
 SQL >
-    %
     SELECT
-        rua.session_pk,
-        argMax(rua.review_unit_key, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS review_unit_key,
-        argMax(rua.review_url, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS review_url,
-        argMax(rua.review_host, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS review_host,
-        argMax(rua.review_owner, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS review_owner,
-        argMax(rua.review_repo, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS review_repo,
-        argMax(rua.review_number, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS review_number,
-        argMax(rua.repo_fingerprint, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS repo_fingerprint,
-        argMax(rua.git_branch, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS git_branch,
-        argMax(rua.attribution_method, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS attribution_method,
-        argMax(rua.confidence, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS confidence,
-        argMax(rua.status, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS status,
-        argMax(rua.rule_version, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS rule_version,
-        any(s.message_count) AS message_count,
-        any(s.priced_message_count) AS priced_message_count,
-        any(s.cost_usd) AS cost_usd,
-        any(s.last_event_ms) AS session_last_event_ms
-    FROM agent_review_unit_attributions AS rua
+        a.*,
+        s.message_count,
+        s.priced_message_count,
+        s.cost_usd,
+        s.last_event_ms AS session_last_event_ms
+    FROM attributions AS a
     INNER JOIN sessions AS s USING (session_pk)
-    WHERE rua.OrgId = {{ String(org_id, '') }}
-        AND rua.rule_version = 'direct_link_v1'
-    GROUP BY rua.session_pk
-    HAVING status = 'attributed'
-        AND attribution_method = 'direct_link'
-        AND review_unit_key != ''
-        {% if defined(repos) %}
-        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
-        {% end %}
 
 NODE endpoint
 SQL >

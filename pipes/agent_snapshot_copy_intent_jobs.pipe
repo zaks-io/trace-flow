@@ -1,0 +1,36 @@
+DESCRIPTION >
+    Reconciles an ambiguous snapshot Copy start from its durable intent metadata.
+    Multiple matches are returned so the coordinator can fail closed.
+
+NODE endpoint
+SQL >
+    %
+    WITH
+        [
+            'agent_context_call_buckets_hourly_snapshots',
+            'agent_repositories_snapshots',
+            'agent_session_file_signals_snapshots',
+            'agent_session_signals_snapshots',
+            'agent_session_summaries_snapshots',
+            'agent_tool_usage_daily_snapshots',
+            'agent_tool_usage_hourly_snapshots',
+            'agent_usage_daily_snapshots',
+            'agent_usage_hourly_snapshots'
+        ] AS allowed_targets,
+        {{ String(target) }} AS requested_target,
+        throwIf(not(has(allowed_targets, requested_target)), 'invalid snapshot target') AS valid_target
+    SELECT job_id, status
+    FROM tinybird.jobs_log
+    WHERE valid_target = 0
+      AND created_at >= fromUnixTimestamp64Milli({{ Int64(started_at_ms) }} - 1000)
+      AND job_type IN ('copy', 'copy_from_branch')
+      AND JSONExtractString(job_metadata, 'pipe_name') = concat('repair_', requested_target)
+      AND JSONExtractString(job_metadata, 'parameters', 'org_id') = {{ String(org_id) }}
+      AND JSONExtractString(job_metadata, 'parameters', 'snapshot_generation') = toString({{ UInt64(generation) }})
+      AND JSONExtractString(job_metadata, 'parameters', 'copy_attempt') = toString({{ UInt64(copy_attempt) }})
+    ORDER BY created_at DESC, job_id DESC
+    LIMIT 2
+
+TYPE ENDPOINT
+
+TOKEN agent_snapshot_worker READ

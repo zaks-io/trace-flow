@@ -128,6 +128,7 @@ jobs:
           printf '%s' "$BODY_ACCESS_JWT_SECRET" |
             bunx convex env set --preview-name "$BRANCH_NAME" BODY_ACCESS_JWT_SECRET
           bunx convex env set --preview-name "$BRANCH_NAME" SENTRY_ENVIRONMENT preview
+          bunx convex env set --preview-name "$BRANCH_NAME" AGENT_INGEST_URL https://trace-flow-agent-ingest-preview.isaac-a46.workers.dev
         env:
           SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
           PIPES_API_SHARED_SECRET: ${{ secrets.PIPES_API_SHARED_SECRET }}
@@ -271,19 +272,16 @@ jobs:
           test -n "$PIPES_API_SHARED_SECRET"
           test -n "$BODY_ACCESS_JWT_SECRET"
           test -n "$AGENT_DELIVERY_ENCRYPTION_ROOT_KEY"
-          test -n "$TINYBIRD_AGENT_DELIVERY_READ_TOKEN"
-          test -n "$TINYBIRD_AGENT_SNAPSHOT_TOKEN"
+          test -n "$TB_TOKEN"
           {
             printf 'ARCHIVE_API_SHARED_SECRET=%s\n' "$ARCHIVE_API_SHARED_SECRET"
             printf 'ARCHIVE_KEY_WRAPPING_SECRET=%s\n' "$ARCHIVE_KEY_WRAPPING_SECRET"
           } > "$secrets_file"
           printf 'PIPES_API_SHARED_SECRET=%s\n' "$PIPES_API_SHARED_SECRET" > "$pipes_secrets_file"
           printf 'BODY_ACCESS_JWT_SECRET=%s\n' "$BODY_ACCESS_JWT_SECRET" > "$api_secrets_file"
-          {
-            printf 'BODY_ENCRYPTION_ROOT_KEY=%s\n' "$AGENT_DELIVERY_ENCRYPTION_ROOT_KEY"
-            printf 'TINYBIRD_AGENT_DELIVERY_READ_TOKEN=%s\n' "$TINYBIRD_AGENT_DELIVERY_READ_TOKEN"
-            printf 'TINYBIRD_AGENT_SNAPSHOT_TOKEN=%s\n' "$TINYBIRD_AGENT_SNAPSHOT_TOKEN"
-          } > "$agent_consumer_secrets_file"
+          bun scripts/ci/configure-agent-tinybird-tokens.mjs "$agent_consumer_secrets_file"
+          unset TB_TOKEN
+          printf 'BODY_ENCRYPTION_ROOT_KEY=%s\n' "$AGENT_DELIVERY_ENCRYPTION_ROOT_KEY" >> "$agent_consumer_secrets_file"
           printf 'BODY_ENCRYPTION_ROOT_KEY=%s\n' "$AGENT_DELIVERY_ENCRYPTION_ROOT_KEY" > "$agent_ingest_secrets_file"
           for attempt in 1 2 3; do
             if (
@@ -329,8 +327,8 @@ jobs:
           PIPES_API_SHARED_SECRET: ${{ secrets.PIPES_API_SHARED_SECRET }}
           BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}
           AGENT_DELIVERY_ENCRYPTION_ROOT_KEY: ${{ secrets.AGENT_DELIVERY_ENCRYPTION_ROOT_KEY }}
-          TINYBIRD_AGENT_DELIVERY_READ_TOKEN: ${{ secrets.TINYBIRD_AGENT_DELIVERY_READ_TOKEN }}
-          TINYBIRD_AGENT_SNAPSHOT_TOKEN: ${{ secrets.TINYBIRD_AGENT_SNAPSHOT_TOKEN }}
+          TB_TOKEN: ${{ secrets.TINYBIRD_DEV_TOKEN_MANAGER_TOKEN }}
+          TB_HOST: https://api.us-west-2.aws.tinybird.co
           CONVEX_URL: ${{ needs.deploy-convex.outputs.convex_url }}
           CONVEX_SITE_URL: ${{ needs.deploy-convex.outputs.convex_site_url }}
 

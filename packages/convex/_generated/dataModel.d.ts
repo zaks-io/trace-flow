@@ -168,14 +168,14 @@ export type DataModel = {
   analystSandboxRuns: {
     document: {
       analystThreadId: Id<"analystThreads">;
-      completedAt?: number;
       checkpointCount?: number;
       checkpointReservation?: number;
+      completedAt?: number;
       completionAttemptCount?: number;
       completionReservation?: number;
-      completionReservationStatus?: "completed" | "failed" | "timed_out" | "cancelled";
+      completionReservationStatus?:
+        "completed" | "failed" | "timed_out" | "cancelled";
       completionReservedAt?: number;
-      pendingBackupCleanupIds?: Array<string>;
       continuationScheduledAt?: number;
       creatorUserId: Id<"users">;
       error?: string;
@@ -186,6 +186,7 @@ export type DataModel = {
       nextSeq: number;
       orgId: Id<"organizations">;
       pageContextReferences?: Array<any>;
+      pendingBackupCleanupIds?: Array<string>;
       processId?: string;
       prompt: string;
       resultText?: string;
@@ -214,14 +215,13 @@ export type DataModel = {
       | "_creationTime"
       | "_id"
       | "analystThreadId"
-      | "completedAt"
       | "checkpointCount"
       | "checkpointReservation"
+      | "completedAt"
       | "completionAttemptCount"
       | "completionReservation"
       | "completionReservationStatus"
       | "completionReservedAt"
-      | "pendingBackupCleanupIds"
       | "continuationScheduledAt"
       | "creatorUserId"
       | "error"
@@ -232,6 +232,7 @@ export type DataModel = {
       | "nextSeq"
       | "orgId"
       | "pageContextReferences"
+      | "pendingBackupCleanupIds"
       | "processId"
       | "prompt"
       | "resultText"
@@ -423,8 +424,8 @@ export type DataModel = {
       actorUserId?: Id<"users">;
       contributionId?: Id<"archiveContributions">;
       enrollmentId?: Id<"archiveEnrollments">;
-      manifestRootHash?: string;
       manifestRootCount?: number;
+      manifestRootHash?: string;
       manifestRootSetHash?: string;
       occurredAt: number;
       operationId: string;
@@ -454,8 +455,8 @@ export type DataModel = {
       | "actorUserId"
       | "contributionId"
       | "enrollmentId"
-      | "manifestRootHash"
       | "manifestRootCount"
+      | "manifestRootHash"
       | "manifestRootSetHash"
       | "occurredAt"
       | "operationId"
@@ -1268,6 +1269,9 @@ export type DataModel = {
   };
   organizations: {
     document: {
+      agentIngestionMigrationId?: string;
+      agentSnapshotCleanupAt?: number;
+      agentSnapshotCleanupFingerprint?: string;
       deletedAt?: number;
       deletionStartedAt?: number;
       name: string;
@@ -1280,6 +1284,9 @@ export type DataModel = {
     fieldPaths:
       | "_creationTime"
       | "_id"
+      | "agentIngestionMigrationId"
+      | "agentSnapshotCleanupAt"
+      | "agentSnapshotCleanupFingerprint"
       | "deletedAt"
       | "deletionStartedAt"
       | "name"

@@ -1,12 +1,16 @@
 import {
-  MAX_AGENT_SNAPSHOT_DAYS,
   type CoordinatorState,
   type ReserveAgentDeliveryInput,
   type StoredReservation,
 } from './agent-delivery-coordinator-contract';
 import { retainedDayBounds } from './agent-delivery-coordinator-validation';
 
-type CountedTable = 'active_deliveries' | 'dirty_days' | 'incomplete_days' | 'snapshot_days';
+type CountedTable =
+  | 'active_deliveries'
+  | 'dirty_days'
+  | 'dirty_day_links'
+  | 'incomplete_days'
+  | 'snapshot_days';
 
 export function initializeCoordinatorSchema(storage: DurableObjectStorage): void {
   storage.sql.exec(`
@@ -40,6 +44,12 @@ export function initializeCoordinatorSchema(storage: DurableObjectStorage): void
     );
     CREATE TABLE IF NOT EXISTS incomplete_days (
       dirty_day TEXT PRIMARY KEY
+    );
+    CREATE TABLE IF NOT EXISTS dirty_day_links (
+      day_a TEXT NOT NULL,
+      day_b TEXT NOT NULL,
+      PRIMARY KEY (day_a, day_b),
+      CHECK (day_a < day_b)
     );
     CREATE TABLE IF NOT EXISTS snapshot_days (
       generation INTEGER NOT NULL,
@@ -108,19 +118,6 @@ export function readDeliveryDays(storage: DurableObjectStorage, deliveryId: stri
   ].map((row) => row.dirty_day);
 }
 
-export function readSnapshotEligibleDays(storage: DurableObjectStorage): string[] {
-  const newestDays = [
-    ...storage.sql.exec<{ dirty_day: string }>(
-      `SELECT dirty_day FROM dirty_days
-       WHERE dirty_day NOT IN (SELECT dirty_day FROM incomplete_days)
-       ORDER BY dirty_day DESC
-       LIMIT ?`,
-      MAX_AGENT_SNAPSHOT_DAYS,
-    ),
-  ].map((row) => row.dirty_day);
-  return newestDays.sort();
-}
-
 export function markDirtyDays(
   storage: DurableObjectStorage,
   dirtyDays: string[],
@@ -141,6 +138,14 @@ export function deleteReservation(storage: DurableObjectStorage, deliveryId: str
 
 export function pruneRetainedDayMetadata(storage: DurableObjectStorage, now: number): void {
   const { oldestDirtyDay, todayDirtyDay } = retainedDayBounds(now);
+  storage.sql.exec(
+    `DELETE FROM dirty_day_links
+     WHERE day_a < ? OR day_a > ? OR day_b < ? OR day_b > ?`,
+    oldestDirtyDay,
+    todayDirtyDay,
+    oldestDirtyDay,
+    todayDirtyDay,
+  );
   for (const table of ['incomplete_days', 'dirty_days'] as const) {
     storage.sql.exec(
       `DELETE FROM ${table}

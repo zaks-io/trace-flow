@@ -12,6 +12,26 @@ const SNAPSHOT_DATASOURCES = [
   'agent_usage_hourly_snapshots',
 ];
 
+export const AGENT_APPEND_DATASOURCES = [
+  'agent_messages',
+  'agent_tool_events',
+  'agent_file_events',
+  'agent_capability_snapshots',
+  'agent_pull_request_links',
+  'agent_message_facts',
+  'agent_tool_event_facts',
+  'agent_file_event_facts',
+  'agent_capability_snapshot_facts',
+  'agent_pull_request_facts',
+  'agent_review_unit_attributions',
+  'agent_message_fact_versions',
+  'agent_tool_event_fact_versions',
+  'agent_file_event_fact_versions',
+  'agent_capability_snapshot_fact_versions',
+  'agent_pull_request_fact_versions',
+  'agent_review_unit_attribution_versions',
+];
+
 export const AGENT_TINYBIRD_TOKENS = [
   {
     name: 'trace_flow_agent_delivery_read',
@@ -24,8 +44,16 @@ export const AGENT_TINYBIRD_TOKENS = [
     scopes: [
       'DATASOURCES:APPEND:agent_snapshot_manifest',
       'PIPES:READ:agent_snapshot_job',
+      'PIPES:READ:agent_snapshot_copy_intent_jobs',
+      'PIPES:READ:agent_snapshot_manifest_latest',
+      ...SNAPSHOT_DATASOURCES.map((name) => `DATASOURCES:APPEND:${name}`),
       ...SNAPSHOT_DATASOURCES.map((name) => `PIPES:READ:repair_${name}`),
     ],
+  },
+  {
+    name: 'trace_flow_agent_facts_append',
+    variable: 'TINYBIRD_TOKEN',
+    scopes: AGENT_APPEND_DATASOURCES.map((name) => `DATASOURCES:APPEND:${name}`),
   },
 ];
 
@@ -90,6 +118,17 @@ export async function configureAgentTinybirdTokens(outputPath, options = {}) {
     values.push(`${definition.variable}=${token.token}`);
   }
 
+  const verified = await request(fetchImpl, host, deployToken, '/v0/tokens');
+  for (const definition of AGENT_TINYBIRD_TOKENS) {
+    const matches = verified.tokens?.filter((token) => token.name === definition.name);
+    if (
+      matches?.length !== 1 ||
+      JSON.stringify(normalizedScopes(matches[0].scopes ?? [])) !==
+        JSON.stringify([...definition.scopes].sort())
+    ) {
+      throw new Error(`Tinybird did not preserve the exact scopes for ${definition.name}`);
+    }
+  }
   await writeFile(outputPath, `${values.join('\n')}\n`, { mode: 0o600 });
   await chmod(outputPath, 0o600);
 }

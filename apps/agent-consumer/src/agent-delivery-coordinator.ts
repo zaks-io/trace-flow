@@ -1,10 +1,30 @@
+import {
+  baselineCopyCheckpoint,
+  beginBaselineCopy,
+  beginBaselineMigrationWindow,
+  confirmBaselineCopy,
+  type BaselineCopyCheckpoint,
+  type BaselineMigrationWindow,
+} from './baseline-copy-migration';
+import {
+  initializeIngestionMigration,
+  ingestionMigrationState,
+  seedIngestionMigration,
+  completeIngestionMigration,
+} from './ingestion-migration';
 import * as Sentry from '@sentry/cloudflare';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { DurableObject } from 'cloudflare:workers';
 import type { AgentConsumerEnv } from './context';
 import {
+  publishAgentSnapshot,
+  scheduleAgentSnapshot,
+  scheduleAgentSnapshotContinuation,
+} from './snapshot-schedule';
+import {
   AgentDeliveryCoordinatorRetryableError,
   MAX_ACTIVE_AGENT_DELIVERIES,
+  type AgentDirtyDayLink,
   type AgentDeliveryCoordinatorStats,
   type AgentDeliveryReservation,
   type ReserveAgentDeliveryInput,
@@ -38,6 +58,7 @@ import {
   validatePayloadSha256,
   validateReservationInput,
 } from './agent-delivery-coordinator-validation';
+import { linkDirtyDays as persistDirtyDayLinks } from './agent-delivery-dirty-graph';
 import {
   assertAgentSnapshotActive,
   beginAgentSnapshot,
@@ -46,13 +67,71 @@ import {
   recoverExpiredSnapshotGate,
   requestAgentSnapshot,
 } from './agent-delivery-snapshots';
+import {
+  agentIngestionErasureStarted,
+  attachSnapshotCopyJob,
+  beginAgentIngestionErasure,
+  initializeAgentIngestionErasure,
+  listSnapshotCopyIntents,
+  readAgentIngestionErasureState,
+  recordSnapshotCopyIntent,
+  rejectSnapshotCopyIntent,
+  settleSnapshotCopyIntent,
+  type AgentSnapshotCopyIntent,
+} from './agent-ingestion-erasure';
+import {
+  advanceSnapshotCopyCursor,
+  assertAgentSnapshotClaim,
+  assertSnapshotCopyCursor,
+  claimAgentSnapshot,
+  initializeAgentSnapshotProgress,
+  prepareSnapshotManifest,
+  releaseAgentSnapshotClaim,
+  renewAgentSnapshotClaim,
+  validateSnapshotClaimId,
+} from './agent-snapshot-progress';
 
 export * from './agent-delivery-coordinator-contract';
+export * from './agent-ingestion-erasure';
 
 class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
   constructor(state: DurableObjectState, env: AgentConsumerEnv) {
     super(state, env);
     initializeCoordinatorSchema(this.ctx.storage);
+    initializeIngestionMigration(this.ctx.storage);
+    initializeAgentIngestionErasure(this.ctx.storage);
+    initializeAgentSnapshotProgress(this.ctx.storage);
+  }
+
+  getBaselineCopy(input: { category: BaselineCopyCheckpoint['category'] }) {
+    return baselineCopyCheckpoint(this.ctx.storage, input.category);
+  }
+  beginBaselineCopy(input: Omit<BaselineCopyCheckpoint, 'jobId' | 'complete'>) {
+    return beginBaselineCopy(this.ctx.storage, input);
+  }
+  confirmBaselineCopy(input: {
+    category: BaselineCopyCheckpoint['category'];
+    jobId: string;
+    complete: boolean;
+  }) {
+    return confirmBaselineCopy(this.ctx.storage, input);
+  }
+  beginBaselineMigrationWindow(input: BaselineMigrationWindow) {
+    return beginBaselineMigrationWindow(this.ctx.storage, input);
+  }
+
+  getIngestionMigrationState() {
+    return ingestionMigrationState(this.ctx.storage);
+  }
+
+  seedIngestionMigration(input: { proofSha256: string; dirtyDays: string[] }) {
+    assertExactKeys(input, ['proofSha256', 'dirtyDays'], 'seed ingestion migration');
+    return seedIngestionMigration(this.ctx.storage, input);
+  }
+
+  completeIngestionMigration(input: { proofSha256: string }) {
+    assertExactKeys(input, ['proofSha256'], 'complete ingestion migration');
+    return completeIngestionMigration(this.ctx.storage, input.proofSha256);
   }
 
   bootstrapSequence(input: { lastAssignedSequence: 1 }): { nextDeliverySequence: 2 } {
@@ -71,7 +150,9 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
         countRows(this.ctx.storage, 'active_deliveries') !== 0 ||
         countRows(this.ctx.storage, 'dirty_days') !== 0 ||
         countRows(this.ctx.storage, 'incomplete_days') !== 0 ||
-        countRows(this.ctx.storage, 'snapshot_days') !== 0
+        countRows(this.ctx.storage, 'snapshot_days') !== 0 ||
+        agentIngestionErasureStarted(this.ctx.storage) ||
+        listSnapshotCopyIntents(this.ctx.storage).length !== 0
       ) {
         throw new Error('delivery sequence bootstrap requires an empty coordinator');
       }
@@ -83,6 +164,11 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     status: 'reserved' | 'existing';
     deliverySequence: number;
   } {
+    const migration = ingestionMigrationState(this.ctx.storage);
+    if (migration && !migration.complete)
+      throw new AgentDeliveryCoordinatorRetryableError(
+        'Ingestion baseline migration is incomplete',
+      );
     const reservation = validateReservationInput(input);
     const now = Date.now();
     recoverExpiredSnapshotGate(this.ctx.storage, now);
@@ -93,6 +179,7 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
         assertMatchingReservation(this.ctx.storage, existing, reservation);
         return { status: 'existing' as const, deliverySequence: existing.delivery_sequence };
       }
+      this.assertIngestionNotErasing();
       assertNewReservationWindow(reservation, now);
       const state = readCoordinatorState(this.ctx.storage);
       if (state.gate_phase !== 'open') {
@@ -120,6 +207,14 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     assertExactKeys(input, ['deliveryId'], 'get reservation');
     const stored = findReservation(this.ctx.storage, validateDeliveryId(input.deliveryId));
     return stored ? toDeliveryReservation(this.ctx.storage, stored) : null;
+  }
+
+  getNextDelivery(): AgentDeliveryReservation | null {
+    if (countRows(this.ctx.storage, 'active_deliveries') === 0) return null;
+    const id = earliestDeliveryId(this.ctx.storage);
+    const stored = findReservation(this.ctx.storage, id);
+    if (!stored) throw new Error('Next delivery reservation is missing');
+    return toDeliveryReservation(this.ctx.storage, stored);
   }
 
   acquireWrite(input: { deliveryId: string; payloadSha256: string }): boolean {
@@ -155,6 +250,12 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
       assertDirtyDayCapacity(this.ctx.storage);
       return { dirtyDays: readDeliveryDays(this.ctx.storage, deliveryId) };
     });
+  }
+
+  linkDirtyDays(input: { deliveryId: string; payloadSha256: string; links: AgentDirtyDayLink[] }): {
+    linkedEdges: number;
+  } {
+    return persistDirtyDayLinks(this.ctx.storage, input, Date.now());
   }
 
   complete(input: { deliveryId: string; payloadSha256: string }): {
@@ -214,26 +315,203 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
 
   requestSnapshot(input: Record<string, never>) {
     assertExactKeys(input, [], 'request snapshot');
+    this.assertIngestionNotErasing();
     return requestAgentSnapshot(this.ctx.storage, Date.now());
   }
 
-  beginSnapshot(input: Record<string, never>) {
-    assertExactKeys(input, [], 'begin snapshot');
-    return beginAgentSnapshot(this.ctx.storage, Date.now());
+  beginSnapshot(input: { claimId: string }) {
+    assertExactKeys(input, ['claimId'], 'begin snapshot');
+    this.assertIngestionNotErasing();
+    return beginAgentSnapshot(this.ctx.storage, validateSnapshotClaimId(input.claimId), Date.now());
   }
 
-  assertSnapshotActive(input: { generation: number }) {
-    const generation = validateGenerationInput(input, 'assert snapshot active');
+  claimSnapshot(input: { claimId: string }) {
+    assertExactKeys(input, ['claimId'], 'claim snapshot');
+    this.assertIngestionNotErasing();
+    return claimAgentSnapshot(this.ctx.storage, input.claimId, Date.now());
+  }
+
+  getSnapshotProgress(input: { generation: number; claimId: string }) {
+    const { generation, claimId } = this.validateSnapshotClaim(input, 'get snapshot progress');
+    return assertAgentSnapshotClaim(this.ctx.storage, generation, claimId, Date.now());
+  }
+
+  renewSnapshotClaim(input: { generation: number; claimId: string }) {
+    const { generation, claimId } = this.validateSnapshotClaim(input, 'renew snapshot claim');
+    this.assertIngestionNotErasing();
+    return renewAgentSnapshotClaim(this.ctx.storage, generation, claimId, Date.now());
+  }
+
+  releaseSnapshotClaim(input: { generation: number; claimId: string }) {
+    const { generation, claimId } = this.validateSnapshotClaim(input, 'release snapshot claim');
+    return releaseAgentSnapshotClaim(this.ctx.storage, generation, claimId, Date.now());
+  }
+
+  prepareSnapshotManifest(input: { generation: number; claimId: string }) {
+    const { generation, claimId } = this.validateSnapshotClaim(input, 'prepare snapshot manifest');
+    this.assertIngestionNotErasing();
+    assertAgentSnapshotActive(this.ctx.storage, generation, Date.now());
+    return prepareSnapshotManifest(this.ctx.storage, generation, claimId, Date.now());
+  }
+
+  assertSnapshotActive(input: { generation: number; claimId: string }) {
+    const { generation, claimId } = this.validateSnapshotClaim(input, 'assert snapshot active');
+    this.assertIngestionNotErasing();
+    assertAgentSnapshotClaim(this.ctx.storage, generation, claimId, Date.now());
     return assertAgentSnapshotActive(this.ctx.storage, generation, Date.now());
   }
 
-  finishSnapshot(input: { generation: number }) {
-    const generation = validateGenerationInput(input, 'finish snapshot');
+  finishSnapshot(input: { generation: number; claimId: string }) {
+    const { generation, claimId } = this.validateSnapshotClaim(input, 'finish snapshot');
+    const progress = assertAgentSnapshotClaim(this.ctx.storage, generation, claimId, Date.now());
+    assertAgentSnapshotActive(this.ctx.storage, generation, Date.now());
+    if (progress.nextCopyIndex !== progress.totalCopies) {
+      throw new Error('snapshot Copy progress is incomplete');
+    }
+    if (listSnapshotCopyIntents(this.ctx.storage).length !== 0) {
+      throw new Error('snapshot has outstanding Copy intents');
+    }
     return finishAgentSnapshot(this.ctx.storage, generation, Date.now());
   }
 
-  failSnapshot(input: { generation: number }) {
-    const generation = validateGenerationInput(input, 'fail snapshot');
+  failSnapshot(input: { generation: number; claimId: string }) {
+    const { generation, claimId } = this.validateSnapshotClaim(input, 'fail snapshot');
+    assertAgentSnapshotClaim(this.ctx.storage, generation, claimId, Date.now());
+    if (listSnapshotCopyIntents(this.ctx.storage).length !== 0) {
+      throw new Error('snapshot has outstanding Copy intents');
+    }
+    return failAgentSnapshot(this.ctx.storage, generation, Date.now());
+  }
+
+  async scheduleSnapshot(input: { orgId: string }): Promise<{ scheduled: boolean }> {
+    assertExactKeys(input, ['orgId'], 'schedule snapshot');
+    if (!input.orgId || input.orgId.length > 256 || input.orgId.includes(':')) {
+      throw new Error('Invalid snapshot organization');
+    }
+    if (agentIngestionErasureStarted(this.ctx.storage)) {
+      await this.ctx.storage.deleteAlarm();
+      return { scheduled: false };
+    }
+    await scheduleAgentSnapshot(this.ctx.storage, input.orgId);
+    return { scheduled: true };
+  }
+
+  async scheduleSnapshotContinuation(input: { orgId: string }): Promise<{ scheduled: boolean }> {
+    assertExactKeys(input, ['orgId'], 'schedule snapshot continuation');
+    if (!input.orgId || input.orgId.length > 256 || input.orgId.includes(':')) {
+      throw new Error('Invalid snapshot organization');
+    }
+    if (agentIngestionErasureStarted(this.ctx.storage)) return { scheduled: false };
+    await scheduleAgentSnapshotContinuation(this.ctx.storage, input.orgId);
+    return { scheduled: true };
+  }
+
+  async alarm(): Promise<void> {
+    const stats = this.getStats({});
+    if (stats.erasureStarted) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    await publishAgentSnapshot(this.ctx.storage, this.env.AGENT_SNAPSHOT_QUEUE, stats);
+  }
+
+  async beginErasure(input: Record<string, never>) {
+    assertExactKeys(input, [], 'begin agent ingestion erasure');
+    this.recoverCoordinatorMetadata();
+    const state = beginAgentIngestionErasure(this.ctx.storage, Date.now());
+    await this.ctx.storage.deleteAlarm();
+    return state;
+  }
+
+  getErasureState(input: Record<string, never>) {
+    assertExactKeys(input, [], 'get agent ingestion erasure');
+    this.recoverCoordinatorMetadata();
+    return readAgentIngestionErasureState(this.ctx.storage);
+  }
+
+  getOutstandingSnapshotCopyIntents(input: Record<string, never>) {
+    assertExactKeys(input, [], 'get outstanding snapshot Copy intents');
+    return listSnapshotCopyIntents(this.ctx.storage);
+  }
+
+  recordSnapshotCopyIntent(
+    input: AgentSnapshotCopyIntent & { claimId: string; copyIndex: number },
+  ) {
+    const { claimId, copyIndex, ...intent } = input;
+    this.assertIngestionNotErasing();
+    assertSnapshotCopyCursor(this.ctx.storage, { ...intent, claimId, copyIndex }, Date.now());
+    return recordSnapshotCopyIntent(this.ctx.storage, intent);
+  }
+
+  attachSnapshotCopyJob(
+    input: Omit<AgentSnapshotCopyIntent, 'startedAt'> & {
+      claimId: string;
+      copyIndex: number;
+      jobId: string;
+    },
+  ) {
+    const { claimId, copyIndex, ...job } = input;
+    assertSnapshotCopyCursor(this.ctx.storage, { ...job, claimId, copyIndex }, Date.now());
+    return attachSnapshotCopyJob(this.ctx.storage, job);
+  }
+
+  settleSnapshotCopyIntent(
+    input: Omit<AgentSnapshotCopyIntent, 'startedAt'> & {
+      claimId: string;
+      copyIndex: number;
+      jobId: string;
+      status: 'done' | 'error';
+    },
+  ) {
+    const { claimId, copyIndex, ...job } = input;
+    assertSnapshotCopyCursor(this.ctx.storage, { ...job, claimId, copyIndex }, Date.now());
+    return settleSnapshotCopyIntent(this.ctx.storage, job, () => {
+      if (job.status === 'done') {
+        advanceSnapshotCopyCursor(this.ctx.storage, job.generation, copyIndex);
+      }
+    });
+  }
+
+  rejectSnapshotCopyIntent(
+    input: Pick<AgentSnapshotCopyIntent, 'generation' | 'target' | 'copyAttempt'> & {
+      claimId: string;
+      copyIndex: number;
+    },
+  ) {
+    const { claimId, copyIndex, ...key } = input;
+    assertSnapshotCopyCursor(this.ctx.storage, { ...key, claimId, copyIndex }, Date.now());
+    return rejectSnapshotCopyIntent(this.ctx.storage, key);
+  }
+
+  attachErasureSnapshotCopyJob(
+    input: Omit<AgentSnapshotCopyIntent, 'startedAt'> & { jobId: string },
+  ) {
+    if (!agentIngestionErasureStarted(this.ctx.storage)) {
+      throw new Error('snapshot Copy erasure settlement requires an erasure tombstone');
+    }
+    return attachSnapshotCopyJob(this.ctx.storage, input);
+  }
+
+  settleErasureSnapshotCopyIntent(
+    input: Omit<AgentSnapshotCopyIntent, 'startedAt'> & {
+      jobId: string;
+      status: 'done' | 'error';
+    },
+  ) {
+    if (!agentIngestionErasureStarted(this.ctx.storage)) {
+      throw new Error('snapshot Copy erasure settlement requires an erasure tombstone');
+    }
+    return settleSnapshotCopyIntent(this.ctx.storage, input);
+  }
+
+  abandonErasureSnapshot(input: { generation: number }) {
+    const generation = validateGenerationInput(input, 'abandon erasure snapshot');
+    if (!agentIngestionErasureStarted(this.ctx.storage)) {
+      throw new Error('snapshot abandonment requires an erasure tombstone');
+    }
+    if (listSnapshotCopyIntents(this.ctx.storage).length !== 0) {
+      throw new Error('snapshot has outstanding Copy intents');
+    }
     return failAgentSnapshot(this.ctx.storage, generation, Date.now());
   }
 
@@ -250,13 +528,38 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
         activeDeliveries: countRows(this.ctx.storage, 'active_deliveries'),
         dirtyDays: countRows(this.ctx.storage, 'dirty_days'),
         incompleteDays: countRows(this.ctx.storage, 'incomplete_days'),
+        dirtyDayLinks: countRows(this.ctx.storage, 'dirty_day_links'),
         capturedSnapshotDays: countRows(this.ctx.storage, 'snapshot_days'),
         gatePhase: state.gate_phase,
         activeSnapshotGeneration: state.active_snapshot_generation,
         gateExpiresAtMs: state.gate_expires_at_ms,
+        erasureStarted: agentIngestionErasureStarted(this.ctx.storage),
         databaseSizeBytes: this.ctx.storage.sql.databaseSize,
       };
     });
+  }
+
+  private recoverCoordinatorMetadata(): void {
+    const now = Date.now();
+    recoverExpiredSnapshotGate(this.ctx.storage, now);
+    this.ctx.storage.transactionSync(() => pruneRetainedDayMetadata(this.ctx.storage, now));
+  }
+
+  private assertIngestionNotErasing(): void {
+    if (agentIngestionErasureStarted(this.ctx.storage)) {
+      throw new AgentDeliveryCoordinatorRetryableError('agent ingestion erasure has started');
+    }
+  }
+
+  private validateSnapshotClaim(
+    input: { generation: number; claimId: string },
+    label: string,
+  ): { generation: number; claimId: string } {
+    assertExactKeys(input, ['generation', 'claimId'], label);
+    return {
+      generation: validateGenerationInput({ generation: input.generation }, label),
+      claimId: validateSnapshotClaimId(input.claimId),
+    };
   }
 }
 

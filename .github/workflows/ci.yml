@@ -154,6 +154,7 @@ jobs:
             workflows:
               - 'scripts/ci/configure-agent-tinybird-tokens*'
               - 'scripts/ci/provision-agent-delivery*'
+              - 'scripts/ci/resolve-agent-tinybird-current-ref*'
               - 'scripts/ci/workflow-permissions.test.mjs'
               - 'scripts/ci/ubuntu_https_sources.py'
               - 'scripts/ci/ubuntu_https_sources_test.py'
@@ -187,6 +188,7 @@ jobs:
           bun test \
             scripts/ci/configure-agent-tinybird-tokens.test.mjs \
             scripts/ci/provision-agent-delivery.test.mjs \
+            scripts/ci/resolve-agent-tinybird-current-ref.test.mjs \
             scripts/ci/workflow-permissions.test.mjs
           python3 scripts/ci/ubuntu_https_sources_test.py
       - uses: devops-actions/actionlint@v0.1.12

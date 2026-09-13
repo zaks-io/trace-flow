@@ -1,0 +1,17 @@
+DESCRIPTION >
+    Current event-day index entries from live agent_file_event_fact_versions rows.
+
+NODE identity_days
+SQL >
+    SELECT
+        OrgId,
+        'file_events' AS Category,
+        concat(OrgId, char(31), session_pk, char(31), file_event_pk) AS FactIdentity,
+        toDate(EventAt) AS EventDay,
+        DeliverySequence,
+        ContentHash
+    FROM agent_file_event_fact_versions
+    WHERE IsDeleted = 0
+
+TYPE MATERIALIZED
+DATASOURCE agent_fact_identity_days

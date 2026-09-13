@@ -1,6 +1,57 @@
 DESCRIPTION >
-    Browsable Agent Session table. Reads the incremental session serving table rather
-    than joining raw message and file facts per request.
+    Browsable Agent Session table. Reads published daily session states and merges every retained day before applying
+    the session last-event window.
+
+NODE candidates
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms,
+        {{ Int64(end_time_ms, 0) }} AS end_ms,
+        if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
+        if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt
+    SELECT session_pk
+    FROM (
+        SELECT
+            session_pk,
+            argMaxMerge(source) AS source,
+            argMaxMerge(model) AS model,
+            argMaxMerge(repo_fingerprint) AS repo_fingerprint,
+            sumMerge(MessageCount) AS message_count,
+            sumMerge(FileEventCount) AS file_event_count,
+            round(sumMerge(CostUsd), 6) AS cost_usd,
+            minMerge(StartedAt) AS started_at,
+            maxMerge(LastEventAt) AS last_event_at,
+            toUnixTimestamp64Milli(last_event_at) - toUnixTimestamp64Milli(started_at) AS duration_ms,
+            toUnixTimestamp64Milli(last_event_at) AS last_event_ms
+        FROM agent_session_summaries_published
+        WHERE OrgId = {{ String(org_id, '') }}
+        GROUP BY session_pk
+    )
+    WHERE message_count > 0
+      AND last_event_at >= start_dt
+      AND last_event_at >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+      AND last_event_at < end_dt
+      {% if defined(sources) %}
+      AND source IN splitByChar(',', {{ String(sources) }})
+      {% end %}
+      {% if defined(models) %}
+      AND model IN splitByChar(',', {{ String(models) }})
+      {% end %}
+      {% if defined(repos) %}
+      AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+      {% end %}
+    ORDER BY
+      multiIf(
+        {{ String(sort, 'recent') }} = 'files', toFloat64(file_event_count),
+        {{ String(sort, 'recent') }} = 'duration', toFloat64(duration_ms),
+        {{ String(sort, 'recent') }} = 'messages', toFloat64(message_count),
+        {{ String(sort, 'recent') }} = 'cost', cost_usd,
+        toFloat64(last_event_ms)
+      ) DESC,
+      session_pk ASC
+    LIMIT greatest(1, least({{ Int32(limit, 25) }}, 100))
+    OFFSET greatest(0, {{ Int32(offset, 0) }})
 
 NODE endpoint
 SQL >
@@ -35,8 +86,9 @@ SQL >
             maxMerge(LastEventAt) AS last_event_at,
             toUnixTimestamp64Milli(last_event_at) - toUnixTimestamp64Milli(started_at) AS duration_ms,
             toUnixTimestamp64Milli(last_event_at) AS last_event_ms
-        FROM agent_session_summaries
+        FROM agent_session_summaries_published
         WHERE OrgId = {{ String(org_id, '') }}
+          AND session_pk IN (SELECT session_pk FROM candidates)
         GROUP BY session_pk
     )
     WHERE message_count > 0

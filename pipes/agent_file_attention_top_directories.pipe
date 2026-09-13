@@ -42,7 +42,7 @@ SQL >
             sumMerge(MissingFileCount) AS missing_file_count,
             sumMerge(CoverageDebtCount) AS coverage_debt_count,
             argMaxMerge(source) AS source
-        FROM agent_session_file_signals
+        FROM agent_session_file_signals_published
         WHERE OrgId = {{ String(org_id, '') }}
             {% if defined(repos) %}
             AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})

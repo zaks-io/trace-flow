@@ -1,0 +1,16 @@
+DESCRIPTION >
+    Immutable publication commits. One row atomically publishes every linked day in a
+    captured generation; readers independently choose the greatest generation per day.
+
+SCHEMA >
+    `OrgId` String `json:$.OrgId`,
+    `SnapshotGeneration` UInt64 `json:$.SnapshotGeneration`,
+    `SnapshotDays` Array(Date) `json:$.SnapshotDays[:]`,
+    `PublishedAt` DateTime64(3) `json:$.PublishedAt`
+
+ENGINE "MergeTree"
+ENGINE_SORTING_KEY "OrgId, SnapshotGeneration"
+ENGINE_PARTITION_KEY "toYYYYMM(PublishedAt)"
+ENGINE_TTL "toDateTime(PublishedAt) + toIntervalYear(1) + toIntervalDay(1)"
+
+TOKEN "agent_snapshot_worker" APPEND

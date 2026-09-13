@@ -53,6 +53,17 @@ export function rowIdentity(row: unknown, keyFields: string[]): string {
   return keyFields.map((field) => identityPart(row[field])).join('\x1f');
 }
 
+export function factIdentityListParam(identities: string[]): string {
+  if (
+    identities.length === 0 ||
+    identities.length > 32 ||
+    identities.some((identity) => identity.length === 0 || identity.includes(','))
+  ) {
+    throw new Error('Invalid fact identity lookup');
+  }
+  return identities.join(',');
+}
+
 export function rowOrgId(row: unknown): string {
   return isRecord(row) && typeof row.OrgId === 'string' ? row.OrgId : '';
 }

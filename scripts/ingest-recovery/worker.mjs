@@ -1,6 +1,20 @@
 import { isArchiveCanonicalIdentifier } from '../../packages/types/src/archive.ts';
 
 const AGENT_METHODS = new Set([
+  'inspectGlobalIngestionMigration',
+  'inspectIngestionMigration',
+  'getBaselineCopy',
+  'listFrozenFacts',
+  'inspectFrozenFactSources',
+  'readFrozenFactSources',
+  'replayFrozenFacts',
+  'freezeIngestionMigration',
+  'seedIngestionMigration',
+  'beginBaselineMigrationWindow',
+  'beginBaselineCopy',
+  'confirmBaselineCopy',
+  'completeIngestionMigration',
+  'completeGlobalIngestionMigration',
   'beginFactRebuild',
   'listRebuildFacts',
   'completeFactRebuild',
@@ -16,6 +30,12 @@ const ARCHIVE_METHODS = new Set([
   'finalizeArchiveRepair',
 ]);
 const READ_METHODS = new Set([
+  'inspectGlobalIngestionMigration',
+  'inspectIngestionMigration',
+  'getBaselineCopy',
+  'listFrozenFacts',
+  'inspectFrozenFactSources',
+  'readFrozenFactSources',
   'listRecovery',
   'listRebuildFacts',
   'inspectArchivePart',

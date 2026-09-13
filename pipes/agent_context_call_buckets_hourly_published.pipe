@@ -1,0 +1,40 @@
+DESCRIPTION >
+    Published snapshot rows for one organization. Each manifest commit atomically switches
+    every linked correction day, and the greatest committed generation wins per day.
+
+NODE published
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms_raw,
+        {{ Int64(end_time_ms, 0) }} AS end_ms_raw,
+        if(end_ms_raw = 0, toUnixTimestamp64Milli(toDateTime64(now(), 3)), end_ms_raw) AS end_ms_candidate,
+        if(start_ms_raw = 0, end_ms_candidate - 7 * 24 * 60 * 60 * 1000, start_ms_raw) AS start_ms_candidate,
+        least(start_ms_candidate, end_ms_candidate) AS start_ms,
+        greatest(start_ms_candidate, end_ms_candidate) AS end_ms,
+        end_ms - start_ms AS span_ms,
+        fromUnixTimestamp64Milli(end_ms) AS end_dt,
+        greatest(
+            fromUnixTimestamp64Milli(start_ms - span_ms),
+            now() - toIntervalDay({{ Int32(retention_days, 7) }})
+        ) AS retained_start_dt
+    SELECT s.*
+    FROM agent_context_call_buckets_hourly_snapshots AS s FINAL
+    INNER JOIN (
+        SELECT SnapshotDay, max(SnapshotGeneration) AS SnapshotGeneration
+        FROM agent_snapshot_manifest
+        ARRAY JOIN SnapshotDays AS SnapshotDay
+        WHERE OrgId = {{ String(org_id, '') }}
+          AND SnapshotDay >= if(
+              toMonth(today()) = 2 AND toDayOfMonth(today()) = 29,
+              toDate(concat(toString(toYear(today()) - 1), '-03-01')),
+              addYears(today(), -1)
+          )
+          AND SnapshotDay <= today()
+        GROUP BY SnapshotDay
+    ) AS m
+      ON s.SnapshotDay = m.SnapshotDay
+      AND s.SnapshotGeneration = m.SnapshotGeneration
+    WHERE s.OrgId = {{ String(org_id, '') }}
+      AND s.SnapshotDay >= toDate(retained_start_dt)
+      AND s.SnapshotDay <= toDate(end_dt)

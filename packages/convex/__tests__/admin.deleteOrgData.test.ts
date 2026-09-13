@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { getFunctionName } from 'convex/server';
 import { deleteOrgData, deleteOrgDataScheduled } from '../admin/admin';
 
 interface DeleteCounts {
@@ -129,24 +130,32 @@ describe('admin.deleteOrgData', () => {
     );
   });
 
-  it('destroys archive keys before erasing archive objects and Tinybird rows', async () => {
+  it('drains agent ingestion and destroys archive keys before deleting Tinybird data', async () => {
     const ctx = makeDeleteCtx([emptyCounts()]);
     const handler = (deleteOrgData as unknown as { _handler: DeleteHandler })._handler;
-
     await handler(ctx, { orgId: 'org_1' });
-
-    expect(ctx.runAction).toHaveBeenCalledTimes(4);
-    expect(ctx.runAction.mock.invocationCallOrder[0]).toBeLessThan(
-      ctx.runAction.mock.invocationCallOrder[1]!,
-    );
+    expect(ctx.runAction.mock.calls.map((call) => getFunctionName(call[0]))).toEqual([
+      'agentIngestionErasure:eraseOrganization',
+      'analystSandbox:eraseOrganizationSandboxBackups',
+      'archiveErasure:stageArchiveErasure',
+      'archiveErasure:eraseArchiveData',
+      'integrations/tinybird:deleteOrgTraces',
+    ]);
     expect(ctx.runMutation.mock.invocationCallOrder[1]).toBeGreaterThan(
-      ctx.runAction.mock.invocationCallOrder[1]!,
-    );
-    expect(ctx.runMutation.mock.invocationCallOrder[1]).toBeLessThan(
       ctx.runAction.mock.invocationCallOrder[2]!,
     );
-    expect(ctx.runAction.mock.invocationCallOrder[2]).toBeLessThan(
+    expect(ctx.runMutation.mock.invocationCallOrder[1]).toBeLessThan(
       ctx.runAction.mock.invocationCallOrder[3]!,
     );
+  });
+
+  it('does not delete analytics or finalize the organization while ingestion is still writing', async () => {
+    const ctx = makeDeleteCtx([emptyCounts()]);
+    ctx.runAction.mockRejectedValueOnce(new Error('Outstanding ingestion writes'));
+    await expect(scheduledHandler(ctx, { orgId: 'org_1' })).rejects.toThrow(
+      'Outstanding ingestion writes',
+    );
+    expect(ctx.runAction).toHaveBeenCalledTimes(1);
+    expect(ctx.runMutation).toHaveBeenCalledTimes(1);
   });
 });

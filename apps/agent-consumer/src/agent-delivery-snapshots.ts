@@ -4,11 +4,15 @@ import {
   type BeginAgentSnapshotResult,
 } from './agent-delivery-coordinator-contract';
 import {
+  createAgentSnapshotProgress,
+  deleteAgentSnapshotProgress,
+} from './agent-snapshot-progress';
+import { deleteCapturedDirtyDayLinks, selectSnapshotDirtyDays } from './agent-delivery-dirty-graph';
+import {
   countRows,
   countSnapshotDays,
   pruneRetainedDayMetadata,
   readCoordinatorState,
-  readSnapshotEligibleDays,
 } from './agent-delivery-coordinator-storage';
 import { retainedDayBounds } from './agent-delivery-coordinator-validation';
 
@@ -38,6 +42,7 @@ export function requestAgentSnapshot(
 
 export function beginAgentSnapshot(
   storage: DurableObjectStorage,
+  claimId: string,
   now: number,
 ): BeginAgentSnapshotResult {
   recoverExpiredSnapshotGate(storage, now);
@@ -48,7 +53,7 @@ export function beginAgentSnapshot(
     if (countRows(storage, 'active_deliveries') !== 0) {
       throw new AgentDeliveryCoordinatorRetryableError('active deliveries prevent snapshot');
     }
-    const dirtyDays = readSnapshotEligibleDays(storage);
+    const dirtyDays = selectSnapshotDirtyDays(storage);
     if (dirtyDays.length === 0) {
       openSnapshotGate(storage);
       return null;
@@ -74,6 +79,7 @@ export function beginAgentSnapshot(
       generation,
       now + MAX_AGENT_SNAPSHOT_LEASE_MS,
     );
+    createAgentSnapshotProgress(storage, generation, claimId, now);
     return { generation, dirtyDays };
   });
   if (!snapshot) throw new Error('agent snapshot has no complete dirty days; recovery is required');
@@ -94,6 +100,9 @@ export function assertAgentSnapshotActive(
   ) {
     throw new Error('snapshot generation is not active');
   }
+  if (snapshotContainsExpiredDays(storage, now)) {
+    throw new Error('snapshot contains days outside retention');
+  }
   return { generation, expiresAtMs: state.gate_expires_at_ms };
 }
 
@@ -106,12 +115,14 @@ export function finishAgentSnapshot(
   return storage.transactionSync(() => {
     assertActiveSnapshotState(storage, generation);
     const clearedDirtyDays = countSnapshotDays(storage, generation);
+    deleteCapturedDirtyDayLinks(storage, generation);
     storage.sql.exec(
       `DELETE FROM dirty_days
        WHERE dirty_day IN (SELECT dirty_day FROM snapshot_days WHERE generation = ?)`,
       generation,
     );
     storage.sql.exec('DELETE FROM snapshot_days WHERE generation = ?', generation);
+    deleteAgentSnapshotProgress(storage, generation);
     openSnapshotGate(storage);
     pruneRetainedDayMetadata(storage, now);
     return { generation, clearedDirtyDays };
@@ -128,6 +139,7 @@ export function failAgentSnapshot(
     assertActiveSnapshotState(storage, generation);
     const retainedDirtyDays = countSnapshotDays(storage, generation);
     storage.sql.exec('DELETE FROM snapshot_days WHERE generation = ?', generation);
+    deleteAgentSnapshotProgress(storage, generation);
     openSnapshotGate(storage);
     pruneRetainedDayMetadata(storage, now);
     return { generation, retainedDirtyDays };
@@ -139,12 +151,8 @@ export function recoverExpiredSnapshotGate(storage: DurableObjectStorage, now: n
     const state = readCoordinatorState(storage);
     if (state.gate_phase === 'open') return false;
     if (state.gate_expires_at_ms === null) throw new Error('snapshot gate is missing its lease');
-    if (
-      now < state.gate_expires_at_ms &&
-      !(state.gate_phase === 'snapshot' && snapshotContainsExpiredDays(storage, now))
-    ) {
-      return false;
-    }
+    if (state.gate_phase === 'snapshot') return false;
+    if (now < state.gate_expires_at_ms) return false;
 
     storage.sql.exec('DELETE FROM snapshot_days');
     openSnapshotGate(storage);

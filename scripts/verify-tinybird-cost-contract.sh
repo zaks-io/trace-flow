@@ -13,11 +13,19 @@ check() {
   fi
 }
 
-check "published SQL must not use FINAL" \
-  rg -n '\bFINAL\b' materializations pipes
+final_violations="$(rg -n '\bFINAL\b' materializations pipes \
+  | grep -Ev '^(pipes/agent_(context_call_buckets_hourly|repositories|session_file_signals|session_signals|session_summaries|tool_usage_daily|tool_usage_hourly|usage_daily|usage_hourly)_published|pipes/agent_(cost_by_depth|review_unit_costs|delivery_receipt|fact_identity_day|snapshot_manifest_latest|priced_usage))\.pipe:' || true)"
+if [[ -n "$final_violations" ]]; then
+  printf 'Tinybird cost contract failed: FINAL is limited to bounded version/snapshot reads\n%s\n' "$final_violations" >&2
+  failed=1
+fi
 
-check "Tinybird datasources must not use ReplacingMergeTree" \
-  rg -n 'ENGINE "ReplacingMergeTree"' datasources
+rmt_violations="$(rg -n 'ENGINE "ReplacingMergeTree"' datasources \
+  | grep -Ev '^datasources/agent_.*(_versions|_snapshots)\.datasource:|^datasources/agent_(delivery_receipts|fact_identity_days|snapshot_manifest)\.datasource:' || true)"
+if [[ -n "$rmt_violations" ]]; then
+  printf 'Tinybird cost contract failed: ReplacingMergeTree is limited to version and snapshot resources\n%s\n' "$rmt_violations" >&2
+  failed=1
+fi
 
 if ! rg -q 'LIMIT \{\{ Int32\(limit, 10\) \}\}' pipes/llm_usage_by_model.pipe; then
   printf 'Tinybird cost contract failed: llm_usage_by_model must honor the requested limit\n' >&2

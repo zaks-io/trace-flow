@@ -11,14 +11,32 @@
 import * as Sentry from '@sentry/cloudflare';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { Hono } from 'hono';
+import type { MiddlewareHandler } from 'hono';
 import type { AgentIngestEnv } from './context';
 import { handleIngest } from './handler';
+import { handleOrganizationErasure } from './organization-erasure';
 
 export const app = new Hono<{ Bindings: AgentIngestEnv }>();
 
 app.get('/healthz', (c) => c.json({ status: 'ok' }));
 
-app.post('/v1/ingest', handleIngest);
+const enforceIngestionMaintenance: MiddlewareHandler<{ Bindings: AgentIngestEnv }> = async (
+  c,
+  next,
+) => {
+  const maintenance = c.env.AGENT_INGEST_MAINTENANCE;
+  if (maintenance !== 'true' && maintenance !== 'false') {
+    throw new Error('Invalid AGENT_INGEST_MAINTENANCE configuration');
+  }
+  if (maintenance === 'true') {
+    c.header('Retry-After', '60');
+    return c.json({ error: 'ingestion_maintenance' }, 503);
+  }
+  await next();
+};
+
+app.post('/v1/ingest', enforceIngestionMaintenance, handleIngest);
+app.post('/internal/organization-erasure', handleOrganizationErasure);
 
 export default Sentry.withSentry(
   (env: AgentIngestEnv) => ({

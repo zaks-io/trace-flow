@@ -65,7 +65,15 @@ export class AgentRecoveryClient {
         confirm: 'apply-recovery',
       }),
     } satisfies RequestInit;
-    const attempts = ['listRecovery', 'listRebuildFacts'].includes(method) ? 3 : 1;
+    const attempts = [
+      'listRecovery',
+      'listRebuildFacts',
+      'listFrozenFacts',
+      'inspectFrozenFactSources',
+      'readFrozenFactSources',
+    ].includes(method)
+      ? 3
+      : 1;
     let response: Response | undefined;
     for (let attempt = 1; attempt <= attempts; attempt++) {
       this.assertExecutor?.();
@@ -145,8 +153,7 @@ export class AgentTinybirdClient {
       body,
       signal: AbortSignal.timeout(65_000),
     });
-    if (!response.ok)
-      throw new Error(`Tinybird ${path.split('?')[0]} failed with HTTP ${response.status}`);
+    if (!response.ok) throw new AgentTinybirdRequestError(path.split('?')[0]!, response.status);
     return response.json();
   }
 
@@ -247,6 +254,15 @@ export class AgentTinybirdClient {
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
     throw new Error(`Delete job ${id} still running; resume with the same operation`);
+  }
+}
+
+export class AgentTinybirdRequestError extends Error {
+  constructor(
+    readonly path: string,
+    readonly status: number,
+  ) {
+    super(`Tinybird ${path} failed with HTTP ${status}`);
   }
 }
 

@@ -31,7 +31,7 @@
     "test:watch": "turbo run test:watch",
     "test:coverage": "turbo run test:coverage",
     "test:tinybird": "bun run tinybird:contract && tb --local build && tb --local test run",
-    "tinybird:contract": "bash scripts/verify-tinybird-cost-contract.sh && node scripts/verify-agent-signal-query-guardrails.mjs",
+    "tinybird:contract": "bash scripts/verify-tinybird-cost-contract.sh && node scripts/verify-agent-signal-query-guardrails.mjs && node scripts/verify-agent-snapshot-contract.mjs",
     "tinybird:perf": "bash scripts/tinybird-performance-report.sh",
     "tinybird:agent-signal:perf": "bash scripts/tinybird-agent-signal-performance-report.sh",
     "tinybird:parity": "bash scripts/tinybird-parity-report.sh",

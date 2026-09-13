@@ -31,8 +31,8 @@ function malformedBody(orgId: string, over: Record<string, unknown> = {}) {
   });
 }
 
-async function preserve(body: unknown) {
-  const source = env.AGENT_FACT_BATCHER.getByName('org:__dlq__');
+async function preserve(body: unknown, shardId = '__dlq__') {
+  const source = env.AGENT_FACT_BATCHER.getByName(`org:${shardId}`);
   const payload = JSON.stringify({
     queue: 'agent-ingest-dlq-prod',
     messageId: crypto.randomUUID(),
@@ -54,7 +54,10 @@ async function expectBlocked(source: DurableObjectStub<AgentFactBatcherInstance>
 }
 
 describe('TraceRecovery excerpt repair', () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
 
   it('stages a corrected Unicode body, resolves with hashes, and preserves the original payload', async () => {
     const orgId = `org-${crypto.randomUUID()}`;
@@ -213,4 +216,70 @@ describe('TraceRecovery excerpt repair', () => {
     ).rejects.toThrow('was not durably staged');
     await expectBlocked(source, record.id);
   });
+
+  it('resolves a migrated DLQ record only after the bounded delivery commits', async () => {
+    const orgId = `org-${crypto.randomUUID()}`;
+    const body = queueMessage({
+      tenancy: {
+        org_id: orgId,
+        user_id: 'user-1',
+        collector_id: 'collector-1',
+        collector_credential_id: 'cred-1',
+      },
+    });
+    const { record, source } = await preserve(body, orgId);
+    await completeMigration(orgId);
+    const writes = mockDeliveryTransport();
+    const recovery = new TraceRecovery(createExecutionContext(), env);
+
+    const resolved = await recovery.replayDlq(orgId, {
+      recoveryId: record.id,
+      reason: 'replay through the completed bounded migration',
+    });
+
+    expect(resolved).toMatchObject({ state: 'resolved', resolution: 'replayed' });
+    expect(writes.flat()).toEqual([
+      expect.objectContaining({ OrgId: orgId, DeliverySequence: 2, IsDeleted: 0 }),
+    ]);
+    await expect(source.getRecovery(record.id)).resolves.toMatchObject({ state: 'resolved' });
+    await expect(
+      env.AGENT_DELIVERIES.list({ prefix: `agent-deliveries/${orgId}/` }),
+    ).resolves.toMatchObject({ objects: [] });
+    await expect(
+      env.AGENT_FACT_BATCHER.getByName(`org:${orgId}`).getStats(),
+    ).resolves.toMatchObject({ queuedRows: 0 });
+  });
 });
+
+async function completeMigration(orgId: string): Promise<void> {
+  const migrationId = 'bounded-agent-ingestion-v1';
+  const proofSha256 = 'a'.repeat(64);
+  await env.AGENT_FACT_BATCHER.getByName(`org:${orgId}`).freezeIngestionMigration(migrationId);
+  const coordinator = env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${orgId}`);
+  await coordinator.seedIngestionMigration({ proofSha256, dirtyDays: [] });
+  await coordinator.completeIngestionMigration({ proofSha256 });
+}
+
+function mockDeliveryTransport(): Record<string, unknown>[][] {
+  const writes: Record<string, unknown>[][] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname.includes('agent_fact_identity_day')) {
+        return Response.json({ data: [] });
+      }
+      if (url.pathname.includes('agent_delivery_receipt')) return Response.json({ data: [] });
+      if (url.pathname === '/v0/events') {
+        const rows = String(init?.body)
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line));
+        writes.push(rows);
+        return Response.json({ successful_rows: rows.length, quarantined_rows: 0 });
+      }
+      throw new Error(`Unexpected test request ${url.pathname}`);
+    }),
+  );
+  return writes;
+}

@@ -1,0 +1,17 @@
+DESCRIPTION >
+    Current event day for each retained live fact identity. This compact index lets the
+    consumer discover partition-moving corrections without scanning canonical facts.
+
+SCHEMA >
+    `OrgId` String,
+    `Category` LowCardinality(String),
+    `FactIdentity` String,
+    `EventDay` Date,
+    `DeliverySequence` UInt64,
+    `ContentHash` String
+
+ENGINE "ReplacingMergeTree"
+ENGINE_SORTING_KEY "OrgId, Category, FactIdentity"
+ENGINE_VER "DeliverySequence"
+ENGINE_PARTITION_KEY "toYYYYMM(EventDay)"
+ENGINE_TTL "toDateTime(EventDay) + toIntervalYear(1) + toIntervalDay(1)"

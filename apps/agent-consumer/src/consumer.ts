@@ -53,7 +53,7 @@ export async function processAgentRecoveryPayload(
 }
 
 /** Maps one well-formed message's facts into the row accumulator, pricing each Agent Message. */
-async function accumulateMessage(
+export async function accumulateMessage(
   body: AgentIngestQueueMessage,
   acc: Accumulator,
   cache: PriceCache,

@@ -14,7 +14,7 @@ SQL >
         argMaxMerge(normalized_git_remote) AS normalized_git_remote,
         argMaxMerge(repo_path_fallback) AS repo_path_fallback,
         argMaxMerge(repo_source) AS repo_source
-    FROM agent_repositories
+    FROM agent_repositories_published
     WHERE OrgId = {{ String(org_id, '') }}
         {% if defined(repos) %}
         AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})

@@ -29,11 +29,9 @@ import {
   DATASOURCES,
   LEGACY_CATEGORIES,
   LEGACY_DATASOURCES,
-  MAX_FACT_INSERT_PARTITIONS,
   ROW_IDENTITY_FIELDS,
   compareFactIngestedAt,
   factIngestedAtMs,
-  factPartitionKey,
   rowIdentity,
   stableHash,
   type Category,
@@ -50,9 +48,31 @@ import {
   type QuiesceFactRepairCapacityInput,
 } from './fact-repair-capacity';
 import { errorMessage } from './fact-repair-proof';
+import type {
+  FrozenFactIdentity,
+  FrozenFactSelector,
+  FrozenFactSource,
+  FrozenFactSourceMetadata,
+} from './frozen-fact-recovery';
+import { LegacyIngestionState } from './legacy-ingestion-state';
+import { initializeFactBatcherSchema } from './fact-batcher-schema';
+import {
+  MAX_NDJSON_BYTES,
+  inlinePayload,
+  isPayloadTooLarge,
+  parseFactTargetKey,
+  splitRowsByBytes,
+  splitRowsByPartitions,
+  validateWriteTargets,
+  type AgentFactBatch,
+  type AgentFactBatcherStats,
+  type AgentFactBatchResult,
+  type StoredFactRow,
+} from './fact-batcher-helpers';
+export type { AgentFactBatcherStats } from './fact-batcher-helpers';
+import { DlqCleanup } from './dlq-cleanup';
 
 const BATCH_SIZE = 10_000;
-const MAX_NDJSON_BYTES = 900_000;
 // Agent dashboards do not need sub-minute ingest visibility; fewer larger inserts reduce part churn.
 const FLUSH_INTERVAL_MS = 60_000;
 const CAPPED_FLUSH_RETRY_MS = 1_000;
@@ -62,33 +82,10 @@ const MAX_FLUSH_CANDIDATES = 500;
 
 export const AGENT_FACT_BATCHER_FLUSH_INTERVAL_MS = FLUSH_INTERVAL_MS;
 
-type AddStatus = 'accepted' | 'failed';
-
-interface AgentFactBatch {
-  rows: Record<Category, unknown[]>;
-  writeClean?: boolean;
-  writeLegacy?: boolean;
-}
-
-interface AgentFactBatchResult {
-  status: AddStatus;
-  acceptedRows: number;
-  duplicateRows: number;
-  repairRows: number;
-  blockedRecoveryRows: number;
-  blockedRecoveryRecords: number;
-}
-
-export interface AgentFactBatcherStats {
-  queuedRows: number;
-  blockedRecoveryRows: number;
-  blockedRecoveryRecords: number;
-}
-
-type StoredFactRow = Record<string, string | number> & { id: number; data: string };
 type StoredFactCandidate = StoredFactRow & { candidate_count: number };
 
 class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
+  private legacyState: LegacyIngestionState;
   private queuedRows = 0;
   private flushAlarmScheduled = false;
   private flushInProgress = false;
@@ -109,8 +106,11 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
 
   constructor(state: DurableObjectState, env: AgentConsumerEnv) {
     super(state, env);
+    this.legacyState = new LegacyIngestionState(state.storage);
     this.recovery = new TinybirdRecoveryStore(state.storage);
-    this.maintenance = new AgentFactMaintenance(state.storage, this.recovery);
+    this.maintenance = new AgentFactMaintenance(state.storage, this.recovery, () =>
+      this.legacyState.assertWritable(),
+    );
     this.pendingFacts = new PendingFactStore(state.storage, this.maintenance);
     this.repairCapacity = new FactRepairCapacity(state.storage, this.recovery, () =>
       this.assertCapacityCompactionAllowed(),
@@ -118,13 +118,23 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     void this.ctx.blockConcurrencyWhile(async () => {
       if (!this.env.TINYBIRD_TOKEN) throw new Error('TINYBIRD_TOKEN is required');
       this.tinybirdTokenFingerprint = await sha256Hex(this.env.TINYBIRD_TOKEN);
+      await this.legacyState.initialize();
+      if (this.legacyState.isErased()) {
+        this.startupRecoveryPending = false;
+        this.startupFlushPending = false;
+        return;
+      }
       this.initializeSchema();
       this.queuedRows = this.countPendingRows();
-      this.startupBlockedReason = await this.retryStartupState();
+      if (this.legacyState.isFenced()) {
+        this.startupRecoveryPending = false;
+        this.startupFlushPending = false;
+      } else this.startupBlockedReason = await this.retryStartupState();
     });
   }
 
   async addFacts(batch: AgentFactBatch): Promise<AgentFactBatchResult> {
+    this.legacyState.assertWritable();
     let acceptedRows = 0;
     let duplicateRows = 0;
     let repairRows = 0;
@@ -391,104 +401,15 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   }
 
   async alarm(): Promise<void> {
+    if (this.legacyState.isErased()) return;
     this.ensureStartupRecovery();
     this.flushAlarmScheduled = false;
-    if (this.maintenance.isLocked()) return;
+    if (this.legacyState.isFenced() || this.maintenance.isLocked()) return;
     await this.flush();
   }
 
   private initializeSchema(): void {
-    this.ctx.storage.sql.exec(`
-      CREATE TABLE IF NOT EXISTS fact_ledger (
-        category TEXT NOT NULL,
-        fact_id TEXT NOT NULL,
-        content_hash TEXT NOT NULL,
-        first_seen_at_ms INTEGER NOT NULL,
-        data TEXT,
-        PRIMARY KEY (category, fact_id)
-      )
-    `);
-    this.ensureColumn('fact_ledger', 'data', 'TEXT');
-    this.ensureColumn('fact_ledger', 'clean_target', 'INTEGER');
-    this.ensureColumn('fact_ledger', 'legacy_target', 'INTEGER');
-    this.ctx.storage.sql.exec(`
-      CREATE TABLE IF NOT EXISTS fact_repairs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        category TEXT NOT NULL,
-        fact_id TEXT NOT NULL,
-        old_hash TEXT NOT NULL,
-        new_hash TEXT NOT NULL,
-        seen_at_ms INTEGER NOT NULL,
-        data TEXT
-      )
-    `);
-    this.ensureColumn('fact_repairs', 'data', 'TEXT');
-    this.ensureColumn('fact_repairs', 'recovery_dedupe_key', 'TEXT');
-    this.ctx.storage.sql.exec(
-      `CREATE INDEX IF NOT EXISTS idx_fact_repairs_lookup
-       ON fact_repairs(category, fact_id, old_hash, new_hash)`,
-    );
-    this.ctx.storage.sql.exec(`
-      CREATE TABLE IF NOT EXISTS pending_facts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        category TEXT NOT NULL,
-        data TEXT NOT NULL,
-        created_at_ms INTEGER NOT NULL,
-        sent_at_ms INTEGER
-      )
-    `);
-    this.ctx.storage.sql.exec(`
-      CREATE TABLE IF NOT EXISTS legacy_pending_facts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        category TEXT NOT NULL,
-        data TEXT NOT NULL,
-        created_at_ms INTEGER NOT NULL,
-        sent_at_ms INTEGER
-      )
-    `);
-    this.ctx.storage.sql.exec(`
-      CREATE TABLE IF NOT EXISTS fact_payload_chunks (
-        table_name TEXT NOT NULL,
-        row_id INTEGER NOT NULL,
-        chunk_index INTEGER NOT NULL,
-        data TEXT NOT NULL,
-        PRIMARY KEY (table_name, row_id, chunk_index)
-      )
-    `);
-    this.ensureColumn('pending_facts', 'sent_at_ms', 'INTEGER');
-    this.ensureColumn('legacy_pending_facts', 'sent_at_ms', 'INTEGER');
-    this.ensureColumn('pending_facts', 'fact_id', 'TEXT');
-    this.ensureColumn('pending_facts', 'content_hash', 'TEXT');
-    this.ensureColumn('legacy_pending_facts', 'fact_id', 'TEXT');
-    this.ensureColumn('legacy_pending_facts', 'content_hash', 'TEXT');
-    this.ctx.storage.sql.exec(
-      'CREATE INDEX IF NOT EXISTS idx_pending_facts_category_id ON pending_facts(category, id)',
-    );
-    this.ctx.storage.sql.exec(
-      'CREATE INDEX IF NOT EXISTS idx_legacy_pending_facts_category_id ON legacy_pending_facts(category, id)',
-    );
-    this.ctx.storage.sql.exec(
-      `CREATE INDEX IF NOT EXISTS idx_pending_facts_identity
-       ON pending_facts(category, fact_id, id)`,
-    );
-    this.ctx.storage.sql.exec(
-      `CREATE INDEX IF NOT EXISTS idx_legacy_pending_facts_identity
-       ON legacy_pending_facts(category, fact_id, id)`,
-    );
-    this.recovery.initializeSchema();
-    this.maintenance.initialize();
-  }
-
-  private ensureColumn(table: string, column: string, definition: string): void {
-    const existing = [
-      ...this.ctx.storage.sql.exec<{ name: string }>(
-        `SELECT name FROM pragma_table_info('${table}') WHERE name = ?`,
-        column,
-      ),
-    ];
-    if (existing.length === 0) {
-      this.ctx.storage.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-    }
+    initializeFactBatcherSchema(this.ctx.storage, this.recovery, this.maintenance);
   }
 
   private countPendingRows(): number {
@@ -515,7 +436,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   }
 
   private async scheduleFlush(delayMs = FLUSH_INTERVAL_MS): Promise<void> {
-    if (this.maintenance.isLocked()) return;
+    if (this.legacyState.isFenced() || this.maintenance.isLocked()) return;
     const alarmAt = Date.now() + delayMs;
     if (this.flushAlarmScheduled) {
       const currentAlarm = await this.ctx.storage.getAlarm();
@@ -526,7 +447,12 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   }
 
   private async flush(): Promise<void> {
-    if (this.flushInProgress || this.queuedRows === 0 || this.maintenance.isLocked()) {
+    if (
+      this.legacyState.isFenced() ||
+      this.flushInProgress ||
+      this.queuedRows === 0 ||
+      this.maintenance.isLocked()
+    ) {
       return;
     }
 
@@ -751,7 +677,83 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     });
   }
 
+  async freezeIngestionMigration(migrationId: string): Promise<{ migrationId: string }> {
+    this.maintenance.assertUnlocked();
+    const result = await this.legacyState.freeze({
+      migrationId,
+      flushInProgress: this.flushInProgress,
+      pendingRows: this.countPendingRows(),
+    });
+    await this.ctx.storage.deleteAlarm();
+    this.flushAlarmScheduled = false;
+    return result;
+  }
+
+  listFrozenFacts(
+    orgId: string,
+    input: Pick<ListRebuildFactsInput, 'after' | 'limit'>,
+  ): ListRebuildFactsResult {
+    this.legacyState.assertFrozen();
+    return this.maintenance.listFrozen(orgId, input);
+  }
+
+  readFrozenFacts(orgId: string, input: { facts: FrozenFactSelector[] }): FrozenFactSource[] {
+    this.legacyState.assertFrozen();
+    return this.maintenance.readFrozen(orgId, input);
+  }
+
+  inspectFrozenFactSources(
+    orgId: string,
+    input: { facts: FrozenFactIdentity[] },
+  ): FrozenFactSourceMetadata[] {
+    this.legacyState.assertFrozen();
+    return this.maintenance.inspectFrozen(orgId, input);
+  }
+
+  async beginOrganizationErasure(): Promise<{ state: 'pending' | 'erased' }> {
+    const result = await this.legacyState.beginErasure();
+    await this.ctx.storage.deleteAlarm();
+    this.flushAlarmScheduled = false;
+    return result;
+  }
+
+  async eraseOrganizationData(): Promise<{ erased: boolean }> {
+    await this.legacyState.beginErasure();
+    await this.ctx.storage.deleteAlarm();
+    this.flushAlarmScheduled = false;
+    const result = await this.legacyState.erase(this.flushInProgress);
+    if (!result.erased) return result;
+    this.queuedRows = 0;
+    this.startupRecoveryPending = false;
+    this.startupFlushPending = false;
+    this.startupBlockedReason = null;
+    return result;
+  }
+
+  getIngestionMigrationState() {
+    const state = this.legacyState.getState();
+    if (state.erasureState === 'erased') {
+      return {
+        ...state,
+        queuedRows: 0,
+        flushing: false,
+        blockedRecoveryRows: 0,
+        blockedRecoveryRecords: 0,
+      };
+    }
+    return {
+      ...state,
+      queuedRows: this.countPendingRows(),
+      flushing: this.flushInProgress,
+      blockedRecoveryRows: this.recovery.countBlockedRows(),
+      blockedRecoveryRecords: this.recovery.countBlockedRecords(),
+    };
+  }
+
   getStats(): AgentFactBatcherStats {
+    if (this.legacyState.isErased()) {
+      return { queuedRows: 0, blockedRecoveryRows: 0, blockedRecoveryRecords: 0 };
+    }
     this.ensureStartupRecovery();
     return {
       queuedRows: this.queuedRows,
@@ -764,6 +766,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     orgId: string,
     input: InspectFactRepairCapacityInput,
   ): Promise<InspectFactRepairCapacityResult> {
+    this.legacyState.assertNotErasing();
     const inspection = await this.repairCapacity.inspect(orgId, input, this.startupBlockedReason);
     const alarmScheduledAtMs = await this.ctx.storage.getAlarm();
     return {
@@ -777,6 +780,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     orgId: string,
     input: CompactFactRepairDuplicatesInput,
   ): Promise<CompactFactRepairDuplicatesResult> {
+    this.legacyState.assertWritable();
     this.assertCapacityCompactionAllowed();
     if ((await this.ctx.storage.getAlarm()) !== null) {
       throw new Error('fact repair compaction requires no scheduled flush alarm');
@@ -788,6 +792,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   }
 
   async quiesceFactRepairCapacity(input: QuiesceFactRepairCapacityInput) {
+    this.legacyState.assertWritable();
     const expectedAlarm = validateQuiescenceInput(input);
     this.maintenance.assertUnlocked();
     if (this.flushInProgress) throw new Error('fact repair quiescence requires no active flush');
@@ -812,16 +817,19 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   }
 
   listRecovery(options: RecoveryPageOptions = {}): RecoveryPage {
+    this.legacyState.assertNotErasing();
     this.ensureStartupRecovery();
     return this.recovery.list(options);
   }
 
   getRecovery(recoveryId: number): RecoveryRecord {
+    this.legacyState.assertNotErasing();
     this.ensureStartupRecovery();
     return this.recovery.get(recoveryId);
   }
 
   async reconcileRecovery(input: ReconcileRecoveryInput): Promise<RecoveryRecord> {
+    this.legacyState.assertNotErasing();
     this.ensureStartupRecovery();
     this.maintenance.assertUnlocked();
     if (!['confirm-written', 'confirm-not-written', 'retain-original'].includes(input.action)) {
@@ -844,6 +852,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
       await this.ctx.storage.setAlarm(Date.now() + 1000);
       this.flushAlarmScheduled = true;
     }
+    this.legacyState.assertNotErasing();
     const resolved = this.recovery.resolveWithMutation(
       record.id,
       input.action,
@@ -858,11 +867,13 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   }
 
   preserveDlq(payload: string, outcome: string, dedupeKey: string): RecoveryRecord {
+    this.legacyState.assertWritable();
     this.ensureStartupRecovery();
     return this.recovery.preserveDlq(payload, outcome, dedupeKey);
   }
 
   resolveDlq(recoveryId: number, reason: string): RecoveryRecord {
+    this.legacyState.assertNotErasing();
     this.ensureStartupRecovery();
     this.maintenance.assertUnlocked();
     const record = this.recovery.get(recoveryId);
@@ -870,7 +881,24 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     return this.recovery.resolve(recoveryId, 'replayed', reason);
   }
 
+  async discardDlq(recoveryId: number, expectedPayloadSha256: string): Promise<void> {
+    this.ensureStartupRecovery();
+    return new DlqCleanup(this.ctx.storage, this.recovery).discard(
+      recoveryId,
+      expectedPayloadSha256,
+    );
+  }
+
+  discardOrganizationDlq(
+    orgId: string,
+    input: { afterId?: number; limit?: number } = {},
+  ): { deleted: number; nextAfterId: number | null } {
+    this.ensureStartupRecovery();
+    return new DlqCleanup(this.ctx.storage, this.recovery).discardOrganization(orgId, input);
+  }
+
   assertFactMaintenanceUnlocked(): void {
+    this.legacyState.assertNotErasing();
     this.ensureStartupRecovery();
     this.maintenance.assertUnlocked();
   }
@@ -879,6 +907,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     orgId: string,
     input: BeginFactRebuildInput,
   ): Promise<BeginFactRebuildResult> {
+    this.legacyState.assertWritable();
     this.ensureStartupRecovery();
     const operation = this.maintenance.begin(orgId, input, {
       tokenFingerprint: this.tinybirdTokenFingerprint,
@@ -911,11 +940,13 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   }
 
   listRebuildFacts(input: ListRebuildFactsInput): ListRebuildFactsResult {
+    this.legacyState.assertWritable();
     this.ensureStartupRecovery();
     return this.maintenance.list(input);
   }
 
   async completeFactRebuild(input: CompleteFactRebuildInput): Promise<CompleteFactRebuildResult> {
+    this.legacyState.assertWritable();
     this.ensureStartupRecovery();
     const result = await this.maintenance.complete(input);
     this.queuedRows = this.countPendingRows();
@@ -967,84 +998,6 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     if (this.flushInProgress || this.flushAlarmScheduled) {
       throw new Error('fact repair compaction requires a quiescent batcher');
     }
-  }
-}
-
-function splitRowsByBytes(rows: StoredFactRow[]): StoredFactRow[][] {
-  const batches: StoredFactRow[][] = [];
-  let current: StoredFactRow[] = [];
-  let bytes = 0;
-  for (const row of rows) {
-    const rowBytes = new TextEncoder().encode(row.data).byteLength + (current.length > 0 ? 1 : 0);
-    if (current.length > 0 && bytes + rowBytes > MAX_NDJSON_BYTES) {
-      batches.push(current);
-      current = [];
-      bytes = 0;
-    }
-    current.push(row);
-    bytes += rowBytes;
-  }
-  if (current.length > 0) batches.push(current);
-  return batches;
-}
-
-function splitRowsByPartitions(
-  rows: StoredFactRow[],
-  facts: unknown[],
-  category: Category,
-): StoredFactRow[][] {
-  const batches: StoredFactRow[][] = [];
-  let current: StoredFactRow[] = [];
-  let partitions = new Set<string>();
-  for (let index = 0; index < rows.length; index++) {
-    const partition = factPartitionKey(category, facts[index]);
-    if (
-      current.length > 0 &&
-      !partitions.has(partition) &&
-      partitions.size >= MAX_FACT_INSERT_PARTITIONS
-    ) {
-      batches.push(current);
-      current = [];
-      partitions = new Set();
-    }
-    current.push(rows[index]!);
-    partitions.add(partition);
-  }
-  if (current.length > 0) batches.push(current);
-  return batches;
-}
-
-function inlinePayload(value: string): string {
-  return new TextEncoder().encode(value).byteLength <= MAX_NDJSON_BYTES ? value : '';
-}
-
-function isPayloadTooLarge(error: unknown): boolean {
-  return error instanceof Error && (error as Error & { status?: unknown }).status === 413;
-}
-
-function parseFactTargetKey(value: string): {
-  table: 'pending_facts' | 'legacy_pending_facts';
-  category: Category;
-} {
-  const [table, category, extra] = value.split(':');
-  if (extra || (table !== 'pending_facts' && table !== 'legacy_pending_facts')) {
-    throw new Error('invalid fact recovery target');
-  }
-  if (!(CATEGORIES as readonly string[]).includes(category ?? '')) {
-    throw new Error('invalid fact recovery category');
-  }
-  return { table, category: category as Category };
-}
-
-function validateWriteTargets(batch: AgentFactBatch): void {
-  const writesClean = batch.writeClean !== false;
-  const writesLegacy = batch.writeLegacy === true;
-  for (const category of CATEGORIES) {
-    if (batch.rows[category].length === 0) continue;
-    if (writesClean || (writesLegacy && (LEGACY_CATEGORIES as Category[]).includes(category))) {
-      continue;
-    }
-    throw new Error(`no Tinybird write target for ${category}`);
   }
 }
 

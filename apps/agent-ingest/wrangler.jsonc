@@ -24,6 +24,7 @@
   },
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
   "vars": {
+    "AGENT_INGEST_MAINTENANCE": "false",
     "SENTRY_ENVIRONMENT": "development",
   },
   // CONVEX_SITE_URL is injected by deploy workflows from the Convex deployment output.
@@ -33,6 +34,16 @@
   // COLLECTOR_CREDS holds the Convex-synced Collector Credential records (see 2a syncCollectorCredToKV).
   // Bound to the 0d-provisioned dev namespace (see provisioned-resources.md).
   "kv_namespaces": [{ "binding": "COLLECTOR_CREDS", "id": "f945ee3d71954ffabd364e3db385d3ab" }],
+  "r2_buckets": [
+    { "binding": "AGENT_DELIVERIES", "bucket_name": "trace-flow-agent-deliveries-dev" },
+  ],
+  "services": [
+    {
+      "binding": "AGENT_CONSUMER",
+      "service": "trace-flow-agent-consumer-dev",
+      "entrypoint": "AgentIngestion",
+    },
+  ],
   "queues": {
     "producers": [{ "queue": "agent-ingest-dev", "binding": "AGENT_QUEUE" }],
   },
@@ -75,9 +86,20 @@
       },
       "version_metadata": { "binding": "CF_VERSION_METADATA" },
       "vars": {
+        "AGENT_INGEST_MAINTENANCE": "false",
         "SENTRY_ENVIRONMENT": "preview",
       },
       "kv_namespaces": [{ "binding": "COLLECTOR_CREDS", "id": "422b54e456c7446ea5ba4f9ef9a8c84e" }],
+      "r2_buckets": [
+        { "binding": "AGENT_DELIVERIES", "bucket_name": "trace-flow-agent-deliveries-dev" },
+      ],
+      "services": [
+        {
+          "binding": "AGENT_CONSUMER",
+          "service": "trace-flow-agent-consumer-dev",
+          "entrypoint": "AgentIngestion",
+        },
+      ],
       "queues": {
         "producers": [{ "queue": "agent-ingest-dev", "binding": "AGENT_QUEUE" }],
       },
@@ -106,10 +128,21 @@
       },
       "version_metadata": { "binding": "CF_VERSION_METADATA" },
       "vars": {
+        "AGENT_INGEST_MAINTENANCE": "false",
         "SENTRY_ENVIRONMENT": "prod",
       },
       "routes": [{ "pattern": "collector.trace-flow.dev/*", "zone_name": "trace-flow.dev" }],
       "kv_namespaces": [{ "binding": "COLLECTOR_CREDS", "id": "67241ef9190a4f9d9ac520a347bd44b9" }],
+      "r2_buckets": [
+        { "binding": "AGENT_DELIVERIES", "bucket_name": "trace-flow-agent-deliveries-prod" },
+      ],
+      "services": [
+        {
+          "binding": "AGENT_CONSUMER",
+          "service": "trace-flow-agent-consumer",
+          "entrypoint": "AgentIngestion",
+        },
+      ],
       "queues": {
         "producers": [{ "queue": "agent-ingest-prod", "binding": "AGENT_QUEUE" }],
       },

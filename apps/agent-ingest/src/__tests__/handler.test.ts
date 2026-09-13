@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
-import { sha256Hex } from '@trace-flow/utils';
+import { loadAgentDelivery, sha256Hex } from '@trace-flow/utils';
 import type {
+  AgentDeliveryReference,
+  AgentDeliveryStagedReference,
+  AgentIngestQueuePayload,
   AgentIngestQueueMessage,
   AgentMessageFact,
   AgentToolEventFact,
@@ -9,12 +12,14 @@ import type {
 import { AGENT_INGEST_LIMITS, validateAgentIngestQueueMessage } from '@trace-flow/types';
 import { app } from '../index';
 import { __resetPolicyCache, type CompatibilityPolicy } from '../policy';
-import type { AgentIngestEnv } from '../context';
+import type { AgentConsumerService, AgentIngestEnv } from '../context';
 import type { ClaimStatus } from '../ownership';
 import { envelope, emptyFacts, facts, messageFact, toolEventFact } from './factories';
 
 const CONVEX = 'https://convex.test';
 const SECRET = 'valid-collector-secret';
+const ROOT_KEY = btoa('0123456789abcdef'.repeat(2));
+const TEST_NOW = 1_700_000_001_000;
 
 const POLICY: CompatibilityPolicy = {
   minDesktopVersion: '1.0.0',
@@ -33,6 +38,9 @@ interface EnvOverrides {
   creds?: Record<string, string>;
   limitSuccess?: boolean;
   queueSend?: ReturnType<typeof vi.fn>;
+  deliveryPut?: ReturnType<typeof vi.fn>;
+  canAcceptDeliveries?: AgentConsumerService['canAcceptDeliveries'];
+  registerDelivery?: AgentConsumerService['registerDelivery'];
 }
 
 async function validCredEntries(
@@ -56,20 +64,75 @@ function makeEnv(over: EnvOverrides = {}): {
   env: AgentIngestEnv;
   queueSend: ReturnType<typeof vi.fn>;
   rateLimit: ReturnType<typeof vi.fn>;
+  deliveryObjects: Map<string, string>;
 } {
   const queueSend = over.queueSend ?? vi.fn(async () => {});
   const rateLimit = vi.fn(async () => ({ success: over.limitSuccess ?? true }));
+  const deliveryObjects = new Map<string, string>();
+  let nextRevision = 0;
+  const canAcceptDeliveries: AgentConsumerService['canAcceptDeliveries'] =
+    over.canAcceptDeliveries ?? vi.fn(async () => true);
+  const registerDelivery: AgentConsumerService['registerDelivery'] =
+    over.registerDelivery ?? vi.fn(async () => (nextRevision += 1));
+  const deliveryPut =
+    over.deliveryPut ??
+    vi.fn(async (key: string, value: string) => {
+      deliveryObjects.set(key, value);
+      return { key };
+    });
+  const deliveries = {
+    put: deliveryPut,
+    get: vi.fn(async (key: string) => {
+      const value = deliveryObjects.get(key);
+      if (value === undefined) return null;
+      return {
+        key,
+        size: new TextEncoder().encode(value).byteLength,
+        text: async () => value,
+      };
+    }),
+  } as unknown as R2Bucket;
   const env = {
+    AGENT_INGEST_MAINTENANCE: 'false',
     COLLECTOR_CREDS: makeKv(over.creds ?? {}),
     // The handler enqueues via sendBatch (one call per <=100-message group). Tests assert on it.
-    AGENT_QUEUE: { sendBatch: queueSend } as unknown as Queue<AgentIngestQueueMessage>,
+    AGENT_QUEUE: { sendBatch: queueSend } as unknown as Queue<AgentIngestQueuePayload>,
+    AGENT_DELIVERIES: deliveries,
+    AGENT_CONSUMER: {
+      canAcceptDeliveries,
+      registerDelivery,
+      eraseOrganization: async () => {
+        throw new Error('Unexpected erasure');
+      },
+    },
+    BODY_ENCRYPTION_ROOT_KEY: ROOT_KEY,
+    BODY_ENCRYPTION_KEY_ID: 'v1',
     AGENT_INGEST_LIMITER: {
       limit: rateLimit,
     } as unknown as RateLimit,
     CONVEX_SITE_URL: CONVEX,
     AGENT_INGEST_SHARED_SECRET: 'shared-secret',
   } satisfies AgentIngestEnv;
-  return { env, queueSend, rateLimit };
+  return { env, queueSend, rateLimit, deliveryObjects };
+}
+
+async function queuedMessages(
+  queueSend: ReturnType<typeof vi.fn>,
+  storage: R2Bucket,
+): Promise<AgentIngestQueueMessage[]> {
+  const references = queueSend.mock.calls.flatMap((call) =>
+    (call[0] as { body: AgentDeliveryReference }[]).map(({ body }) => body),
+  );
+  return Promise.all(
+    references.map((reference) =>
+      loadAgentDelivery({
+        storage,
+        reference,
+        encryption: { rootKeyBase64: ROOT_KEY },
+        now: reference.created_at,
+      }),
+    ),
+  );
 }
 
 /**
@@ -161,6 +224,7 @@ const authHeaders = { 'X-Trace-Flow-Collector-Secret': SECRET, 'Content-Type': '
 
 describe('POST /v1/ingest', () => {
   beforeEach(() => {
+    vi.spyOn(Date, 'now').mockReturnValue(TEST_NOW);
     __resetPolicyCache();
     policyResponse = null;
     claimResponder = null;
@@ -169,6 +233,28 @@ describe('POST /v1/ingest', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('503s before the ingest handler while maintenance is active', async () => {
+    const { env, rateLimit } = makeEnv();
+    env.AGENT_INGEST_MAINTENANCE = 'true';
+
+    const res = await post(env, JSON.stringify(envelope()), { 'Content-Type': 'application/json' });
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get('Retry-After')).toBe('60');
+    expect(await res.json()).toEqual({ error: 'ingestion_maintenance' });
+    expect(rateLimit).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, 'TRUE'])('500s for maintenance configuration %s', async (value) => {
+    const { env, rateLimit } = makeEnv();
+    (env as { AGENT_INGEST_MAINTENANCE?: unknown }).AGENT_INGEST_MAINTENANCE = value;
+
+    const res = await post(env, JSON.stringify(envelope()), { 'Content-Type': 'application/json' });
+
+    expect(res.status).toBe(500);
+    expect(rateLimit).not.toHaveBeenCalled();
   });
 
   it('401s when the collector secret is missing', async () => {
@@ -262,9 +348,9 @@ describe('POST /v1/ingest', () => {
     expect(queueSend).toHaveBeenCalledTimes(1);
     // Prove the body was actually inflated and parsed, not just that a 202 came back: the enqueued
     // message must carry the decompressed facts. sendBatch is called with an array of {body} entries.
-    const sentGroup = queueSend.mock.calls[0]![0] as { body: AgentIngestQueueMessage }[];
-    const enqueued = sentGroup[0]!.body;
-    expect(enqueued.facts.messages.length).toBeGreaterThan(0);
+    const [enqueued] = await queuedMessages(queueSend, env.AGENT_DELIVERIES);
+    expect(enqueued).toBeDefined();
+    expect(enqueued!.facts.messages.length).toBeGreaterThan(0);
   });
 
   it('400s a body that declares Content-Encoding: gzip but is not gzip', async () => {
@@ -524,12 +610,169 @@ describe('POST /v1/ingest', () => {
     const queueSend = vi.fn(async () => {
       throw new Error('queue down');
     });
-    const { env } = makeEnv({ creds: await validCredEntries(), queueSend });
+    const { env, deliveryObjects } = makeEnv({ creds: await validCredEntries(), queueSend });
     interceptPolicy(200, POLICY);
     interceptClaim({ claim: 'claimed' });
     const res = await post(env, JSON.stringify(envelope()), authHeaders);
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ error: 'enqueue_failed' });
+    expect(deliveryObjects.size).toBeGreaterThan(0);
+  });
+
+  it('503s without registering or queueing when encrypted delivery persistence fails', async () => {
+    const queueSend = vi.fn(async () => {});
+    const registerDelivery = vi.fn(
+      async (_reference: AgentDeliveryStagedReference, _days: string[]) => 1,
+    );
+    const { env } = makeEnv({
+      creds: await validCredEntries(),
+      queueSend,
+      registerDelivery,
+      deliveryPut: vi.fn().mockRejectedValue(new Error('R2 unavailable')),
+    });
+    interceptPolicy(200, POLICY);
+    interceptClaim({ claim: 'claimed' });
+
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: 'enqueue_failed' });
+    expect(registerDelivery).not.toHaveBeenCalled();
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it('retains encrypted delivery when registration fails without queueing it', async () => {
+    const queueSend = vi.fn(async () => {});
+    const registerDelivery = vi.fn().mockRejectedValue(new Error('coordinator unavailable'));
+    const { env, deliveryObjects } = makeEnv({
+      creds: await validCredEntries(),
+      queueSend,
+      registerDelivery,
+    });
+    interceptPolicy(200, POLICY);
+    interceptClaim({ claim: 'claimed' });
+
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+
+    expect(res.status).toBe(503);
+    expect(deliveryObjects.size).toBeGreaterThan(0);
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it('503s without staging or registering when the snapshot gate is closed', async () => {
+    const canAcceptDeliveries = vi.fn(async () => false);
+    const deliveryPut = vi.fn();
+    const registerDelivery = vi.fn(async () => 1);
+    const { env, queueSend } = makeEnv({
+      creds: await validCredEntries(),
+      canAcceptDeliveries,
+      deliveryPut,
+      registerDelivery,
+    });
+    interceptPolicy(200, POLICY);
+    interceptClaim({ claim: 'claimed' });
+
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'enqueue_failed' });
+    expect(canAcceptDeliveries).toHaveBeenCalledWith('org-1');
+    expect(deliveryPut).not.toHaveBeenCalled();
+    expect(registerDelivery).not.toHaveBeenCalled();
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it('persists, registers, then publishes a revisioned fact-free reference', async () => {
+    const order: string[] = [];
+    const deliveryPut = vi.fn(async (key: string) => {
+      order.push('put');
+      return { key };
+    });
+    const registerDelivery = vi.fn(
+      async (_reference: AgentDeliveryStagedReference, _days: string[]) => {
+        order.push('register');
+        return 7;
+      },
+    );
+    const queueSend = vi.fn(async (_messages: { body: AgentIngestQueuePayload }[]) => {
+      order.push('queue');
+    });
+    const { env } = makeEnv({
+      creds: await validCredEntries(),
+      deliveryPut,
+      registerDelivery,
+      queueSend,
+    });
+    interceptPolicy(200, POLICY);
+    interceptClaim({ claim: 'claimed' });
+
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+
+    expect(res.status).toBe(202);
+    expect(order).toEqual(['put', 'register', 'queue']);
+    const registration = registerDelivery.mock.calls[0]!;
+    expect(registration[0]).not.toHaveProperty('delivery_revision');
+    expect(registration[1]).toEqual([expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/u)]);
+    const queued = queueSend.mock.calls[0]![0] as { body: AgentDeliveryReference }[];
+    expect(queued[0]!.body).toMatchObject({
+      type: 'agent-delivery',
+      delivery_revision: 7,
+    });
+    expect(JSON.stringify(queued)).not.toContain('facts');
+  });
+
+  it('publishes each ten-delivery window before registering the next one', async () => {
+    const actions: string[] = [];
+    const canAcceptDeliveries = vi.fn(async () => {
+      actions.push('admit');
+      return true;
+    });
+    let putCount = 0;
+    const deliveryPut = vi.fn(async (key: string) => {
+      putCount++;
+      actions.push(`put:${putCount}`);
+      return { key };
+    });
+    const registerDelivery = vi.fn(
+      async (_reference: AgentDeliveryStagedReference, _days: string[]) => {
+        actions.push('register');
+        return actions.filter((action) => action === 'register').length;
+      },
+    );
+    const queueSend = vi.fn(async (_messages: { body: AgentIngestQueuePayload }[]) => {
+      actions.push('queue');
+    });
+    const link = facts().pull_request_links[0]!;
+    const links = Array.from({ length: 12 }, (_, index) => ({
+      ...link,
+      source_event_id: `event-${index}`,
+      stable_turn_index: index,
+      number: index + 1,
+      url: `https://example.test/${index}/${'x'.repeat(70_000)}`,
+    }));
+    const body = envelope({ facts: facts({ pull_request_links: links }) });
+    const { env } = makeEnv({
+      creds: await validCredEntries(),
+      canAcceptDeliveries,
+      deliveryPut,
+      registerDelivery,
+      queueSend,
+    });
+    interceptPolicy(200, POLICY);
+    interceptClaim({ claim: 'claimed' });
+
+    const res = await post(env, JSON.stringify(body), authHeaders);
+
+    expect(res.status).toBe(202);
+    expect(queueSend).toHaveBeenCalledTimes(2);
+    expect(canAcceptDeliveries).toHaveBeenCalledTimes(2);
+    expect((queueSend.mock.calls[0]![0] as unknown[]).length).toBe(10);
+    expect((queueSend.mock.calls[1]![0] as unknown[]).length).toBe(2);
+    expect(actions.indexOf('queue')).toBeLessThan(actions.indexOf('put:11'));
+    const secondAdmission = actions.indexOf('admit', 1);
+    expect(actions[0]).toBe('admit');
+    expect(actions.indexOf('queue')).toBeLessThan(secondAdmission);
+    expect(secondAdmission).toBeLessThan(actions.indexOf('put:11'));
   });
 
   it('202s the happy path and enqueues the claimed session', async () => {
@@ -557,7 +800,7 @@ describe('POST /v1/ingest', () => {
 
   it('timestamps queued facts after the ownership claim completes', async () => {
     let now = 1_700_000_000_000;
-    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    vi.mocked(Date.now).mockImplementation(() => now);
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
     interceptPolicy(200, POLICY);
     claimResponder = (_req, body) => {
@@ -577,8 +820,96 @@ describe('POST /v1/ingest', () => {
     const res = await post(env, JSON.stringify(envelope()), authHeaders);
 
     expect(res.status).toBe(202);
-    const sentGroup = queueSend.mock.calls[0]![0] as { body: AgentIngestQueueMessage }[];
-    expect(sentGroup[0]!.body.enqueued_at).toBe(1_700_000_001_000);
+    const [message] = await queuedMessages(queueSend, env.AGENT_DELIVERIES);
+    expect(message!.enqueued_at).toBe(1_700_000_001_000);
+  });
+
+  it('queues retained facts from a mixed-age batch and reports the excluded fact count', async () => {
+    const today = Date.UTC(2026, 8, 13);
+    vi.mocked(Date.now).mockReturnValue(today + 12 * 60 * 60 * 1_000);
+    const retained = messageFact({ vendor_message_id: 'retained', turn_index: 1, event_at: today });
+    const expired = messageFact({
+      vendor_message_id: 'expired',
+      event_at: today - 366 * 24 * 60 * 60 * 1_000,
+    });
+    const body = envelope({
+      facts: facts({
+        messages: [expired, retained],
+        tool_events: [],
+        file_events: [],
+        capability_snapshots: [],
+        pull_request_links: [],
+      }),
+    });
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    interceptClaim({ claim: 'claimed' });
+
+    const res = await post(env, JSON.stringify(body), authHeaders);
+
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({
+      sessions: 1,
+      excluded_by_retention: 1,
+    });
+    const queued = await queuedMessages(queueSend, env.AGENT_DELIVERIES);
+    expect(queued.flatMap((message) => message.facts.messages)).toEqual([
+      expect.objectContaining({ vendor_message_id: 'retained' }),
+    ]);
+  });
+
+  it('accepts an all-expired batch as a fact-free no-op', async () => {
+    const today = Date.UTC(2026, 8, 13);
+    vi.mocked(Date.now).mockReturnValue(today + 12 * 60 * 60 * 1_000);
+    const body = envelope({
+      facts: facts({
+        messages: [messageFact({ event_at: today - 366 * 24 * 60 * 60 * 1_000 })],
+        tool_events: [],
+        file_events: [],
+        capability_snapshots: [],
+        pull_request_links: [],
+      }),
+    });
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+
+    const res = await post(env, JSON.stringify(body), authHeaders);
+
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({
+      accepted: true,
+      sessions: 0,
+      excluded_by_retention: 1,
+    });
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it('rejects a fact dated on a future UTC day before persistence', async () => {
+    const today = Date.UTC(2026, 8, 13);
+    vi.mocked(Date.now).mockReturnValue(today + 12 * 60 * 60 * 1_000);
+    const body = envelope({
+      facts: facts({
+        messages: [messageFact({ event_at: today + 24 * 60 * 60 * 1_000 })],
+        tool_events: [],
+        file_events: [],
+        capability_snapshots: [],
+        pull_request_links: [],
+      }),
+    });
+    const registerDelivery = vi.fn(async () => 1);
+    const { env, queueSend, deliveryObjects } = makeEnv({
+      creds: await validCredEntries(),
+      registerDelivery,
+    });
+    interceptPolicy(200, POLICY);
+
+    const res = await post(env, JSON.stringify(body), authHeaders);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'invalid_envelope' });
+    expect(deliveryObjects.size).toBe(0);
+    expect(registerDelivery).not.toHaveBeenCalled();
+    expect(queueSend).not.toHaveBeenCalled();
   });
 
   it('ignores legacy raw-upload fields without storing or forwarding them', async () => {
@@ -611,12 +942,15 @@ describe('POST /v1/ingest', () => {
     expect(await res.json()).toMatchObject({ sessions: 1 });
     expect(queueSend).toHaveBeenCalledTimes(1);
 
-    const sentGroup = queueSend.mock.calls[0]![0] as { body: AgentIngestQueueMessage }[];
-    const enqueued = JSON.stringify(sentGroup);
-    expect(enqueued).not.toContain('raw_upload_requested');
-    expect(enqueued).not.toContain('raw_session_bundles');
-    expect(enqueued).not.toContain('legacy-raw-transcript-bytes');
-    expect(sentGroup[0]!.body.facts.messages.length).toBeGreaterThan(0);
+    const queuedReferences = JSON.stringify(queueSend.mock.calls);
+    expect(queuedReferences).not.toContain('raw_upload_requested');
+    expect(queuedReferences).not.toContain('raw_session_bundles');
+    expect(queuedReferences).not.toContain('legacy-raw-transcript-bytes');
+    const [message] = await queuedMessages(queueSend, env.AGENT_DELIVERIES);
+    expect(JSON.stringify(message)).not.toContain('raw_upload_requested');
+    expect(JSON.stringify(message)).not.toContain('raw_session_bundles');
+    expect(JSON.stringify(message)).not.toContain('legacy-raw-transcript-bytes');
+    expect(message!.facts.messages.length).toBeGreaterThan(0);
   });
 
   it('accepts legacy tool events without ingest-time classification fields', async () => {
@@ -668,9 +1002,8 @@ describe('POST /v1/ingest', () => {
     expect(res.status).toBe(202);
 
     expect(queueSend).toHaveBeenCalledTimes(1);
-    const sentGroup = queueSend.mock.calls[0]![0] as { body: AgentIngestQueueMessage }[];
-    const enqueued = sentGroup[0]!.body;
-    const tool = enqueued.facts.tool_events[0]!;
+    const [enqueued] = await queuedMessages(queueSend, env.AGENT_DELIVERIES);
+    const tool = enqueued!.facts.tool_events[0]!;
     expect(tool.command_excerpt).toBe('');
     expect(tool.navigation_path_hint).toBe('/Users/[REDACTED]/secret-project');
     expect(tool.navigation_pattern_hint).toBe('');
@@ -708,8 +1041,8 @@ describe('POST /v1/ingest', () => {
     const res = await post(env, JSON.stringify(bounded), authHeaders);
     expect(res.status).toBe(202);
 
-    const sentGroup = queueSend.mock.calls[0]![0] as { body: AgentIngestQueueMessage }[];
-    const [withRoom, noRoom] = sentGroup[0]!.body.facts.tool_events;
+    const [message] = await queuedMessages(queueSend, env.AGENT_DELIVERIES);
+    const [withRoom, noRoom] = message!.facts.tool_events;
     expect(withRoom!.navigation_path_hint).toHaveLength(256);
     expect(withRoom!.navigation_pattern_hint).toHaveLength(256);
     expect(noRoom!.navigation_path_hint).toBe('');
@@ -739,9 +1072,8 @@ describe('POST /v1/ingest', () => {
     const res = await post(env, JSON.stringify(bounded), authHeaders);
     expect(res.status).toBe(202);
 
-    const sentGroup = queueSend.mock.calls[0]![0] as { body: AgentIngestQueueMessage }[];
-    const message = sentGroup[0]!.body;
-    const tool = message.facts.tool_events[0]!;
+    const [message] = await queuedMessages(queueSend, env.AGENT_DELIVERIES);
+    const tool = message!.facts.tool_events[0]!;
     const bytes = (value: string): number => new TextEncoder().encode(value).byteLength;
     expect(bytes(tool.command_excerpt)).toBe(AGENT_INGEST_LIMITS.maxCommandExcerptBytes);
     expect(bytes(tool.error_excerpt)).toBeLessThanOrEqual(AGENT_INGEST_LIMITS.maxErrorExcerptBytes);

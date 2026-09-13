@@ -353,6 +353,9 @@ export const deleteOrgDataScheduled = internalAction({
 async function deleteOrgDataImpl(ctx: ActionCtx, orgId: Id<'organizations'>) {
   // Establish the durable archive deletion gate before the external deletion begins.
   await ctx.runMutation(internal.admin.admin.beginOrgDeletion, { orgId });
+  await ctx.runAction(makeFunctionReference<'action'>('agentIngestionErasure:eraseOrganization'), {
+    orgId,
+  });
 
   // The deletion gate blocks new checkpoints before the Worker removes both referenced and
   // orphaned org-scoped Analyst snapshots.
@@ -699,6 +702,8 @@ export const finalizeOrgDeletion = internalMutation({
     if (org) {
       await ctx.db.patch(args.orgId, {
         deletionStartedAt: undefined,
+        agentSnapshotCleanupFingerprint: undefined,
+        agentSnapshotCleanupAt: undefined,
         deletedAt: Date.now(),
       });
     }
