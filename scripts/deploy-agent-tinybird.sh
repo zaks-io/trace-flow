@@ -27,9 +27,9 @@
 #   switch  - deploy clean endpoint pipes, keep legacy tables, and stop scheduled legacy copy pipes.
 #   cleanup - deploy only repo resources and delete legacy Tinybird resources; prod requires approval.
 #
-# The repo can keep clean final names while prod expansion/switch use a generated temporary deploy tree
-# containing needed legacy files from TINYBIRD_LEGACY_REF. Expand requires TINYBIRD_CURRENT_REF so it
-# preserves the endpoint definitions from the exact previously deployed commit.
+# The repo can keep clean final names while prod expansion/switch use a generated temporary deploy tree.
+# Expand layers legacy resources under the exact currently deployed definitions; switch keeps the
+# legacy data resources while activating the repo endpoint definitions.
 #
 # Usage:
 #   scripts/deploy-agent-tinybird.sh
@@ -105,13 +105,21 @@ trap cleanup_tmp EXIT
 
 legacy_ref_has_resources() {
   local ref="$1"
+  local found=0
   local path
-  for path in datasources/agent_messages.datasource pipes/agent_usage_summary.pipe; do
+  if ! git rev-parse --verify --quiet "$DEFAULT_LEGACY_REF^{tree}" >/dev/null; then
+    return 1
+  fi
+  while IFS= read -r path; do
+    if ! is_preservable_path "$DEFAULT_LEGACY_REF" "$path"; then
+      continue
+    fi
+    found=$((found + 1))
     if ! git cat-file -e "$ref:$path" 2>/dev/null; then
       return 1
     fi
-  done
-  return 0
+  done < <(git ls-tree -r --name-only "$DEFAULT_LEGACY_REF" -- datasources pipes materializations)
+  [[ "$found" -gt 0 ]]
 }
 
 current_ref_has_resources() {
@@ -178,10 +186,9 @@ has_legacy_copy_resource_name() {
   [[ "$name" == *_copy.* ]]
 }
 
-should_restore_legacy_path() {
-  local phase="$1"
-  local ref="$2"
-  local path="$3"
+is_preservable_path() {
+  local ref="$1"
+  local path="$2"
 
   if has_legacy_copy_resource_name "$path"; then
     return 1
@@ -191,16 +198,82 @@ should_restore_legacy_path() {
     return 1
   fi
 
-  if [[ "$phase" == "expand" && "$path" == pipes/* ]]; then
+  return 0
+}
+
+should_restore_preserved_path() {
+  local phase="$1"
+  local ref="$2"
+  local path="$3"
+
+  if ! is_preservable_path "$ref" "$path"; then
+    return 1
+  fi
+
+  if [[ "$phase" == "expand" ]]; then
     return 0
   fi
 
-  if [[ "$path" == datasources/* ]]; then
-    [[ ! -e "$TMP_DIR/$path" ]]
-    return
-  fi
-
   [[ ! -e "$TMP_DIR/$path" ]]
+}
+
+restore_preserved_ref() {
+  local phase="$1"
+  local ref="$2"
+  local restored=0
+  local skipped=0
+  local path
+
+  while IFS= read -r path; do
+    if should_restore_preserved_path "$phase" "$ref" "$path"; then
+      restore_file_from_ref "$ref" "$path" "$TMP_DIR"
+      restored=$((restored + 1))
+      continue
+    fi
+    skipped=$((skipped + 1))
+  done < <(git ls-tree -r --name-only "$ref" -- datasources pipes materializations)
+
+  echo "Layered Tinybird resources from $ref ($restored restored, $skipped skipped)."
+}
+
+verify_preserved_inventory() {
+  local ref="$1"
+  local overriding_ref="${2:-}"
+  local repo_wins="${3:-0}"
+  local expected_ref
+  local expected_path
+  local path
+  local verified=0
+
+  while IFS= read -r path; do
+    if ! is_preservable_path "$ref" "$path"; then
+      continue
+    fi
+    expected_ref="$ref"
+    expected_path=""
+    if [[ -n "$overriding_ref" ]] && git cat-file -e "$overriding_ref:$path" 2>/dev/null &&
+      is_preservable_path "$overriding_ref" "$path"; then
+      expected_ref="$overriding_ref"
+    elif [[ "$repo_wins" == "1" && -f "$ROOT_DIR/$path" ]]; then
+      expected_path="$ROOT_DIR/$path"
+    fi
+    if [[ ! -f "$TMP_DIR/$path" ]]; then
+      echo "Refusing deploy: generated tree did not preserve $path from $expected_ref." >&2
+      exit 1
+    fi
+    if [[ -n "$expected_path" ]]; then
+      cmp -s "$expected_path" "$TMP_DIR/$path" || {
+        echo "Refusing deploy: generated tree did not preserve $path from the repo." >&2
+        exit 1
+      }
+    elif ! cmp -s <(git show "$expected_ref:$path") "$TMP_DIR/$path"; then
+      echo "Refusing deploy: generated tree did not preserve $path from $expected_ref." >&2
+      exit 1
+    fi
+    verified=$((verified + 1))
+  done < <(git ls-tree -r --name-only "$ref" -- datasources pipes materializations)
+
+  echo "Verified $verified preserved Tinybird resources from $ref."
 }
 
 prepare_phase_project() {
@@ -209,16 +282,18 @@ prepare_phase_project() {
     return 0
   fi
 
-  local preserved_ref
+  local current_ref=""
+  local legacy_ref
   if [[ "$phase" == "expand" ]]; then
-    preserved_ref="${TINYBIRD_CURRENT_REF:-}"
-    if [[ -z "$preserved_ref" ]] ||
-      ! git rev-parse --verify --quiet "$preserved_ref^{tree}" >/dev/null ||
-      ! current_ref_has_resources "$preserved_ref"; then
+    current_ref="${TINYBIRD_CURRENT_REF:-}"
+    if [[ -z "$current_ref" ]] ||
+      ! git rev-parse --verify --quiet "$current_ref^{tree}" >/dev/null ||
+      ! current_ref_has_resources "$current_ref"; then
       echo "Refusing expand deploy: TINYBIRD_CURRENT_REF must name the exact current Tinybird commit." >&2
       exit 1
     fi
-  elif ! preserved_ref="$(resolve_legacy_ref)"; then
+  fi
+  if ! legacy_ref="$(resolve_legacy_ref)"; then
     echo "Refusing $phase deploy: could not resolve TINYBIRD_LEGACY_REF." >&2
     echo "Set TINYBIRD_LEGACY_REF to the commit/ref containing the live legacy Tinybird resources." >&2
     exit 1
@@ -227,19 +302,22 @@ prepare_phase_project() {
   TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/trace-flow-tinybird-${phase}.XXXXXX")"
   copy_current_project "$TMP_DIR"
 
-  local restored=0
-  local skipped=0
-  while IFS= read -r path; do
-    if should_restore_legacy_path "$phase" "$preserved_ref" "$path"; then
-      restore_file_from_ref "$preserved_ref" "$path" "$TMP_DIR"
-      restored=$((restored + 1))
-      continue
-    fi
-    skipped=$((skipped + 1))
-  done < <(git ls-tree -r --name-only "$preserved_ref" -- datasources pipes)
+  restore_preserved_ref "$phase" "$legacy_ref"
+  if [[ -n "$current_ref" ]]; then
+    restore_preserved_ref "$phase" "$current_ref"
+  fi
+
+  if [[ "$phase" == "expand" ]]; then
+    verify_preserved_inventory "$legacy_ref" "$current_ref"
+  else
+    verify_preserved_inventory "$legacy_ref" "" 1
+  fi
+  if [[ -n "$current_ref" ]]; then
+    verify_preserved_inventory "$current_ref"
+  fi
 
   DEPLOY_DIR="$TMP_DIR"
-  echo "Prepared Tinybird $phase deploy tree from $preserved_ref ($restored files restored, $skipped skipped)."
+  echo "Prepared Tinybird $phase deploy tree."
 }
 
 prepare_phase_project "$DEPLOY_PHASE"

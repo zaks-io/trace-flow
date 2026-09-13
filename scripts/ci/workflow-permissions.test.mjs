@@ -9,6 +9,7 @@ function workflow(name) {
 }
 
 const claude = workflow('claude');
+const ci = workflow('ci');
 const preview = workflow('preview');
 const deploy = workflow('deploy');
 const authorize = new Function(
@@ -333,6 +334,14 @@ describe('credentialed CI checks', () => {
 });
 
 describe('production Worker secret boundary', () => {
+  test('pins both deployed and legacy Tinybird inventories for the cloud expand check', () => {
+    const cloudCheck = ci.jobs['tinybird-schema-check'].steps.find(
+      (step) => step.name === 'Tinybird deploy --check (trace_flow_prod)',
+    );
+    expect(cloudCheck.env.TINYBIRD_CURRENT_REF).toBe('HEAD^');
+    expect(cloudCheck.env.TINYBIRD_LEGACY_REF).toBe('11613a4619444adb0e27abc3df958cebb43cc280');
+  });
+
   test.each(['Deploy Raw API Worker', 'Deploy Pipes API Worker'])(
     '%s scopes secret uploads and deployment to production',
     (stepName) => {
@@ -362,6 +371,7 @@ describe('production Worker secret boundary', () => {
     expect(expand.env.TINYBIRD_CURRENT_REF).toBe(
       '${{ needs.agent-delivery-current-ref.outputs.current_ref }}',
     );
+    expect(expand.env.TINYBIRD_LEGACY_REF).toBe('11613a4619444adb0e27abc3df958cebb43cc280');
     const pause = deploy.jobs['deploy-agent-ingest-maintenance'].steps.find(
       (step) => step.name === 'Deploy retryable maintenance response',
     );
