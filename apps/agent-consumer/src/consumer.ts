@@ -26,7 +26,7 @@ import {
  * Full queue-contract guard and the named "malformed message → DLQ" trigger. The producer is our own
  * worker, so a failing guard means contract drift or a foreign message: dead-letter rather than drop.
  */
-export function isQueueMessage(body: unknown): body is AgentIngestQueueMessage {
+function isQueueMessage(body: unknown): body is AgentIngestQueueMessage {
   return isAgentIngestQueueMessage(body);
 }
 
