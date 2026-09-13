@@ -51,6 +51,7 @@ import type {
   QuiesceFactRepairCapacityInput,
   QuiesceFactRepairCapacityResult,
 } from './fact-repair-capacity';
+import type { LegacyRetirementProof } from './legacy-retirement';
 
 export { processAgentBatch } from './consumer';
 export { AgentFactBatcher } from './fact-batcher';
@@ -289,6 +290,11 @@ export class TraceRecovery extends WorkerEntrypoint<AgentConsumerEnv> {
       input,
       getAgentBatcher(this.env, normalized),
     );
+  }
+
+  retireFrozenLedger(orgId: string, input: LegacyRetirementProof) {
+    const normalized = normalizeAgentShardId(orgId);
+    return getAgentBatcher(this.env, normalized).retireFrozenLedger(normalized, input);
   }
 
   freezeIngestionMigration(orgId: string, input: { migrationId: string }) {

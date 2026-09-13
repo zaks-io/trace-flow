@@ -3,9 +3,7 @@ import { runInDurableObject } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AGENT_SNAPSHOT_TARGETS, snapshotCopyAttempt } from '../snapshot-tinybird';
 import type { AgentConsumerEnv } from '../context';
-import type { AgentFactBatcherInstance } from '../fact-batcher';
 import {
-  AgentDeliveryCoordinator,
   MAX_AGENT_DELIVERY_RETENTION_MS,
   MAX_AGENT_SNAPSHOT_LEASE_MS,
   type AgentDeliveryCoordinatorInstance,
@@ -13,18 +11,16 @@ import {
 
 const CLAIM_ID = 'claim-a';
 
-const env = workerEnv as unknown as {
-  AGENT_FACT_BATCHER: DurableObjectNamespace<AgentFactBatcherInstance>;
-};
+const env = workerEnv as unknown as AgentConsumerEnv;
 const PAYLOAD_SHA256 = 'a'.repeat(64);
 
 describe('agent ingestion erasure fence', () => {
-  let storageHost: DurableObjectStub<AgentFactBatcherInstance>;
+  let storageHost: DurableObjectStub<AgentDeliveryCoordinatorInstance>;
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-13T12:00:00.000Z'));
-    storageHost = env.AGENT_FACT_BATCHER.get(env.AGENT_FACT_BATCHER.newUniqueId());
+    storageHost = env.AGENT_DELIVERY_COORDINATOR.get(env.AGENT_DELIVERY_COORDINATOR.newUniqueId());
   });
 
   afterEach(() => vi.useRealTimers());
@@ -34,10 +30,7 @@ describe('agent ingestion erasure fence', () => {
       coordinator: AgentDeliveryCoordinatorInstance,
       state: DurableObjectState,
     ) => T | Promise<T>,
-  ): Promise<T> =>
-    runInDurableObject(storageHost, (_instance, state) =>
-      callback(new AgentDeliveryCoordinator(state, {} as AgentConsumerEnv), state),
-    );
+  ): Promise<T> => runInDurableObject(storageHost, (instance, state) => callback(instance, state));
 
   it('permanently blocks new work while an existing reservation drains', async () => {
     const input = reservation('delivery-active');
@@ -56,6 +49,9 @@ describe('agent ingestion erasure fence', () => {
     await expect(
       withCoordinator((_coordinator, state) => state.storage.getAlarm()),
     ).resolves.toBeNull();
+    await expect(
+      withCoordinator((_coordinator, state) => state.storage.get('snapshot_org_id')),
+    ).resolves.toBeUndefined();
     await expect(withCoordinator((coordinator) => coordinator.reserve(input))).resolves.toEqual({
       status: 'existing',
       deliverySequence: reserved.deliverySequence,
@@ -80,8 +76,40 @@ describe('agent ingestion erasure fence', () => {
       withCoordinator((coordinator) => coordinator.getErasureState({})),
     ).resolves.toEqual({ ...started, activeDeliveries: 0, ready: true });
     await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
-      { erasureStarted: true },
+      { erasureStarted: true, dirtyDays: 0, dirtyDayLinks: 0, capturedSnapshotDays: 0 },
     );
+    await expect(withCoordinator((coordinator) => coordinator.beginErasure({}))).resolves.toEqual({
+      ...started,
+      activeDeliveries: 0,
+      ready: true,
+    });
+  });
+
+  it('discards incomplete analytics after failed deliveries drain under the erasure fence', async () => {
+    const first = reservation('delivery-expired');
+    const second = reservation('delivery-still-active');
+    await withCoordinator((coordinator) => coordinator.reserve(first));
+    await withCoordinator((coordinator) => coordinator.reserve(second));
+    await withCoordinator((coordinator) => coordinator.beginErasure({}));
+    vi.advanceTimersByTime(MAX_AGENT_DELIVERY_RETENTION_MS);
+    await withCoordinator((coordinator) =>
+      coordinator.expire({ deliveryId: first.deliveryId, payloadSha256: first.payloadSha256 }),
+    );
+    await expect(
+      withCoordinator((coordinator) => coordinator.getErasureState({})),
+    ).resolves.toMatchObject({ activeDeliveries: 1, incompleteDays: 1, ready: false });
+    await withCoordinator((coordinator) =>
+      coordinator.expire({ deliveryId: second.deliveryId, payloadSha256: second.payloadSha256 }),
+    );
+    await expect(
+      withCoordinator((coordinator) => coordinator.getErasureState({})),
+    ).resolves.toMatchObject({ activeDeliveries: 0, incompleteDays: 0, ready: true });
+    await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
+      { erasureStarted: true, dirtyDays: 0, incompleteDays: 0 },
+    );
+    await expect(
+      withCoordinator((coordinator) => coordinator.reserve(reservation('new-delivery'))),
+    ).rejects.toThrow('erasure has started');
   });
 
   it('waits for a known Copy job to report terminal before becoming ready', async () => {

@@ -215,10 +215,8 @@ export async function runAgentSnapshot(
       const status =
         discoveredStatus === 'done' || discoveredStatus === 'error'
           ? discoveredStatus
-          : await waitForSnapshotJob(env, jobId, workDeadlineAt);
-      if (status === null) {
-        return await continueRun(progress);
-      }
+          : await waitForSnapshotJob(env, orgId, intent, jobId, workDeadlineAt);
+      if (status === null) return await continueRun(progress);
       const settledJobId = jobId;
       await beforeSnapshotDeadline(
         () =>

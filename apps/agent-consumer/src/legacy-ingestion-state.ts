@@ -1,4 +1,5 @@
 import type { DurableObjectStorage } from '@cloudflare/workers-types';
+import type { LegacyRetirementRecord } from './legacy-retirement';
 
 const MIGRATION_ID = 'bounded-agent-ingestion-v1';
 const MIGRATION_KEY = 'ingestion_migration';
@@ -9,16 +10,18 @@ type ErasureState = 'pending' | 'erased';
 export class LegacyIngestionState {
   private migrationId: string | null = null;
   private erasure: ErasureState | null = null;
+  private retirement: LegacyRetirementRecord | null = null;
 
   constructor(private readonly storage: DurableObjectStorage) {}
 
-  async initialize(): Promise<void> {
+  async initialize(retirement: LegacyRetirementRecord | null = null): Promise<void> {
     const [migrationId, erasure] = await Promise.all([
       this.storage.get<string>(MIGRATION_KEY),
       this.storage.get<{ state: ErasureState }>(ERASURE_KEY),
     ]);
     this.migrationId = migrationId ?? null;
     this.erasure = erasure?.state ?? null;
+    this.retirement = retirement;
     if (this.erasure !== null && !['pending', 'erased'].includes(this.erasure)) {
       throw new Error('Invalid organization erasure state');
     }
@@ -32,20 +35,27 @@ export class LegacyIngestionState {
     return this.erasure === 'erased';
   }
 
+  isRetired(): boolean {
+    return this.retirement !== null;
+  }
+
   isFenced(): boolean {
-    return this.isFrozen() || this.erasure !== null;
+    return this.isFrozen() || this.erasure !== null || this.retirement !== null;
   }
 
   assertNotErasing(): void {
+    if (this.retirement !== null) throw new Error('Legacy ingestion was retired');
     if (this.erasure !== null) throw new Error('Organization erasure has started');
   }
 
   assertWritable(): void {
+    if (this.retirement !== null) throw new Error('Legacy ingestion was retired');
     if (this.erasure !== null) throw new Error('Organization erasure has started');
     if (this.migrationId !== null) throw new Error('Legacy ingestion is frozen for migration');
   }
 
   assertFrozen(): void {
+    if (this.retirement !== null) throw new Error('Legacy ingestion was retired');
     if (this.erasure !== null) throw new Error('Organization erasure has started');
     if (this.migrationId !== MIGRATION_ID) throw new Error('Legacy ingestion is not frozen');
   }
@@ -55,6 +65,7 @@ export class LegacyIngestionState {
     flushInProgress: boolean;
     pendingRows: number;
   }): Promise<{ migrationId: string }> {
+    if (this.retirement !== null) throw new Error('Legacy ingestion was retired');
     if (this.erasure !== null) throw new Error('Organization erasure has started');
     if (input.migrationId !== MIGRATION_ID) throw new Error('Invalid ingestion migration');
     if (this.migrationId && this.migrationId !== input.migrationId) {
@@ -75,6 +86,11 @@ export class LegacyIngestionState {
     return { state: 'pending' };
   }
 
+  applyRetirement(record: LegacyRetirementRecord): void {
+    this.retirement = record;
+    this.migrationId = null;
+  }
+
   async erase(flushInProgress: boolean): Promise<{ erased: boolean }> {
     if (this.erasure === null) throw new Error('Organization erasure has not started');
     if (this.erasure === 'erased') return { erased: true };
@@ -86,7 +102,15 @@ export class LegacyIngestionState {
     return { erased: true };
   }
 
-  getState(): { migrationId: string | null; erasureState: ErasureState | null } {
-    return { migrationId: this.migrationId, erasureState: this.erasure };
+  getState(): {
+    migrationId: string | null;
+    erasureState: ErasureState | null;
+    retirement: LegacyRetirementRecord | null;
+  } {
+    return {
+      migrationId: this.migrationId,
+      erasureState: this.erasure,
+      retirement: this.retirement,
+    };
   }
 }

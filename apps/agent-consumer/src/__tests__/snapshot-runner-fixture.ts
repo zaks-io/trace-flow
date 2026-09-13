@@ -7,6 +7,7 @@ import { vi } from 'vitest';
 interface FixtureOptions {
   initialStats?: Record<string, unknown>;
   finalStats?: Record<string, unknown>;
+  initialIntent?: AgentSnapshotCopyIntent;
   overrides?: Record<string, unknown>;
 }
 
@@ -17,7 +18,7 @@ export function makeSnapshotRunner(
   let nextCopyIndex = 0;
   let claimId: string | undefined;
   let manifestPublishedAtMs: number | undefined;
-  let intents: AgentSnapshotCopyIntent[] = [];
+  let intents: AgentSnapshotCopyIntent[] = options.initialIntent ? [options.initialIntent] : [];
   const totalCopies = Math.ceil(snapshot.dirtyDays.length / 31) * 9;
   const progress = (): AgentSnapshotProgress => ({
     ...snapshot,

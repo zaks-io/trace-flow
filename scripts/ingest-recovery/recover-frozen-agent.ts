@@ -16,12 +16,19 @@ import {
   inspectMissingCensus,
   recoverReadyFacts,
 } from './agent-frozen-recovery';
+import {
+  assertCompletedRetirement,
+  existingRetirement,
+  recordedRetirementProof,
+  retirementProof,
+} from './agent-frozen-retirement';
 import { verifyAllFrozenFacts } from './agent-frozen-verification';
 import {
   requireAgentProducerMaintenance,
   requireDrainedAgentQueues,
   startMigrationRuntime,
 } from './agent-migration-runtime';
+import { verifyMigrationTarget } from './agent-migration-target';
 import { AgentRecoveryClient } from './agent-transport';
 
 const { values } = parseArgs({
@@ -32,6 +39,7 @@ const { values } = parseArgs({
     apply: { type: 'boolean', default: false },
     'confirm-org': { type: 'string' },
     'verify-all-frozen': { type: 'boolean', default: false },
+    retire: { type: 'boolean', default: false },
     'canonical-index': { type: 'string' },
   },
 });
@@ -39,7 +47,22 @@ const { values } = parseArgs({
 if (!values.org || !/^[A-Za-z0-9_-]{1,256}$/.test(values.org)) {
   throw new Error('Use --org with one valid organization ID');
 }
-if (
+if (values.retire && values['verify-all-frozen']) {
+  throw new Error('Use either --retire or --verify-all-frozen');
+}
+if (values.retire) {
+  if (
+    !values.apply ||
+    values['confirm-org'] !== values.org ||
+    !values['canonical-index'] ||
+    values.census ||
+    values.journal
+  ) {
+    throw new Error(
+      '--retire requires --apply, exact --confirm-org, and --canonical-index without census or journal options',
+    );
+  }
+} else if (
   values['verify-all-frozen'] &&
   (values.apply || values.census || values.journal || !values['canonical-index'])
 ) {
@@ -48,6 +71,7 @@ if (
   );
 }
 if (
+  !values.retire &&
   !values['verify-all-frozen'] &&
   (!values.census || !values.journal || values['canonical-index'])
 ) {
@@ -62,36 +86,63 @@ let journal: FrozenRecoveryJournal | undefined;
 let canonicalIndex: CanonicalHashIndex | undefined;
 try {
   const recovery = new AgentRecoveryClient(values.org, runtime.url);
-  await assertFrozenRecoveryTarget(recovery, runtime.tb);
-  if (values['verify-all-frozen']) {
+  if (values['verify-all-frozen'] || values.retire) {
     await requireAgentProducerMaintenance();
     await requireDrainedAgentQueues();
-    const sequence = canonicalDeliveryFence(await recovery.call('inspectIngestionMigration', {}));
-    canonicalIndex = currentCanonicalIndex(
-      resolve(values['canonical-index']!),
-      values.org,
-      runtime.tb.host,
-    );
-    canonicalIndex.beginExport(sequence);
-    await exportCanonicalHashIndex(runtime.tb, canonicalIndex);
-    assertSameCanonicalFence(sequence, await recovery.call('inspectIngestionMigration', {}));
-    canonicalIndex.finishExport(sequence);
-    const report = await verifyAllFrozenFacts(recovery, canonicalIndex);
-    assertSameCanonicalFence(sequence, await recovery.call('inspectIngestionMigration', {}));
-    assertCurrentCanonicalWindow(canonicalIndex);
-    console.log(
-      JSON.stringify({
-        mode: 'verify-all-frozen',
-        org: values.org,
-        canonicalDeliverySequence: sequence,
-        retentionWindow: {
-          oldestDay: canonicalIndex.oldestDay,
-          todayDay: canonicalIndex.todayDay,
-        },
-        ...report,
-        note: 'Legacy ledger retirement requires zero missing and zero conflicts. Exact matches compare every typed source column including IngestedAt; newer canonical rows are preserved.',
-      }),
-    );
+    const initialState = await recovery.call('inspectIngestionMigration', {});
+    await verifyMigrationTarget(runtime.tb, initialState?.migrationTarget);
+    const priorRetirement = values.retire ? existingRetirement(initialState) : null;
+    if (priorRetirement) {
+      const proof = recordedRetirementProof(priorRetirement);
+      const completed = assertCompletedRetirement(
+        await recovery.call('retireFrozenLedger', proof),
+        proof,
+      );
+      console.log(
+        JSON.stringify({
+          mode: 'retire-resume',
+          org: values.org,
+          retirement: completed,
+          note: 'Retirement resumed from the matching durable external intent created by a prior full verification.',
+        }),
+      );
+    } else {
+      const frozenState = await assertFrozenRecoveryTarget(recovery, runtime.tb);
+      const sequence = canonicalDeliveryFence(frozenState);
+      canonicalIndex = currentCanonicalIndex(
+        resolve(values['canonical-index']!),
+        values.org,
+        runtime.tb.host,
+      );
+      canonicalIndex.beginExport(sequence);
+      await exportCanonicalHashIndex(runtime.tb, canonicalIndex);
+      assertSameCanonicalFence(sequence, await recovery.call('inspectIngestionMigration', {}));
+      canonicalIndex.finishExport(sequence);
+      const report = await verifyAllFrozenFacts(recovery, canonicalIndex);
+      const finalState = await recovery.call('inspectIngestionMigration', {});
+      assertSameCanonicalFence(sequence, finalState);
+      assertCurrentCanonicalWindow(canonicalIndex);
+      const proof = values.retire ? retirementProof(report, canonicalIndex, finalState) : undefined;
+      const retirement = proof
+        ? assertCompletedRetirement(await recovery.call('retireFrozenLedger', proof), proof)
+        : undefined;
+      console.log(
+        JSON.stringify({
+          mode: values.retire ? 'retire' : 'verify-all-frozen',
+          org: values.org,
+          canonicalDeliverySequence: sequence,
+          retentionWindow: {
+            oldestDay: canonicalIndex.oldestDay,
+            todayDay: canonicalIndex.todayDay,
+          },
+          ...report,
+          ...(retirement ? { retirement } : {}),
+          note: retirement
+            ? 'The verified frozen legacy ledger was retired; the coordinator, canonical facts, delivery objects, R2 buffers, and shared DLQ were not deleted.'
+            : 'Legacy ledger retirement requires zero missing and zero conflicts. Exact matches compare every typed source column including IngestedAt; newer canonical rows are preserved.',
+        }),
+      );
+    }
   } else {
     const censusPath = resolve(values.census!);
     const journalPath = resolve(values.journal!);

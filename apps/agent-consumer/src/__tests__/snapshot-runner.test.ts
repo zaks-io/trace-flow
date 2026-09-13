@@ -7,6 +7,7 @@ import {
 } from '../snapshot-runner';
 import {
   AGENT_SNAPSHOT_TARGETS,
+  discoverSnapshotCopy,
   publishSnapshotManifest,
   SnapshotCopyStartRejectedError,
   snapshotJobStatus,
@@ -17,6 +18,7 @@ import { makeSnapshotRunner } from './snapshot-runner-fixture';
 vi.mock('../snapshot-tinybird', async (importOriginal) => ({
   ...(await importOriginal<typeof SnapshotTinybird>()),
   publishSnapshotManifest: vi.fn().mockResolvedValue(undefined),
+  discoverSnapshotCopy: vi.fn().mockResolvedValue(null),
   snapshotJobStatus: vi.fn().mockResolvedValue('done'),
   startSnapshotCopy: vi.fn(),
 }));
@@ -31,6 +33,8 @@ describe('agent snapshot runner', () => {
     vi.mocked(snapshotJobStatus).mockResolvedValue('done');
     vi.mocked(publishSnapshotManifest).mockReset();
     vi.mocked(publishSnapshotManifest).mockResolvedValue(undefined);
+    vi.mocked(discoverSnapshotCopy).mockReset();
+    vi.mocked(discoverSnapshotCopy).mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -167,6 +171,33 @@ describe('agent snapshot runner', () => {
       generation: 3,
       claimId: expect.any(String),
     });
+  });
+
+  it('resumes an older known job through its exact durable Copy intent', async () => {
+    const target = AGENT_SNAPSHOT_TARGETS[0];
+    const knownIntent = {
+      generation: plan.generation,
+      target,
+      copyAttempt: plan.generation,
+      startedAt: Date.now() - 11 * 60_000,
+      jobId: 'job-older-than-status-window',
+    };
+    vi.mocked(snapshotJobStatus).mockResolvedValueOnce(null);
+    vi.mocked(discoverSnapshotCopy).mockResolvedValueOnce({
+      id: knownIntent.jobId,
+      status: 'done',
+    });
+    const { coordinator, env } = makeSnapshotRunner(plan, {
+      initialStats: { gatePhase: 'snapshot' },
+      initialIntent: knownIntent,
+    });
+
+    await expect(runAgentSnapshot(env, 'org-1')).resolves.toMatchObject({ status: 'complete' });
+    expect(discoverSnapshotCopy).toHaveBeenCalledWith(env, 'org-1', knownIntent);
+    expect(coordinator.settleSnapshotCopyIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: knownIntent.jobId, status: 'done' }),
+    );
+    expect(startSnapshotCopy).toHaveBeenCalledTimes(AGENT_SNAPSHOT_TARGETS.length - 1);
   });
 
   it('hands off before the four-minute invocation deadline while a job is running', async () => {

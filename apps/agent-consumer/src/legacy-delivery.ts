@@ -39,7 +39,7 @@ export async function processMigratedLegacyMessage(
     encryption: { rootKeyBase64: env.BODY_ENCRYPTION_ROOT_KEY },
   });
   const delivery = env.AGENT_DELIVERY.getByName(staged.key);
-  const revision = await delivery.register(staged, days);
+  const revision = await delivery.register(staged, days, { legacySourceOrder: true });
   if (!Number.isSafeInteger(revision) || revision <= 0) {
     throw new Error('Agent delivery returned an invalid revision');
   }

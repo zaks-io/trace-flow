@@ -66,6 +66,7 @@ describe('DLQ delivery replay', () => {
     expect(register).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'agent-delivery', org_id: 'org-1' }),
       ['2026-05-20'],
+      { legacySourceOrder: true },
     );
     expect(put).toHaveBeenCalledOnce();
 

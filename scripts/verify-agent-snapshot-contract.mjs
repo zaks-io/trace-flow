@@ -230,15 +230,26 @@ for (const name of identityViews)
     /ContentHash/,
     'identity-day index must retain the current content hash',
   );
+for (const name of identityViews)
+  requireMatch(
+    `materializations/${name}`,
+    /IngestedAt/,
+    'identity-day index must retain source ordering for legacy deliveries',
+  );
 requireMatch(
   'pipes/agent_fact_identity_day.pipe',
-  /DeliverySequence, ContentHash/,
+  /DeliverySequence, ContentHash, IngestedAt/,
   'identity-day endpoint must return the current content proof',
 );
 requireMatch(
   'datasources/agent_fact_identity_days.datasource',
   /ENGINE_SORTING_KEY "OrgId, Category, FactIdentity"/,
   'identity-day replacement identity must remain stable across event-month corrections',
+);
+requireMatch(
+  'datasources/agent_fact_identity_days.datasource',
+  /`IngestedAt` DateTime64\(3\)/,
+  'identity-day metadata must retain the canonical source ingest time',
 );
 requireMatch(
   'pipes/agent_fact_identity_day.pipe',
@@ -255,6 +266,17 @@ requireMatch(
   /ENGINE_TTL "toDateTime\(EventDay\) \+ toIntervalYear\(1\) \+ toIntervalDay\(1\)"/,
   'day-grain identity metadata must outlive every fact timestamp in the retained day',
 );
+
+const sessionBrowserNodes = read('pipes/agent_sessions_browser.pipe').split(/\nNODE endpoint\n/);
+if (
+  sessionBrowserNodes.length !== 2 ||
+  !/OFFSET greatest\(0, \{\{ Int32\(offset, 0\) \}\}\)/.test(sessionBrowserNodes[0]) ||
+  /\b(?:LIMIT|OFFSET)\b/.test(sessionBrowserNodes[1])
+) {
+  failures.push(
+    'pipes/agent_sessions_browser.pipe: pagination must be applied once while selecting candidates',
+  );
+}
 
 for (const name of endpointFiles) {
   const content = read(`pipes/${name}.pipe`);

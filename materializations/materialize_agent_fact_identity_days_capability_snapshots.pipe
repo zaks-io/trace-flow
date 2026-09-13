@@ -9,7 +9,8 @@ SQL >
         concat(OrgId, char(31), session_pk, char(31), capability_snapshot_pk) AS FactIdentity,
         toDate(EventAt) AS EventDay,
         DeliverySequence,
-        ContentHash
+        ContentHash,
+        IngestedAt
     FROM agent_capability_snapshot_fact_versions
     WHERE IsDeleted = 0
 

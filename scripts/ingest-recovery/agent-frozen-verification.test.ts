@@ -106,7 +106,8 @@ test('full frozen verification distinguishes exact, newer, and retention-expired
     );
     index.beginExport(3);
     index.finishExport(3);
-    await expect(verifyAllFrozenFacts(recovery, index)).resolves.toMatchObject({
+    const report = await verifyAllFrozenFacts(recovery, index);
+    expect(report).toMatchObject({
       total: 3,
       exactMatches: 1,
       safelySuperseded: 1,
@@ -115,6 +116,10 @@ test('full frozen verification distinguishes exact, newer, and retention-expired
       conflicts: 0,
       eligibleForLegacyRetirement: true,
     });
+    expect(report.verificationSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect((await verifyAllFrozenFacts(recovery, index)).verificationSha256).toBe(
+      report.verificationSha256,
+    );
   } finally {
     index.close();
     rmSync(directory, { recursive: true });

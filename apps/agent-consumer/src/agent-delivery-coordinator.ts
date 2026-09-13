@@ -90,9 +90,17 @@ import {
   renewAgentSnapshotClaim,
   validateSnapshotClaimId,
 } from './agent-snapshot-progress';
+import {
+  beginLegacyRetirement,
+  completeLegacyRetirement,
+  initializeLegacyRetirement,
+  readLegacyRetirement,
+  type LegacyRetirementProof,
+} from './legacy-retirement';
 
 export * from './agent-delivery-coordinator-contract';
 export * from './agent-ingestion-erasure';
+export * from './legacy-retirement';
 
 class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
   constructor(state: DurableObjectState, env: AgentConsumerEnv) {
@@ -101,6 +109,7 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     initializeIngestionMigration(this.ctx.storage);
     initializeAgentIngestionErasure(this.ctx.storage);
     initializeAgentSnapshotProgress(this.ctx.storage);
+    initializeLegacyRetirement(this.ctx.storage);
   }
 
   getBaselineCopy(input: { category: BaselineCopyCheckpoint['category'] }) {
@@ -122,6 +131,20 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
 
   getIngestionMigrationState() {
     return ingestionMigrationState(this.ctx.storage);
+  }
+
+  getLegacyRetirement(input: Record<string, never>) {
+    assertExactKeys(input, [], 'get legacy retirement');
+    return readLegacyRetirement(this.ctx.storage);
+  }
+
+  beginLegacyRetirement(input: LegacyRetirementProof) {
+    return beginLegacyRetirement(this.ctx.storage, input);
+  }
+
+  completeLegacyRetirement(input: { verificationSha256: string }) {
+    assertExactKeys(input, ['verificationSha256'], 'complete legacy retirement');
+    return completeLegacyRetirement(this.ctx.storage, input.verificationSha256, Date.now());
   }
 
   seedIngestionMigration(input: { proofSha256: string; dirtyDays: string[] }) {
@@ -420,6 +443,7 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     this.recoverCoordinatorMetadata();
     const state = beginAgentIngestionErasure(this.ctx.storage, Date.now());
     await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.delete('snapshot_org_id');
     return state;
   }
 

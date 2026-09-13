@@ -197,13 +197,26 @@ export function rejectSnapshotCopyIntent(
 }
 
 function requireErasureState(storage: DurableObjectStorage): AgentIngestionErasureState {
+  return storage.transactionSync(() => settleErasureState(storage));
+}
+
+function settleErasureState(storage: DurableObjectStorage): AgentIngestionErasureState {
   const startedAt = readErasureStartedAt(storage);
   if (startedAt === null) throw new Error('agent ingestion erasure has not started');
   const coordinator = readCoordinatorState(storage);
   const activeDeliveries = countRows(storage, 'active_deliveries');
-  const incompleteDays = countRows(storage, 'incomplete_days');
+  let incompleteDays = countRows(storage, 'incomplete_days');
   const outstandingCopyIntents = countCopyIntents(storage);
   const activeSnapshotGeneration = coordinator.active_snapshot_generation;
+  const ready =
+    activeDeliveries === 0 && activeSnapshotGeneration === null && outstandingCopyIntents === 0;
+  if (ready && incompleteDays > 0) {
+    // The permanent erasure fence has drained every writer; missing analytics need no repair before deletion.
+    incompleteDays = 0;
+  }
+  if (ready) {
+    clearErasedCoordinatorMetadata(storage);
+  }
   return {
     erasureStarted: true,
     startedAt,
@@ -211,12 +224,23 @@ function requireErasureState(storage: DurableObjectStorage): AgentIngestionErasu
     incompleteDays,
     activeSnapshotGeneration,
     outstandingCopyIntents,
-    ready:
-      activeDeliveries === 0 &&
-      incompleteDays === 0 &&
-      activeSnapshotGeneration === null &&
-      outstandingCopyIntents === 0,
+    ready,
   };
+}
+
+function clearErasedCoordinatorMetadata(storage: DurableObjectStorage): void {
+  storage.sql.exec(`
+    DELETE FROM active_delivery_days;
+    DELETE FROM dirty_day_links;
+    DELETE FROM dirty_days;
+    DELETE FROM incomplete_days;
+    DELETE FROM snapshot_days;
+    DELETE FROM snapshot_progress;
+    DELETE FROM ingestion_migration;
+    UPDATE coordinator_state
+      SET gate_phase='open', active_snapshot_generation=NULL, gate_expires_at_ms=NULL
+      WHERE singleton=1;
+  `);
 }
 
 function readErasureStartedAt(storage: DurableObjectStorage): number | null {

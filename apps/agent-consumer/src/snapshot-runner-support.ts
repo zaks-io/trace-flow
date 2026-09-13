@@ -7,6 +7,7 @@ import {
 } from './agent-delivery-coordinator-contract';
 import type { AgentSnapshotCopyIntent } from './agent-ingestion-erasure';
 import {
+  discoverSnapshotCopy,
   snapshotCopyAttempt,
   snapshotJobStatus,
   type SnapshotCopyPlan,
@@ -95,6 +96,8 @@ export function assertSnapshotDaysRetained(dirtyDays: string[], now: number): vo
 
 export async function waitForSnapshotJob(
   env: SnapshotTinybirdEnv,
+  orgId: string,
+  intent: AgentSnapshotCopyIntent,
   jobId: string,
   deadlineAt: number,
 ): Promise<'done' | 'error' | null> {
@@ -104,6 +107,20 @@ export async function waitForSnapshotJob(
       deadlineAt,
       'poll snapshot job',
     );
+    if (status === null) {
+      const discovered = await beforeSnapshotDeadline(
+        () => discoverSnapshotCopy(env, orgId, intent),
+        deadlineAt,
+        `rediscover ${intent.target} job`,
+      );
+      if (!discovered) return null;
+      if (discovered.id !== jobId) {
+        throw new Error('Snapshot Copy discovery changed its attached job receipt');
+      }
+      return discovered.status === 'done' || discovered.status === 'error'
+        ? discovered.status
+        : null;
+    }
     if (status === 'done' || status === 'error') return status;
     const remainingMs = deadlineAt - Date.now();
     if (remainingMs <= 0) return null;

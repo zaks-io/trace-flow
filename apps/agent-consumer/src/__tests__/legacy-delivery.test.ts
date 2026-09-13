@@ -104,6 +104,7 @@ describe('legacy inline delivery migration', () => {
     expect(register).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'agent-delivery', org_id: 'org-1' }),
       ['2026-05-20'],
+      { legacySourceOrder: true },
     );
     expect(order).toEqual(['process', 'ack']);
   });

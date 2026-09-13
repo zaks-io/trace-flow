@@ -2,10 +2,8 @@ import { env as workerEnv } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentConsumerEnv } from '../context';
-import type { AgentFactBatcherInstance } from '../fact-batcher';
 import { finishSnapshotCopies } from './snapshot-coordinator-helpers';
 import {
-  AgentDeliveryCoordinator,
   AgentDeliveryCoordinatorRetryableError,
   type AgentDeliveryCoordinatorInstance,
   MAX_ACTIVE_AGENT_DELIVERIES,
@@ -17,20 +15,18 @@ import {
 
 const CLAIM_ID = 'claim-a';
 
-const env = workerEnv as unknown as {
-  AGENT_FACT_BATCHER: DurableObjectNamespace<AgentFactBatcherInstance>;
-};
+const env = workerEnv as unknown as AgentConsumerEnv;
 
 const HASH_A = 'a'.repeat(64);
 const HASH_B = 'b'.repeat(64);
 
 describe('AgentDeliveryCoordinator', () => {
-  let storageHost: DurableObjectStub<AgentFactBatcherInstance>;
+  let storageHost: DurableObjectStub<AgentDeliveryCoordinatorInstance>;
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-13T12:00:00.000Z'));
-    storageHost = env.AGENT_FACT_BATCHER.get(env.AGENT_FACT_BATCHER.newUniqueId());
+    storageHost = env.AGENT_DELIVERY_COORDINATOR.get(env.AGENT_DELIVERY_COORDINATOR.newUniqueId());
   });
 
   const withCoordinator = <T>(
@@ -38,10 +34,7 @@ describe('AgentDeliveryCoordinator', () => {
       coordinator: AgentDeliveryCoordinatorInstance,
       state: DurableObjectState,
     ) => T | Promise<T>,
-  ): Promise<T> =>
-    runInDurableObject(storageHost, (_instance, state) =>
-      callback(new AgentDeliveryCoordinator(state, {} as AgentConsumerEnv), state),
-    );
+  ): Promise<T> => runInDurableObject(storageHost, (instance, state) => callback(instance, state));
 
   it('allocates monotonic sequences and supports an explicit migration bootstrap', async () => {
     await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(

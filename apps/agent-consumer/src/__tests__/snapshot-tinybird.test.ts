@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchPipe, insertRows } from '@trace-flow/tinybird-client';
 import type * as TinybirdClient from '@trace-flow/tinybird-client';
 import {
+  discoverSnapshotCopy,
   publishSnapshotManifest,
   snapshotCopyAttempt,
   snapshotJobStatus,
@@ -111,6 +112,20 @@ describe('snapshot Tinybird transport', () => {
       return [options.schema!.parse({ id: 'job-123', status: 'cancelled' })] as never;
     });
     await expect(snapshotJobStatus(env, 'job-123')).rejects.toThrow('Invalid snapshot job status');
+  });
+
+  it('rejects intent discovery when it differs from the attached job receipt', async () => {
+    vi.mocked(fetchPipe).mockResolvedValueOnce([{ job_id: 'job-other', status: 'done' }] as never);
+
+    await expect(
+      discoverSnapshotCopy(env, plan.orgId, {
+        generation: plan.generation,
+        target: 'agent_session_signals_snapshots',
+        copyAttempt: plan.generation,
+        startedAt: Date.now() - 11 * 60_000,
+        jobId: 'job-attached',
+      }),
+    ).rejects.toThrow('did not match its durable intent');
   });
 
   it('publishes one immutable manifest row for the complete captured group', async () => {

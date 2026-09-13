@@ -8,7 +8,8 @@ SCHEMA >
     `FactIdentity` String,
     `EventDay` Date,
     `DeliverySequence` UInt64,
-    `ContentHash` String
+    `ContentHash` String,
+    `IngestedAt` DateTime64(3)
 
 ENGINE "ReplacingMergeTree"
 ENGINE_SORTING_KEY "OrgId, Category, FactIdentity"

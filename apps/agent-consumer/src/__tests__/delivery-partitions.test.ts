@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { sha256Hex } from '@trace-flow/utils';
 import { prepareDeliveryPartitions } from '../delivery-partitions';
 import { emptyAccumulator } from '../facts';
 import type { DeliveryRows } from '../delivery-rows';
@@ -20,6 +21,7 @@ function delivery(): DeliveryRows {
           session_pk: 's',
           message_pk: 'm',
           EventAt: '2026-09-13 01:00:00.000',
+          IngestedAt: '2026-09-13 01:00:00.000',
           DeliverySequence: 3,
           IsDeleted: 0,
           ContentHash: 'a'.repeat(64),
@@ -45,6 +47,8 @@ describe('delivery partition corrections', () => {
               FactIdentity: 'org\x1fs\x1fm',
               EventDay: '2026-09-12',
               DeliverySequence: 2,
+              ContentHash: 'b'.repeat(64),
+              IngestedAt: '2026-09-13 00:00:00.000',
             },
           ],
         }),
@@ -87,6 +91,8 @@ describe('delivery partition corrections', () => {
               FactIdentity: 'org\x1fs\x1fm',
               EventDay: '2026-09-13',
               DeliverySequence: '2',
+              ContentHash: 'b'.repeat(64),
+              IngestedAt: '2026-09-13 00:00:00.000',
             },
           ],
         }),
@@ -118,8 +124,20 @@ describe('delivery partition corrections', () => {
 
   it('rejects a later revision or foreign identity before changing the plan', async () => {
     for (const entry of [
-      { FactIdentity: 'org\x1fs\x1fm', EventDay: '2026-09-12', DeliverySequence: 4 },
-      { FactIdentity: 'another-org\x1fs\x1fm', EventDay: '2026-09-12', DeliverySequence: 2 },
+      {
+        FactIdentity: 'org\x1fs\x1fm',
+        EventDay: '2026-09-12',
+        DeliverySequence: 4,
+        ContentHash: 'b'.repeat(64),
+        IngestedAt: '2026-09-13 00:00:00.000',
+      },
+      {
+        FactIdentity: 'another-org\x1fs\x1fm',
+        EventDay: '2026-09-12',
+        DeliverySequence: 2,
+        ContentHash: 'b'.repeat(64),
+        IngestedAt: '2026-09-13 00:00:00.000',
+      },
     ]) {
       vi.stubGlobal(
         'fetch',
@@ -129,5 +147,74 @@ describe('delivery partition corrections', () => {
       await expect(prepareDeliveryPartitions(env, plan)).rejects.toThrow();
       expect(plan.rows.messages).toHaveLength(1);
     }
+  });
+
+  it('omits superseded legacy facts while retaining missing and newer facts', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          data: [
+            {
+              FactIdentity: 'org\x1fs\x1fm',
+              EventDay: '2026-09-13',
+              DeliverySequence: 2,
+              ContentHash: 'b'.repeat(64),
+              IngestedAt: '2026-09-13 02:00:00.000',
+            },
+          ],
+        }),
+      ),
+    );
+    const plan = delivery();
+    plan.rows.messages.push(
+      {
+        ...(plan.rows.messages[0] as Record<string, unknown>),
+        message_pk: 'missing',
+        IngestedAt: '2026-09-13 01:30:00.000',
+      },
+      {
+        ...(plan.rows.messages[0] as Record<string, unknown>),
+        message_pk: 'newer',
+        IngestedAt: '2026-09-13 03:00:00.000',
+      },
+    );
+
+    expect(await prepareDeliveryPartitions(env, plan, { legacySourceOrder: true })).toEqual([
+      '2026-09-13',
+    ]);
+    expect(plan.rows.messages.map((row) => (row as Record<string, unknown>).message_pk)).toEqual([
+      'missing',
+      'newer',
+    ]);
+  });
+
+  it('accepts only a proven equal-time duplicate and rejects an equal-time conflict', async () => {
+    const exact = delivery();
+    const row = exact.rows.messages[0] as Record<string, unknown>;
+    const currentVersion: Record<string, unknown> = { ...row, DeliverySequence: 2, IsDeleted: 0 };
+    delete currentVersion.ContentHash;
+    const current = {
+      FactIdentity: 'org\x1fs\x1fm',
+      EventDay: '2026-09-13',
+      DeliverySequence: 2,
+      ContentHash: await sha256Hex(JSON.stringify(currentVersion)),
+      IngestedAt: row.IngestedAt,
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ data: [current] })),
+    );
+
+    expect(await prepareDeliveryPartitions(env, exact, { legacySourceOrder: true })).toEqual([]);
+    expect(exact.rows.messages).toEqual([]);
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ data: [{ ...current, ContentHash: 'b'.repeat(64) }] })),
+    );
+    await expect(
+      prepareDeliveryPartitions(env, delivery(), { legacySourceOrder: true }),
+    ).rejects.toThrow('Conflicting equal-time messages fact');
   });
 });

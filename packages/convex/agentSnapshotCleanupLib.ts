@@ -88,14 +88,18 @@ export async function cleanupAgentSnapshots(
       }),
     );
   }
-  const days = eligible.map((row) => `'${row.SnapshotDay}'`).join(',');
-  const minGeneration = Math.min(...eligible.map((row) => row.SnapshotGeneration));
+  const supersededDays = eligible
+    .map(
+      (row) =>
+        `(day = toDate('${row.SnapshotDay}') AND SnapshotGeneration < ${row.SnapshotGeneration})`,
+    )
+    .join(' OR ');
   jobs.push(
     await startDeleteRows({
       baseUrl: env.TINYBIRD_HOST,
       token: env.TINYBIRD_AGENT_SNAPSHOT_CLEANUP_TOKEN,
       datasource: 'agent_snapshot_manifest',
-      condition: `OrgId = ${org} AND SnapshotGeneration < ${minGeneration} AND hasAll([${days}], SnapshotDays)`,
+      condition: `OrgId = ${org} AND notEmpty(SnapshotDays) AND arrayAll(day -> (${supersededDays}), SnapshotDays)`,
     }),
   );
   for (const jobId of jobs)

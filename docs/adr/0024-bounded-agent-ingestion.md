@@ -36,8 +36,10 @@ completed Tinybird insert.
 Six versioned `ReplacingMergeTree` fact tables replace same-identity versions using the accepted
 revision. Natural replacement keys include the event date. Moving an identity between dates writes
 an old-date tombstone and a new-date live row under the same revision. A bounded identity lookup
-provides the previous date, revision, and content hash. Receipt materializations permit uncertain
-inserts to be reconciled without blindly inserting again.
+provides the previous date, revision, content hash, and source ingest time. Queue and DLQ messages
+accepted before migration keep that source ordering: older facts cannot replace newer canonical
+facts, and ambiguous equal-time conflicts fail for operator review. Receipt materializations permit
+uncertain inserts to be reconciled without blindly inserting again.
 
 Nine snapshot targets are rebuilt from canonical facts with scoped `FINAL` reads. Snapshot jobs
 filter the organization and captured dates before aggregation and use `max_threads = 1`. Canonical
@@ -117,6 +119,9 @@ The isolated branch produced these measurements on 2026-09-13:
   delivery sequence. Identity lookups also receive the consumer's exact calendar retention bounds
   so asynchronous TTL cleanup cannot expose an expired prior day. A 32-identity lookup against the
   two-million-row fixture read 16,384 index rows and 2,533,522 bytes in 8.307 milliseconds.
+- Frozen-fact verification pages use the event date and native identity tuple. On the two-million-row
+  fixture, a 5,000-row message page read 10,960 rows and 4,306,206 bytes in 44.075 milliseconds. The
+  remaining 464-row page used the same bounded scan and completed in 24.741 milliseconds.
 
 References: [Cloudflare Durable Object storage](https://developers.cloudflare.com/durable-objects/best-practices/access-durable-objects-storage/),
 [Tinybird deduplication](https://www.tinybird.co/docs/forward/guides/deduplication-strategies),

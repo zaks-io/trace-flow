@@ -10,24 +10,33 @@ import { makeKv } from './harness';
 
 const writes: Record<string, unknown>[][] = [];
 
-async function staged() {
+async function staged(
+  options: { legacySourceOrder?: boolean; message?: ReturnType<typeof queueMessage> } = {},
+) {
   const orgId = `test-${crypto.randomUUID()}`;
-  const message = queueMessage({
+  const source =
+    options.message ??
+    queueMessage({
+      facts: { ...emptyQueueFacts(), messages: [messageFact({ event_at: Date.now() })] },
+    });
+  const message = {
+    ...source,
     tenancy: {
+      ...source.tenancy,
       org_id: orgId,
-      user_id: 'user',
-      collector_id: 'collector',
-      collector_credential_id: 'credential',
     },
-    facts: { ...emptyQueueFacts(), messages: [messageFact({ event_at: Date.now() })] },
-  });
+  };
   const reference = await stageAgentDelivery({
     storage: env.AGENT_DELIVERIES,
     message,
     encryption: { rootKeyBase64: env.BODY_ENCRYPTION_ROOT_KEY },
   });
   const host = env.AGENT_DELIVERY.getByName(reference.key);
-  const revision = await host.register(reference, [new Date().toISOString().slice(0, 10)]);
+  const revision = await host.register(
+    reference,
+    [new Date().toISOString().slice(0, 10)],
+    options.legacySourceOrder ? { legacySourceOrder: true } : undefined,
+  );
   return {
     host,
     stagedReference: reference,
@@ -100,6 +109,7 @@ function mockTransport(
     EventDay: string;
     DeliverySequence: number;
     ContentHash?: string;
+    IngestedAt?: string;
   }[] = [],
 ) {
   let first = true;
@@ -108,7 +118,13 @@ function mockTransport(
     vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = new URL(String(input));
       if (url.pathname.includes('agent_fact_identity_day')) {
-        return Response.json({ data: identityDays });
+        return Response.json({
+          data: identityDays.map((row) => ({
+            ContentHash: 'f'.repeat(64),
+            IngestedAt: '2026-05-20 00:00:00.000',
+            ...row,
+          })),
+        });
       }
       if (url.pathname.includes('agent_delivery_receipt'))
         return Response.json({
@@ -177,6 +193,46 @@ describe('bounded delivery durability', () => {
     await host.process(reference);
     expect(writes).toHaveLength(1);
     expect(await env.AGENT_DELIVERIES.head(reference.key)).toBeNull();
+  });
+
+  it('confirms an all-superseded legacy delivery without writing facts', async () => {
+    const enqueuedAt = Date.parse('2026-09-13T01:00:00.000Z');
+    const message = queueMessage({
+      enqueued_at: enqueuedAt,
+      facts: {
+        ...emptyQueueFacts(),
+        messages: [messageFact({ event_at: enqueuedAt })],
+      },
+    });
+    const stagedDelivery = await staged({ legacySourceOrder: true, message });
+    mockTransport(false, [
+      {
+        FactIdentity: `${stagedDelivery.orgId}\x1fs1\x1fmsg_1`,
+        EventDay: '2026-09-13',
+        DeliverySequence: 1,
+        ContentHash: 'f'.repeat(64),
+        IngestedAt: '2026-09-13 02:00:00.000',
+      },
+    ]);
+
+    await stagedDelivery.host.process(stagedDelivery.reference);
+
+    expect(writes).toEqual([]);
+    expect(await env.AGENT_DELIVERIES.head(stagedDelivery.reference.key)).toBeNull();
+    expect(
+      await env.AGENT_DELIVERIES.head(
+        stagedDelivery.reference.key.replace('agent-deliveries/', 'agent-delivery-rows/'),
+      ),
+    ).toBeNull();
+    expect(
+      await env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${stagedDelivery.orgId}`).getStats({}),
+    ).toMatchObject({ activeDeliveries: 0, incompleteDays: 0 });
+    await runInDurableObject(stagedDelivery.host, async (_instance, state) => {
+      expect(await state.storage.get('receipt')).toMatchObject({
+        phase: 'complete',
+        legacySourceOrder: true,
+      });
+    });
   });
 
   it('rejects tampered queue references before reading or writing facts', async () => {
@@ -293,6 +349,7 @@ describe('bounded delivery durability', () => {
       EventDay: string;
       DeliverySequence: number;
       ContentHash?: string;
+      IngestedAt?: string;
     }[] = [];
     mockTransport(false, identityDays);
     let reservation: { payloadSha256: string; deliverySequence: number } | null = {

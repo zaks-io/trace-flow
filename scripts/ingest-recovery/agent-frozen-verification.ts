@@ -5,7 +5,7 @@ import {
   stableHash,
 } from '../../apps/agent-consumer/src/facts';
 import { CATEGORIES, type Category, type Row } from './agent-data';
-import type { CanonicalHashIndex } from './agent-canonical-index';
+import type { CanonicalHashIndex, CanonicalHashRow } from './agent-canonical-index';
 import type { FrozenSourceMetadata } from './agent-frozen-journal';
 import { normalized, type AgentRecoveryClient } from './agent-transport';
 
@@ -20,6 +20,7 @@ export interface FrozenVerificationCounts {
 
 export interface FrozenVerificationReport extends FrozenVerificationCounts {
   eligibleForLegacyRetirement: boolean;
+  verificationSha256: string;
   byCategory: Record<Category, FrozenVerificationCounts>;
 }
 
@@ -36,6 +37,7 @@ export async function verifyAllFrozenFacts(
 ): Promise<FrozenVerificationReport> {
   if (!index.complete) throw new Error('Canonical hash index export is incomplete');
   const report = emptyReport();
+  const digest = createHash('sha256');
   let after: { category: Category; factId: string } | undefined;
   for (let pageNumber = 0; pageNumber < 100_000; pageNumber++) {
     const page = await recovery.call('listFrozenFacts', { after, limit: 100 });
@@ -43,9 +45,10 @@ export async function verifyAllFrozenFacts(
       throw new Error('Invalid frozen fact page');
     }
     const identities = page.facts.map(validatePageIdentity);
-    if (identities.length > 0) await verifyFrozenPage(recovery, index, identities, report);
+    if (identities.length > 0) await verifyFrozenPage(recovery, index, identities, report, digest);
     if (page.nextAfter === null) {
       report.eligibleForLegacyRetirement = report.missing === 0 && report.conflicts === 0;
+      report.verificationSha256 = digest.digest('hex');
       return report;
     }
     after = validatePageIdentity(page.nextAfter);
@@ -58,6 +61,7 @@ async function verifyFrozenPage(
   index: CanonicalHashIndex,
   identities: Array<{ category: Category; factId: string }>,
   report: FrozenVerificationReport,
+  digest: ReturnType<typeof createHash>,
 ): Promise<void> {
   const inspected = (await recovery.call('inspectFrozenFactSources', {
     facts: identities,
@@ -66,13 +70,13 @@ async function verifyFrozenPage(
   for (const source of inspected) validateMetadata(source);
   const retained = inspected.filter((source) => {
     if (source.eventDay >= index.oldestDay) return true;
-    increment(report, source.category, 'expired');
+    record(report, digest, source, 'expired', null);
     return false;
   });
   for (const sources of sourceBatches(retained)) {
     const present = sources.filter((source) => {
       if (index.get(source.category, source.factId)) return true;
-      increment(report, source.category, 'missing');
+      record(report, digest, source, 'missing', null);
       return false;
     });
     if (present.length === 0) continue;
@@ -84,7 +88,8 @@ async function verifyFrozenPage(
       })),
     })) as FrozenSource[];
     assertExactIdentities(present, frozen);
-    for (const source of frozen) verifySource(index, source, present, report);
+    frozen.sort((left, right) => factKey(left).localeCompare(factKey(right)));
+    for (const source of frozen) verifySource(index, source, present, report, digest);
   }
 }
 
@@ -93,14 +98,15 @@ function verifySource(
   source: FrozenSource,
   metadataRows: FrozenSourceMetadata[],
   report: FrozenVerificationReport,
+  digest: ReturnType<typeof createHash>,
 ): void {
   const metadata = metadataRows.find((row) => factKey(row) === factKey(source));
   const current = index.get(source.category, source.factId);
   const schema = index.sourceSchema(source.category);
+  if (!metadata) throw new Error('Frozen source metadata is missing');
   try {
     const sourceRow = JSON.parse(source.payload) as Row;
     if (
-      !metadata ||
       !current ||
       !schema ||
       source.sourceHash !== metadata.sourceHash ||
@@ -108,21 +114,21 @@ function verifySource(
       factPartitionKey(source.category, sourceRow) !== metadata.eventDay ||
       String(sourceRow.IngestedAt) !== metadata.ingestedAt
     ) {
-      increment(report, source.category, 'conflicts');
+      record(report, digest, metadata, 'conflicts', current);
       return;
     }
     const sourceSha256 = createHash('sha256')
       .update(JSON.stringify(normalized(sourceRow, schema.meta)))
       .digest('hex');
     if (sourceSha256 === current.rowSha256) {
-      increment(report, source.category, 'exactMatches');
+      record(report, digest, metadata, 'exactMatches', current);
     } else if (current.ingestedAtMs > factIngestedAtMs(sourceRow)) {
-      increment(report, source.category, 'safelySuperseded');
+      record(report, digest, metadata, 'safelySuperseded', current);
     } else {
-      increment(report, source.category, 'conflicts');
+      record(report, digest, metadata, 'conflicts', current);
     }
   } catch {
-    increment(report, source.category, 'conflicts');
+    record(report, digest, metadata, 'conflicts', current);
   }
 }
 
@@ -186,6 +192,7 @@ function emptyReport(): FrozenVerificationReport {
   return {
     ...emptyCounts(),
     eligibleForLegacyRetirement: false,
+    verificationSha256: '',
     byCategory: Object.fromEntries(
       CATEGORIES.map((category) => [category, emptyCounts()]),
     ) as Record<Category, FrozenVerificationCounts>,
@@ -201,6 +208,23 @@ function increment(
   report.total++;
   report.byCategory[category][field]++;
   report.byCategory[category].total++;
+}
+
+function record(
+  report: FrozenVerificationReport,
+  digest: ReturnType<typeof createHash>,
+  source: FrozenSourceMetadata,
+  classification: Exclude<keyof FrozenVerificationCounts, 'total'>,
+  current: CanonicalHashRow | null,
+): void {
+  digest.update(
+    `${JSON.stringify({
+      source,
+      classification,
+      canonical: current,
+    })}\n`,
+  );
+  increment(report, source.category, classification);
 }
 
 function factKey(value: { category: Category; factId: string }): string {

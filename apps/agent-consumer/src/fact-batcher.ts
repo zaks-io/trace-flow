@@ -71,6 +71,8 @@ import {
 } from './fact-batcher-helpers';
 export type { AgentFactBatcherStats } from './fact-batcher-helpers';
 import { DlqCleanup } from './dlq-cleanup';
+import { retireFrozenLegacyLedger } from './legacy-ledger-retirement';
+import type { LegacyRetirementProof, LegacyRetirementRecord } from './legacy-retirement';
 
 const BATCH_SIZE = 10_000;
 // Agent dashboards do not need sub-minute ingest visibility; fewer larger inserts reduce part churn.
@@ -97,6 +99,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   private startupFlushPending = false;
   private startupBlockedReason: string | null = null;
   private tinybirdTokenFingerprint = '';
+  private readonly legacyObjectId: string;
   private logger = createLogger({
     service: 'agent-consumer',
     runtime: 'durable-object',
@@ -106,6 +109,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
 
   constructor(state: DurableObjectState, env: AgentConsumerEnv) {
     super(state, env);
+    this.legacyObjectId = state.id.toString();
     this.legacyState = new LegacyIngestionState(state.storage);
     this.recovery = new TinybirdRecoveryStore(state.storage);
     this.maintenance = new AgentFactMaintenance(state.storage, this.recovery, () =>
@@ -118,8 +122,9 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     void this.ctx.blockConcurrencyWhile(async () => {
       if (!this.env.TINYBIRD_TOKEN) throw new Error('TINYBIRD_TOKEN is required');
       this.tinybirdTokenFingerprint = await sha256Hex(this.env.TINYBIRD_TOKEN);
-      await this.legacyState.initialize();
-      if (this.legacyState.isErased()) {
+      const retirement = await this.retirementCoordinator().getLegacyRetirement({});
+      await this.legacyState.initialize(retirement);
+      if (this.legacyState.isErased() || this.legacyState.isRetired()) {
         this.startupRecoveryPending = false;
         this.startupFlushPending = false;
         return;
@@ -678,6 +683,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   }
 
   async freezeIngestionMigration(migrationId: string): Promise<{ migrationId: string }> {
+    this.legacyState.assertNotErasing();
     this.maintenance.assertUnlocked();
     const result = await this.legacyState.freeze({
       migrationId,
@@ -730,9 +736,26 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     return result;
   }
 
+  async retireFrozenLedger(
+    orgId: string,
+    input: LegacyRetirementProof,
+  ): Promise<LegacyRetirementRecord> {
+    return retireFrozenLegacyLedger(orgId, input, {
+      storage: this.ctx.storage,
+      coordinators: this.env.AGENT_DELIVERY_COORDINATOR,
+      legacyObjectId: this.legacyObjectId,
+      legacyState: this.legacyState,
+      flushInProgress: this.flushInProgress,
+      assertMaintenanceUnlocked: () => this.maintenance.assertUnlocked(),
+      pendingRows: () => this.countPendingRows(),
+      blockedRows: () => this.recovery.countBlockedRows(),
+      blockedRecords: () => this.recovery.countBlockedRecords(),
+    });
+  }
+
   getIngestionMigrationState() {
     const state = this.legacyState.getState();
-    if (state.erasureState === 'erased') {
+    if (state.erasureState === 'erased' || state.retirement !== null) {
       return {
         ...state,
         queuedRows: 0,
@@ -751,7 +774,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   }
 
   getStats(): AgentFactBatcherStats {
-    if (this.legacyState.isErased()) {
+    if (this.legacyState.isErased() || this.legacyState.isRetired()) {
       return { queuedRows: 0, blockedRecoveryRows: 0, blockedRecoveryRecords: 0 };
     }
     this.ensureStartupRecovery();
@@ -998,6 +1021,10 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     if (this.flushInProgress || this.flushAlarmScheduled) {
       throw new Error('fact repair compaction requires a quiescent batcher');
     }
+  }
+
+  private retirementCoordinator() {
+    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(`retirement:${this.legacyObjectId}`);
   }
 }
 

@@ -27,6 +27,7 @@ interface DeliveryState {
   reference: AgentDeliveryStagedReference;
   days: string[];
   inputFormat: 'queue' | 'priced';
+  legacySourceOrder?: true;
   canonicalProof?: ExpectedCanonicalFact[];
   revision?: number;
   rowsSha256?: string;
@@ -44,8 +45,20 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     return result;
   }
 
-  register(reference: AgentDeliveryStagedReference, days: string[]): Promise<number> {
-    return this.exclusive(() => this.registerInner(reference, days, 'queue'));
+  register(
+    reference: AgentDeliveryStagedReference,
+    days: string[],
+    options?: { legacySourceOrder?: boolean },
+  ): Promise<number> {
+    if (
+      options?.legacySourceOrder !== undefined &&
+      typeof options.legacySourceOrder !== 'boolean'
+    ) {
+      throw new Error('Invalid delivery registration options');
+    }
+    return this.exclusive(() =>
+      this.registerInner(reference, days, 'queue', undefined, options?.legacySourceOrder === true),
+    );
   }
 
   registerPricedRecovery(
@@ -64,6 +77,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     days: string[],
     inputFormat: DeliveryState['inputFormat'],
     canonicalProof?: ExpectedCanonicalFact[],
+    legacySourceOrder = false,
   ): Promise<number> {
     if (validateAgentDeliveryStagedReference(reference))
       throw new Error('Invalid delivery registration');
@@ -74,7 +88,8 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
         JSON.stringify(state.reference) !== JSON.stringify(reference) ||
         JSON.stringify(state.days) !== JSON.stringify(days) ||
         state.inputFormat !== inputFormat ||
-        JSON.stringify(state.canonicalProof) !== JSON.stringify(canonicalProof)
+        JSON.stringify(state.canonicalProof) !== JSON.stringify(canonicalProof) ||
+        (state.legacySourceOrder === true) !== legacySourceOrder
       ) {
         throw new Error('Delivery registration conflict');
       }
@@ -85,6 +100,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
         days,
         inputFormat,
         ...(canonicalProof ? { canonicalProof } : {}),
+        ...(legacySourceOrder ? { legacySourceOrder: true as const } : {}),
         categories: {},
         phase: 'registered',
       };
@@ -156,7 +172,9 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
           await assertExpectedCanonicalFacts(this.env, priced, state.canonicalProof);
           canonicalProofChecked = true;
         }
-        await prepareDeliveryPartitions(this.env, priced);
+        await prepareDeliveryPartitions(this.env, priced, {
+          legacySourceOrder: state.legacySourceOrder === true,
+        });
         state.rowsSha256 = await storeDeliveryRows(this.env, rowsKey, priced);
         await this.ctx.storage.put('receipt', state);
       }
@@ -169,17 +187,18 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
       if (state.canonicalProof && !canonicalProofChecked) {
         await assertExpectedCanonicalFacts(this.env, delivery, state.canonicalProof);
       }
-      if (reservation)
+      const dirtyDays = [
+        ...new Set(
+          CATEGORIES.flatMap((category) =>
+            delivery.rows[category].map((row) => factPartitionKey(category, row)),
+          ),
+        ),
+      ].sort();
+      if (reservation && dirtyDays.length > 0)
         await coordinator.expandDirtyDays({
           deliveryId: reference.key,
           payloadSha256: reference.sha256,
-          dirtyDays: [
-            ...new Set(
-              CATEGORIES.flatMap((category) =>
-                delivery.rows[category].map((row) => factPartitionKey(category, row)),
-              ),
-            ),
-          ].sort(),
+          dirtyDays,
         });
       const links = deliveryPartitionLinks(delivery);
       if (reservation && links.length > 0)
@@ -250,6 +269,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
           state.days,
           state.inputFormat,
           state.canonicalProof,
+          state.legacySourceOrder === true,
         ));
       await this.env.AGENT_QUEUE.send({ ...state.reference, delivery_revision: revision });
     });

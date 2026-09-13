@@ -69,7 +69,19 @@ describe('superseded snapshot cleanup', () => {
     );
     expect(deletes[0]!.condition).not.toContain('2026-09-12');
     expect(deletes[9]!.condition).toContain(
-      "SnapshotGeneration < 10 AND hasAll(['2026-09-10'], SnapshotDays)",
+      "arrayAll(day -> ((day = toDate('2026-09-10') AND SnapshotGeneration < 10)), SnapshotDays)",
+    );
+    expect(deletes[9]!.condition).not.toContain('2026-09-12');
+  });
+
+  it('uses each day generation so a quiet baseline day does not prevent hot-day cleanup', async () => {
+    const { deletes } = transport([
+      { ...old, SnapshotDay: '2026-09-01', SnapshotGeneration: 1 },
+      { ...old, SnapshotDay: '2026-09-12', SnapshotGeneration: 3 },
+    ]);
+    await cleanupAgentSnapshots(env, 'org', undefined, undefined);
+    expect(deletes[9]!.condition).toBe(
+      "OrgId = 'org' AND notEmpty(SnapshotDays) AND arrayAll(day -> ((day = toDate('2026-09-01') AND SnapshotGeneration < 1) OR (day = toDate('2026-09-12') AND SnapshotGeneration < 3)), SnapshotDays)",
     );
   });
 

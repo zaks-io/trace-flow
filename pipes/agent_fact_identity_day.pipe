@@ -4,7 +4,7 @@ DESCRIPTION >
 NODE endpoint
 SQL >
     %
-    SELECT FactIdentity, EventDay, DeliverySequence, ContentHash
+    SELECT FactIdentity, EventDay, DeliverySequence, ContentHash, IngestedAt
     FROM agent_fact_identity_days FINAL
     WHERE OrgId = {{ String(org_id) }}
       AND Category = {{ String(category) }}

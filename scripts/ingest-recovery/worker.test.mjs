@@ -122,6 +122,36 @@ test('fact rebuild methods require agent pipeline and explicit mutation confirma
   assert.equal(calls, 1);
 });
 
+test('legacy retirement requires explicit mutation confirmation', async () => {
+  const calls = [];
+  const env = {
+    AGENT_RECOVERY: {
+      retireFrozenLedger: async (orgId, proof) => {
+        calls.push([orgId, proof]);
+        return { ...proof, state: 'complete', completedAtMs: 1 };
+      },
+    },
+  };
+  const options = {
+    verificationSha256: 'a'.repeat(64),
+    migrationProofSha256: 'b'.repeat(64),
+    deliverySequence: 42,
+    oldestDay: '2025-09-14',
+    todayDay: '2026-09-13',
+    frozenFactCount: 9,
+  };
+  const body = { pipeline: 'agent', shardId: 'org-1', options };
+
+  assert.equal((await worker.fetch(request('retireFrozenLedger', body), env)).status, 400);
+  assert.equal(calls.length, 0);
+  assert.equal(
+    (await worker.fetch(request('retireFrozenLedger', { ...body, confirm: 'apply-recovery' }), env))
+      .status,
+    200,
+  );
+  assert.deepEqual(calls, [['org-1', options]]);
+});
+
 test('persists the baseline migration window only through a confirmed agent mutation', async () => {
   const calls = [];
   const env = {
