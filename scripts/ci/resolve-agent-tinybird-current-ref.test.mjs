@@ -41,6 +41,17 @@ function fetchFixture({
       const status = /\/deployments\/(\d+)\/statuses$/.exec(url.pathname);
       return Response.json(status ? (statuses[status[1]] ?? []) : deployments);
     }
+    if (url.pathname === '/v0/tokens') {
+      return Response.json({
+        tokens: [
+          {
+            token: 'tinybird-secret',
+            scopes: [{ type: 'ADMIN' }],
+          },
+        ],
+      });
+    }
+    if (url.pathname === '/v1/workspace') return Response.json({ name: 'trace_flow_prod' });
     return Response.json({ pipes: [{ name: 'agent_usage', content: live }] });
   };
   return { calls, fetchImpl };
@@ -54,6 +65,7 @@ function options(fetchImpl, git, extra = {}) {
     githubToken: 'github-secret',
     tinybirdHost: 'https://api.tinybird.test',
     tinybirdToken: 'tinybird-secret',
+    tinybirdWorkspace: 'trace_flow_prod',
     ...extra,
   };
 }
@@ -109,7 +121,48 @@ describe('Agent Tinybird current ref resolution', () => {
     );
 
     expect(result).toMatchObject({ ref: MANUAL, source: 'manual input' });
-    expect(calls.map(({ url }) => url.hostname)).toEqual(['api.tinybird.test']);
+    expect(calls.map(({ url }) => url.hostname)).toEqual([
+      'api.tinybird.test',
+      'api.tinybird.test',
+      'api.tinybird.test',
+    ]);
+  });
+
+  test('fails before live comparison when the credential is deploy-only', async () => {
+    const { fetchImpl: baseFetch } = fetchFixture();
+    const fetchImpl = async (input, init) => {
+      const url = new URL(input);
+      if (url.pathname === '/v0/tokens') {
+        return Response.json({
+          tokens: [
+            {
+              token: 'tinybird-secret',
+              scopes: [{ type: 'WORKSPACE:DEPLOY' }],
+            },
+          ],
+        });
+      }
+      return baseFetch(input, init);
+    };
+    await expect(
+      resolveAgentTinybirdCurrentRef(
+        options(fetchImpl, gitFixture({ [INITIAL]: 'NODE endpoint\nSQL select 1\n' })),
+      ),
+    ).rejects.toThrow('Tinybird operator credential must be an ADMIN token');
+  });
+
+  test('fails before live comparison when the operator resolves to another workspace', async () => {
+    const { fetchImpl: baseFetch } = fetchFixture();
+    const fetchImpl = async (input, init) => {
+      const url = new URL(input);
+      if (url.pathname === '/v1/workspace') return Response.json({ name: 'another_workspace' });
+      return baseFetch(input, init);
+    };
+    await expect(
+      resolveAgentTinybirdCurrentRef(
+        options(fetchImpl, gitFixture({ [INITIAL]: 'NODE endpoint\nSQL select 1\n' })),
+      ),
+    ).rejects.toThrow('Tinybird operator credential resolved to the wrong workspace');
   });
 
   test('fails closed when the nominated commit does not match a live endpoint', async () => {

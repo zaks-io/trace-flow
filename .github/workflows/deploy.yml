@@ -45,8 +45,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           REQUESTED_CURRENT_REF: ${{ inputs.agent_delivery_current_ref }}
-          TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
+          TB_TOKEN: ${{ secrets.TINYBIRD_OPERATOR_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
+          TB_TARGET_WORKSPACE: trace_flow_prod
         run: |
           current_ref="$(bun scripts/ci/resolve-agent-tinybird-current-ref.mjs)"
           echo "current_ref=$current_ref" >> "$GITHUB_OUTPUT"
@@ -355,7 +356,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           BODY_ENCRYPTION_ROOT_KEY: ${{ secrets.AGENT_DELIVERY_ENCRYPTION_ROOT_KEY }}
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-          TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
+          TB_TOKEN: ${{ secrets.TINYBIRD_OPERATOR_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
 
   deploy-proxy-consumer:
@@ -618,7 +619,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-          TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
+          TB_TOKEN: ${{ secrets.TINYBIRD_OPERATOR_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
           TINYBIRD_CURRENT_REF: ${{ needs.agent-delivery-current-ref.outputs.current_ref }}
 
@@ -664,8 +665,9 @@ jobs:
       - name: Verify switched endpoint definitions
         env:
           REQUESTED_CURRENT_REF: ${{ github.sha }}
-          TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
+          TB_TOKEN: ${{ secrets.TINYBIRD_OPERATOR_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
+          TB_TARGET_WORKSPACE: trace_flow_prod
         run: |
           deployed_ref="$(bun scripts/ci/resolve-agent-tinybird-current-ref.mjs)"
           test "$deployed_ref" = "$REQUESTED_CURRENT_REF"
@@ -734,7 +736,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-          TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
+          TB_TOKEN: ${{ secrets.TINYBIRD_OPERATOR_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
           TINYBIRD_CURRENT_REF: ${{ needs.agent-delivery-current-ref.outputs.current_ref }}
 

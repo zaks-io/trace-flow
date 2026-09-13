@@ -168,11 +168,13 @@ run` (the `tests/*.yaml` fixture/output tests, offline against a `tinybirdco/tin
   — so clean schema exists before any consumer ships the new shape. The automatic merge deploy does not
   delete legacy Tinybird resources.
 
-The cloud steps authenticate headless via the `TINYBIRD_DEPLOY_TOKEN` repo secret (also exposed to the
-Production environment), a `WORKSPACE:DEPLOY`-scoped token — never the append-only `TINYBIRD_TOKEN` the
-consumer uses, and never on the client/collector path. The token resolves to `trace_flow_prod`; the
-script refuses to deploy anywhere else. The local build/test steps need no token. When adding or
-changing a pipe, add a matching `tests/<pipe>.yaml` so the PR gate verifies its output.
+Schema deployment authenticates via the `TINYBIRD_DEPLOY_TOKEN` repo secret, which has only the
+`WORKSPACE:DEPLOY` scope. Trusted migration, token provisioning, and live-definition proof jobs use a
+separate non-personal `TINYBIRD_OPERATOR_TOKEN` with the `ADMIN` scope. Neither credential is the
+append-only `TINYBIRD_TOKEN` used by the consumer or is exposed on a client/collector path. The live
+definition proof checks that the operator credential resolves to `trace_flow_prod` before allowing
+the deployment workflow to continue. The local build/test steps need no token. When adding or changing
+a pipe, add a matching `tests/<pipe>.yaml` so the PR gate verifies its output.
 
 ### Tinybird cost-refactor rollout
 
