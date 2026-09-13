@@ -1,0 +1,25 @@
+DESCRIPTION >
+    Latest atomically published generation for each retained day of one organization.
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        SnapshotDay,
+        max(manifest_generation) AS SnapshotGeneration,
+        argMax(PublishedAt, manifest_generation) AS PublishedAt
+    FROM (
+        SELECT SnapshotDays, SnapshotGeneration AS manifest_generation, PublishedAt
+        FROM agent_snapshot_manifest
+        WHERE OrgId = {{ String(org_id) }}
+    )
+    ARRAY JOIN SnapshotDays AS SnapshotDay
+    WHERE SnapshotDay >= {{ Date(oldest_day) }}
+      AND SnapshotDay <= {{ Date(today_day) }}
+    GROUP BY SnapshotDay
+    ORDER BY SnapshotDay
+    LIMIT 367
+
+TYPE ENDPOINT
+
+TOKEN agent_snapshot_worker READ

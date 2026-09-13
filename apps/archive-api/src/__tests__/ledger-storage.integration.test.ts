@@ -1,10 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  createExecutionContext,
   runInDurableObject,
-  waitOnExecutionContext,
   decryptArchiveObject,
-  sha256Hex,
   unwrapArchiveEncryptionKey,
   MAX_CHUNK_BYTES,
   canonicalElement,
@@ -14,9 +11,6 @@ import {
   commitArchiveSession,
   ARCHIVE_STORAGE_CAP_BYTES,
   readPendingIntent,
-  agentIngestApp,
-  __resetPolicyCache,
-  agentIngestEnvelope,
   WRAPPING_SECRET,
   KEY_VERSION,
   runtimeEnv,
@@ -41,7 +35,6 @@ import type {
   ArchiveUploadRequest,
   StoredRecord,
   ArchiveApiEnv,
-  AgentIngestEnv,
   StorageBudget,
 } from './ledger.integration.fixtures';
 import { ACTIVATION_ID, FakeArchiveCustody, installCustody } from './key-rotation-custody-fixture';
@@ -385,97 +378,7 @@ describe('Archive Session Ledger', () => {
     ]);
     expect(pendingIntents).toHaveLength(0);
 
-    __resetPolicyCache();
-    const collectorSecret = 'archive-cap-fact-ingest-secret';
-    const collectorKey = `collector:${await sha256Hex(collectorSecret)}`;
-    const queueSend = vi.fn(async () => {});
-    const agentEnv = {
-      COLLECTOR_CREDS: {
-        get: async (key: string) =>
-          key === collectorKey
-            ? JSON.stringify({
-                orgId: currentScope.orgId,
-                userId: currentScope.userId,
-                collectorId: 'collector-1',
-                expiresAt: Date.now() + 60_000,
-                status: 'active',
-                createdAt: Date.now(),
-              })
-            : null,
-      },
-      AGENT_QUEUE: { sendBatch: queueSend },
-      AGENT_INGEST_LIMITER: { limit: async () => ({ success: true }) },
-      CONVEX_SITE_URL: 'https://agent-convex.test',
-      AGENT_INGEST_SHARED_SECRET: 'agent-shared-secret',
-    } as unknown as AgentIngestEnv;
-    const previousFetch = globalThis.fetch;
-    const agentFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const request = new Request(input, init);
-      const url = new URL(request.url);
-      if (
-        request.method === 'GET' &&
-        url.origin === 'https://agent-convex.test' &&
-        url.pathname === '/agent-ingest/compatibility-policy'
-      ) {
-        return new Response(
-          JSON.stringify({
-            minDesktopVersion: '1.0.0',
-            minParserVersion: '1.0.0',
-            denylistedVersions: [],
-            updatedAt: Date.now(),
-          }),
-          { status: 200 },
-        );
-      }
-      if (
-        request.method === 'POST' &&
-        url.origin === 'https://agent-convex.test' &&
-        url.pathname === '/agent-ingest/claim-sessions'
-      ) {
-        const body = await request.json();
-        if (
-          typeof body !== 'object' ||
-          body === null ||
-          !('sessionPks' in body) ||
-          !Array.isArray(body.sessionPks) ||
-          !body.sessionPks.every((value): value is string => typeof value === 'string')
-        ) {
-          throw new Error('claim request malformed');
-        }
-        return new Response(
-          JSON.stringify({
-            results: body.sessionPks.map((sessionPk) => ({
-              sessionPk,
-              status: 'claimed',
-              ownerUserId: currentScope.userId,
-            })),
-          }),
-          { status: 200 },
-        );
-      }
-      return previousFetch(input, init);
-    });
-    try {
-      const ingestContext = createExecutionContext();
-      const ingestResponse = await agentIngestApp.fetch(
-        new Request('https://agent.test/v1/ingest', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Trace-Flow-Collector-Secret': collectorSecret,
-          },
-          body: JSON.stringify(agentIngestEnvelope()),
-        }),
-        agentEnv,
-        ingestContext,
-      );
-      await waitOnExecutionContext(ingestContext);
-      expect(ingestResponse.status).toBe(202);
-      expect(await ingestResponse.json()).toMatchObject({ accepted: true, sessions: 1 });
-      expect(queueSend).toHaveBeenCalledTimes(1);
-    } finally {
-      agentFetch.mockRestore();
-    }
+    await expectAgentFactSyncAccepted(currentScope, 'archive-cap-fact-ingest-secret');
     const outbox = await runInDurableObject(budgetStub, (_instance, state) => [
       ...state.storage.sql.exec<{ payload: string }>(
         'SELECT payload FROM storage_budget_status_outbox WHERE id = 1',

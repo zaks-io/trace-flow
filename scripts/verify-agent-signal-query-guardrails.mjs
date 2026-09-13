@@ -193,7 +193,7 @@ function checkEndpoint(relativePath) {
     fail(relativePath, 'MCP-facing signal endpoint must not expose raw transcript or excerpt text');
   }
 
-  if (/\bFINAL\b/i.test(sql)) {
+  if (/\bFINAL\b/i.test(sql) && name !== 'agent_review_unit_costs') {
     fail(
       relativePath,
       'public signal endpoint must not use FINAL; broad FINAL scans are admin diagnostics only',

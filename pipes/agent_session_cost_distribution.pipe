@@ -3,7 +3,7 @@ DESCRIPTION >
     is one data point; the endpoint reports the spend skew (how concentrated cost is in a few
     conversations), cost-per-conversation percentiles, and a parallel token distribution so the
     UI can toggle the axis between cost (default) and tokens. Message counts are deliberately
-    NOT a headline unit. Reads the incremental session serving table only and merges aggregate
+    NOT a headline unit. Reads the generation-published session serving table and merges aggregate
     states by (OrgId, session_pk) via GROUP BY on the hot path (mirrors agent_sessions_browser).
 
 NODE sessions
@@ -42,7 +42,7 @@ SQL >
             input_tokens + output_tokens + reasoning_tokens AS generated_tokens,
             round(sumMerge(CostUsd), 6) AS cost_usd,
             maxMerge(LastEventAt) AS last_event_at
-        FROM agent_session_summaries
+        FROM agent_session_summaries_published
         WHERE OrgId = {{ String(org_id, '') }}
         GROUP BY session_pk
     )
@@ -62,239 +62,110 @@ SQL >
 
 NODE distribution
 SQL >
-    -- Per-conversation distribution per period. Histogram buckets are EQUAL-FREQUENCY
-    -- (decile-edged), not fixed dollar tiers: edges come from the data's own quantiles so a
-    -- long, skewed tail (a few very pricey conversations) is resolved into several buckets
-    -- instead of one open-ended catch-all. quantileExact (not the sampling `quantile`) keeps
-    -- the edges exact and deterministic, matching the p50/p90/p95 already computed here.
-    --
-    -- `*_edges` is the distinct, ascending boundary list [min, q10..q90, max]; arrayDistinct
-    -- collapses degenerate deciles (e.g. many identical near-$0 costs), so there are AT MOST 10
-    -- buckets and never a zero-width/empty one. Bucket i spans (edges[i] .. edges[i+1]] with the
-    -- first bucket inclusive of the min. Count and summed magnitude are computed array-side over
-    -- the collected per-conversation values (`*_vals`) so the per-bucket aggregation stays single
-    -- pass. The client zips lo/hi/count/sum into bars and plots the SUM (where the money goes).
-    SELECT
-        period,
-        count() AS session_count,
-        sum(generated_tokens) AS total_generated_tokens,
-        sum(cache_inclusive_tokens) AS total_cache_inclusive_tokens,
-        round(sum(cost_usd), 6) AS total_cost_usd,
-
-        round(quantileExact(0.5)(cost_usd), 6) AS cost_p50,
-        round(quantileExact(0.9)(cost_usd), 6) AS cost_p90,
-        round(quantileExact(0.95)(cost_usd), 6) AS cost_p95,
-        round(max(cost_usd), 6) AS cost_max,
-
-        round(quantileExact(0.5)(generated_tokens), 0) AS generated_tokens_p50,
-        round(quantileExact(0.9)(generated_tokens), 0) AS generated_tokens_p90,
-        round(quantileExact(0.95)(generated_tokens), 0) AS generated_tokens_p95,
-        max(generated_tokens) AS generated_tokens_max,
-
-        round(quantileExact(0.5)(cache_inclusive_tokens), 0) AS cache_inclusive_tokens_p50,
-        round(quantileExact(0.9)(cache_inclusive_tokens), 0) AS cache_inclusive_tokens_p90,
-        round(quantileExact(0.95)(cache_inclusive_tokens), 0) AS cache_inclusive_tokens_p95,
-        max(cache_inclusive_tokens) AS cache_inclusive_tokens_max,
-
-        -- Per-conversation values + decile edges; the `buckets` node turns these into bars.
-        -- arrayDistinct collapses degenerate deciles so there are AT MOST 10 edges and never a
-        -- zero-width bucket. Edges are [min, q10..q90, max], ascending.
-        arraySort(groupArray(cost_usd)) AS cost_vals,
-        arrayDistinct(
-            arrayConcat(
-                [arrayElement(cost_vals, 1)],
-                arrayMap(q -> round(q, 6), quantilesExact(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)(cost_usd)),
-                [arrayElement(cost_vals, length(cost_vals))]
-            )
-        ) AS cost_edges,
-        arraySort(groupArray(generated_tokens)) AS token_vals,
-        arrayDistinct(
-            arrayConcat(
-                [arrayElement(token_vals, 1)],
-                quantilesExact(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)(generated_tokens),
-                [arrayElement(token_vals, length(token_vals))]
-            )
-        ) AS token_edges
-    FROM sessions
-    GROUP BY period
-
-NODE buckets
-SQL >
-    -- Turn the per-conversation value arrays + decile edges into drawable bars. Bucket i spans
-    -- (edges[i] .. edges[i+1]] with the first bucket inclusive of the minimum. Count and summed
-    -- magnitude are derived array-side over the collected values — no extra scan. The client zips
-    -- lo/hi/count/sum into bars and plots the SUM (where the money goes), so equal-frequency
-    -- buckets still read as "which cost ranges hold the dollars".
-    SELECT
-        period,
-        arraySlice(cost_edges, 1, length(cost_edges) - 1) AS cost_bucket_lo,
-        arraySlice(cost_edges, 2, length(cost_edges) - 1) AS cost_bucket_hi,
-        arrayMap(
-            i -> toUInt64(length(arrayFilter(
-                v -> (i = 1 OR v > arrayElement(cost_edges, i)) AND v <= arrayElement(cost_edges, i + 1),
-                cost_vals
-            ))),
-            range(1, length(cost_edges))
-        ) AS cost_bucket_count,
-        arrayMap(
-            i -> round(arraySum(arrayFilter(
-                v -> (i = 1 OR v > arrayElement(cost_edges, i)) AND v <= arrayElement(cost_edges, i + 1),
-                cost_vals
-            )), 6),
-            range(1, length(cost_edges))
-        ) AS cost_bucket_sum,
-        arraySlice(token_edges, 1, length(token_edges) - 1) AS token_bucket_lo,
-        arraySlice(token_edges, 2, length(token_edges) - 1) AS token_bucket_hi,
-        arrayMap(
-            i -> toUInt64(length(arrayFilter(
-                v -> (i = 1 OR v > arrayElement(token_edges, i)) AND v <= arrayElement(token_edges, i + 1),
-                token_vals
-            ))),
-            range(1, length(token_edges))
-        ) AS token_bucket_count,
-        arrayMap(
-            i -> toUInt64(arraySum(arrayFilter(
-                v -> (i = 1 OR v > arrayElement(token_edges, i)) AND v <= arrayElement(token_edges, i + 1),
-                token_vals
-            ))),
-            range(1, length(token_edges))
-        ) AS token_bucket_sum
-    FROM distribution
-
-NODE ranked
-SQL >
-    SELECT
-        period,
-        cost_usd,
-        row_number() OVER (PARTITION BY period ORDER BY cost_usd DESC) AS cost_rank
-    FROM sessions
-
-NODE concentration
-SQL >
-    SELECT
-        r.period AS period,
-        d.session_count AS session_count,
-        d.total_cost_usd AS total_cost_usd,
-        round(sumIf(r.cost_usd, r.cost_rank <= greatest(1, toUInt64(ceil(d.session_count * 0.1)))), 6) AS top_10pct_cost_usd,
-        sumIf(1, r.cost_rank <= greatest(1, toUInt64(ceil(d.session_count * 0.1)))) AS top_10pct_session_count
-    FROM ranked AS r
-    INNER JOIN distribution AS d ON r.period = d.period
-    GROUP BY r.period, d.session_count, d.total_cost_usd
-
-NODE curve
-SQL >
-    -- Bin-free concentration (Lorenz) shape for the CURRENT window. Everything here is derived
-    -- from the per-conversation cost array alone — no chosen dollar or percentile cutpoints.
-    -- costs_desc: conversation costs sorted priciest-first. cum: cumulative spend down that order.
-    -- The curve is (cumulative conversation share, cumulative spend share); Gini is the area
-    -- between it and the even-spend diagonal; half_spend_conv_count is the smallest number of
-    -- conversations that already carry half of total spend. P caps drawing resolution only.
-    --
-    -- Gini uses the n/(n-1) SAMPLE bias correction (ADR 0021 §Concentration), not the biased
-    -- "population" form: the n^2 denominator counts n zero self-pairs, biasing the estimate
-    -- downward (looks more equal) worst at small n. Without the correction a small repo/window
-    -- looks artificially less concentrated than a large one purely from n, so cross-cohort
-    -- comparison lies. The correction is undefined at n=1 (single conversation = no inequality),
-    -- which collapses to 0.
+    -- Build both periods from one session scan. Current-period arrays also drive the
+    -- histograms and concentration metrics, so no result branch re-reads session states.
     WITH
         100 AS P,
-        arraySort(x -> -x, groupArray(cost_usd)) AS costs_desc,
-        arraySort(groupArray(cost_usd)) AS costs_asc,
-        length(costs_desc) AS n,
-        arrayCumSum(costs_desc) AS cum,
-        if(n = 0, 0., cum[n]) AS total_cost,
+        arraySort(groupArrayIf(cost_usd, period = 'current')) AS cost_vals,
+        arraySort(groupArrayIf(generated_tokens, period = 'current')) AS token_vals,
+        arrayReverse(cost_vals) AS costs_desc,
+        arrayCumSum(costs_desc) AS cumulative_cost,
+        length(cost_vals) AS n,
+        if(n = 0, 0., cumulative_cost[n]) AS total_cost,
+        if(
+            n = 0,
+            [],
+            arrayDistinct(arrayConcat(
+                [cost_vals[1]],
+                arrayMap(q -> round(q, 6), quantilesExactIf(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)(cost_usd, period = 'current')),
+                [cost_vals[n]]
+            ))
+        ) AS cost_edges,
+        if(
+            n = 0,
+            [],
+            arrayDistinct(arrayConcat(
+                [token_vals[1]],
+                quantilesExactIf(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)(generated_tokens, period = 'current'),
+                [token_vals[n]]
+            ))
+        ) AS token_edges,
         least(n, P) AS num_points,
-        -- Even-stride sample ranks across 0..n, deduped, so the drawn curve never exceeds P+1 points
-        -- but always spans the full (0,0)->(1,1) range. When n <= P every rank is kept (round is the
-        -- identity); above P it thins by even stride. The exact half-spend rank is unioned in so the
-        -- labelled crossing point is precise, not interpolated.
+        if(n = 0, toUInt64(0), toUInt64(greatest(1, ceil(n * 0.1)))) AS top_count,
         if(
             n = 0,
             [0],
-            arraySort(
-                arrayDistinct(
-                    arrayConcat(
-                        arrayMap(k -> toUInt64(round(k * n / num_points)), range(0, num_points + 1)),
-                        [if(total_cost = 0, 0, arrayFirstIndex(s -> s >= total_cost / 2, cum))]
-                    )
-                )
-            )
+            arraySort(arrayDistinct(arrayConcat(
+                arrayMap(k -> toUInt64(round(k * n / num_points)), range(0, num_points + 1)),
+                [if(total_cost = 0, 0, arrayFirstIndex(value -> value >= total_cost / 2, cumulative_cost))]
+            )))
         ) AS sample_ranks
     SELECT
-        'current' AS period,
-        if(n <= 1 OR total_cost = 0, 0., greatest(0., least(1., (1. - 2. * arraySum(arrayMap((x, i) -> x * (n - i + 0.5), costs_asc, arrayEnumerate(costs_asc))) / (n * total_cost)) * n / (n - 1)))) AS gini,
-        if(total_cost = 0, toUInt64(0), toUInt64(arrayFirstIndex(s -> s >= total_cost / 2, cum))) AS half_spend_conv_count,
-        arrayMap(rk -> if(n = 0, 0., rk / n), sample_ranks) AS lorenz_conv_pct,
-        arrayMap(rk -> if(rk = 0 OR total_cost = 0, 0., cum[rk] / total_cost), sample_ranks) AS lorenz_cost_pct
+        toUInt64(countIf(period = 'current')) AS session_count,
+        toUInt64(countIf(period = 'prior')) AS prior_session_count,
+        sumIf(generated_tokens, period = 'current') AS total_generated_tokens,
+        sumIf(generated_tokens, period = 'prior') AS prior_total_generated_tokens,
+        sumIf(cache_inclusive_tokens, period = 'current') AS total_cache_inclusive_tokens,
+        sumIf(cache_inclusive_tokens, period = 'prior') AS prior_total_cache_inclusive_tokens,
+        round(sumIf(cost_usd, period = 'current'), 6) AS total_cost_usd,
+        round(sumIf(cost_usd, period = 'prior'), 6) AS prior_total_cost_usd,
+        if(n = 0, 0., round(quantileExactIf(0.5)(cost_usd, period = 'current'), 6)) AS cost_p50,
+        if(prior_session_count = 0, 0., round(quantileExactIf(0.5)(cost_usd, period = 'prior'), 6)) AS prior_cost_p50,
+        if(n = 0, 0., round(quantileExactIf(0.9)(cost_usd, period = 'current'), 6)) AS cost_p90,
+        if(prior_session_count = 0, 0., round(quantileExactIf(0.9)(cost_usd, period = 'prior'), 6)) AS prior_cost_p90,
+        if(n = 0, 0., round(quantileExactIf(0.95)(cost_usd, period = 'current'), 6)) AS cost_p95,
+        if(prior_session_count = 0, 0., round(quantileExactIf(0.95)(cost_usd, period = 'prior'), 6)) AS prior_cost_p95,
+        if(n = 0, 0., round(maxIf(cost_usd, period = 'current'), 6)) AS cost_max,
+        if(prior_session_count = 0, 0., round(maxIf(cost_usd, period = 'prior'), 6)) AS prior_cost_max,
+        if(n = 0, 0, round(quantileExactIf(0.5)(generated_tokens, period = 'current'), 0)) AS generated_tokens_p50,
+        if(prior_session_count = 0, 0, round(quantileExactIf(0.5)(generated_tokens, period = 'prior'), 0)) AS prior_generated_tokens_p50,
+        if(n = 0, 0, round(quantileExactIf(0.9)(generated_tokens, period = 'current'), 0)) AS generated_tokens_p90,
+        if(prior_session_count = 0, 0, round(quantileExactIf(0.9)(generated_tokens, period = 'prior'), 0)) AS prior_generated_tokens_p90,
+        if(n = 0, 0, round(quantileExactIf(0.95)(generated_tokens, period = 'current'), 0)) AS generated_tokens_p95,
+        if(prior_session_count = 0, 0, round(quantileExactIf(0.95)(generated_tokens, period = 'prior'), 0)) AS prior_generated_tokens_p95,
+        if(n = 0, 0, maxIf(generated_tokens, period = 'current')) AS generated_tokens_max,
+        if(prior_session_count = 0, 0, maxIf(generated_tokens, period = 'prior')) AS prior_generated_tokens_max,
+        if(n = 0, 0, round(quantileExactIf(0.5)(cache_inclusive_tokens, period = 'current'), 0)) AS cache_inclusive_tokens_p50,
+        if(prior_session_count = 0, 0, round(quantileExactIf(0.5)(cache_inclusive_tokens, period = 'prior'), 0)) AS prior_cache_inclusive_tokens_p50,
+        if(n = 0, 0, round(quantileExactIf(0.9)(cache_inclusive_tokens, period = 'current'), 0)) AS cache_inclusive_tokens_p90,
+        if(prior_session_count = 0, 0, round(quantileExactIf(0.9)(cache_inclusive_tokens, period = 'prior'), 0)) AS prior_cache_inclusive_tokens_p90,
+        if(n = 0, 0, round(quantileExactIf(0.95)(cache_inclusive_tokens, period = 'current'), 0)) AS cache_inclusive_tokens_p95,
+        if(prior_session_count = 0, 0, round(quantileExactIf(0.95)(cache_inclusive_tokens, period = 'prior'), 0)) AS prior_cache_inclusive_tokens_p95,
+        if(n = 0, 0, maxIf(cache_inclusive_tokens, period = 'current')) AS cache_inclusive_tokens_max,
+        if(prior_session_count = 0, 0, maxIf(cache_inclusive_tokens, period = 'prior')) AS prior_cache_inclusive_tokens_max,
+        arraySlice(cost_edges, 1, length(cost_edges) - 1) AS cost_bucket_lo,
+        arraySlice(cost_edges, 2, length(cost_edges) - 1) AS cost_bucket_hi,
+        arrayMap(i -> toUInt64(length(arrayFilter(
+            value -> (i = 1 OR value > cost_edges[i]) AND value <= cost_edges[i + 1], cost_vals
+        ))), range(1, length(cost_edges))) AS cost_bucket_count,
+        arrayMap(i -> round(arraySum(arrayFilter(
+            value -> (i = 1 OR value > cost_edges[i]) AND value <= cost_edges[i + 1], cost_vals
+        )), 6), range(1, length(cost_edges))) AS cost_bucket_sum,
+        arraySlice(token_edges, 1, length(token_edges) - 1) AS token_bucket_lo,
+        arraySlice(token_edges, 2, length(token_edges) - 1) AS token_bucket_hi,
+        arrayMap(i -> toUInt64(length(arrayFilter(
+            value -> (i = 1 OR value > token_edges[i]) AND value <= token_edges[i + 1], token_vals
+        ))), range(1, length(token_edges))) AS token_bucket_count,
+        arrayMap(i -> toUInt64(arraySum(arrayFilter(
+            value -> (i = 1 OR value > token_edges[i]) AND value <= token_edges[i + 1], token_vals
+        ))), range(1, length(token_edges))) AS token_bucket_sum,
+        round(arraySum(arraySlice(costs_desc, 1, top_count)), 6) AS top_10pct_cost_usd,
+        top_count AS top_10pct_session_count,
+        round(if(
+            n <= 1 OR total_cost = 0,
+            0.,
+            greatest(0., least(1., (1. - 2. * arraySum(arrayMap(
+                (value, i) -> value * (n - i + 0.5), cost_vals, arrayEnumerate(cost_vals)
+            )) / (n * total_cost)) * n / (n - 1)))
+        ), 4) AS gini,
+        if(total_cost = 0, toUInt64(0), toUInt64(arrayFirstIndex(value -> value >= total_cost / 2, cumulative_cost))) AS half_spend_conv_count,
+        arrayMap(rank -> if(n = 0, 0., rank / n), sample_ranks) AS lorenz_conv_pct,
+        arrayMap(rank -> if(rank = 0 OR total_cost = 0, 0., cumulative_cost[rank] / total_cost), sample_ranks) AS lorenz_cost_pct
     FROM sessions
-    WHERE period = 'current'
 
 NODE endpoint
 SQL >
-    SELECT
-        ifNull(c.session_count, 0) AS session_count,
-        ifNull(p.session_count, 0) AS prior_session_count,
-        ifNull(c.total_generated_tokens, 0) AS total_generated_tokens,
-        ifNull(p.total_generated_tokens, 0) AS prior_total_generated_tokens,
-        ifNull(c.total_cache_inclusive_tokens, 0) AS total_cache_inclusive_tokens,
-        ifNull(p.total_cache_inclusive_tokens, 0) AS prior_total_cache_inclusive_tokens,
-        round(ifNull(c.total_cost_usd, 0.), 6) AS total_cost_usd,
-        round(ifNull(p.total_cost_usd, 0.), 6) AS prior_total_cost_usd,
-
-        round(ifNull(c.cost_p50, 0.), 6) AS cost_p50,
-        round(ifNull(p.cost_p50, 0.), 6) AS prior_cost_p50,
-        round(ifNull(c.cost_p90, 0.), 6) AS cost_p90,
-        round(ifNull(p.cost_p90, 0.), 6) AS prior_cost_p90,
-        round(ifNull(c.cost_p95, 0.), 6) AS cost_p95,
-        round(ifNull(p.cost_p95, 0.), 6) AS prior_cost_p95,
-        round(ifNull(c.cost_max, 0.), 6) AS cost_max,
-        round(ifNull(p.cost_max, 0.), 6) AS prior_cost_max,
-
-        ifNull(c.generated_tokens_p50, 0) AS generated_tokens_p50,
-        ifNull(p.generated_tokens_p50, 0) AS prior_generated_tokens_p50,
-        ifNull(c.generated_tokens_p90, 0) AS generated_tokens_p90,
-        ifNull(p.generated_tokens_p90, 0) AS prior_generated_tokens_p90,
-        ifNull(c.generated_tokens_p95, 0) AS generated_tokens_p95,
-        ifNull(p.generated_tokens_p95, 0) AS prior_generated_tokens_p95,
-        ifNull(c.generated_tokens_max, 0) AS generated_tokens_max,
-        ifNull(p.generated_tokens_max, 0) AS prior_generated_tokens_max,
-
-        ifNull(c.cache_inclusive_tokens_p50, 0) AS cache_inclusive_tokens_p50,
-        ifNull(p.cache_inclusive_tokens_p50, 0) AS prior_cache_inclusive_tokens_p50,
-        ifNull(c.cache_inclusive_tokens_p90, 0) AS cache_inclusive_tokens_p90,
-        ifNull(p.cache_inclusive_tokens_p90, 0) AS prior_cache_inclusive_tokens_p90,
-        ifNull(c.cache_inclusive_tokens_p95, 0) AS cache_inclusive_tokens_p95,
-        ifNull(p.cache_inclusive_tokens_p95, 0) AS prior_cache_inclusive_tokens_p95,
-        ifNull(c.cache_inclusive_tokens_max, 0) AS cache_inclusive_tokens_max,
-        ifNull(p.cache_inclusive_tokens_max, 0) AS prior_cache_inclusive_tokens_max,
-
-        -- Equal-frequency (decile-edged) histogram buckets for the CURRENT window only; the
-        -- prior window is not charted as a histogram. Empty window -> empty arrays.
-        ifNull(bk.cost_bucket_lo, []) AS cost_bucket_lo,
-        ifNull(bk.cost_bucket_hi, []) AS cost_bucket_hi,
-        ifNull(bk.cost_bucket_count, []) AS cost_bucket_count,
-        ifNull(bk.cost_bucket_sum, []) AS cost_bucket_sum,
-        ifNull(bk.token_bucket_lo, []) AS token_bucket_lo,
-        ifNull(bk.token_bucket_hi, []) AS token_bucket_hi,
-        ifNull(bk.token_bucket_count, []) AS token_bucket_count,
-        ifNull(bk.token_bucket_sum, []) AS token_bucket_sum,
-
-        round(ifNull(cc.top_10pct_cost_usd, 0.), 6) AS top_10pct_cost_usd,
-        ifNull(cc.top_10pct_session_count, 0) AS top_10pct_session_count,
-
-        round(ifNull(cv.gini, 0.), 4) AS gini,
-        ifNull(cv.half_spend_conv_count, 0) AS half_spend_conv_count,
-        ifNull(cv.lorenz_conv_pct, []) AS lorenz_conv_pct,
-        ifNull(cv.lorenz_cost_pct, []) AS lorenz_cost_pct
-    FROM (SELECT * FROM distribution WHERE period = 'current') AS c
-    FULL OUTER JOIN (SELECT * FROM distribution WHERE period = 'prior') AS p
-        ON 1 = 1
-    LEFT JOIN (SELECT * FROM concentration WHERE period = 'current') AS cc
-        ON 1 = 1
-    LEFT JOIN curve AS cv
-        ON 1 = 1
-    LEFT JOIN (SELECT * FROM buckets WHERE period = 'current') AS bk
-        ON 1 = 1
-    SETTINGS join_use_nulls = 1
+    SELECT * FROM distribution
+    WHERE session_count > 0 OR prior_session_count > 0
 
 TYPE ENDPOINT

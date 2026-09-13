@@ -1,21 +1,14 @@
+import type { BaselineCopyCheckpoint, BaselineMigrationWindow } from './baseline-copy-migration';
 /**
- * Agent ingest queue consumer. Drains AGENT_QUEUE, prices each Agent Message via the shared
- * `@trace-flow/pricing` catalog (one KV read per distinct `(provider, model)` per batch), and hands
- * clean fact rows to AGENT_FACT_BATCHER. The Durable Object owns cross-delivery dedupe and Tinybird
- * insert batching. See `docs/adr/0012-agent-conversation-analytics.md` → "Transport".
- *
- * `processAgentBatch` is exported for in-process tests (drive it with stub messages + a fetch mock,
- * the only way to deterministically assert the ack / retry / DLQ paths). The default export wraps the
- * queue handler in Sentry for the deployed Worker; `withSentry` instruments the `queue` method and
- * initializes the client per invocation, so the manual `Sentry.captureException` / `captureMessage`
- * calls inside `processAgentBatch` report (the batch loop catches per-message and insert errors to
- * retry them rather than letting them escape, so they would otherwise never reach Sentry).
+ * Queue entrypoint for encrypted fact deliveries and published analytics snapshots.
+ * Legacy queue messages remain supported during migration and frozen-fact recovery.
+ * See docs/adr/0024-bounded-agent-ingestion.md for durability and retention contracts.
  */
 import * as Sentry from '@sentry/cloudflare';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { sha256Hex } from '@trace-flow/utils';
 import type { AgentConsumerEnv } from './context';
-import { processAgentBatch, processAgentRecoveryPayload } from './consumer';
+import { processAgentBatch } from './consumer';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { AgentFactBatcherInstance } from './fact-batcher';
 import type {
@@ -35,6 +28,21 @@ import type {
 } from '@trace-flow/tinybird-client';
 import { requireRecoveryReason } from '@trace-flow/tinybird-client';
 import { normalizeDlqExcerptByteLimits } from './dlq-excerpt-repair';
+import type { AgentDeliveryStagedReference, AgentIngestQueueMessage } from '@trace-flow/types';
+import { validateAgentIngestQueueMessage } from '@trace-flow/types';
+import { validateAgentDeliveryStagedReference } from '@trace-flow/utils';
+import { hasDeliveryReferenceType, processDeliveryReferences } from './delivery-queue';
+import { AGENT_SNAPSHOT_QUEUE_NAMES, processSnapshotQueue } from './snapshot-queue';
+import { agentIngestionErasureStarted, processMigratedLegacyMessages } from './legacy-delivery';
+import { eraseAgentOrganization } from './organization-erasure';
+import { MAX_ACTIVE_AGENT_DELIVERIES } from './agent-delivery-coordinator-contract';
+import { replayAgentDlqPayload } from './dlq-replay';
+import { replayFrozenFactSelection, type FrozenFactReplayConfirmation } from './frozen-fact-replay';
+import type {
+  FrozenFactIdentity,
+  FrozenFactSelector,
+  ReplayFrozenFactsInput,
+} from './frozen-fact-recovery';
 import type {
   CompactFactRepairDuplicatesInput,
   CompactFactRepairDuplicatesResult,
@@ -43,9 +51,12 @@ import type {
   QuiesceFactRepairCapacityInput,
   QuiesceFactRepairCapacityResult,
 } from './fact-repair-capacity';
+import type { LegacyRetirementProof } from './legacy-retirement';
 
 export { processAgentBatch } from './consumer';
 export { AgentFactBatcher } from './fact-batcher';
+export { AgentDelivery } from './agent-delivery';
+export { AgentDeliveryCoordinator } from './agent-delivery-coordinator';
 
 const AGENT_DLQ_NAMES = new Set(['agent-ingest-dlq-dev', 'agent-ingest-dlq-prod']);
 const DLQ_PRESERVATION_RETRY_DELAY_SECONDS = 60;
@@ -85,11 +96,23 @@ async function preserveDeadLetterBatch(
     try {
       // Keep dead letters independent of an organization batcher that may be full or unavailable.
       const shardId = '__dlq__';
-      await getAgentBatcher(env, shardId).preserveDlq(
-        JSON.stringify({ queue: batch.queue, messageId: message.id, body: message.body }),
+      const sink = getAgentBatcher(env, shardId);
+      const payload = JSON.stringify({
+        queue: batch.queue,
+        messageId: message.id,
+        body: message.body,
+      });
+      const record = await sink.preserveDlq(
+        payload,
         JSON.stringify({ reason: 'dead_letter_queue_delivery' }),
         message.id,
       );
+      if (!validateAgentIngestQueueMessage(message.body)) {
+        const orgId = (message.body as AgentIngestQueueMessage).tenancy.org_id;
+        if (await agentIngestionErasureStarted(env, orgId)) {
+          await sink.discardDlq(record.id, await sha256Hex(payload));
+        }
+      }
       message.ack();
       Sentry.captureMessage('agent_consumer.dead_letter_preserved', {
         level: 'error',
@@ -112,19 +135,195 @@ async function preserveDeadLetterBatch(
   }
 }
 
+async function excludeErasedDeadLetters(
+  messages: Message<unknown>[],
+  env: AgentConsumerEnv,
+): Promise<Message<unknown>[]> {
+  const retained: Message<unknown>[] = [];
+  for (const message of messages) {
+    try {
+      if (validateAgentIngestQueueMessage(message.body)) {
+        retained.push(message);
+        continue;
+      }
+      const orgId = (message.body as AgentIngestQueueMessage).tenancy.org_id;
+      if (await agentIngestionErasureStarted(env, orgId)) message.ack();
+      else retained.push(message);
+    } catch (error) {
+      message.retry({ delaySeconds: DLQ_PRESERVATION_RETRY_DELAY_SECONDS });
+      Sentry.captureException(error, {
+        tags: { operation: 'dlq_erasure_check' },
+        extra: { messageId: message.id },
+      });
+    }
+  }
+  return retained;
+}
+
 const handler = {
   // The queue delivers untrusted bytes; `processAgentBatch` validates each body structurally and
   // dead-letters anything off-contract, so the handler accepts `unknown` rather than asserting shape.
   async queue(batch: MessageBatch<unknown>, env: AgentConsumerEnv): Promise<void> {
-    if (AGENT_DLQ_NAMES.has(batch.queue)) {
-      await preserveDeadLetterBatch(batch, env);
+    if (AGENT_SNAPSHOT_QUEUE_NAMES.has(batch.queue)) {
+      await processSnapshotQueue(batch, env);
       return;
     }
-    await processAgentBatch(batch, env);
+    const references = batch.messages.filter((message) => hasDeliveryReferenceType(message.body));
+    await processDeliveryReferences(references, env);
+    const inline = batch.messages.filter((message) => !hasDeliveryReferenceType(message.body));
+    if (inline.length === 0) return;
+    if (AGENT_DLQ_NAMES.has(batch.queue)) {
+      const retained = await excludeErasedDeadLetters(inline, env);
+      if (retained.length > 0) await preserveDeadLetterBatch({ ...batch, messages: retained }, env);
+      return;
+    }
+    const legacy = await processMigratedLegacyMessages(inline, env);
+    if (legacy.length > 0) await processAgentBatch({ ...batch, messages: legacy }, env);
   },
 };
 
+export class AgentIngestion extends WorkerEntrypoint<AgentConsumerEnv> {
+  eraseOrganization(
+    orgId: string,
+    afterId?: number,
+  ): Promise<{ ready: boolean; nextAfterId?: number }> {
+    return eraseAgentOrganization(this.env, normalizeAgentShardId(orgId), afterId);
+  }
+
+  async canAcceptDeliveries(orgId: string): Promise<boolean> {
+    const normalized = normalizeAgentShardId(orgId);
+    const coordinator = this.env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${normalized}`);
+    const [stats, migration] = await Promise.all([
+      coordinator.getStats({}),
+      coordinator.getIngestionMigrationState(),
+    ]);
+    return (
+      !stats.erasureStarted &&
+      stats.gatePhase === 'open' &&
+      stats.activeDeliveries < MAX_ACTIVE_AGENT_DELIVERIES &&
+      (migration === null || migration.complete)
+    );
+  }
+
+  async registerDelivery(reference: AgentDeliveryStagedReference, days: string[]): Promise<number> {
+    if (validateAgentDeliveryStagedReference(reference))
+      throw new Error('Invalid delivery registration');
+    return this.env.AGENT_DELIVERY.getByName(reference.key).register(reference, days);
+  }
+}
+
 export class TraceRecovery extends WorkerEntrypoint<AgentConsumerEnv> {
+  beginBaselineMigrationWindow(_shardId: string, input: BaselineMigrationWindow) {
+    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(
+      'migration:bounded-agent-ingestion-v1',
+    ).beginBaselineMigrationWindow(input);
+  }
+  getBaselineCopy(orgId: string, input: { category: BaselineCopyCheckpoint['category'] }) {
+    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(
+      `baseline:${normalizeAgentShardId(orgId)}`,
+    ).getBaselineCopy(input);
+  }
+  beginBaselineCopy(orgId: string, input: Omit<BaselineCopyCheckpoint, 'jobId' | 'complete'>) {
+    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(
+      `baseline:${normalizeAgentShardId(orgId)}`,
+    ).beginBaselineCopy(input);
+  }
+  confirmBaselineCopy(
+    orgId: string,
+    input: { category: BaselineCopyCheckpoint['category']; jobId: string; complete: boolean },
+  ) {
+    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(
+      `baseline:${normalizeAgentShardId(orgId)}`,
+    ).confirmBaselineCopy(input);
+  }
+
+  inspectGlobalIngestionMigration() {
+    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(
+      'migration:bounded-agent-ingestion-v1',
+    ).getIngestionMigrationState();
+  }
+
+  async completeGlobalIngestionMigration(_shardId: string, input: { proofSha256: string }) {
+    const coordinator = this.env.AGENT_DELIVERY_COORDINATOR.getByName(
+      'migration:bounded-agent-ingestion-v1',
+    );
+    await coordinator.seedIngestionMigration({ proofSha256: input.proofSha256, dirtyDays: [] });
+    return coordinator.completeIngestionMigration(input);
+  }
+
+  async inspectIngestionMigration(orgId: string) {
+    const normalized = normalizeAgentShardId(orgId);
+    const coordinator = this.env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${normalized}`);
+    return {
+      migrationTarget: {
+        tinybirdHost: this.env.TINYBIRD_HOST,
+        appendTokenSha256: await sha256Hex(this.env.TINYBIRD_TOKEN),
+      },
+      legacy: await getAgentBatcher(this.env, normalized).getIngestionMigrationState(),
+      migration: await coordinator.getIngestionMigrationState(),
+      coordinator: await coordinator.getStats({}),
+    };
+  }
+
+  listFrozenFacts(orgId: string, input: Pick<ListRebuildFactsInput, 'after' | 'limit'>) {
+    return getAgentBatcher(this.env, orgId).listFrozenFacts(normalizeAgentShardId(orgId), input);
+  }
+
+  inspectFrozenFactSources(orgId: string, input: { facts: FrozenFactIdentity[] }) {
+    const normalized = normalizeAgentShardId(orgId);
+    return getAgentBatcher(this.env, normalized).inspectFrozenFactSources(normalized, input);
+  }
+
+  readFrozenFactSources(orgId: string, input: { facts: FrozenFactSelector[] }) {
+    const normalized = normalizeAgentShardId(orgId);
+    return getAgentBatcher(this.env, normalized).readFrozenFacts(normalized, input);
+  }
+
+  replayFrozenFacts(
+    orgId: string,
+    input: ReplayFrozenFactsInput,
+  ): Promise<FrozenFactReplayConfirmation> {
+    const normalized = normalizeAgentShardId(orgId);
+    return replayFrozenFactSelection(
+      this.env,
+      normalized,
+      input,
+      getAgentBatcher(this.env, normalized),
+    );
+  }
+
+  retireFrozenLedger(orgId: string, input: LegacyRetirementProof) {
+    const normalized = normalizeAgentShardId(orgId);
+    return getAgentBatcher(this.env, normalized).retireFrozenLedger(normalized, input);
+  }
+
+  freezeIngestionMigration(orgId: string, input: { migrationId: string }) {
+    return getAgentBatcher(this.env, orgId).freezeIngestionMigration(input.migrationId);
+  }
+
+  async seedIngestionMigration(orgId: string, input: { proofSha256: string; dirtyDays: string[] }) {
+    const normalized = normalizeAgentShardId(orgId);
+    const coordinator = this.env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${normalized}`);
+    const result = await coordinator.seedIngestionMigration(input);
+    if (input.dirtyDays.length > 0 && !result.complete) {
+      await coordinator.scheduleSnapshot({ orgId: normalized });
+      await this.env.AGENT_SNAPSHOT_QUEUE.send({ type: 'agent-snapshot', org_id: normalized });
+    }
+    return result;
+  }
+
+  completeIngestionMigration(orgId: string, input: { proofSha256: string }) {
+    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(
+      `org:${normalizeAgentShardId(orgId)}`,
+    ).completeIngestionMigration(input);
+  }
+
+  inspectDeliveryStatus(orgId: string) {
+    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(
+      `org:${normalizeAgentShardId(orgId)}`,
+    ).getStats({});
+  }
+
   listRecovery(shardId: string, options: RecoveryPageOptions = {}): Promise<RecoveryPage> {
     return getAgentBatcher(this.env, shardId).listRecovery(options);
   }
@@ -189,7 +388,7 @@ export class TraceRecovery extends WorkerEntrypoint<AgentConsumerEnv> {
       throw new Error('invalid DLQ payload');
     const payload = value as Record<string, unknown>;
     if (!repair) {
-      await processAgentRecoveryPayload(payload.body, this.env);
+      await replayAgentDlqPayload(payload.body, this.env);
       return batcher.resolveDlq(input.recoveryId, reason);
     }
 
@@ -199,7 +398,7 @@ export class TraceRecovery extends WorkerEntrypoint<AgentConsumerEnv> {
     const normalized = normalizeDlqExcerptByteLimits(payload.body);
     const originalBodySha256 = await sha256Hex(JSON.stringify(payload.body));
     const correctedBodySha256 = await sha256Hex(JSON.stringify(normalized.body));
-    await processAgentRecoveryPayload(normalized.body, this.env);
+    await replayAgentDlqPayload(normalized.body, this.env);
     return batcher.resolveDlq(
       input.recoveryId,
       JSON.stringify({

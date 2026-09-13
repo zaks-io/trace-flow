@@ -1,0 +1,17 @@
+DESCRIPTION >
+    Bounded readback for an ambiguous canonical delivery write.
+
+NODE endpoint
+SQL >
+    %
+    SELECT FactIdentity, EventDay, IsDeleted, ContentHash
+    FROM agent_delivery_receipts FINAL
+    WHERE OrgId = {{ String(org_id) }}
+      AND DeliverySequence = {{ UInt64(delivery_sequence) }}
+      AND Category = {{ String(category) }}
+    ORDER BY FactIdentity, EventDay, IsDeleted
+    LIMIT 10000
+
+TYPE ENDPOINT
+
+TOKEN agent_consumer_versions_append READ

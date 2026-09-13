@@ -22,7 +22,7 @@ SQL >
             + sum(finalizeAggregation(CacheReadTokens)) + sum(finalizeAggregation(CacheCreationTokens))
             + sum(finalizeAggregation(ReasoningTokens)) AS total_tokens,
         round(sum(finalizeAggregation(CostUsd)), 6) AS cost_usd
-    FROM agent_usage_hourly
+    FROM agent_usage_hourly_published
     WHERE OrgId = {{ String(org_id, '') }}
         AND BucketStart >= start_dt
         AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})

@@ -25,7 +25,7 @@ SQL >
         sumIf(finalizeAggregation(FailureCount), BucketStart >= start_dt AND BucketStart < end_dt) AS current_failures,
         sumIf(finalizeAggregation(FailureCount), BucketStart >= prior_start_dt AND BucketStart < start_dt) AS prior_failures,
         toInt64(current_failures) - toInt64(prior_failures) AS failure_delta
-    FROM agent_tool_usage_hourly
+    FROM agent_tool_usage_hourly_published
     WHERE OrgId = {{ String(org_id, '') }}
         AND BucketStart >= prior_start_dt
         AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})

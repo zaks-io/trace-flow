@@ -1,0 +1,38 @@
+DESCRIPTION >
+    Bounded on-demand snapshot of agent_usage_daily from contributors: usage_daily.
+
+NODE snapshot
+SQL >
+    %
+    SELECT
+        toStartOfDay(toDateTime(EventAt)) AS BucketStart,
+        OrgId,
+        source,
+        model,
+        repo_fingerprint,
+        countState() AS MessageCount,
+        uniqState(session_pk) AS SessionCount,
+        sumState(toUInt64(input_tokens)) AS InputTokens,
+        sumState(toUInt64(output_tokens)) AS OutputTokens,
+        sumState(toUInt64(cache_read_tokens)) AS CacheReadTokens,
+        sumState(toUInt64(cache_creation_tokens)) AS CacheCreationTokens,
+        sumState(toUInt64(reasoning_tokens)) AS ReasoningTokens,
+        sumState(toUInt64(cost_usd IS NOT NULL)) AS PricedMessageCount,
+        sumState(ifNull(cost_usd, 0.)) AS CostUsd,
+        toDate(EventAt) AS SnapshotDay,
+        {{ UInt64(snapshot_generation) }} AS SnapshotGeneration,
+        {{ UInt64(copy_attempt) }} AS CopyAttempt,
+        'usage_daily' AS SourceContributor
+    FROM agent_message_fact_versions FINAL
+    WHERE OrgId = {{ String(org_id) }}
+      AND toDate(EventAt) IN {{ Array(snapshot_days, 'Date') }}
+      AND IsDeleted = 0
+      AND role = 'assistant'
+    GROUP BY BucketStart, OrgId, source, model, repo_fingerprint, SnapshotDay
+    SETTINGS max_threads = 1
+
+TYPE COPY
+TARGET_DATASOURCE agent_usage_daily_snapshots
+COPY_MODE append
+
+TOKEN agent_snapshot_worker READ

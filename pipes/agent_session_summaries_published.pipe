@@ -1,0 +1,25 @@
+DESCRIPTION >
+    Published snapshot rows for one organization. Each manifest commit atomically switches
+    every linked correction day, and the greatest committed generation wins per day.
+
+NODE published
+SQL >
+    %
+    SELECT s.*
+    FROM agent_session_summaries_snapshots AS s FINAL
+    INNER JOIN (
+        SELECT SnapshotDay, max(SnapshotGeneration) AS SnapshotGeneration
+        FROM agent_snapshot_manifest
+        ARRAY JOIN SnapshotDays AS SnapshotDay
+        WHERE OrgId = {{ String(org_id, '') }}
+          AND SnapshotDay >= if(
+              toMonth(today()) = 2 AND toDayOfMonth(today()) = 29,
+              toDate(concat(toString(toYear(today()) - 1), '-03-01')),
+              addYears(today(), -1)
+          )
+          AND SnapshotDay <= today()
+        GROUP BY SnapshotDay
+    ) AS m
+      ON s.SnapshotDay = m.SnapshotDay
+      AND s.SnapshotGeneration = m.SnapshotGeneration
+    WHERE s.OrgId = {{ String(org_id, '') }}

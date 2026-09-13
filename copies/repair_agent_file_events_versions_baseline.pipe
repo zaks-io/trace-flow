@@ -1,0 +1,41 @@
+DESCRIPTION >
+    One-time bounded migration of uniqueness-verified file_events facts into the versioned canonical table.
+    DeliverySequence 1 is reserved for this baseline; live deliveries begin at 2.
+
+NODE baseline
+SQL >
+    %
+    SELECT
+        toUInt64(1) AS DeliverySequence,
+        lower(hex(SHA256(toJSONString(tuple(`OrgId`, `UserId`, `CollectorId`, `CollectorCredentialId`, `session_pk`, `file_event_pk`, `repo_fingerprint`, `repo_source`, `source`, `parser_version`, `EventAt`, `IngestedAt`, `vendor_session_id`, `vendor_message_id`, `source_block_index`, `normalized_repo_path`, `operation`, `dropped_sensitive`))))) AS ContentHash,
+        toUInt8(0) AS IsDeleted,
+        `OrgId`,
+        `UserId`,
+        `CollectorId`,
+        `CollectorCredentialId`,
+        `session_pk`,
+        `file_event_pk`,
+        `repo_fingerprint`,
+        `repo_source`,
+        `source`,
+        `parser_version`,
+        `EventAt`,
+        `IngestedAt`,
+        `vendor_session_id`,
+        `vendor_message_id`,
+        `source_block_index`,
+        `normalized_repo_path`,
+        `operation`,
+        `dropped_sensitive`
+    FROM agent_file_event_facts
+    WHERE OrgId = {{ String(org_id) }}
+      AND EventAt >= toDateTime({{ Date(start_day) }})
+      AND EventAt < toDateTime({{ Date(end_day) }}) + INTERVAL 1 DAY
+      AND {{ UInt64(copy_attempt) }} >= 1
+    SETTINGS max_threads = 1
+
+TYPE COPY
+TARGET_DATASOURCE agent_file_event_fact_versions
+COPY_MODE append
+
+TOKEN agent_snapshot_migration READ

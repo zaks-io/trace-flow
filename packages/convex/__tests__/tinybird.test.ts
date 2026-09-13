@@ -1,12 +1,14 @@
 // tinybird.ts requires TINYBIRD_ADMIN_TOKEN and TINYBIRD_WORKSPACE_ID at module load time.
 // These are provided via vitest.config.ts env configuration.
 import { readdirSync, readFileSync } from 'node:fs';
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   AGENT_ORG_DATASOURCES,
-  buildOrgTraceDeleteStatements,
+  buildOrgTraceDeleteConditions,
   buildWebReadScopes,
+  deleteOrgTraceStatement,
   joinAnalyticsKeyIds,
+  LEGACY_AGENT_ORG_DATASOURCES,
   LLM_API_KEY_DATASOURCES,
   MCP_TINYBIRD_PIPES,
   sanitizeAnalyticsKeyIds,
@@ -15,6 +17,8 @@ import {
   WEB_TINYBIRD_PIPES,
   withRowSecurityParams,
 } from '../integrations/tinybird';
+
+afterEach(() => vi.unstubAllGlobals());
 
 const EXPECTED_WEB_PIPES = [
   'filter_options',
@@ -204,7 +208,7 @@ describe('Tinybird org deletion SQL', () => {
 
   it('deletes both API-key scoped LLM rows and org-scoped agent rows', () => {
     const analyticsKeyId = `sha256:${'1'.repeat(64)}`;
-    const statements = buildOrgTraceDeleteStatements({
+    const statements = buildOrgTraceDeleteConditions({
       analyticsKeyIds: [analyticsKeyId],
       orgId: 'org_123',
     });
@@ -212,34 +216,129 @@ describe('Tinybird org deletion SQL', () => {
     expect(statements.map((statement) => statement.datasource)).toEqual([
       ...LLM_API_KEY_DATASOURCES,
       ...AGENT_ORG_DATASOURCES,
+      ...LEGACY_AGENT_ORG_DATASOURCES,
     ]);
-    expect(statements.find((statement) => statement.datasource === 'llm_request_facts')?.sql).toBe(
-      `ALTER TABLE llm_request_facts DELETE WHERE if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) IN ('${analyticsKeyId}')`,
+    expect(
+      statements.find((statement) => statement.datasource === 'llm_request_facts')?.condition,
+    ).toBe(
+      `if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) IN ('${analyticsKeyId}')`,
     );
     expect(
-      statements.find((statement) => statement.datasource === 'agent_message_facts')?.sql,
-    ).toBe("ALTER TABLE agent_message_facts DELETE WHERE OrgId = 'org_123'");
+      statements.find((statement) => statement.datasource === 'agent_message_facts')?.condition,
+    ).toBe("OrgId = 'org_123'");
+    expect(
+      statements.find((statement) => statement.datasource === 'agent_messages')?.optional,
+    ).toBe(true);
+    expect(
+      statements.find((statement) => statement.datasource === 'agent_message_facts')?.optional,
+    ).toBeUndefined();
   });
 
   it('still deletes agent analytics when an org has no valid API keys', () => {
-    const statements = buildOrgTraceDeleteStatements({
+    const statements = buildOrgTraceDeleteConditions({
       analyticsKeyIds: ['not-a-valid-analytics-key-id'],
       orgId: 'org_123',
     });
 
-    expect(statements.map((statement) => statement.datasource)).toEqual([...AGENT_ORG_DATASOURCES]);
-    expect(statements.every((statement) => statement.sql.includes("WHERE OrgId = 'org_123'"))).toBe(
+    expect(statements.map((statement) => statement.datasource)).toEqual([
+      ...AGENT_ORG_DATASOURCES,
+      ...LEGACY_AGENT_ORG_DATASOURCES,
+    ]);
+    expect(statements.every((statement) => statement.condition.includes("OrgId = 'org_123'"))).toBe(
       true,
     );
   });
 
   it('escapes org ids before interpolating them into SQL', () => {
-    const statements = buildOrgTraceDeleteStatements({
+    const statements = buildOrgTraceDeleteConditions({
       analyticsKeyIds: [],
       orgId: "org_'quoted",
     });
 
-    expect(statements[0]?.sql).toContain("OrgId = 'org_''quoted'");
+    expect(statements[0]?.condition).toContain("OrgId = 'org_''quoted'");
+  });
+
+  it('pins every legacy org datasource retained by the Tinybird deploy', () => {
+    expect(LEGACY_AGENT_ORG_DATASOURCES).toEqual([
+      'agent_capability_snapshots',
+      'agent_file_events',
+      'agent_messages',
+      'agent_pull_request_links',
+      'agent_sessions',
+      'agent_tool_events',
+      'agent_tool_usage_1d',
+      'agent_tool_usage_1h',
+      'agent_usage_1d',
+      'agent_usage_1h',
+    ]);
+  });
+
+  it('accepts an absent optional legacy datasource only after an exact lookup 404', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: URL | RequestInfo) => {
+        const url = String(request);
+        calls.push(url);
+        return new Response(null, { status: 404 });
+      }),
+    );
+
+    await expect(
+      deleteOrgTraceStatement(
+        { datasource: 'agent_messages', condition: "OrgId = 'org_123'", optional: true },
+        Date.now() + 10_000,
+      ),
+    ).resolves.toBe('confirmed_missing');
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toContain('/v0/datasources/agent_messages?attrs=name');
+  });
+
+  it('does not treat a required datasource delete 404 as success even if marked optional', async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      deleteOrgTraceStatement(
+        {
+          datasource: 'agent_message_facts',
+          condition: "OrgId = 'org_123'",
+          optional: true,
+        },
+        Date.now() + 10_000,
+      ),
+    ).rejects.toThrow('Tinybird row deletion failed: HTTP 404');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not skip an optional legacy datasource that still exists', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(Response.json({ name: 'agent_messages' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      deleteOrgTraceStatement(
+        { datasource: 'agent_messages', condition: "OrgId = 'org_123'", optional: true },
+        Date.now() + 10_000,
+      ),
+    ).rejects.toThrow('Tinybird row deletion failed: HTTP 404');
+  });
+
+  it('fails when the optional legacy datasource lookup cannot prove absence', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(new Response(null, { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      deleteOrgTraceStatement(
+        { datasource: 'agent_messages', condition: "OrgId = 'org_123'", optional: true },
+        Date.now() + 10_000,
+      ),
+    ).rejects.toThrow('Tinybird datasource lookup failed: HTTP 503');
   });
 });
 

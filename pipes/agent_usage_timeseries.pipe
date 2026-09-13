@@ -37,11 +37,11 @@ SQL >
         sum(finalizeAggregation(PricedMessageCount)) AS priced_message_count
     FROM (
         SELECT *
-        FROM agent_usage_hourly
+        FROM agent_usage_hourly_published
         WHERE NOT use_rollup_daily
         UNION ALL
         SELECT *
-        FROM agent_usage_daily
+        FROM agent_usage_daily_published
         WHERE use_rollup_daily
     )
     WHERE OrgId = {{ String(org_id, '') }}
@@ -88,11 +88,11 @@ SQL >
         sum(finalizeAggregation(UnknownCount)) AS tool_unknown_count
     FROM (
         SELECT *
-        FROM agent_tool_usage_hourly
+        FROM agent_tool_usage_hourly_published
         WHERE NOT use_rollup_daily
         UNION ALL
         SELECT *
-        FROM agent_tool_usage_daily
+        FROM agent_tool_usage_daily_published
         WHERE use_rollup_daily
     )
     WHERE OrgId = {{ String(org_id, '') }}

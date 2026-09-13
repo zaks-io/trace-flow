@@ -9,6 +9,7 @@ function workflow(name) {
 }
 
 const claude = workflow('claude');
+const ci = workflow('ci');
 const preview = workflow('preview');
 const deploy = workflow('deploy');
 const authorize = new Function(
@@ -141,6 +142,24 @@ describe('preview credential boundary', () => {
     expect(ownerGate({ actor: 'maintainer', triggering_actor: 'isuttell' })).toBe(false);
   });
 
+  test('provisions the complete dev-scoped Agent Tinybird secret file', () => {
+    const deployWorkers = preview.jobs.preview.steps.find(
+      (step) => step.name === 'Deploy Convex-backed Preview Workers',
+    );
+
+    expect(deployWorkers.run).toContain(
+      'bun scripts/ci/configure-agent-tinybird-tokens.mjs "$agent_consumer_secrets_file"',
+    );
+    expect(deployWorkers.run).toContain('unset TB_TOKEN');
+    expect(deployWorkers.run).toContain(
+      `printf 'BODY_ENCRYPTION_ROOT_KEY=%s\\n' "$AGENT_DELIVERY_ENCRYPTION_ROOT_KEY" >> "$agent_consumer_secrets_file"`,
+    );
+    expect(deployWorkers.env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_DEV_TOKEN_MANAGER_TOKEN }}');
+    expect(deployWorkers.env.TB_HOST).toBe('https://api.us-west-2.aws.tinybird.co');
+    expect(deployWorkers.env).not.toHaveProperty('TINYBIRD_AGENT_DELIVERY_READ_TOKEN');
+    expect(deployWorkers.env).not.toHaveProperty('TINYBIRD_AGENT_SNAPSHOT_TOKEN');
+  });
+
   test('resolves an open same-repository PR to its immutable head', async () => {
     const outputs = {};
     const failures = [];
@@ -230,6 +249,7 @@ describe('preview credential boundary', () => {
       '422b54e456c7446ea5ba4f9ef9a8c84e',
     );
     expect(preview.env.PREVIEW_ARCHIVE_BUCKET).toBe('trace-flow-agent-archive-preview');
+    expect(preview.env.PREVIEW_AGENT_DELIVERY_BUCKET).toBe('trace-flow-agent-deliveries-dev');
 
     const configure = preview.jobs['deploy-convex'].steps.find(
       (step) => step.name === 'Configure Archive API authorization',
@@ -258,6 +278,7 @@ describe('preview credential boundary', () => {
         ...process.env,
         PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: preview.env.PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID,
         PREVIEW_ARCHIVE_BUCKET: preview.env.PREVIEW_ARCHIVE_BUCKET,
+        PREVIEW_AGENT_DELIVERY_BUCKET: preview.env.PREVIEW_AGENT_DELIVERY_BUCKET,
       },
       stdout: 'pipe',
       stderr: 'pipe',
@@ -277,6 +298,7 @@ describe('preview credential boundary', () => {
         ...process.env,
         PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: 'wrong-namespace',
         PREVIEW_ARCHIVE_BUCKET: preview.env.PREVIEW_ARCHIVE_BUCKET,
+        PREVIEW_AGENT_DELIVERY_BUCKET: preview.env.PREVIEW_AGENT_DELIVERY_BUCKET,
       },
       stdout: 'pipe',
       stderr: 'pipe',
@@ -312,6 +334,14 @@ describe('credentialed CI checks', () => {
 });
 
 describe('production Worker secret boundary', () => {
+  test('pins both deployed and legacy Tinybird inventories for the cloud expand check', () => {
+    const cloudCheck = ci.jobs['tinybird-schema-check'].steps.find(
+      (step) => step.name === 'Tinybird deploy --check (trace_flow_prod)',
+    );
+    expect(cloudCheck.env.TINYBIRD_CURRENT_REF).toBe('HEAD^');
+    expect(cloudCheck.env.TINYBIRD_LEGACY_REF).toBe('11613a4619444adb0e27abc3df958cebb43cc280');
+  });
+
   test.each(['Deploy Raw API Worker', 'Deploy Pipes API Worker'])(
     '%s scopes secret uploads and deployment to production',
     (stepName) => {
@@ -322,4 +352,80 @@ describe('production Worker secret boundary', () => {
       expect(step.with.command).toContain('deploy --env production');
     },
   );
+
+  test('keeps ingest in maintenance until the automatic migration and endpoint switch pass', () => {
+    const currentRefJob = deploy.jobs['agent-delivery-current-ref'];
+    const release = deploy.jobs['agent-delivery-current-ref'].steps.find(
+      (step) => step.name === 'Resolve current deployed ref',
+    );
+    expect(currentRefJob.environment).toBe('Production');
+    expect(currentRefJob.permissions).toEqual({ contents: 'read', deployments: 'read' });
+    expect(release.env).not.toHaveProperty('BEFORE_SHA');
+    expect(release.run).toContain('resolve-agent-tinybird-current-ref.mjs');
+    expect(release.env.GITHUB_TOKEN).toBe('${{ github.token }}');
+    expect(release.env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_DEPLOY_TOKEN }}');
+    const expand = deploy.jobs['deploy-tinybird-schema'].steps.find(
+      (step) => step.name === 'Expand schema in trace_flow_prod',
+    );
+    expect(expand.env.TINYBIRD_DEPLOY_PHASE).toBe('expand');
+    expect(expand.env.TINYBIRD_CURRENT_REF).toBe(
+      '${{ needs.agent-delivery-current-ref.outputs.current_ref }}',
+    );
+    expect(expand.env.TINYBIRD_LEGACY_REF).toBe('11613a4619444adb0e27abc3df958cebb43cc280');
+    const pause = deploy.jobs['deploy-agent-ingest-maintenance'].steps.find(
+      (step) => step.name === 'Deploy retryable maintenance response',
+    );
+    expect(pause.with.command).toContain('AGENT_INGEST_MAINTENANCE:true');
+    const status = deploy.jobs['agent-delivery-migration-status'].steps.find(
+      (step) => step.name === 'Read migration status',
+    );
+    expect(status.run).toContain('--status');
+    expect(status.run).toContain('migration_required');
+    expect(deploy.jobs['deploy-agent-ingest-maintenance'].if).toContain(
+      "migration_required == 'true'",
+    );
+    const migrate = deploy.jobs['migrate-agent-ingestion'].steps.find(
+      (step) => step.name === 'Drain, build revision-1 baseline, index, and initial snapshots',
+    );
+    expect(migrate.run).toContain('migrate-agent-ingestion.ts');
+    expect(migrate.run).toContain('--apply');
+    expect(deploy.jobs['migrate-agent-ingestion'].if).toContain("migration_required == 'true'");
+    const switchJob = deploy.jobs['switch-agent-tinybird'];
+    expect(switchJob.needs).toContain('migrate-agent-ingestion');
+    expect(switchJob.permissions.deployments).toBe('write');
+    const marker = switchJob.steps.find(
+      (step) => step.name === 'Record deployed Agent Tinybird ref',
+    );
+    const switchProof = switchJob.steps.find(
+      (step) => step.name === 'Verify switched endpoint definitions',
+    );
+    expect(switchProof.env.REQUESTED_CURRENT_REF).toBe('${{ github.sha }}');
+    expect(switchProof.run).toContain('resolve-agent-tinybird-current-ref.mjs');
+    expect(marker.with.script).toContain("task: 'deploy-agent-tinybird'");
+    expect(marker.with.script).toContain("state: 'success'");
+    expect(deploy.jobs['deploy-agent-ingest'].needs).toContain('switch-agent-tinybird');
+    const resume = deploy.jobs['deploy-agent-ingest'].steps.find(
+      (step) => step.name === 'Deploy Agent Ingest Worker',
+    );
+    expect(resume.with.command).toContain('AGENT_INGEST_MAINTENANCE:false');
+  });
+
+  test('maps the dedicated delivery key to both Workers and scoped tokens to the consumer', () => {
+    const configure = deploy.jobs['prepare-agent-delivery'].steps.find(
+      (step) => step.name === 'Configure scoped Tinybird and delivery encryption secrets',
+    );
+    expect(configure.env.BODY_ENCRYPTION_ROOT_KEY).toBe(
+      '${{ secrets.AGENT_DELIVERY_ENCRYPTION_ROOT_KEY }}',
+    );
+    expect(configure.run).toContain('apps/agent-consumer');
+    expect(configure.run).toContain('apps/agent-ingest');
+    const tokenScript = readFileSync(
+      new URL('./configure-agent-tinybird-tokens.mjs', import.meta.url),
+      'utf8',
+    );
+    expect(tokenScript).toContain('TINYBIRD_AGENT_DELIVERY_READ_TOKEN');
+    expect(tokenScript).toContain('TINYBIRD_AGENT_SNAPSHOT_TOKEN');
+    expect(configure.run).not.toContain('TINYBIRD_ADMIN_TOKEN');
+    expect(configure.run).not.toContain('TINYBIRD_AGENT_SNAPSHOT_CLEANUP_TOKEN');
+  });
 });

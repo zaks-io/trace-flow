@@ -236,6 +236,56 @@ If capture failed before any deletion, preserve `snapshot.sqlite` under a differ
 then retry the same operation and directory. Keep `executor.json` unchanged. Never move
 a snapshot aside after a deletion journal has been created.
 
+After the bounded-ingestion migration, recover identities from a local parity census
+through the frozen-ledger replay command. Its private SQLite journal fixes each batch UUID
+and creation time before replay, so resume with the same census and journal after an
+uncertain response. This targeted recovery is not evidence that the complete legacy ledger
+can be retired.
+
+```sh
+bun scripts/ingest-recovery/recover-frozen-agent.ts \
+  --org ORGANIZATION_ID --census /private/parity.sqlite \
+  --journal /private/frozen-recovery.sqlite
+```
+
+The full frozen-ledger verification requires producer maintenance for its entire run.
+The command verifies the production ingest endpoint returns the maintenance response,
+both agent queues are drained, and the organization's active delivery count is zero. It
+then exports the retained canonical year into a private local SQLite hash index with
+native day and fact-key pagination. It fails if the delivery sequence or retention window
+changes before verification finishes. The index contains identities, timestamps,
+revisions, content hashes, and typed-row hashes; it does not retain fact payloads.
+
+```sh
+bun scripts/ingest-recovery/recover-frozen-agent.ts \
+  --org ORGANIZATION_ID --verify-all-frozen \
+  --canonical-index /private/frozen-canonical.sqlite
+```
+
+Zero missing and conflicting facts is necessary for legacy-ledger retirement. The command
+reports exact matches, facts safely superseded by a newer canonical `IngestedAt`, and facts
+expired from the one-year analytics window separately. Reconcile every blocked recovery
+record in the organization's legacy batcher first. Those records can contain a newer repair
+source than the ledger row, so they cannot be discarded as queue residue. Records in the shared
+`org:__dlq__` batcher require their own verified replay or organization-scoped cleanup and are
+never deleted by legacy-ledger retirement.
+
+After the read-only report is clean, run the same full verification and retirement in one
+invocation. `--retire` requires the producer maintenance check, drained queues, zero active
+deliveries, `--apply`, and the exact organization confirmation. It stores the verified digest,
+migration proof, delivery sequence, retention window, and frozen source count in an external
+Durable Object before deleting the legacy database. A retry after an uncertain response resumes
+only from that matching durable intent.
+
+```sh
+bun scripts/ingest-recovery/recover-frozen-agent.ts \
+  --org ORGANIZATION_ID --retire --apply --confirm-org ORGANIZATION_ID \
+  --canonical-index /private/frozen-canonical.sqlite
+```
+
+This operation preserves the new delivery coordinator, canonical Tinybird facts, delivery
+objects, R2 buffers, and shared DLQ.
+
 Run the local repair checks with `bun test scripts/ingest-recovery/agent-*.test.ts`.
 After `tb --local build`, the integration check is
 `bun scripts/ingest-recovery/agent-rebuild.smoke.ts /private/tinybird-local-config.json`.

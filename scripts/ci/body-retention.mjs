@@ -38,3 +38,27 @@ export function analystBackupRetentionRules(rules) {
   else next[managedIndex] = managedRule;
   return next;
 }
+
+export function agentDeliveryRetentionRules(rules) {
+  if (!Array.isArray(rules)) throw new Error('R2 lifecycle response is missing rules');
+  const managedIds = new Set(['expire-agent-deliveries-4d', 'expire-agent-delivery-rows-4d']);
+  const next = structuredClone(rules).filter((rule) => !managedIds.has(rule.id));
+  for (const rule of next) {
+    if (rule.actions) throw new Error(`Unsupported legacy lifecycle actions: ${rule.id}`);
+    if (rule.enabled && rule.deleteObjectsTransition) {
+      throw new Error(`Unexpected deletion policy in the agent delivery bucket: ${rule.id}`);
+    }
+  }
+  for (const prefix of ['agent-deliveries/', 'agent-delivery-rows/']) {
+    next.push({
+      id:
+        prefix === 'agent-deliveries/'
+          ? 'expire-agent-deliveries-4d'
+          : 'expire-agent-delivery-rows-4d',
+      enabled: true,
+      conditions: { prefix },
+      deleteObjectsTransition: { condition: { type: 'Age', maxAge: 4 * 24 * 60 * 60 } },
+    });
+  }
+  return next;
+}

@@ -47,6 +47,13 @@ export function makeEnv(
 ): AgentConsumerEnv {
   return {
     AGENT_QUEUE: {} as unknown as AgentConsumerEnv['AGENT_QUEUE'],
+    AGENT_SNAPSHOT_QUEUE: {} as AgentConsumerEnv['AGENT_SNAPSHOT_QUEUE'],
+    AGENT_DELIVERIES: {} as AgentConsumerEnv['AGENT_DELIVERIES'],
+    BODY_ENCRYPTION_ROOT_KEY: btoa('a'.repeat(32)),
+    AGENT_DELIVERY: {} as AgentConsumerEnv['AGENT_DELIVERY'],
+    AGENT_DELIVERY_COORDINATOR: {} as AgentConsumerEnv['AGENT_DELIVERY_COORDINATOR'],
+    TINYBIRD_AGENT_SNAPSHOT_TOKEN: 'snapshot-test',
+    TINYBIRD_AGENT_DELIVERY_READ_TOKEN: 'read-token',
     MODEL_PRICING: kv,
     AGENT_FACT_BATCHER: makeFactBatcher(),
     TINYBIRD_TOKEN: 'tb-token',

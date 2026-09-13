@@ -28,3 +28,7 @@ export type {
   RecoveryState,
   ReplayDlqInput,
 } from './recovery';
+
+export { startDeleteRows, waitForDeleteRows } from './deleteRows';
+export type { DeleteRowsOptions } from './deleteRows';
+export { AGENT_SNAPSHOT_TARGETS } from './agentDatasources';

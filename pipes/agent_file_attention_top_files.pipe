@@ -68,7 +68,7 @@ SQL >
                 sumMerge(StructuredFileEventCount) AS structured_file_event_count,
                 sumMerge(HintEventCount) AS hint_event_count,
                 argMaxMerge(source) AS source
-            FROM agent_session_file_signals
+            FROM agent_session_file_signals_published
             WHERE OrgId = {{ String(org_id, '') }}
                 {% if defined(repos) %}
                 AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})

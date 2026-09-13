@@ -1,0 +1,18 @@
+DESCRIPTION >
+    Current event-day index entries from live agent_review_unit_attribution_versions rows.
+
+NODE identity_days
+SQL >
+    SELECT
+        OrgId,
+        'review_unit_attributions' AS Category,
+        concat(OrgId, char(31), session_pk, char(31), review_unit_attribution_pk) AS FactIdentity,
+        toDate(DecidedAt) AS EventDay,
+        DeliverySequence,
+        ContentHash,
+        IngestedAt
+    FROM agent_review_unit_attribution_versions
+    WHERE IsDeleted = 0
+
+TYPE MATERIALIZED
+DATASOURCE agent_fact_identity_days

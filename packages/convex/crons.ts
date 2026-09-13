@@ -1,5 +1,6 @@
 import { cronJobs } from 'convex/server';
 import { internal } from './_generated/api';
+import { scheduleAgentSnapshotCleanup } from './agentSnapshotCleanup';
 
 const crons = cronJobs();
 
@@ -19,6 +20,13 @@ crons.daily(
   'import model pricing from models.dev',
   { hourUTC: 6, minuteUTC: 30 },
   internal.billing.modelPricing.importFromModelsDevInternal,
+);
+
+crons.hourly(
+  'remove superseded agent snapshots',
+  { minuteUTC: 20 },
+  scheduleAgentSnapshotCleanup,
+  {},
 );
 
 export default crons;

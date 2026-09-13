@@ -39,7 +39,7 @@ SQL >
             + sumIf(finalizeAggregation(ReasoningTokens), BucketStart >= prior_start_dt AND BucketStart < start_dt) AS prior_total_tokens,
         sumIf(finalizeAggregation(MessageCount), BucketStart >= prior_start_dt AND BucketStart < start_dt) AS prior_message_count,
         uniqMergeIf(SessionCount, BucketStart >= prior_start_dt AND BucketStart < start_dt) AS prior_session_count
-    FROM agent_usage_hourly
+    FROM agent_usage_hourly_published
     WHERE OrgId = {{ String(org_id, '') }}
         AND BucketStart >= prior_start_dt
         AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})

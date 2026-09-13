@@ -10,6 +10,14 @@ fi
 export CI="${CI:-1}"
 export TB_VERSION_WARNING="${TB_VERSION_WARNING:-0}"
 
+if [[ "$scope" == "--local" ]]; then
+  exec bash scripts/ci/run-tinybird-local-fixture-tests.sh \
+    agent_session_signals_top_runaway \
+    agent_file_attention_top_files \
+    agent_failure_leaderboard \
+    agent_notable_changes
+fi
+
 tmp_output="$(mktemp "${TMPDIR:-/tmp}/trace-flow-agent-signal-perf.XXXXXX")"
 trap 'rm -f "$tmp_output"' EXIT
 

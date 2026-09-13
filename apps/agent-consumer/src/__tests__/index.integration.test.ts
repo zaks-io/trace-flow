@@ -1,10 +1,12 @@
 import { captureException } from '@sentry/cloudflare';
-import { env } from 'cloudflare:test';
+import { env as workerEnv } from 'cloudflare:test';
 import type * as SentryCloudflare from '@sentry/cloudflare';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentConsumerEnv } from '../context';
 import worker from '../index';
 import { queueMessage } from './factories';
+
+const env = workerEnv as unknown as AgentConsumerEnv;
 
 vi.mock('@sentry/cloudflare', async (importOriginal) => ({
   ...(await importOriginal<typeof SentryCloudflare>()),
@@ -14,6 +16,81 @@ vi.mock('@sentry/cloudflare', async (importOriginal) => ({
 }));
 
 describe('agent consumer DLQ', () => {
+  it('acknowledges a valid deleted-organization message without preserving another copy', async () => {
+    const orgId = `erased-${crypto.randomUUID()}`;
+    await env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${orgId}`).beginErasure({});
+    const base = queueMessage();
+    const ack = vi.fn();
+    const retry = vi.fn();
+    const message = {
+      id: crypto.randomUUID(),
+      timestamp: new Date(),
+      body: { ...base, tenancy: { ...base.tenancy, org_id: orgId } },
+      attempts: 6,
+      ack,
+      retry,
+    };
+    const batch = {
+      queue: 'agent-ingest-dlq-dev',
+      messages: [message],
+      retryAll: vi.fn(),
+      ackAll: vi.fn(),
+    } as unknown as MessageBatch<unknown>;
+    const preserve = vi.fn(() => {
+      throw new Error('deleted payload must not be preserved');
+    });
+
+    await worker.queue(batch, {
+      ...env,
+      AGENT_FACT_BATCHER: { getByName: preserve },
+    } as unknown as AgentConsumerEnv);
+
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+    expect(preserve).not.toHaveBeenCalled();
+  });
+
+  it('discards a shared recovery copy when erasure starts during preservation', async () => {
+    const body = queueMessage();
+    const ack = vi.fn();
+    const message = {
+      id: crypto.randomUUID(),
+      timestamp: new Date(),
+      body,
+      attempts: 6,
+      ack,
+      retry: vi.fn(),
+    };
+    const batch = {
+      queue: 'agent-ingest-dlq-dev',
+      messages: [message],
+      retryAll: vi.fn(),
+      ackAll: vi.fn(),
+    } as unknown as MessageBatch<unknown>;
+    const getErasureState = vi
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ erasureStarted: true });
+    const discardDlq = vi.fn(async () => undefined);
+    const preserveDlq = vi.fn(async () => ({ id: 17 }));
+    const isolatedEnv = {
+      ...env,
+      AGENT_DELIVERY_COORDINATOR: {
+        getByName: vi.fn(() => ({ getErasureState })),
+      },
+      AGENT_FACT_BATCHER: {
+        getByName: vi.fn(() => ({ preserveDlq, discardDlq })),
+      },
+    } as unknown as AgentConsumerEnv;
+
+    await worker.queue(batch, isolatedEnv);
+
+    expect(preserveDlq).toHaveBeenCalledOnce();
+    expect(discardDlq).toHaveBeenCalledWith(17, expect.stringMatching(/^[0-9a-f]{64}$/));
+    expect(ack).toHaveBeenCalledOnce();
+    expect(message.retry).not.toHaveBeenCalled();
+  });
+
   it('preserves the complete message before acknowledgement and dedupes redelivery', async () => {
     let acknowledgements = 0;
     const message = {

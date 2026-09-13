@@ -1,5 +1,7 @@
-import type { AgentIngestQueueMessage } from '@trace-flow/types';
+import type { AgentIngestQueuePayload, AgentSnapshotQueueMessage } from '@trace-flow/types';
 import type { AgentFactBatcherInstance } from './fact-batcher';
+import type { AgentDeliveryInstance } from './agent-delivery';
+import type { AgentDeliveryCoordinatorInstance } from './agent-delivery-coordinator';
 
 /**
  * Bindings for the agent-consumer Worker. All bindings are required — a misconfigured deploy must
@@ -9,7 +11,15 @@ import type { AgentFactBatcherInstance } from './fact-batcher';
  */
 export interface AgentConsumerEnv {
   /** The agent ingest queue the worker (2b) produces to; this consumer prices + writes its facts. */
-  AGENT_QUEUE: Queue<AgentIngestQueueMessage>;
+  AGENT_QUEUE: Queue<AgentIngestQueuePayload>;
+  AGENT_SNAPSHOT_QUEUE: Queue<AgentSnapshotQueueMessage>;
+  AGENT_DELIVERIES: R2Bucket;
+  BODY_ENCRYPTION_ROOT_KEY: string;
+  AGENT_DELIVERY: DurableObjectNamespace<AgentDeliveryInstance>;
+  AGENT_DELIVERY_COORDINATOR: DurableObjectNamespace<AgentDeliveryCoordinatorInstance>;
+  /** Only the delivery receipt and identity lookup pipes; never a workspace admin token. */
+  TINYBIRD_AGENT_DELIVERY_READ_TOKEN: string;
+  TINYBIRD_AGENT_SNAPSHOT_TOKEN: string;
   /** Shared model pricing catalog, keyed `pricing:<provider>:<model>` (models.dev import, 2d). */
   MODEL_PRICING: KVNamespace;
   /** Durable Object ledger that dedupes and batches facts before Tinybird insert. */

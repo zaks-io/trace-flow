@@ -152,6 +152,9 @@ jobs:
               - '.prettierignore'
               - 'tsconfig.json'
             workflows:
+              - 'scripts/ci/configure-agent-tinybird-tokens*'
+              - 'scripts/ci/provision-agent-delivery*'
+              - 'scripts/ci/resolve-agent-tinybird-current-ref*'
               - 'scripts/ci/workflow-permissions.test.mjs'
               - 'scripts/ci/ubuntu_https_sources.py'
               - 'scripts/ci/ubuntu_https_sources_test.py'
@@ -162,6 +165,7 @@ jobs:
               - 'pipes/**'
               - 'tests/**'
               - 'tinybird.config.json'
+              - 'scripts/ci/*tinybird-local-fixture-tests*'
               - 'scripts/deploy-agent-tinybird.sh'
               - 'scripts/tinybird-agent-signal-performance-report.sh'
               - 'scripts/verify-agent-signal-query-guardrails.mjs'
@@ -182,7 +186,11 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Test workflow helpers
         run: |
-          bun test scripts/ci/workflow-permissions.test.mjs
+          bun test \
+            scripts/ci/configure-agent-tinybird-tokens.test.mjs \
+            scripts/ci/provision-agent-delivery.test.mjs \
+            scripts/ci/resolve-agent-tinybird-current-ref.test.mjs \
+            scripts/ci/workflow-permissions.test.mjs
           python3 scripts/ci/ubuntu_https_sources_test.py
       - uses: devops-actions/actionlint@v0.1.12
 
@@ -219,19 +227,17 @@ jobs:
           bash scripts/verify-tinybird-cost-contract.sh
           node scripts/verify-agent-signal-query-guardrails.mjs
           TB_TARGET_WORKSPACE=trace_flow_prod \
-            TINYBIRD_DEPLOY_PHASE=switch \
-            TINYBIRD_LEGACY_REF=11613a4619444adb0e27abc3df958cebb43cc280 \
+            TINYBIRD_DEPLOY_PHASE=expand \
+            TINYBIRD_CURRENT_REF=HEAD^ \
             TINYBIRD_VALIDATE_DEPLOY_TREE_ONLY=1 \
           bash scripts/deploy-agent-tinybird.sh
           tb --local build
-          tb --local test run
-          bash scripts/tinybird-agent-signal-performance-report.sh --local
+          bash scripts/ci/run-tinybird-local-fixture-tests.sh
         env:
           TB_VERSION_WARNING: 0
 
-      # Cloud dry-run diff against trace_flow_prod in the non-destructive switch phase. The script
-      # generates a temporary deploy tree that preserves legacy rollback resources without restoring
-      # legacy copy pipes, so this catches incompatible changes without requiring cleanup approval.
+      # Cloud dry-run diff against trace_flow_prod in the non-destructive expand phase. It restores
+      # legacy resources and the exact endpoint definitions from the explicit current ref.
       - name: Tinybird deploy --check (trace_flow_prod)
         # Keep local schema validation available to contributors without cloud secrets.
         if: >-
@@ -239,12 +245,13 @@ jobs:
           (github.event.pull_request.head.repo.full_name == github.repository &&
            github.event.pull_request.user.login != 'dependabot[bot]' &&
            github.actor != 'dependabot[bot]')
-        run: ./scripts/deploy-agent-tinybird.sh --check
+        run: |
+          bash scripts/ci/deploy-agent-tinybird-tree.test.sh
+          ./scripts/deploy-agent-tinybird.sh --check
         env:
           TB_TARGET_WORKSPACE: trace_flow_prod
-          TINYBIRD_DEPLOY_PHASE: switch
-          # Last main commit before the clean Tinybird resource cutover. The generated switch tree
-          # keeps rollback resources from this ref while excluding legacy copy pipes.
+          TINYBIRD_DEPLOY_PHASE: expand
+          TINYBIRD_CURRENT_REF: HEAD^
           TINYBIRD_LEGACY_REF: 11613a4619444adb0e27abc3df958cebb43cc280
           TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co

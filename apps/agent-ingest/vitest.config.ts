@@ -7,6 +7,12 @@ export default defineConfig({
       wrangler: {
         configPath: './wrangler.jsonc',
       },
+      miniflare: {
+        serviceBindings: {
+          AGENT_CONSUMER: async () =>
+            new Response('Use the explicit test service fixture', { status: 501 }),
+        },
+      },
     }),
   ],
   test: {

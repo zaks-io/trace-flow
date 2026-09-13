@@ -1,12 +1,8 @@
 {
-  // Agent ingest queue consumer. Drains AGENT_QUEUE, prices each Agent Message via the shared KV
-  // catalog, and writes one batched insert per base agent_* datasource through the shared Tinybird
-  // transport. Redelivery is absorbed by AGENT_FACT_BATCHER before Tinybird insert.
-  //
-  // Deploy workflow runs an explicit deploy job and preview.yml auto-discovers the `deploy:preview`
-  // script (`turbo run deploy:preview --filter=./apps/*`). Default deploys use the dev-named worker
-  // and dev resources; the production env block below binds prod resources. Production readiness
-  // still depends on the gates in docs/guides/agent-conversation-analytics/ROADMAP.md.
+  // Agent deliveries are encrypted in R2, priced once, and written as versioned Tinybird facts.
+  // Durable Objects retain bounded delivery receipts and snapshot progress. The legacy batcher
+  // remains available for the verified migration and frozen-fact recovery.
+  // Default bindings use dev resources; production binds its own queues, buckets, and pricing KV.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "trace-flow-agent-consumer-dev",
   "main": "src/index.ts",
@@ -31,28 +27,49 @@
     "TINYBIRD_HOST": "https://api.us-west-2.aws.tinybird.co",
     "TINYBIRD_AGENT_WRITE_MODE": "clean",
   },
-  // Secrets (set via `wrangler secret` / CI, never committed): TINYBIRD_TOKEN (DATASOURCE:APPEND
-  // scope), SENTRY_DSN.
+  // CI provisions append-only TINYBIRD_TOKEN, scoped delivery/snapshot read tokens,
+  // BODY_ENCRYPTION_ROOT_KEY for delivery buffers, and SENTRY_DSN.
   //
   // MODEL_PRICING is the shared dev pricing catalog (same namespace the proxy consumer reads); the
   // models.dev import (2d) keeps it populated.
   "kv_namespaces": [{ "binding": "MODEL_PRICING", "id": "25a35f71a8d64884a8e8935056880dba" }],
+  "r2_buckets": [
+    { "binding": "AGENT_DELIVERIES", "bucket_name": "trace-flow-agent-deliveries-dev" },
+  ],
   "durable_objects": {
-    "bindings": [{ "name": "AGENT_FACT_BATCHER", "class_name": "AgentFactBatcher" }],
+    "bindings": [
+      { "name": "AGENT_FACT_BATCHER", "class_name": "AgentFactBatcher" },
+      { "name": "AGENT_DELIVERY", "class_name": "AgentDelivery" },
+      { "name": "AGENT_DELIVERY_COORDINATOR", "class_name": "AgentDeliveryCoordinator" },
+    ],
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AgentFactBatcher"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["AgentFactBatcher"] },
+    { "tag": "v2", "new_sqlite_classes": ["AgentDelivery", "AgentDeliveryCoordinator"] },
+  ],
   // Consumes the 0d-provisioned agent-ingest-dev queue; poison + exhausted-retry messages dead-letter
   // to agent-ingest-dlq-dev.
   "queues": {
+    "producers": [
+      { "queue": "agent-ingest-dev", "binding": "AGENT_QUEUE" },
+      { "queue": "agent-snapshot-dev", "binding": "AGENT_SNAPSHOT_QUEUE" },
+    ],
     "consumers": [
       {
         "queue": "agent-ingest-dev",
         "max_batch_size": 100,
         "max_batch_timeout": 5,
-        // History imports can put every batch on one organization Durable Object.
-        "max_concurrency": 1,
+        "max_concurrency": 6,
         "max_retries": 5,
         "dead_letter_queue": "agent-ingest-dlq-dev",
+      },
+      {
+        "queue": "agent-snapshot-dev",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_concurrency": 2,
+        "max_retries": 100,
+        "retry_delay": 60,
       },
       {
         "queue": "agent-ingest-dlq-dev",
@@ -92,19 +109,37 @@
         "TINYBIRD_AGENT_WRITE_MODE": "clean",
       },
       "kv_namespaces": [{ "binding": "MODEL_PRICING", "id": "45dd0d5e619d44fc831ccab01ed428a4" }],
+      "r2_buckets": [
+        { "binding": "AGENT_DELIVERIES", "bucket_name": "trace-flow-agent-deliveries-prod" },
+      ],
       "durable_objects": {
-        "bindings": [{ "name": "AGENT_FACT_BATCHER", "class_name": "AgentFactBatcher" }],
+        "bindings": [
+          { "name": "AGENT_FACT_BATCHER", "class_name": "AgentFactBatcher" },
+          { "name": "AGENT_DELIVERY", "class_name": "AgentDelivery" },
+          { "name": "AGENT_DELIVERY_COORDINATOR", "class_name": "AgentDeliveryCoordinator" },
+        ],
       },
       "queues": {
+        "producers": [
+          { "queue": "agent-ingest-prod", "binding": "AGENT_QUEUE" },
+          { "queue": "agent-snapshot-prod", "binding": "AGENT_SNAPSHOT_QUEUE" },
+        ],
         "consumers": [
           {
             "queue": "agent-ingest-prod",
             "max_batch_size": 100,
             "max_batch_timeout": 5,
-            // Keep queued RPC bodies off the single organization Durable Object.
-            "max_concurrency": 1,
+            "max_concurrency": 6,
             "max_retries": 5,
             "dead_letter_queue": "agent-ingest-dlq-prod",
+          },
+          {
+            "queue": "agent-snapshot-prod",
+            "max_batch_size": 1,
+            "max_batch_timeout": 1,
+            "max_concurrency": 2,
+            "max_retries": 100,
+            "retry_delay": 60,
           },
           {
             "queue": "agent-ingest-dlq-prod",

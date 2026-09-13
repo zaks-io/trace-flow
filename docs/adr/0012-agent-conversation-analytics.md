@@ -1,5 +1,8 @@
 # Agent Conversation Analytics
 
+The ingestion ledger, deduplication, and serving-rollup design below is superseded by
+[ADR 0024: Bounded agent ingestion](./0024-bounded-agent-ingestion.md).
+
 Status: accepted
 
 Captured: 2026-05-23

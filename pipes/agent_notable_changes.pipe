@@ -45,7 +45,7 @@ SQL >
             BucketStart >= prior_start_dt AND BucketStart < start_dt
         ) AS prior_generated_tokens,
         uniqExactIf(toDate(BucketStart), BucketStart >= baseline_start_dt AND BucketStart < start_dt) AS baseline_active_days
-    FROM agent_usage_daily
+    FROM agent_usage_daily_published
     WHERE OrgId = {{ String(org_id, '') }}
         AND BucketStart >= scan_start_dt
         AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})

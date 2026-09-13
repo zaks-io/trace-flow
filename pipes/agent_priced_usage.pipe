@@ -20,6 +20,7 @@ DESCRIPTION >
 
 NODE direct_usage
 SQL >
+    %
     SELECT
         OrgId,
         UserId,
@@ -46,11 +47,15 @@ SQL >
         cost_usd,
         'direct' AS usage_kind,
         if(is_sidechain = 1 OR agent_depth > 0, 'direct', 'none') AS subagent_cost_coverage
-    FROM agent_message_facts
-    WHERE role = 'assistant'
+    FROM agent_message_fact_versions FINAL
+    WHERE OrgId = {{ String(org_id, '') }}
+      AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 366) }})
+      AND IsDeleted = 0
+      AND role = 'assistant'
 
 NODE subagent_fallback_usage
 SQL >
+    %
     SELECT
         t.OrgId AS OrgId,
         t.UserId AS UserId,
@@ -77,8 +82,11 @@ SQL >
         CAST(NULL AS Nullable(Float64)) AS cost_usd,
         'subagent_fallback' AS usage_kind,
         'fallback' AS subagent_cost_coverage
-    FROM agent_tool_event_facts AS t
-    WHERE t.extracted_subagent_agent_id != ''
+    FROM agent_tool_event_fact_versions AS t FINAL
+    WHERE t.OrgId = {{ String(org_id, '') }}
+        AND t.EventAt >= now() - toIntervalDay({{ Int32(retention_days, 366) }})
+        AND t.IsDeleted = 0
+        AND t.extracted_subagent_agent_id != ''
         AND (
             t.extracted_subagent_input_tokens > 0
             OR t.extracted_subagent_output_tokens > 0
@@ -87,8 +95,11 @@ SQL >
         )
         AND (t.source, t.session_pk, t.extracted_subagent_agent_id) NOT IN (
             SELECT source, session_pk, agent_id
-            FROM agent_message_facts
-            WHERE agent_id != '' AND (is_sidechain = 1 OR agent_depth > 0)
+            FROM agent_message_fact_versions FINAL
+            WHERE OrgId = {{ String(org_id, '') }}
+              AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 366) }})
+              AND IsDeleted = 0
+              AND agent_id != '' AND (is_sidechain = 1 OR agent_depth > 0)
         )
 
 NODE priced_usage

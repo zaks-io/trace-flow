@@ -1,11 +1,19 @@
 import type { Context } from 'hono';
 import { axiomConfigFromEnv, createWorkerLogger } from '@trace-flow/logging';
 import { currentSentryTraceContext } from '@trace-flow/utils/sentry-tracing';
-import { BodySizeLimitError, readBodyWithLimit, utf8ByteLength } from '@trace-flow/utils';
+import {
+  MAX_AGENT_ANALYTICS_DAY_BUCKETS,
+  BodySizeLimitError,
+  readBodyWithLimit,
+  stageAgentDelivery,
+  utf8ByteLength,
+} from '@trace-flow/utils';
 import type {
+  AgentDeliveryReference,
   AgentIngestEnvelope,
   AgentIngestQueueFacts,
   AgentIngestQueueMessage,
+  AgentIngestQueuePayload,
 } from '@trace-flow/types';
 import type { AgentIngestEnv } from './context';
 import { authenticateCollector } from './auth';
@@ -27,6 +35,11 @@ import {
   redactField,
 } from './redaction';
 import { validateEnvelopeShape } from './validation';
+import { FutureAgentFactTimestampError, retainAgentAnalyticsFacts } from './fact-retention';
+import {
+  AgentFactIdentityConflictError,
+  normalizeAgentFactIdentities,
+} from './fact-identity-conflicts';
 
 /** Collector authenticates with this header; the value is the raw Collector Credential secret. */
 const COLLECTOR_SECRET_HEADER = 'X-Trace-Flow-Collector-Secret';
@@ -40,6 +53,7 @@ const MAX_INGEST_BYTES = 10 * 1024 * 1024;
 // headroom for the batch's own JSON framing.
 const QUEUE_SEND_BATCH_MAX_MESSAGES = 100;
 const QUEUE_SEND_BATCH_MAX_BYTES = 240 * 1024;
+const DELIVERY_GROUP_SIZE = 10;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -49,9 +63,9 @@ const decoder = new TextDecoder();
  * caps. A single message already fits the per-message limit, so a message larger than the byte budget
  * still ships alone in its own batch rather than being dropped.
  */
-function groupForSendBatch(messages: AgentIngestQueueMessage[]): AgentIngestQueueMessage[][] {
-  const groups: AgentIngestQueueMessage[][] = [];
-  let current: AgentIngestQueueMessage[] = [];
+function groupForSendBatch(messages: AgentIngestQueuePayload[]): AgentIngestQueuePayload[][] {
+  const groups: AgentIngestQueuePayload[][] = [];
+  let current: AgentIngestQueuePayload[] = [];
   let currentBytes = 0;
 
   for (const message of messages) {
@@ -167,11 +181,39 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
       );
     }
 
-    if (isEmpty(facts)) return c.json({ accepted: true, sessions: 0 }, 202);
+    let retained;
+    try {
+      retained = retainAgentAnalyticsFacts(facts, Date.now());
+    } catch (err) {
+      if (err instanceof FutureAgentFactTimestampError) {
+        logger.warn('agent_ingest.future_fact_timestamp', { category: err.category });
+        return c.json({ error: 'invalid_envelope' }, 400);
+      }
+      throw err;
+    }
+    const retainedFacts = retained.facts;
+    const excludedByRetention = retained.excludedByRetention;
+    if (isEmpty(retainedFacts)) {
+      return c.json(
+        { accepted: true, sessions: 0, excluded_by_retention: excludedByRetention },
+        202,
+      );
+    }
 
-    reRedact(facts);
+    reRedact(retainedFacts);
 
-    const { queueFacts, sessionPks } = await assembleQueueFacts(facts, batch.source);
+    const assembled = await assembleQueueFacts(retainedFacts, batch.source);
+    let queueFacts: AgentIngestQueueFacts;
+    try {
+      queueFacts = normalizeAgentFactIdentities(assembled.queueFacts);
+    } catch (err) {
+      if (err instanceof AgentFactIdentityConflictError) {
+        logger.warn('agent_ingest.fact_identity_conflict', { category: err.category });
+        return c.json({ error: 'invalid_envelope' }, 400);
+      }
+      throw err;
+    }
+    const { sessionPks } = assembled;
 
     const base: Omit<AgentIngestQueueMessage, 'facts'> = {
       type: 'agent',
@@ -244,7 +286,15 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
     const ownedSessions = sessionPks.length - conflicted.size;
     if (isEmpty(owned)) {
       logger.info('agent_ingest.all_sessions_conflict', { sessions: sessionPks.length });
-      return c.json({ accepted: true, sessions: 0, skipped_conflict: conflicted.size }, 202);
+      return c.json(
+        {
+          accepted: true,
+          sessions: 0,
+          skipped_conflict: conflicted.size,
+          excluded_by_retention: excludedByRetention,
+        },
+        202,
+      );
     }
 
     const enqueuedAt = Date.now();
@@ -253,24 +303,10 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
         ? candidateMessages.map((message) => ({ ...message, enqueued_at: enqueuedAt }))
         : chunkFacts({ ...base, enqueued_at: enqueuedAt }, owned);
 
-    // Enqueue with sendBatch, not N parallel send()s. A multi-session envelope can chunk into hundreds
-    // of queue messages; firing that many individual send() subrequests bursts past Cloudflare's
-    // queue-write limits (and the Worker subrequest cap) and was the `enqueue_failed` 503 a batched
-    // backfill hit. sendBatch packs up to QUEUE_SEND_BATCH_MAX messages per call, so hundreds of sends
-    // collapse to a handful. Any failure is a retryable 503; the client re-sends the whole envelope and
-    // the consumer dedups on deterministic *_pks, so re-enqueuing messages that already landed is
-    // idempotent.
-    const groups = groupForSendBatch(messages);
-    const sends = await Promise.allSettled(
-      groups.map((g) => c.env.AGENT_QUEUE.sendBatch(g.map((body) => ({ body })))),
-    );
-    const failedGroups = sends.filter((s): s is PromiseRejectedResult => s.status === 'rejected');
-    if (failedGroups.length > 0) {
-      logger.error('agent_ingest.enqueue_failed', failedGroups[0]?.reason, {
-        failed_groups: failedGroups.length,
-        groups: groups.length,
-        messages: messages.length,
-      });
+    try {
+      await publishDeliveryGroups(c.env, messages, enqueuedAt);
+    } catch (err) {
+      logger.error('agent_ingest.delivery_publish_failed', err, { messages: messages.length });
       return c.json({ error: 'enqueue_failed' }, 503);
     }
 
@@ -278,14 +314,93 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
       sessions: ownedSessions,
       messages: messages.length,
       skipped_conflict: conflicted.size,
+      excluded_by_retention: excludedByRetention,
     });
     return c.json(
-      { accepted: true, sessions: ownedSessions, skipped_conflict: conflicted.size },
+      {
+        accepted: true,
+        sessions: ownedSessions,
+        skipped_conflict: conflicted.size,
+        excluded_by_retention: excludedByRetention,
+      },
       202,
     );
   } finally {
     await logger.flush();
   }
+}
+
+async function publishDeliveryGroups(
+  env: AgentIngestEnv,
+  messages: AgentIngestQueueMessage[],
+  now: number,
+): Promise<void> {
+  for (let offset = 0; offset < messages.length; offset += DELIVERY_GROUP_SIZE) {
+    const messageGroup = messages.slice(offset, offset + DELIVERY_GROUP_SIZE);
+    const orgId = messageGroup[0]!.tenancy.org_id;
+    if (!(await env.AGENT_CONSUMER.canAcceptDeliveries(orgId))) {
+      throw new Error('Agent delivery admission is temporarily unavailable');
+    }
+    const days = messageGroup.map(deliveryDays);
+    const staged = await settleAll(
+      messageGroup.map((message) =>
+        stageAgentDelivery({
+          storage: env.AGENT_DELIVERIES,
+          message,
+          encryption: {
+            rootKeyBase64: env.BODY_ENCRYPTION_ROOT_KEY,
+            keyId: env.BODY_ENCRYPTION_KEY_ID,
+          },
+          now,
+        }),
+      ),
+    );
+    const deliveries = await settleAll(
+      staged.map(async (reference, index): Promise<AgentDeliveryReference> => {
+        const revision = await env.AGENT_CONSUMER.registerDelivery(reference, days[index]!);
+        if (!Number.isSafeInteger(revision) || revision <= 0) {
+          throw new Error('Agent consumer returned an invalid delivery revision');
+        }
+        return { ...reference, delivery_revision: revision };
+      }),
+    );
+
+    // Every delivery in this group is durable and registered before the first Queue write. A failed
+    // send keeps the encrypted objects and registrations available for the recovery sweep.
+    for (const group of groupForSendBatch(deliveries)) {
+      await env.AGENT_QUEUE.sendBatch(group.map((body) => ({ body })));
+    }
+  }
+}
+
+async function settleAll<T>(promises: Promise<T>[]): Promise<T[]> {
+  const results = await Promise.allSettled(promises);
+  const failure = results.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected',
+  );
+  if (failure) throw failure.reason;
+  return results.map((result) => {
+    if (result.status !== 'fulfilled') throw new Error('Unreachable rejected delivery operation');
+    return result.value;
+  });
+}
+
+function deliveryDays(message: AgentIngestQueueMessage): string[] {
+  const timestamps = [
+    ...message.facts.messages.map((fact) => fact.event_at),
+    ...message.facts.tool_events.map((fact) => fact.event_at),
+    ...message.facts.file_events.map((fact) => fact.event_at),
+    ...message.facts.capability_snapshots.map((fact) => fact.event_at),
+    ...message.facts.pull_request_links.map((fact) => fact.event_at),
+    ...(message.facts.review_unit_attributions ?? []).map((fact) => fact.decided_at),
+  ];
+  const days = [
+    ...new Set(timestamps.map((timestamp) => new Date(timestamp).toISOString().slice(0, 10))),
+  ].sort();
+  if (days.length === 0 || days.length > MAX_AGENT_ANALYTICS_DAY_BUCKETS) {
+    throw new Error('Agent delivery has an invalid retention-day set');
+  }
+  return days;
 }
 
 /** True when the request declares a gzip body (case-insensitive; the Collector sends exactly `gzip`). */
