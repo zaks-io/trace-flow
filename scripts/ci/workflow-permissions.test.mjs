@@ -353,6 +353,26 @@ describe('production Worker secret boundary', () => {
     },
   );
 
+  test('sets Node 24 before every production Wrangler invocation', () => {
+    let checkedJobs = 0;
+    for (const job of Object.values(deploy.jobs)) {
+      const wranglerIndex = job.steps?.findIndex((step) =>
+        /wrangler|assert-agent-prod-resources|migrate-agent-ingestion/.test(
+          `${step.uses ?? ''} ${step.run ?? ''}`,
+        ),
+      );
+      if (wranglerIndex === undefined || wranglerIndex < 0) continue;
+      const setupIndex = job.steps.findIndex((step) =>
+        step.uses?.startsWith('actions/setup-node@'),
+      );
+      expect(setupIndex).toBeGreaterThanOrEqual(0);
+      expect(setupIndex).toBeLessThan(wranglerIndex);
+      expect(job.steps[setupIndex].with['node-version']).toBe(24);
+      checkedJobs++;
+    }
+    expect(checkedJobs).toBeGreaterThan(0);
+  });
+
   test('keeps ingest in maintenance until the automatic migration and endpoint switch pass', () => {
     const currentRefJob = deploy.jobs['agent-delivery-current-ref'];
     const release = deploy.jobs['agent-delivery-current-ref'].steps.find(
