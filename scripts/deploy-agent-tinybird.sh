@@ -95,6 +95,19 @@ ROOT_DIR="$(pwd)"
 DEPLOY_DIR="$ROOT_DIR"
 TMP_DIR=""
 DEFAULT_LEGACY_REF="11613a4619444adb0e27abc3df958cebb43cc280"
+LEGACY_AGENT_APPEND_DATASOURCES=(
+  agent_messages
+  agent_tool_events
+  agent_file_events
+  agent_capability_snapshots
+  agent_pull_request_links
+  agent_message_facts
+  agent_tool_event_facts
+  agent_file_event_facts
+  agent_capability_snapshot_facts
+  agent_pull_request_facts
+  agent_review_unit_attributions
+)
 
 cleanup_tmp() {
   if [[ -n "$TMP_DIR" ]]; then
@@ -276,6 +289,59 @@ verify_preserved_inventory() {
   echo "Verified $verified preserved Tinybird resources from $ref."
 }
 
+overlay_preserved_agent_append_tokens() {
+  local phase="$1"
+  local legacy_ref="$2"
+  local current_ref="$3"
+  local directive="TOKEN trace_flow_agent_facts_append APPEND"
+  local datasource
+  local expected_ref
+  local exact_count
+  local path
+  local present=0
+  local overlaid=0
+  local token_count
+
+  for datasource in "${LEGACY_AGENT_APPEND_DATASOURCES[@]}"; do
+    path="datasources/$datasource.datasource"
+    if [[ "$phase" == "switch" && -f "$ROOT_DIR/$path" ]]; then
+      continue
+    fi
+    expected_ref="$legacy_ref"
+    if [[ -n "$current_ref" ]] && git cat-file -e "$current_ref:$path" 2>/dev/null; then
+      expected_ref="$current_ref"
+    fi
+    if [[ ! -f "$TMP_DIR/$path" ]]; then
+      echo "Refusing deploy: preserved append datasource $path is missing." >&2
+      exit 1
+    fi
+    token_count="$(
+      grep -Ec '^TOKEN[[:space:]]+"?trace_flow_agent_facts_append"?[[:space:]]+' "$TMP_DIR/$path" || true
+    )"
+    exact_count="$(grep -Fxc "$directive" "$TMP_DIR/$path" || true)"
+    if [[ "$token_count" == "1" && "$exact_count" == "1" ]]; then
+      present=$((present + 1))
+      continue
+    fi
+    if [[ "$token_count" != "0" ]]; then
+      echo "Refusing deploy: preserved append datasource $path has an invalid trace_flow_agent_facts_append directive." >&2
+      exit 1
+    fi
+    printf '%s\n' "$directive" >> "$TMP_DIR/$path"
+    if [[ "$(grep -Fxc "$directive" "$TMP_DIR/$path")" != "1" ]]; then
+      echo "Refusing deploy: failed to add the exact token directive to $path." >&2
+      exit 1
+    fi
+    if ! cmp -s <(git show "$expected_ref:$path") <(grep -Fvx "$directive" "$TMP_DIR/$path"); then
+      echo "Refusing deploy: token overlay changed preserved schema in $path." >&2
+      exit 1
+    fi
+    overlaid=$((overlaid + 1))
+  done
+
+  echo "Verified declarative append-token scopes on ${#LEGACY_AGENT_APPEND_DATASOURCES[@]} preserved datasources ($overlaid added, $present already present)."
+}
+
 prepare_phase_project() {
   local phase="$1"
   if [[ "$phase" == "cleanup" ]]; then
@@ -316,11 +382,17 @@ prepare_phase_project() {
     verify_preserved_inventory "$current_ref"
   fi
 
+  overlay_preserved_agent_append_tokens "$phase" "$legacy_ref" "$current_ref"
+
   DEPLOY_DIR="$TMP_DIR"
   echo "Prepared Tinybird $phase deploy tree."
 }
 
 prepare_phase_project "$DEPLOY_PHASE"
+
+if [[ "$DEPLOY_PHASE" != "cleanup" ]]; then
+  node "$ROOT_DIR/scripts/ci/configure-agent-tinybird-tokens.mjs" --validate-datafiles "$DEPLOY_DIR"
+fi
 
 "$ROOT_DIR/scripts/verify-tinybird-copy-policy.sh" "$DEPLOY_DIR"
 

@@ -42,3 +42,4 @@ ENGINE_TTL "toDateTime(DecidedAt) + toIntervalYear(1)"
 
 TOKEN "agent_consumer_versions_append" APPEND
 TOKEN "agent_snapshot_migration" APPEND
+TOKEN trace_flow_agent_facts_append APPEND

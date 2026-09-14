@@ -1,4 +1,6 @@
-import { chmod, writeFile } from 'node:fs/promises';
+import { chmod, readdir, readFile, writeFile } from 'node:fs/promises';
+import { extname, join, parse, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const SNAPSHOT_DATASOURCES = [
   'agent_context_call_buckets_hourly_snapshots',
@@ -66,12 +68,10 @@ function normalizedScopes(scopes) {
   return scopes.map((scope) => `${scope.type}${scope.resource ? `:${scope.resource}` : ''}`).sort();
 }
 
-async function request(fetchImpl, host, deployToken, path, init = {}) {
+async function request(fetchImpl, host, deployToken, path) {
   const response = await fetchImpl(new URL(path, host), {
-    ...init,
     headers: {
       Authorization: `Bearer ${deployToken}`,
-      ...(init.body ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
     },
   });
   const body = await response.json();
@@ -79,10 +79,64 @@ async function request(fetchImpl, host, deployToken, path, init = {}) {
   return body;
 }
 
-function tokenForm(definition) {
-  const form = new URLSearchParams({ name: definition.name });
-  for (const scope of definition.scopes) form.append('scope', scope);
-  return form;
+async function datafilesIn(directory) {
+  const entries = await readdir(directory, { withFileTypes: true }).catch((error) => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+  const files = [];
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...(await datafilesIn(path)));
+    else if (entry.isFile() && ['.datasource', '.pipe'].includes(extname(entry.name)))
+      files.push(path);
+  }
+  return files;
+}
+
+function scopeForDirective(path, permission) {
+  const extension = extname(path);
+  const resource = parse(path).name;
+  if (extension === '.datasource' && ['READ', 'APPEND'].includes(permission)) {
+    return `DATASOURCES:${permission}:${resource}`;
+  }
+  if (extension === '.pipe' && permission === 'READ') return `PIPES:READ:${resource}`;
+  return undefined;
+}
+
+export async function validateAgentTinybirdTokenDatafiles(rootPath) {
+  required(rootPath, 'datafile root');
+  const tokenNames = new Set(AGENT_TINYBIRD_TOKENS.map(({ name }) => name));
+  const inventory = new Map(AGENT_TINYBIRD_TOKENS.map(({ name }) => [name, []]));
+  const paths = (
+    await Promise.all(
+      ['datasources', 'pipes', 'materializations', 'copies'].map((directory) =>
+        datafilesIn(join(rootPath, directory)),
+      ),
+    )
+  ).flat();
+
+  for (const path of paths) {
+    const contents = await readFile(path, 'utf8');
+    for (const line of contents.split('\n')) {
+      const directive = line.match(/^TOKEN\s+(?:"([^"]+)"|(\S+))\s+(READ|APPEND)\s*$/);
+      const tokenName = directive?.[1] ?? directive?.[2];
+      if (!tokenName || !tokenNames.has(tokenName)) continue;
+      const scope = scopeForDirective(path, directive[3]);
+      if (!scope) throw new Error(`Invalid ${tokenName} directive in ${path}`);
+      inventory.get(tokenName).push(scope);
+    }
+  }
+
+  for (const definition of AGENT_TINYBIRD_TOKENS) {
+    const actual = inventory.get(definition.name).sort();
+    const expected = [...definition.scopes].sort();
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      throw new Error(`Tinybird datafiles do not declare the exact scopes for ${definition.name}`);
+    }
+  }
+
+  return Object.fromEntries(inventory);
 }
 
 export async function configureAgentTinybirdTokens(outputPath, options = {}) {
@@ -97,20 +151,13 @@ export async function configureAgentTinybirdTokens(outputPath, options = {}) {
   for (const definition of AGENT_TINYBIRD_TOKENS) {
     const matches = listing.tokens.filter((token) => token.name === definition.name);
     if (matches.length > 1) throw new Error(`Tinybird returned duplicate token ${definition.name}`);
-    let token = matches[0];
-    if (!token) {
-      token = await request(fetchImpl, host, deployToken, '/v0/tokens/', {
-        method: 'POST',
-        body: tokenForm(definition),
-      });
-    } else if (
+    const token = matches[0];
+    if (!token) throw new Error(`Tinybird did not deploy token ${definition.name}`);
+    if (
       JSON.stringify(normalizedScopes(token.scopes ?? [])) !==
       JSON.stringify([...definition.scopes].sort())
     ) {
-      await request(fetchImpl, host, deployToken, `/v0/tokens/${encodeURIComponent(token.token)}`, {
-        method: 'PUT',
-        body: tokenForm(definition),
-      });
+      throw new Error(`Tinybird did not preserve the exact scopes for ${definition.name}`);
     }
     if (typeof token.token !== 'string' || token.token.length === 0 || /[\r\n]/.test(token.token)) {
       throw new Error(`Tinybird returned an invalid value for ${definition.name}`);
@@ -118,22 +165,16 @@ export async function configureAgentTinybirdTokens(outputPath, options = {}) {
     values.push(`${definition.variable}=${token.token}`);
   }
 
-  const verified = await request(fetchImpl, host, deployToken, '/v0/tokens');
-  for (const definition of AGENT_TINYBIRD_TOKENS) {
-    const matches = verified.tokens?.filter((token) => token.name === definition.name);
-    if (
-      matches?.length !== 1 ||
-      JSON.stringify(normalizedScopes(matches[0].scopes ?? [])) !==
-        JSON.stringify([...definition.scopes].sort())
-    ) {
-      throw new Error(`Tinybird did not preserve the exact scopes for ${definition.name}`);
-    }
-  }
   await writeFile(outputPath, `${values.join('\n')}\n`, { mode: 0o600 });
   await chmod(outputPath, 0o600);
 }
 
-if (import.meta.main) {
-  await configureAgentTinybirdTokens(process.argv[2]);
-  console.log('Configured scoped Agent Tinybird tokens.');
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  if (process.argv[2] === '--validate-datafiles') {
+    await validateAgentTinybirdTokenDatafiles(process.argv[3]);
+    console.log('Validated declarative Agent Tinybird token scopes.');
+  } else {
+    await configureAgentTinybirdTokens(process.argv[2]);
+    console.log('Exported deployed Agent Tinybird tokens.');
+  }
 }

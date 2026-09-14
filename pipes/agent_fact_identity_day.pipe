@@ -17,3 +17,4 @@ SQL >
 TYPE ENDPOINT
 
 TOKEN agent_consumer_versions_append READ
+TOKEN trace_flow_agent_delivery_read READ

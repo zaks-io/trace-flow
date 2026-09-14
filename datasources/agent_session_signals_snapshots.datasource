@@ -66,3 +66,4 @@ ENGINE_PARTITION_KEY "toYYYYMM(SnapshotDay)"
 ENGINE_TTL "toDateTime(SnapshotDay) + toIntervalYear(1) + toIntervalDay(1)"
 
 TOKEN "agent_snapshot_worker" APPEND
+TOKEN trace_flow_agent_snapshot_worker APPEND

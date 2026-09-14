@@ -14,3 +14,4 @@ ENGINE_PARTITION_KEY "toYYYYMM(PublishedAt)"
 ENGINE_TTL "toDateTime(PublishedAt) + toIntervalYear(1) + toIntervalDay(1)"
 
 TOKEN "agent_snapshot_worker" APPEND
+TOKEN trace_flow_agent_snapshot_worker APPEND
