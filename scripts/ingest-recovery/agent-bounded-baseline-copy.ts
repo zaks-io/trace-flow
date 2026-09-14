@@ -25,6 +25,7 @@ import {
   preserveChunkFailure,
   requireEmptyCategoryTarget,
   requireEmptyChunkTarget,
+  retainedSlice,
   verifyChunkSource,
   verifyCompletedChunkTarget,
 } from './agent-bounded-baseline-proof';
@@ -225,8 +226,8 @@ async function recoverChunkReceipt(
       AND JSONExtractString(job_metadata,'parameters','org_id')=${quote(recovery.org)}
       AND JSONExtractString(job_metadata,'parameters','start_day')=${quote(checkpoint.startDay)}
       AND JSONExtractString(job_metadata,'parameters','end_day')=${quote(checkpoint.endDay)}
-      AND JSONExtractString(job_metadata,'parameters','chunk_start_day')=${quote(chunk.startDay)}
-      AND JSONExtractString(job_metadata,'parameters','chunk_end_day')=${quote(chunk.endDay)}
+      AND JSONExtractString(job_metadata,'parameters','chunk_start_day')>=${quote(chunk.startDay)}
+      AND JSONExtractString(job_metadata,'parameters','chunk_end_day')<=${quote(chunk.endDay)}
       AND JSONExtractString(job_metadata,'parameters','copy_attempt')=${quote(String(active.copyAttempt))}
       AND JSONExtractString(job_metadata,'parameters','_mode')='append'
     ORDER BY created_at DESC,job_id DESC LIMIT 2`);
@@ -252,12 +253,20 @@ function chunkParams(
   copyAttempt: number,
 ): URLSearchParams {
   const chunk = checkpoint.plan.chunks[chunkIndex]!;
+  // Retention rolls forward at UTC midnight while a long run is in flight. The proofs only cover
+  // the retained slice of a chunk, so the Copy must never append days those proofs no longer see.
+  const retained = retainedSlice(chunk, retainedMigrationWindow());
+  if (!retained) {
+    throw new Error(
+      'Bounded baseline Copy chunk is fully outside analytics retention; replan before resuming',
+    );
+  }
   return new URLSearchParams({
     org_id: recovery.org,
     start_day: checkpoint.startDay,
     end_day: checkpoint.endDay,
-    chunk_start_day: chunk.startDay,
-    chunk_end_day: chunk.endDay,
+    chunk_start_day: retained.startDay,
+    chunk_end_day: retained.endDay,
     copy_attempt: String(copyAttempt),
     _mode: 'append',
   });

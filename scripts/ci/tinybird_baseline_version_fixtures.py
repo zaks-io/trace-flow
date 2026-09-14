@@ -189,14 +189,14 @@ def verify_resumed_proof(client, org, previous, today, query_rows) -> None:
         const capture={sql:async query=>{
             const kind=query.includes('HAVING uniqExact')?'conflict':query.includes('argMax(')?'inspection':'parity';
             queries.push({kind,query,category:currentCategory});
-            return {data:kind==='conflict'?[]:kind==='inspection'?[{rows:0,days:[]}]:[
+            return {data:kind==='conflict'?[]:kind==='inspection'?[]:[
                 {source_rows:0,target_rows:0,invalid_metadata:0,missing_target:0,unexpected_target:0}
             ],meta:[]};
         }};
         await inspectBaseline(capture,org,retainedWindow,copyWindow);
         for(const category of CATEGORIES) {
             currentCategory=category;
-            await verifyBaseline(capture,org,retainedWindow,{category,rows:0,days:[]},copyWindow);
+            await verifyBaseline(capture,org,retainedWindow,{category,rows:0,days:[],dailyStats:[]},copyWindow);
         }
         console.log(JSON.stringify(queries));
     """
@@ -215,7 +215,12 @@ def verify_resumed_proof(client, org, previous, today, query_rows) -> None:
         if entry["kind"] == "conflict":
             valid = rows == []
         elif entry["kind"] == "inspection":
-            valid = len(rows) == 1 and int(rows[0]["rows"]) == 1 and rows[0]["days"] == [today.strftime("%Y-%m-%d")]
+            valid = (
+                len(rows) == 1
+                and int(rows[0]["rows"]) == 1
+                and rows[0]["day"] == today.strftime("%Y-%m-%d")
+                and int(rows[0]["projected_bytes"]) > 0
+            )
         else:
             valid = len(rows) == 1 and int(rows[0]["source_rows"]) == int(rows[0]["target_rows"])
             valid = valid and not any(int(rows[0].get(field, 0)) for field in ["invalid_metadata", "missing_target", "unexpected_target"])

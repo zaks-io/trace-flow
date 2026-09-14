@@ -134,7 +134,7 @@ function expectedRetained(
     );
 }
 
-function retainedSlice(
+export function retainedSlice(
   chunk: BaselineCopyChunk,
   retained: MigrationWindow,
 ): MigrationWindow | null {

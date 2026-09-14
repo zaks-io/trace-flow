@@ -53,6 +53,12 @@ afterAll(() => {
   restore('CLOUDFLARE_API_TOKEN', originalApiToken);
 });
 
+function shiftDay(day: string, days: number): string {
+  return new Date(Date.parse(`${day}T00:00:00.000Z`) + days * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+}
+
 function restore(name: string, value: string | undefined): void {
   if (value === undefined) delete process.env[name];
   else process.env[name] = value;
@@ -79,7 +85,7 @@ function checkpoint(): BoundedBaselineCopyCheckpoint {
   };
 }
 
-function fixture(initial = checkpoint()) {
+function fixture(initial = checkpoint(), verificationStartDay?: string) {
   let state: BaselineCopyCheckpoint = structuredClone(initial);
   let jobs: Record<string, unknown>[] = [];
   let terminal: Record<string, unknown> = { job_id: 'job-chunk', status: 'done' };
@@ -87,7 +93,9 @@ function fixture(initial = checkpoint()) {
   const requests: string[] = [];
   const queries: string[] = [];
   const calls: string[] = [];
-  const verificationChunk = chunkAgentDayRange(initial)[0]!;
+  const verificationChunk = {
+    startDay: verificationStartDay ?? chunkAgentDayRange(initial)[0]!.startDay,
+  };
   const recovery = {
     org: 'org-proof',
     async call(method: string, input: Record<string, unknown>) {
@@ -190,6 +198,64 @@ describe('bounded baseline Copy operator', () => {
     expect(copy).toContain(`chunk_end_day=${f.state().plan.chunks[0]!.endDay}`);
     expect(copy).not.toContain('on_demand_compute');
     expect(f.state()).toMatchObject({ complete: true, completedJobs: [{ jobId: 'job-chunk' }] });
+  });
+
+  test('clips the Copy to the retained slice when retention rolled past a chunk day', async () => {
+    const window = retainedMigrationWindow();
+    const expired = shiftDay(window.startDay, -1);
+    const proof = {
+      category: 'tool_events' as const,
+      rows: 3,
+      days: [expired, window.startDay],
+      dailyStats: [
+        { day: expired, rows: 1, projectedBytes: 10 },
+        { day: window.startDay, rows: 2, projectedBytes: 20 },
+      ],
+    };
+    const initial: BoundedBaselineCopyCheckpoint = {
+      mode: 'bounded',
+      category: proof.category,
+      startDay: expired,
+      endDay: window.endDay,
+      startedAt: 1,
+      plan: buildBaselineCopyPlan(proof, { startDay: expired, endDay: window.endDay }),
+      completedJobs: [],
+      complete: false,
+    };
+    expect(initial.plan.chunks[0]).toMatchObject({ startDay: expired, endDay: window.startDay });
+    const f = fixture(initial, window.startDay);
+    await expect(runBoundedBaselineCopy(f.tb, f.recovery, f.state(), {})).resolves.toEqual([
+      'job-chunk',
+    ]);
+    const copy = f.requests.find((path) => path.includes('/copy?'))!;
+    expect(copy).toContain(`chunk_start_day=${window.startDay}`);
+    expect(copy).toContain(`chunk_end_day=${window.startDay}`);
+    expect(copy).not.toContain(`chunk_start_day=${expired}`);
+  });
+
+  test('refuses to Copy a chunk that is fully outside analytics retention', async () => {
+    const day = '2020-01-01';
+    const proof = {
+      category: 'tool_events' as const,
+      rows: 1,
+      days: [day],
+      dailyStats: [{ day, rows: 1, projectedBytes: 10 }],
+    };
+    const initial: BoundedBaselineCopyCheckpoint = {
+      mode: 'bounded',
+      category: proof.category,
+      startDay: day,
+      endDay: day,
+      startedAt: 1,
+      plan: buildBaselineCopyPlan(proof, { startDay: day, endDay: day }),
+      completedJobs: [],
+      complete: false,
+    };
+    const f = fixture(initial);
+    await expect(runBoundedBaselineCopy(f.tb, f.recovery, f.state(), {})).rejects.toThrow(
+      'fully outside analytics retention',
+    );
+    expect(f.requests.filter((path) => path.includes('/copy?'))).toHaveLength(0);
   });
 
   test('recovers exactly one lost receipt and refuses missing or ambiguous matches', async () => {

@@ -13,7 +13,6 @@ const AGENT_METHODS = new Set([
   'freezeIngestionMigration',
   'seedIngestionMigration',
   'beginBaselineMigrationWindow',
-  'beginBaselineCopy',
   'confirmBaselineCopy',
   'retryBaselineCopy',
   'beginBoundedBaselineCopy',
