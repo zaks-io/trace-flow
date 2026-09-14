@@ -293,9 +293,11 @@ stops the command with the private journal intact.
 
 Resolve blocked `tinybird_insert` records before this repair command. Enumerate them through
 `listRecovery` with `options.kind="tinybird_insert"`, prove the exact submitted rows are fully
-present at the target, and use the existing `confirm-written` reconciliation. Repair absent or
-partial rows through the existing insertion procedure and verify their delivery before confirming
-the record written. Verify the resulting frozen source against canonical storage afterward.
+present at the target, and use the existing `confirm-written` reconciliation. If any row is absent
+or partial, stop without resolving the record. Do not use `confirm-not-written` or attempt a legacy
+flush after freeze. Require a separate reviewed recovery plan that writes and verifies the current
+canonical target before confirming the record written. Verify the resulting frozen source against
+canonical storage afterward.
 `confirm-written` marks the linked pending rows sent and may delete them, so a recovery record or
 HTTP outcome alone is not sufficient proof. The repair command remains blocked while insert
 recovery items exist and does not reconcile them.
