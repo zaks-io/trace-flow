@@ -309,6 +309,24 @@ describe('preview credential boundary', () => {
 });
 
 describe('credentialed CI checks', () => {
+  test('Tinybird fixtures have the runtimes and workspace dependencies used by migration proofs', () => {
+    const steps = ci.jobs['tinybird-schema-check'].steps;
+    const fixture = steps.findIndex(
+      (step) => step.name === 'Build and test against Tinybird Local',
+    );
+    const prerequisites = steps.slice(0, fixture);
+    expect(fixture).toBeGreaterThan(0);
+    expect(prerequisites.some((step) => step.uses === 'oven-sh/setup-bun@v2')).toBe(true);
+    expect(
+      prerequisites.some(
+        (step) => step.uses === 'actions/setup-node@v6' && step.with['node-version'] === 24,
+      ),
+    ).toBe(true);
+    const install = prerequisites.findIndex((step) => step.run === 'bun install --frozen-lockfile');
+    const bun = prerequisites.findIndex((step) => step.uses === 'oven-sh/setup-bun@v2');
+    expect(install).toBeGreaterThan(bun);
+  });
+
   test('Tinybird checks run when Copy SQL or its fixtures change independently', () => {
     const filters = YAML.parse(
       ci.jobs.changes.steps.find((step) => step.id === 'filter').with.filters,
