@@ -18,6 +18,11 @@ export interface FrozenFactIdentity {
   factId: string;
 }
 
+export interface FrozenFactIdentityPage {
+  facts: FrozenFactIdentity[];
+  nextAfter: FrozenFactIdentity | null;
+}
+
 export interface ExpectedCanonicalFact {
   category: Category;
   factId: string;

@@ -50,6 +50,7 @@ import {
 import { errorMessage } from './fact-repair-proof';
 import type {
   FrozenFactIdentity,
+  FrozenFactIdentityPage,
   FrozenFactSelector,
   FrozenFactSource,
   FrozenFactSourceMetadata,
@@ -701,11 +702,11 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
   }
 
   listFrozenFacts(
-    orgId: string,
+    _orgId: string,
     input: Pick<ListRebuildFactsInput, 'after' | 'limit'>,
-  ): ListRebuildFactsResult {
+  ): FrozenFactIdentityPage {
     this.legacyState.assertFrozen();
-    return this.maintenance.listFrozen(orgId, input);
+    return this.maintenance.listFrozenIdentities(input);
   }
 
   readFrozenFacts(orgId: string, input: { facts: FrozenFactSelector[] }): FrozenFactSource[] {

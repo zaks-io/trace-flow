@@ -1,0 +1,14 @@
+{
+  "job_id": "job-failed",
+  "job_type": "copy",
+  "status": "error",
+  "error": "Copy timed out",
+  "workspace_id": "workspace-fixture",
+  "request_id": "request-fixture",
+  "pipe_id": "pipe-fixture",
+  "datasource_id": "datasource-fixture",
+  "created_at": "2026-09-13 19:00:00.000",
+  "started_at": "2026-09-13 19:00:01.000",
+  "updated_at": "2026-09-13 19:00:31.000",
+  "job_metadata": "{\"dependent_datasources\":{},\"processed_data\":{},\"execution_type\":\"manual\",\"parameters\":{\"org_id\":\"org-proof\",\"start_day\":\"2026-09-01\",\"end_day\":\"2026-09-13\",\"copy_attempt\":\"1\",\"_mode\":\"append\",\"copy_timestamp\":\"2026-09-13 19:00:00\",\"job_timestamp\":\"2026-09-13 19:00:00\"},\"pipe_name\":\"repair_agent_tool_events_versions_baseline\",\"query_id\":\"query-fixture\",\"query_sql\":\"SELECT fixture\",\"mode\":\"append\",\"ondemand_instance\":null}"
+}

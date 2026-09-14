@@ -211,6 +211,45 @@ test('persists the baseline migration window only through a confirmed agent muta
   assert.deepEqual(calls, [['__migration__', body.options]]);
 });
 
+test('exposes baseline retry only through the confirmed agent recovery service', async () => {
+  const calls = [];
+  const env = {
+    AGENT_RECOVERY: {
+      retryBaselineCopy: async (shardId, options) => {
+        calls.push([shardId, options]);
+        return { ...options, complete: false };
+      },
+    },
+  };
+  const options = {
+    category: 'tool_events',
+    expectedJobId: 'job-failed',
+    expectedCopyAttempt: 10,
+    nextCopyAttempt: 11,
+    observedAt: 11,
+    providerErrorSha256: 'a'.repeat(64),
+    journalSha256: 'b'.repeat(64),
+  };
+  const body = { pipeline: 'agent', shardId: 'org-1', options };
+
+  assert.equal((await worker.fetch(request('retryBaselineCopy', body), env)).status, 400);
+  assert.equal(
+    (
+      await worker.fetch(
+        request('retryBaselineCopy', { ...body, pipeline: 'proxy', confirm: 'apply-recovery' }),
+        env,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (await worker.fetch(request('retryBaselineCopy', { ...body, confirm: 'apply-recovery' }), env))
+      .status,
+    200,
+  );
+  assert.deepEqual(calls, [['org-1', options]]);
+});
+
 test('forwards bounded frozen source inspection and reads without mutation confirmation', async () => {
   const calls = [];
   const env = {

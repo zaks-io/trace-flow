@@ -142,25 +142,35 @@ export async function requireAgentProducerMaintenance(): Promise<void> {
   }
 }
 
-export async function waitForMigrationCopy(tb: AgentTinybirdClient, jobId: string): Promise<void> {
+export async function waitForMigrationCopy(
+  tb: AgentTinybirdClient,
+  jobId: string,
+): Promise<Record<string, unknown> & { status: string }> {
   if (!/^[a-zA-Z0-9-]{1,128}$/.test(jobId)) throw new Error('Invalid migration Copy job');
   const deadline = Date.now() + 4 * 60_000;
   while (Date.now() < deadline) {
-    let job: { status?: unknown };
+    let job: Record<string, unknown>;
     try {
-      job = await tb.request(`/v0/jobs/${jobId}`);
+      const response: unknown = await tb.request(`/v0/jobs/${jobId}`);
+      if (!response || typeof response !== 'object' || Array.isArray(response)) {
+        throw new Error('Migration Copy job response is invalid');
+      }
+      job = response as Record<string, unknown>;
     } catch (error) {
       if (!(error instanceof AgentTinybirdRequestError) || error.status !== 404) throw error;
       const result = await tb.sql(
-        `SELECT job_id, status FROM tinybird.jobs_log WHERE job_id = '${jobId}' LIMIT 2`,
+        `SELECT * FROM tinybird.jobs_log WHERE job_id = '${jobId}' LIMIT 2`,
       );
       if (result.data.length !== 1 || result.data[0]?.job_id !== jobId) {
         throw new Error('Migration Copy job is absent from both the Jobs API and jobs_log');
       }
       job = result.data[0]!;
     }
-    if (job.status === 'done') return;
-    if (typeof job.status !== 'string' || !['waiting', 'working'].includes(job.status)) {
+    if (typeof job.status !== 'string') throw new Error('Migration Copy job status is invalid');
+    if (['done', 'error', 'cancelled'].includes(job.status)) {
+      return job as Record<string, unknown> & { status: string };
+    }
+    if (!['waiting', 'working'].includes(job.status)) {
       throw new Error('Migration Copy job failed');
     }
     await new Promise((resolve) => setTimeout(resolve, 2_000));
