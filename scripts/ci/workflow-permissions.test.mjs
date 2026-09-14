@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { YAML } from 'bun';
+import { Glob, YAML } from 'bun';
 import { readFileSync } from 'node:fs';
 
 function workflow(name) {
@@ -309,6 +309,20 @@ describe('preview credential boundary', () => {
 });
 
 describe('credentialed CI checks', () => {
+  test('Tinybird checks run when Copy SQL or its fixtures change independently', () => {
+    const filters = YAML.parse(
+      ci.jobs.changes.steps.find((step) => step.id === 'filter').with.filters,
+    );
+    for (const path of [
+      'copies/repair_agent_messages_versions_baseline.pipe',
+      'fixtures/agent_message_facts.ndjson',
+      'scripts/ci/tinybird-local-fixture-tests.py',
+      'scripts/ci/tinybird_baseline_version_fixtures.py',
+    ]) {
+      expect(filters.tinybird.some((pattern) => new Glob(pattern).match(path))).toBe(true);
+    }
+  });
+
   const cloudCheck = workflow('ci').jobs['tinybird-schema-check'].steps.find(
     (step) => step.name === 'Tinybird deploy --check (trace_flow_prod)',
   ).if;
