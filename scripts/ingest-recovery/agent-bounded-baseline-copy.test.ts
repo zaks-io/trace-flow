@@ -256,6 +256,8 @@ describe('bounded baseline Copy operator', () => {
       'fully outside analytics retention',
     );
     expect(f.requests.filter((path) => path.includes('/copy?'))).toHaveLength(0);
+    expect(f.calls).not.toContain('armBoundedBaselineCopyChunk');
+    expect(f.state().activeJob).toBeUndefined();
   });
 
   test('recovers exactly one lost receipt and refuses missing or ambiguous matches', async () => {

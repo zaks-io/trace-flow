@@ -108,6 +108,15 @@ export async function runBoundedBaselineCopy(
     const chunkIndex = checkpoint.completedJobs.length;
     const chunk = checkpoint.plan.chunks[chunkIndex]!;
     if (!checkpoint.activeJob) {
+      // Retention rolls forward at UTC midnight while a long run is in flight. The proofs only
+      // cover the retained slice of a chunk, so decide the slice once, before the intent is
+      // durably armed, and post exactly that slice. A fully expired chunk must never be armed.
+      const retained = retainedSlice(chunk, retainedMigrationWindow());
+      if (!retained) {
+        throw new Error(
+          'Bounded baseline Copy chunk is fully outside analytics retention; replan before resuming',
+        );
+      }
       await freshExternalGuards();
       await verifyChunkSource(tb, recovery, checkpoint, chunk);
       await requireEmptyChunkTarget(tb, recovery, checkpoint, chunk);
@@ -121,7 +130,7 @@ export async function runBoundedBaselineCopy(
       })) as BoundedBaselineCopyCheckpoint & { created: boolean };
       checkpoint = armed;
       if (armed.created) {
-        checkpoint = await startChunk(tb, recovery, pipe, checkpoint, chunkIndex);
+        checkpoint = await startChunk(tb, recovery, pipe, checkpoint, chunkIndex, retained);
       }
     }
     if (!checkpoint.activeJob) throw new Error('Bounded baseline Copy omitted its active intent');
@@ -188,11 +197,12 @@ async function startChunk(
   pipe: string,
   checkpoint: BoundedBaselineCopyCheckpoint,
   chunkIndex: number,
+  retained: MigrationWindow,
 ): Promise<BoundedBaselineCopyCheckpoint> {
   const active = checkpoint.activeJob;
   const chunk = checkpoint.plan.chunks[chunkIndex];
   if (!active || !chunk) throw new Error('Bounded baseline Copy start state is invalid');
-  const params = chunkParams(recovery, checkpoint, chunkIndex, active.copyAttempt);
+  const params = chunkParams(recovery, checkpoint, retained, active.copyAttempt);
   const response: unknown = await tb.request(`/v0/pipes/${pipe}/copy?${params.toString()}`, '');
   const receipt =
     response && typeof response === 'object' && 'job' in response ? response.job : null;
@@ -249,18 +259,9 @@ async function recoverChunkReceipt(
 function chunkParams(
   recovery: AgentRecoveryClient,
   checkpoint: BoundedBaselineCopyCheckpoint,
-  chunkIndex: number,
+  retained: MigrationWindow,
   copyAttempt: number,
 ): URLSearchParams {
-  const chunk = checkpoint.plan.chunks[chunkIndex]!;
-  // Retention rolls forward at UTC midnight while a long run is in flight. The proofs only cover
-  // the retained slice of a chunk, so the Copy must never append days those proofs no longer see.
-  const retained = retainedSlice(chunk, retainedMigrationWindow());
-  if (!retained) {
-    throw new Error(
-      'Bounded baseline Copy chunk is fully outside analytics retention; replan before resuming',
-    );
-  }
   return new URLSearchParams({
     org_id: recovery.org,
     start_day: checkpoint.startDay,
