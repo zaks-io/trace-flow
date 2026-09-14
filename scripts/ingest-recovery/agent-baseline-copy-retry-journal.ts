@@ -9,12 +9,12 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join, resolve } from 'node:path';
-import type { BaselineCopyCheckpoint } from '../../apps/agent-consumer/src/baseline-copy-contract';
+import type { LegacyBaselineCopyCheckpoint } from '../../apps/agent-consumer/src/baseline-copy-contract';
 
 interface BaselineCopyFailureJournalEntry {
   version: 1;
   orgId: string;
-  checkpoint: BaselineCopyCheckpoint;
+  checkpoint: LegacyBaselineCopyCheckpoint;
   observedAt: number;
   providerJob: Record<string, unknown>;
 }

@@ -10,6 +10,7 @@ export interface BaselineCategoryProof {
   category: Category;
   rows: number;
   days: string[];
+  dailyStats: { day: string; rows: number; projectedBytes: number }[];
 }
 export interface MigrationWindow {
   startDay: string;
@@ -126,26 +127,45 @@ export async function inspectBaseline(
       );
     }
     const rows = (
-      await tb.sql(`SELECT count() AS rows,
-        arraySort(groupUniqArray(toString(toDate(latest_time)))) AS days
+      await tb.sql(`SELECT toString(toDate(latest_time)) AS day,
+        count() AS rows,
+        sum(latest_projected_bytes) AS projected_bytes
         FROM (
-          SELECT argMax(${time},IngestedAt) AS latest_time
+          SELECT argMax(${time},IngestedAt) AS latest_time,
+            argMax(length(toJSONString(tuple(${projection}))),IngestedAt) AS latest_projected_bytes
           FROM ${DATASOURCES[category]}
           WHERE ${migrationScope(category, org, copyWindow)}
           GROUP BY ${identity}
         ) WHERE latest_time >= toDateTime(${quote(window.startDay)})
-          AND latest_time < toDateTime(${quote(window.endDay)}) + INTERVAL 1 DAY`)
+          AND latest_time < toDateTime(${quote(window.endDay)}) + INTERVAL 1 DAY
+        GROUP BY day ORDER BY day`)
     ).data;
-    const row = rows[0];
+    if (!Array.isArray(rows) || rows.length > 367) {
+      throw new Error(`Source ${category} is not uniquely defined; baseline requires repair`);
+    }
+    const dailyStats = rows.map((row) => ({
+      day: String(row.day),
+      rows: safeCount(row.rows, `${category} daily rows`),
+      projectedBytes: safeCount(row.projected_bytes, `${category} daily projected bytes`),
+    }));
     if (
-      !row ||
-      !Number.isSafeInteger(Number(row.rows)) ||
-      !Array.isArray(row.days) ||
-      row.days.length > 367
+      dailyStats.some(
+        (row) =>
+          !/^\d{4}-\d{2}-\d{2}$/.test(row.day) ||
+          !Number.isSafeInteger(row.rows) ||
+          row.rows <= 0 ||
+          !Number.isSafeInteger(row.projectedBytes) ||
+          row.projectedBytes <= 0,
+      )
     ) {
       throw new Error(`Source ${category} is not uniquely defined; baseline requires repair`);
     }
-    proofs.push({ category, rows: Number(row.rows), days: row.days as string[] });
+    proofs.push({
+      category,
+      rows: dailyStats.reduce((sum, row) => sum + row.rows, 0),
+      days: dailyStats.map((row) => row.day),
+      dailyStats,
+    });
   }
   return proofs;
 }
@@ -270,12 +290,20 @@ export async function verifyBaseline(
 }
 
 function safeCount(value: unknown, label: string): number {
+  if (
+    !(
+      (typeof value === 'number' && Number.isSafeInteger(value)) ||
+      (typeof value === 'string' && /^\d+$/.test(value))
+    )
+  ) {
+    throw new Error(`Invalid ${label}`);
+  }
   const count = Number(value);
   if (!Number.isSafeInteger(count) || count < 0) throw new Error(`Invalid ${label}`);
   return count;
 }
 
-function baselineProjection(category: Category): string {
+export function baselineProjection(category: Category): string {
   const source = DATASOURCES[category];
   const columns = [
     ...readFileSync(`datasources/${source}.datasource`, 'utf8').matchAll(/^\s+`([^`]+)`\s/gm),
