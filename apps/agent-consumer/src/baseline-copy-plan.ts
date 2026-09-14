@@ -6,11 +6,11 @@ import type {
 import { CATEGORIES, type Category } from './facts';
 import { assertExactKeys } from './agent-delivery-coordinator-validation';
 
-export const MAX_BASELINE_COPY_DAYS = 367;
+const MAX_BASELINE_COPY_DAYS = 367;
 export const MAX_BASELINE_COPY_CHUNK_DAYS = 7;
 export const MAX_BASELINE_COPY_CHUNK_ROWS = 50_000;
 export const MAX_BASELINE_COPY_CHUNK_BYTES = 64 * 1024 * 1024;
-export const MAX_BASELINE_COPY_CHECKPOINT_BYTES = 128 * 1024;
+const MAX_BASELINE_COPY_CHECKPOINT_BYTES = 128 * 1024;
 
 export function isBoundedBaselineCopy(
   checkpoint: BaselineCopyCheckpoint,
