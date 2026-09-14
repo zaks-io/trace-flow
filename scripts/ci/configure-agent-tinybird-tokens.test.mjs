@@ -1,12 +1,16 @@
 import { afterEach, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   AGENT_APPEND_DATASOURCES,
   AGENT_TINYBIRD_TOKENS,
   configureAgentTinybirdTokens,
 } from './configure-agent-tinybird-tokens.mjs';
+import {
+  ensureAgentTinybirdTokenDatafiles,
+  validateAgentTinybirdTokenDatafiles,
+} from './configure-agent-tinybird-tokens-datafiles.mjs';
 
 const directories = [];
 afterEach(async () =>
@@ -30,6 +34,33 @@ async function outputPath() {
   const directory = await mkdtemp(join(tmpdir(), 'agent-tokens-'));
   directories.push(directory);
   return join(directory, 'worker.env');
+}
+
+function datafileForScope(root, scope) {
+  const [kind, , resource] = scope.split(':');
+  if (kind === 'DATASOURCES') return join(root, 'datasources', `${resource}.datasource`);
+  const directory = resource.startsWith('repair_') ? 'copies' : 'pipes';
+  return join(root, directory, `${resource}.pipe`);
+}
+
+async function datafileFixture(includeDeclarations = false) {
+  const root = await mkdtemp(join(tmpdir(), 'agent-token-datafiles-'));
+  directories.push(root);
+  const expectedBase = new Map();
+  for (const definition of AGENT_TINYBIRD_TOKENS) {
+    for (const scopeValue of definition.scopes) {
+      const [, permission] = scopeValue.split(':');
+      const path = datafileForScope(root, scopeValue);
+      const base = 'DESCRIPTION >\n    preserved bytes\n\nTOKEN existing_reader READ\n';
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(
+        path,
+        includeDeclarations ? `${base}TOKEN ${definition.name} ${permission}\n` : base,
+      );
+      expectedBase.set(path, base);
+    }
+  }
+  return { root, expectedBase };
 }
 
 test('defines the exact deployed token names, Worker variables, and resource scopes', () => {
@@ -152,4 +183,51 @@ test('fails without writing an export when deployed scopes are not exact', async
     'Tinybird did not preserve the exact scopes for trace_flow_agent_delivery_read',
   );
   await expect(readFile(output, 'utf8')).rejects.toThrow();
+});
+
+test('adds every missing datafile binding without changing existing bytes or tokens', async () => {
+  const { root, expectedBase } = await datafileFixture();
+  expect(await ensureAgentTinybirdTokenDatafiles(root)).toEqual({ added: 41, present: 0 });
+  const inventory = await validateAgentTinybirdTokenDatafiles(root);
+  expect(inventory).toEqual(
+    Object.fromEntries(AGENT_TINYBIRD_TOKENS.map(({ name, scopes }) => [name, [...scopes].sort()])),
+  );
+  for (const [path, base] of expectedBase) {
+    const withoutAgentToken = (await readFile(path, 'utf8'))
+      .split('\n')
+      .filter((line) => !line.startsWith('TOKEN trace_flow_agent_'))
+      .join('\n');
+    expect(withoutAgentToken).toBe(base);
+  }
+});
+
+test('keeps one existing exact datafile binding byte-for-byte', async () => {
+  const { root, expectedBase } = await datafileFixture(true);
+  const before = await Promise.all(
+    [...expectedBase.keys()].map(async (path) => [path, await readFile(path, 'utf8')]),
+  );
+  expect(await ensureAgentTinybirdTokenDatafiles(root)).toEqual({ added: 0, present: 41 });
+  for (const [path, contents] of before) expect(await readFile(path, 'utf8')).toBe(contents);
+});
+
+test('rejects a wrong datafile permission', async () => {
+  const { root } = await datafileFixture();
+  const path = datafileForScope(root, AGENT_TINYBIRD_TOKENS[0].scopes[0]);
+  await writeFile(
+    path,
+    `${await readFile(path, 'utf8')}TOKEN trace_flow_agent_delivery_read APPEND\n`,
+  );
+  await expect(ensureAgentTinybirdTokenDatafiles(root)).rejects.toThrow(
+    'Invalid trace_flow_agent_delivery_read directive',
+  );
+});
+
+test('rejects duplicate datafile bindings', async () => {
+  const { root } = await datafileFixture();
+  const path = datafileForScope(root, AGENT_TINYBIRD_TOKENS[0].scopes[0]);
+  const directive = 'TOKEN trace_flow_agent_delivery_read READ\n';
+  await writeFile(path, `${await readFile(path, 'utf8')}${directive}${directive}`);
+  await expect(ensureAgentTinybirdTokenDatafiles(root)).rejects.toThrow(
+    'Invalid trace_flow_agent_delivery_read directive',
+  );
 });

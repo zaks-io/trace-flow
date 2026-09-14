@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CURRENT_REF="844d8f0313af18ac73ad60bdbe7f81dc3d8f019d"
+FAILED_CURRENT_REF="c5aaa06a8c1cb88cc5345edcbbd3e7f57b61c136"
 LEGACY_REF="11613a4619444adb0e27abc3df958cebb43cc280"
 TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/trace-flow-deploy-tree-test.XXXXXX")"
 trap 'rm -rf "$TEST_DIR"' EXIT
@@ -25,12 +26,12 @@ assert_ref_file() {
   }
 }
 
-assert_ref_file_with_append_token() {
+assert_ref_file_with_token() {
   local ref="$1"
   local path="$2"
-  local directive="TOKEN trace_flow_agent_facts_append APPEND"
+  local directive="$3"
   [[ "$(grep -Fxc "$directive" "$PWD/$path")" == "1" ]] || {
-    echo "Generated tree did not declare the exact append token in $path" >&2
+    echo "Generated tree did not declare '$directive' exactly once in $path" >&2
     exit 1
   }
   if git -C "$TEST_ROOT" show "$ref:$path" | grep -Fxq "$directive"; then
@@ -51,7 +52,10 @@ assert_repo_file() {
   }
 }
 
-assert_ref_file_with_append_token "$LEGACY_REF" datasources/agent_messages.datasource
+assert_ref_file_with_token \
+  "$LEGACY_REF" \
+  datasources/agent_messages.datasource \
+  "TOKEN trace_flow_agent_facts_append APPEND"
 assert_ref_file "$LEGACY_REF" datasources/otel_traces.datasource
 assert_ref_file "$LEGACY_REF" pipes/llm_requests_mv.pipe
 [[ ! -e pipes/agent_sessions_copy.pipe ]] || {
@@ -61,7 +65,28 @@ assert_ref_file "$LEGACY_REF" pipes/llm_requests_mv.pipe
 
 if [[ "$TEST_PHASE" == "expand" ]]; then
   assert_ref_file "$CURRENT_REF" pipes/agent_usage_summary.pipe
-  assert_ref_file_with_append_token "$CURRENT_REF" datasources/agent_message_facts.datasource
+  assert_ref_file_with_token \
+    "$CURRENT_REF" \
+    datasources/agent_message_facts.datasource \
+    "TOKEN trace_flow_agent_facts_append APPEND"
+  if git -C "$TEST_ROOT" cat-file -e "$CURRENT_REF:pipes/agent_delivery_receipt.pipe" 2>/dev/null; then
+    assert_ref_file_with_token \
+      "$CURRENT_REF" \
+      pipes/agent_delivery_receipt.pipe \
+      "TOKEN trace_flow_agent_delivery_read READ"
+    assert_ref_file_with_token \
+      "$CURRENT_REF" \
+      datasources/agent_snapshot_manifest.datasource \
+      "TOKEN trace_flow_agent_snapshot_worker APPEND"
+    assert_ref_file_with_token \
+      "$CURRENT_REF" \
+      pipes/agent_snapshot_job.pipe \
+      "TOKEN trace_flow_agent_snapshot_worker READ"
+  else
+    assert_repo_file pipes/agent_delivery_receipt.pipe
+    assert_repo_file datasources/agent_snapshot_manifest.datasource
+    assert_repo_file pipes/agent_snapshot_job.pipe
+  fi
 else
   assert_repo_file pipes/agent_usage_summary.pipe
   assert_repo_file datasources/agent_message_facts.datasource
@@ -69,7 +94,9 @@ fi
 
 assert_repo_file pipes/agent_delivery_receipt.pipe
 assert_repo_file pipes/agent_snapshot_job.pipe
-node "$TEST_ROOT/scripts/ci/configure-agent-tinybird-tokens.mjs" --validate-datafiles "$PWD" >/dev/null
+assert_repo_file copies/repair_agent_repositories_snapshots.pipe
+node "$TEST_ROOT/scripts/ci/configure-agent-tinybird-tokens-datafiles.mjs" \
+  --validate-datafiles "$PWD" >/dev/null
 
 touch "$TEST_MARKER"
 EOF
@@ -117,7 +144,9 @@ if [[ "$incomplete_exit_code" -eq 0 || "$incomplete_output" != *"does not contai
 fi
 
 run_phase expand
+run_phase expand "$FAILED_CURRENT_REF" expand-failed-current-ref
+run_phase expand HEAD^ expand-head-parent
 run_phase switch
 run_phase expand HEAD expand-with-declared-tokens
 
-echo "Tinybird deploy tree preservation passed (expand, repeat expand, and switch)"
+echo "Tinybird deploy tree preservation passed (844, c5, HEAD^, repeat HEAD, and switch)"
