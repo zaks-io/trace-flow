@@ -381,6 +381,41 @@ export class TinybirdRecoveryStore {
     return this.get(id);
   }
 
+  resolveBatchWithMutation(
+    entries: { id: number; resolution: string; reason: string }[],
+    mutate: () => void,
+    validate: () => void,
+  ): RecoveryRecord[] {
+    if (entries.length === 0 || new Set(entries.map(({ id }) => id)).size !== entries.length) {
+      throw new Error('recovery resolution batch is invalid');
+    }
+    const validated = entries.map((entry) => ({
+      ...entry,
+      reason: requireRecoveryReason(entry.reason),
+      record: this.getStored(entry.id),
+    }));
+    if (validated.some(({ record }) => record.state !== 'blocked')) {
+      throw new Error('recovery record is not blocked');
+    }
+    this.storage.transactionSync(() => {
+      mutate();
+      for (const entry of validated) {
+        this.storage.sql.exec('DELETE FROM recovery_items WHERE recovery_id = ?', entry.id);
+        const updated = this.storage.sql.exec(
+          `UPDATE recovery_records SET state = 'resolved', resolved_at_ms = ?, resolution = ?,
+           resolution_reason = ? WHERE id = ? AND state = 'blocked'`,
+          Date.now(),
+          entry.resolution,
+          entry.reason,
+          entry.id,
+        ).rowsWritten;
+        if (updated !== 1) throw new Error('recovery record changed during batch resolution');
+      }
+      validate();
+    });
+    return entries.map(({ id }) => this.get(id));
+  }
+
   countBlockedRows(): number {
     return this.storage.sql
       .exec<{ count: number }>(

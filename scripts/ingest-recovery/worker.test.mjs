@@ -152,6 +152,33 @@ test('legacy retirement requires explicit mutation confirmation', async () => {
   assert.deepEqual(calls, [['org-1', options]]);
 });
 
+test('frozen repair reconciliation requires explicit mutation confirmation', async () => {
+  const calls = [];
+  const env = {
+    AGENT_RECOVERY: {
+      reconcileFrozenRepairs: async (orgId, batch) => {
+        calls.push([orgId, batch]);
+        return { resolved: batch.repairs.length };
+      },
+    },
+  };
+  const options = { repairs: [{ recoveryId: 7 }] };
+  const body = { pipeline: 'agent', shardId: 'org-1', options };
+
+  assert.equal((await worker.fetch(request('reconcileFrozenRepairs', body), env)).status, 400);
+  assert.equal(calls.length, 0);
+  assert.equal(
+    (
+      await worker.fetch(
+        request('reconcileFrozenRepairs', { ...body, confirm: 'apply-recovery' }),
+        env,
+      )
+    ).status,
+    200,
+  );
+  assert.deepEqual(calls, [['org-1', options]]);
+});
+
 test('persists the baseline migration window only through a confirmed agent mutation', async () => {
   const calls = [];
   const env = {

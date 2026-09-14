@@ -150,4 +150,91 @@ describe('frozen ledger replay', () => {
       expect(JSON.parse(stored.data)).toMatchObject({ cost_usd: 1 });
     });
   });
+
+  it('reads only exact journal tombstones as resolved frozen repair sources', async () => {
+    const orgId = `journaled-${crypto.randomUUID()}`;
+    const row = sourceRow(orgId);
+    const ledgerRow = { ...row, IngestedAt: '2026-09-01 00:00:00.000', cost_usd: 1 };
+    const factId = rowIdentity(row, ROW_IDENTITY_FIELDS.messages);
+    const sourceHash = stableHash(row);
+    const ledgerHash = stableHash(ledgerRow);
+    const dedupeKey = JSON.stringify([
+      'messages',
+      factId,
+      ledgerHash,
+      sourceHash,
+      factIngestedAtMs(row),
+    ]);
+    const batcher = env.AGENT_FACT_BATCHER.getByName(`org:${orgId}`);
+    await runInDurableObject(batcher, async (instance, state) => {
+      instance.getIngestionMigrationState();
+      state.storage.sql.exec(
+        `INSERT INTO fact_ledger
+         (category, fact_id, content_hash, first_seen_at_ms, data, clean_target, legacy_target)
+         VALUES ('messages', ?, ?, ?, ?, 1, 0)`,
+        factId,
+        ledgerHash,
+        Date.now(),
+        JSON.stringify(ledgerRow),
+      );
+      state.storage.sql.exec(
+        `INSERT INTO fact_repairs
+         (category, fact_id, old_hash, new_hash, seen_at_ms, data, recovery_dedupe_key)
+         VALUES ('messages', ?, ?, ?, ?, ?, ?)`,
+        factId,
+        ledgerHash,
+        sourceHash,
+        Date.now(),
+        JSON.stringify(row),
+        dedupeKey,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO recovery_records
+         (kind, state, classification, target, target_key, dedupe_key, payload, outcome,
+          created_at_ms, resolved_at_ms, resolution, resolution_reason)
+         VALUES ('repair', 'resolved', 'changed', NULL, NULL, ?, '', '', ?, ?,
+                 'frozen-journal-exact', ?)`,
+        dedupeKey,
+        Date.now(),
+        Date.now(),
+        'a'.repeat(64),
+      );
+      await instance.freezeIngestionMigration('bounded-agent-ingestion-v1');
+
+      const valid = instance.inspectFrozenFactSources(orgId, {
+        facts: [{ category: 'messages', factId }],
+      });
+      expect(valid[0]?.sourceHash).toBe(sourceHash);
+
+      state.storage.sql.exec(
+        'UPDATE fact_repairs SET data = ? WHERE recovery_dedupe_key = ?',
+        JSON.stringify({ ...row, cost_usd: 99 }),
+        dedupeKey,
+      );
+      const replaced = instance.inspectFrozenFactSources(orgId, {
+        facts: [{ category: 'messages', factId }],
+      });
+      expect(replaced[0]?.sourceHash).toBe(ledgerHash);
+      state.storage.sql.exec(
+        'UPDATE fact_repairs SET data = ? WHERE recovery_dedupe_key = ?',
+        JSON.stringify(row),
+        dedupeKey,
+      );
+
+      state.storage.sql.exec("UPDATE recovery_records SET resolution_reason = 'malformed'");
+      const malformed = instance.inspectFrozenFactSources(orgId, {
+        facts: [{ category: 'messages', factId }],
+      });
+      expect(malformed[0]?.sourceHash).toBe(ledgerHash);
+
+      state.storage.sql.exec(
+        "UPDATE recovery_records SET resolution_reason = ?, resolution = 'rebuilt'",
+        'a'.repeat(64),
+      );
+      const unrelated = instance.inspectFrozenFactSources(orgId, {
+        facts: [{ category: 'messages', factId }],
+      });
+      expect(unrelated[0]?.sourceHash).toBe(ledgerHash);
+    });
+  });
 });

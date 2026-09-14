@@ -270,6 +270,25 @@ source than the ledger row, so they cannot be discarded as queue residue. Record
 `org:__dlq__` batcher require their own verified replay or organization-scoped cleanup and are
 never deleted by legacy-ledger retirement.
 
+Blocked repair reconciliation is an explicit destructive operator action. Get owner approval,
+then dispatch the existing Deploy workflow on `main` with `agent_ingest_maintenance=true`. After
+the maintenance response is live, run the command below from a reviewed checkout. It inventories
+every blocked record into a private `0600` SQLite journal and validates the complete journal before
+the first mutation. The journal may require several gigabytes, and the command refuses to start or
+drain records unless at least 1 GiB remains free. Each proof-bound batch leaves a compact resolution
+tombstone while releasing that record's recovery payload and outcome copies; the full originals
+remain in the journal. Preserve and reuse the same journal after an uncertain response. Once the
+reconciliation and later retirement checks finish, dispatch the same Deploy workflow with
+`agent_ingest_maintenance=false` to resume ingestion.
+
+```sh
+bun scripts/ingest-recovery/recover-frozen-agent.ts \
+  --org ORGANIZATION_ID --reconcile-blocked-repairs --apply \
+  --confirm-org ORGANIZATION_ID \
+  --canonical-index /private/frozen-canonical.sqlite \
+  --journal /private/frozen-repair-reconciliation.sqlite
+```
+
 After the read-only report is clean, run the same full verification and retirement in one
 invocation. `--retire` requires the producer maintenance check, drained queues, zero active
 deliveries, `--apply`, and the exact organization confirmation. It stores the verified digest,
