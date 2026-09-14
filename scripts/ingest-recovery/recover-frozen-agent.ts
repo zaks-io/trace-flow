@@ -224,6 +224,7 @@ try {
       }
     }
   } else {
+    await assertFrozenRecoveryTarget(recovery, runtime.tb);
     const censusPath = resolve(values.census!);
     const journalPath = resolve(values.journal!);
     journal = new FrozenRecoveryJournal(journalPath, values.org, await censusSha256(censusPath));
