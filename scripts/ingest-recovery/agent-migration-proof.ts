@@ -44,21 +44,40 @@ export async function migrationOrganizations(
   tb: AgentTinybirdClient,
   window: MigrationWindow,
 ): Promise<string[]> {
-  const union = CATEGORIES.map(
-    (category) =>
-      `SELECT DISTINCT OrgId FROM ${DATASOURCES[category]} WHERE ${migrationScope(category, '', window).replace("OrgId = '' AND ", '')}`,
-  ).join(' UNION ALL ');
-  const rows = (await tb.sql(`SELECT DISTINCT OrgId FROM (${union}) ORDER BY OrgId LIMIT 1001`))
-    .data;
-  if (rows.length > 1000)
-    throw new Error(
-      'Migration organization bound exceeded; use paginated migration before proceeding',
-    );
-  return rows.map((row) => {
-    if (typeof row.OrgId !== 'string' || !/^[a-zA-Z0-9_-]{1,256}$/.test(row.OrgId))
-      throw new Error('Invalid migration organization');
-    return row.OrgId;
-  });
+  const organizations = new Set<string>();
+  const chunks = chunkAgentDayRange(window);
+  for (const category of CATEGORIES) {
+    for (const chunk of chunks) {
+      const context = `${category} for ${chunk.startDay} through ${chunk.endDay}`;
+      let rows: unknown;
+      try {
+        rows = (
+          await tb.sql(
+            `SELECT DISTINCT OrgId FROM ${DATASOURCES[category]} WHERE ${migrationScope(category, '', chunk).replace("OrgId = '' AND ", '')} LIMIT 1001`,
+          )
+        ).data;
+      } catch {
+        throw new Error(`Migration organization discovery failed in ${context}`);
+      }
+      if (!Array.isArray(rows)) {
+        throw new Error(`Invalid migration organization response in ${context}`);
+      }
+      for (const row of rows) {
+        const orgId =
+          row && typeof row === 'object' ? (row as Record<string, unknown>).OrgId : undefined;
+        if (typeof orgId !== 'string' || !/^[a-zA-Z0-9_-]{1,256}$/.test(orgId)) {
+          throw new Error(`Invalid migration organization in ${context}`);
+        }
+        organizations.add(orgId);
+        if (organizations.size > 1000) {
+          throw new Error(
+            `Migration organization bound exceeded in ${context}; use paginated migration before proceeding`,
+          );
+        }
+      }
+    }
+  }
+  return [...organizations].sort();
 }
 
 export async function inspectBaseline(
