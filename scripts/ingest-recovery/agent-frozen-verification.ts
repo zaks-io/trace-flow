@@ -38,20 +38,30 @@ export async function verifyAllFrozenFacts(
   if (!index.complete) throw new Error('Canonical hash index export is incomplete');
   const report = emptyReport();
   const digest = createHash('sha256');
-  let after: { category: Category; factId: string } | undefined;
+  let page = await recovery.call('listFrozenFacts', { limit: 100 });
   for (let pageNumber = 0; pageNumber < 100_000; pageNumber++) {
-    const page = await recovery.call('listFrozenFacts', { after, limit: 100 });
     if (!Array.isArray(page?.facts) || page.facts.length > 100) {
       throw new Error('Invalid frozen fact page');
     }
     const identities = page.facts.map(validatePageIdentity);
-    if (identities.length > 0) await verifyFrozenPage(recovery, index, identities, report, digest);
     if (page.nextAfter === null) {
+      if (identities.length > 0)
+        await verifyFrozenPage(recovery, index, identities, report, digest);
       report.eligibleForLegacyRetirement = report.missing === 0 && report.conflicts === 0;
       report.verificationSha256 = digest.digest('hex');
       return report;
     }
-    after = validatePageIdentity(page.nextAfter);
+    const after = validatePageIdentity(page.nextAfter);
+    // Drain both reads on failure before the caller closes the canonical index.
+    const [verified, next] = await Promise.allSettled([
+      identities.length > 0
+        ? verifyFrozenPage(recovery, index, identities, report, digest)
+        : Promise.resolve(),
+      recovery.call('listFrozenFacts', { after, limit: 100 }),
+    ]);
+    if (verified.status === 'rejected') throw verified.reason;
+    if (next.status === 'rejected') throw next.reason;
+    page = next.value;
   }
   throw new Error('Frozen fact verification page bound exceeded');
 }
