@@ -90,9 +90,10 @@ try {
         for (const category of categories) {
           if (category.rows === 0) continue;
           jobs.push(
-            await runBaselineCopy(runtime.tb, recovery, category.category, copyWindow, {
+            ...(await runBaselineCopy(runtime.tb, recovery, category.category, copyWindow, {
               retryJournalRoot: values['retry-journal'],
-            }),
+              sourceProof: category,
+            })),
           );
         }
       }

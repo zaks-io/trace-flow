@@ -45,6 +45,7 @@ const messageProof = (rows: number): BaselineCategoryProof => ({
   category: 'messages',
   rows,
   days: [],
+  dailyStats: [],
 });
 
 describe('migrationOrganizations', () => {
@@ -180,7 +181,13 @@ describe('latest baseline selection', () => {
         queries.push(query);
         return query.includes('HAVING uniqExact')
           ? { data: [], meta: [] }
-          : { data: [{ rows: '2', days: ['2026-09-12', '2026-09-13'] }], meta: [] };
+          : {
+              data: [
+                { day: '2026-09-12', rows: '1', projected_bytes: '100' },
+                { day: '2026-09-13', rows: '1', projected_bytes: '110' },
+              ],
+              meta: [],
+            };
       },
     } as unknown as AgentTinybirdClient;
 
@@ -195,6 +202,10 @@ describe('latest baseline selection', () => {
         category,
         rows: 2,
         days: ['2026-09-12', '2026-09-13'],
+        dailyStats: [
+          { day: '2026-09-12', rows: 1, projectedBytes: 100 },
+          { day: '2026-09-13', rows: 1, projectedBytes: 110 },
+        ],
       })),
     );
     expect(queries).toHaveLength(CATEGORIES.length * 2);
@@ -225,6 +236,23 @@ describe('latest baseline selection', () => {
     expect(queries[0]).toContain('> 1');
     expect(queries[0]).toContain('LIMIT 1');
   });
+
+  test('rejects malformed daily aggregate values without numeric coercion', async () => {
+    const client = {
+      async sql(query: string) {
+        return query.includes('HAVING uniqExact')
+          ? { data: [], meta: [] }
+          : {
+              data: [{ day: '2026-09-13', rows: true, projected_bytes: '10' }],
+              meta: [],
+            };
+      },
+    } as unknown as AgentTinybirdClient;
+    const window = { startDay: '2026-09-13', endDay: '2026-09-13' };
+    await expect(inspectBaseline(client, 'org-proof', window, window)).rejects.toThrow(
+      'Invalid messages daily rows',
+    );
+  });
 });
 
 describe('verifyBaseline', () => {
@@ -236,7 +264,7 @@ describe('verifyBaseline', () => {
       async sql(query: string) {
         inspections.push(query);
         return {
-          data: query.includes('HAVING uniqExact') ? [] : [{ rows: 0, days: [] }],
+          data: [],
           meta: [],
         };
       },

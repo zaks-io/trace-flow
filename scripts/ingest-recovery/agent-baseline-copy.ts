@@ -1,21 +1,31 @@
-import type { BaselineCopyCheckpoint } from '../../apps/agent-consumer/src/baseline-copy-contract';
+import type {
+  BaselineCopyCheckpoint,
+  LegacyBaselineCopyCheckpoint,
+} from '../../apps/agent-consumer/src/baseline-copy-contract';
+import { isBoundedBaselineCopy } from '../../apps/agent-consumer/src/baseline-copy-plan';
 import { FACT_VERSION_DATASOURCES } from '../../apps/agent-consumer/src/delivery-write';
 import { quote } from './agent-data';
-import { preserveBaselineCopyFailure } from './agent-baseline-copy-retry-journal';
 import type { AgentRecoveryClient, AgentTinybirdClient } from './agent-transport';
+import { waitForMigrationCopy } from './agent-migration-runtime';
+import type { BaselineCategoryProof } from './agent-migration-proof';
 import {
-  requireAgentProducerMaintenance,
-  requireDrainedAgentQueues,
-  waitForMigrationCopy,
-} from './agent-migration-runtime';
+  beginFreshBoundedBaselineCopy,
+  runBoundedBaselineCopy,
+  transitionFailedBaselineCopy,
+} from './agent-bounded-baseline-copy';
+
+interface BaselineCopyOptions {
+  retryJournalRoot?: string;
+  sourceProof?: BaselineCategoryProof;
+}
 
 export async function runBaselineCopy(
   tb: AgentTinybirdClient,
   recovery: AgentRecoveryClient,
   category: BaselineCopyCheckpoint['category'],
   window: { startDay: string; endDay: string },
-  options: { retryJournalRoot?: string } = {},
-): Promise<string> {
+  options: BaselineCopyOptions = {},
+): Promise<string[]> {
   const pipe = `repair_agent_${category}_versions_baseline`;
   let checkpoint = (await recovery.call('getBaselineCopy', {
     category,
@@ -28,93 +38,61 @@ export async function runBaselineCopy(
       'Baseline Copy retention window changed; existing intent must be reconciled before resuming',
     );
   }
-  if (!checkpoint) {
-    const startedAt = Date.now();
-    const claimed = (await recovery.call('beginBaselineCopy', {
-      category,
-      ...window,
-      startedAt,
-      copyAttempt: startedAt,
-    })) as BaselineCopyCheckpoint & { created: boolean };
-    checkpoint = claimed;
-    if (claimed.created) {
-      checkpoint = await startBaselineCopy(tb, recovery, pipe, claimed, false);
-    }
+  if (checkpoint && isBoundedBaselineCopy(checkpoint)) {
+    return runBoundedBaselineCopy(tb, recovery, checkpoint, options);
   }
+  if (!checkpoint) {
+    const proof = requireSourceProof(options.sourceProof, category);
+    const bounded = await beginFreshBoundedBaselineCopy(tb, recovery, proof, window);
+    return runBoundedBaselineCopy(tb, recovery, bounded, options);
+  }
+  const existing = checkpoint as LegacyBaselineCopyCheckpoint;
+  if (existing.complete) {
+    if (!existing.jobId) throw new Error('Completed baseline Copy omitted its job receipt');
+    return [existing.jobId];
+  }
+  let legacy = existing;
   while (true) {
-    if (!checkpoint.jobId)
-      checkpoint = await recoverBaselineCopyReceipt(tb, recovery, pipe, checkpoint);
-    if (!checkpoint.jobId) throw new Error('Baseline Copy checkpoint omitted its job receipt');
-    if (checkpoint.complete) return checkpoint.jobId;
-    const jobId = checkpoint.jobId;
+    if (!legacy.jobId) legacy = await recoverBaselineCopyReceipt(tb, recovery, pipe, legacy);
+    if (!legacy.jobId) throw new Error('Baseline Copy checkpoint omitted its job receipt');
+    if (legacy.complete) return [legacy.jobId];
+    const jobId = legacy.jobId;
 
     const terminal = await waitForMigrationCopy(tb, jobId);
     if (terminal.status === 'done') {
-      checkpoint = (await recovery.call('confirmBaselineCopy', {
+      legacy = (await recovery.call('confirmBaselineCopy', {
         category,
-        copyAttempt: checkpoint.copyAttempt,
+        copyAttempt: legacy.copyAttempt,
         jobId,
         complete: true,
-      })) as BaselineCopyCheckpoint;
-      return checkpoint.jobId!;
+      })) as LegacyBaselineCopyCheckpoint;
+      return [legacy.jobId!];
     }
     if (terminal.status !== 'error') {
       throw new Error(
         `Baseline Copy job reached terminal status ${terminal.status}; retry refused`,
       );
     }
-    if (checkpoint.failedAttempt) {
-      throw new Error('Baseline Copy dedicated-compute retry failed; retry limit reached');
-    }
-    checkpoint = await armBaselineCopyRetry(
+    const proof = requireSourceProof(options.sourceProof, category);
+    const bounded = await transitionFailedBaselineCopy(
       tb,
       recovery,
-      pipe,
-      { ...checkpoint, jobId },
+      { ...legacy, jobId },
       terminal,
-      options.retryJournalRoot,
+      proof,
+      options,
+      () => readFailedBaselineCopy(tb, recovery, pipe, { ...legacy, jobId }),
     );
-    checkpoint = await startBaselineCopy(tb, recovery, pipe, checkpoint, true);
+    return runBoundedBaselineCopy(tb, recovery, bounded, options);
   }
-}
-
-async function startBaselineCopy(
-  tb: AgentTinybirdClient,
-  recovery: AgentRecoveryClient,
-  pipe: string,
-  checkpoint: BaselineCopyCheckpoint,
-  onDemandCompute: boolean,
-): Promise<BaselineCopyCheckpoint> {
-  const params = new URLSearchParams({
-    org_id: recovery.org,
-    start_day: checkpoint.startDay,
-    end_day: checkpoint.endDay,
-    copy_attempt: String(checkpoint.copyAttempt),
-    _mode: 'append',
-  });
-  if (onDemandCompute) params.set('on_demand_compute', 'true');
-  const response: unknown = await tb.request(`/v0/pipes/${pipe}/copy?${params.toString()}`, '');
-  const receipt =
-    response && typeof response === 'object' && 'job' in response ? response.job : null;
-  const jobId: unknown =
-    receipt && typeof receipt === 'object' && 'job_id' in receipt ? receipt.job_id : null;
-  if (typeof jobId !== 'string') {
-    throw new Error('Baseline Copy returned no job receipt; durable intent remains unresolved');
-  }
-  return recovery.call('confirmBaselineCopy', {
-    category: checkpoint.category,
-    copyAttempt: checkpoint.copyAttempt,
-    jobId,
-    complete: false,
-  }) as Promise<BaselineCopyCheckpoint>;
 }
 
 async function recoverBaselineCopyReceipt(
   tb: AgentTinybirdClient,
   recovery: AgentRecoveryClient,
   pipe: string,
-  checkpoint: BaselineCopyCheckpoint,
-): Promise<BaselineCopyCheckpoint> {
+  checkpoint: LegacyBaselineCopyCheckpoint,
+): Promise<LegacyBaselineCopyCheckpoint> {
   const result = await tb.sql(`SELECT job_id, status FROM tinybird.jobs_log
     WHERE job_type IN ('copy', 'copy_from_branch')
       AND JSONExtractString(job_metadata, 'pipe_name') = ${quote(pipe)}
@@ -134,55 +112,14 @@ async function recoverBaselineCopyReceipt(
     copyAttempt: checkpoint.copyAttempt,
     jobId: job.job_id,
     complete: false,
-  }) as Promise<BaselineCopyCheckpoint>;
+  }) as Promise<LegacyBaselineCopyCheckpoint>;
 }
 
-async function armBaselineCopyRetry(
+export async function readFailedBaselineCopy(
   tb: AgentTinybirdClient,
   recovery: AgentRecoveryClient,
   pipe: string,
-  checkpoint: BaselineCopyCheckpoint & { jobId: string },
-  providerJob: Record<string, unknown>,
-  retryJournalRoot: string | undefined,
-): Promise<BaselineCopyCheckpoint> {
-  if (!retryJournalRoot) {
-    throw new Error('Baseline Copy retry requires --retry-journal <private directory>');
-  }
-  await requireAgentProducerMaintenance();
-  await requireDrainedAgentQueues();
-  const job = await readFailedBaselineCopy(tb, recovery, pipe, checkpoint);
-
-  const observedAt = Date.now();
-  const evidence = preserveBaselineCopyFailure(retryJournalRoot, {
-    version: 1,
-    orgId: recovery.org,
-    checkpoint,
-    observedAt,
-    providerJob: { ...providerJob, ...job },
-  });
-  await requireAgentProducerMaintenance();
-  await requireDrainedAgentQueues();
-  const freshJob = await readFailedBaselineCopy(tb, recovery, pipe, checkpoint);
-  if (freshJob.error !== job.error) {
-    throw new Error('Baseline Copy provider error changed while arming its retry');
-  }
-  const nextCopyAttempt = Math.max(Date.now(), checkpoint.copyAttempt + 1);
-  return recovery.call('retryBaselineCopy', {
-    category: checkpoint.category,
-    expectedJobId: checkpoint.jobId,
-    expectedCopyAttempt: checkpoint.copyAttempt,
-    nextCopyAttempt,
-    observedAt: evidence.observedAt,
-    providerErrorSha256: evidence.providerErrorSha256,
-    journalSha256: evidence.journalSha256,
-  }) as Promise<BaselineCopyCheckpoint>;
-}
-
-async function readFailedBaselineCopy(
-  tb: AgentTinybirdClient,
-  recovery: AgentRecoveryClient,
-  pipe: string,
-  checkpoint: BaselineCopyCheckpoint & { jobId: string },
+  checkpoint: LegacyBaselineCopyCheckpoint & { jobId: string },
 ): Promise<Record<string, unknown> & { error: string }> {
   const target = FACT_VERSION_DATASOURCES[checkpoint.category];
   const proof = (
@@ -221,6 +158,16 @@ async function readFailedBaselineCopy(
     throw new Error('Baseline Copy failed-job proof omitted the provider error');
   }
   return { ...job, metadata, error: job.error };
+}
+
+function requireSourceProof(
+  proof: BaselineCategoryProof | undefined,
+  category: BaselineCopyCheckpoint['category'],
+): BaselineCategoryProof {
+  if (!proof || proof.category !== category || proof.rows <= 0) {
+    throw new Error('Bounded baseline Copy requires an exact source plan');
+  }
+  return proof;
 }
 
 type BaselineCopyJobMetadata = Record<string, unknown> & {

@@ -6,13 +6,19 @@ import type {
   BaselineMigrationWindow,
   BeginBaselineCopyInput,
   ConfirmBaselineCopyInput,
+  LegacyBaselineCopyCheckpoint,
   RetryBaselineCopyInput,
 } from './baseline-copy-contract';
 export type {
   BaselineCopyCheckpoint,
+  BaselineCopyChunkInput,
   BaselineMigrationWindow,
   BeginBaselineCopyInput,
+  BeginBoundedBaselineCopyInput,
+  CompleteBoundedBaselineCopyInput,
   ConfirmBaselineCopyInput,
+  ConfirmBaselineCopyChunkInput,
+  LegacyBaselineCopyCheckpoint,
   RetryBaselineCopyInput,
 } from './baseline-copy-contract';
 const key = (category: Category) => `baseline-copy:${category}`;
@@ -59,7 +65,7 @@ export async function baselineCopyCheckpoint(
 export async function beginBaselineCopy(
   storage: DurableObjectStorage,
   input: BeginBaselineCopyInput,
-): Promise<BaselineCopyCheckpoint & { created: boolean }> {
+): Promise<LegacyBaselineCopyCheckpoint & { created: boolean }> {
   if (
     !CATEGORIES.includes(input.category) ||
     !Number.isSafeInteger(input.startedAt) ||
@@ -75,6 +81,7 @@ export async function beginBaselineCopy(
   return storage.transaction(async (transaction) => {
     const existing = await baselineCopyCheckpoint(transaction, input.category);
     if (existing) {
+      if ('mode' in existing) throw new Error('Legacy baseline Copy cannot replace bounded mode');
       if (existing.startDay !== input.startDay || existing.endDay !== input.endDay)
         throw new Error('Baseline Copy window changed');
       return { ...existing, created: false };
@@ -95,7 +102,7 @@ export async function beginBaselineCopy(
 export async function confirmBaselineCopy(
   storage: DurableObjectStorage,
   input: ConfirmBaselineCopyInput,
-): Promise<BaselineCopyCheckpoint> {
+): Promise<LegacyBaselineCopyCheckpoint> {
   assertExactKeys(input, ['category', 'copyAttempt', 'jobId', 'complete'], 'confirm baseline Copy');
   if (
     !Number.isSafeInteger(input.copyAttempt) ||
@@ -106,6 +113,8 @@ export async function confirmBaselineCopy(
     throw new Error('Invalid baseline Copy confirmation');
   return storage.transaction(async (transaction) => {
     const existing = await baselineCopyCheckpoint(transaction, input.category);
+    if (existing && 'mode' in existing)
+      throw new Error('Legacy baseline Copy confirmation is forbidden in bounded mode');
     if (
       existing?.copyAttempt !== input.copyAttempt ||
       (existing?.jobId !== undefined && existing.jobId !== input.jobId)
@@ -124,7 +133,7 @@ export async function confirmBaselineCopy(
 export async function retryBaselineCopy(
   storage: DurableObjectStorage,
   input: RetryBaselineCopyInput,
-): Promise<BaselineCopyCheckpoint> {
+): Promise<LegacyBaselineCopyCheckpoint> {
   assertExactKeys(
     input,
     [
@@ -156,6 +165,7 @@ export async function retryBaselineCopy(
     const existing = await baselineCopyCheckpoint(transaction, input.category);
     if (
       !existing ||
+      'mode' in existing ||
       existing.complete ||
       existing.failedAttempt ||
       existing.jobId !== input.expectedJobId ||
