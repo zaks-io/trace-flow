@@ -5,7 +5,10 @@ import { TinybirdRecoveryStore } from '@trace-flow/tinybird-client';
 import { agentAnalyticsDayBounds, sha256Hex } from '@trace-flow/utils';
 import type { AgentConsumerEnv } from '../context';
 import type { AgentFactBatcherInstance } from '../fact-batcher';
-import { reconcileFrozenRepairs as reconcileFrozenRepairsCore } from '../frozen-repair-reconciliation';
+import {
+  assertFrozenRepairReleaseCapacity,
+  reconcileFrozenRepairs as reconcileFrozenRepairsCore,
+} from '../frozen-repair-reconciliation';
 import {
   factIngestedAtMs,
   factPartitionKey,
@@ -20,6 +23,13 @@ const migrationProofSha256 = 'a'.repeat(64);
 const verificationSha256 = 'b'.repeat(64);
 
 describe('frozen repair reconciliation', () => {
+  it('rejects a batch whose replacement metadata exceeds its logical release', () => {
+    expect(() => assertFrozenRepairReleaseCapacity(100, 80, 21)).toThrow(
+      'cannot release enough logical bytes',
+    );
+    expect(() => assertFrozenRepairReleaseCapacity(101, 80, 21)).not.toThrow();
+  });
+
   it('resolves an exact repair idempotently and leaves retirement blocked after partial failure', async () => {
     const orgId = `frozen-repair-${crypto.randomUUID()}`;
     const batcher = env.AGENT_FACT_BATCHER.getByName(`org:${orgId}`);
@@ -283,28 +293,17 @@ describe('frozen repair reconciliation', () => {
           .one().count,
       ).toBe(0);
 
-      await expectError(
-        () =>
-          reconcileFrozenRepairsCore(
-            orgId,
-            { repairs: proofs },
-            fixedSizeReportingContext(instance, state, 10 * 1024 ** 3),
-          ),
-        'uncertain SQLite capacity headroom',
-      );
-      expect(recoveryPayloadBytes(state.storage)).toBe(seeded.rawBytes);
-
       const actualDatabaseSizeBeforeBytes = state.storage.sql.databaseSize;
-      const nearCapacitySize = 10 * 1024 ** 3 - 1024 ** 2;
+      const reportedDatabaseSize = 20 * 1024 ** 3;
       const result = await reconcileFrozenRepairsCore(
         orgId,
         { repairs: proofs },
-        fixedSizeReportingContext(instance, state, nearCapacitySize),
+        fixedSizeReportingContext(instance, state, reportedDatabaseSize),
       );
       expect(result.resolved).toHaveLength(100);
       expect(result.storage).toMatchObject({
-        databaseSizeBeforeBytes: nearCapacitySize,
-        databaseSizeAfterBytes: nearCapacitySize,
+        databaseSizeBeforeBytes: reportedDatabaseSize,
+        databaseSizeAfterBytes: reportedDatabaseSize,
       });
       expect(result.storage.releasedRecoveryBytes).toBeGreaterThan(
         result.storage.hydratedRepairBytes + result.storage.tombstoneBytes,

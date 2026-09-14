@@ -96,6 +96,116 @@ it('indexes existing recovery records without deleting duplicate repairs and bou
   });
 });
 
+it('filters bounded recovery pages by kind without adding an index or sorting payloads', async () => {
+  const batcher = env.AGENT_FACT_BATCHER.get(env.AGENT_FACT_BATCHER.newUniqueId());
+  await runInDurableObject(batcher, (_instance: AgentFactBatcherInstance, state) => {
+    const sql = state.storage.sql;
+    const recovery = new TinybirdRecoveryStore(state.storage);
+    recovery.initialize();
+    sql.exec(`
+      WITH RECURSIVE rows(n) AS (
+        SELECT 1 UNION ALL SELECT n + 1 FROM rows WHERE n < 5000
+      )
+      INSERT INTO recovery_records
+        (kind, state, classification, target, target_key, dedupe_key, payload, outcome, created_at_ms)
+      SELECT 'repair', 'blocked', 'changed', NULL, NULL, 'first-' || n, '', '', n FROM rows
+    `);
+    sql.exec(`
+      INSERT INTO recovery_records
+        (kind, state, classification, target, target_key, payload, outcome, created_at_ms)
+      VALUES ('tinybird_insert', 'blocked', 'uncertain', 'facts', 'pending_facts:messages',
+              '[{"batch":1}]', '{"status":"unknown"}', 5001)
+    `);
+    sql.exec(`
+      WITH RECURSIVE rows(n) AS (
+        SELECT 1 UNION ALL SELECT n + 1 FROM rows WHERE n < 5000
+      )
+      INSERT INTO recovery_records
+        (kind, state, classification, target, target_key, dedupe_key, payload, outcome, created_at_ms)
+      SELECT 'repair', 'blocked', 'changed', NULL, NULL, 'second-' || n, '', '', 5001 + n
+      FROM rows
+    `);
+    sql.exec(`
+      INSERT INTO recovery_records
+        (kind, state, classification, target, target_key, payload, outcome, created_at_ms,
+         resolved_at_ms, resolution, resolution_reason)
+      VALUES
+        ('tinybird_insert', 'blocked', 'rejected', 'facts', 'pending_facts:messages',
+         '[{"batch":2}]', '{"status":"rejected"}', 10002, NULL, NULL, NULL),
+        ('dlq', 'blocked', 'dead_letter', NULL, NULL, '{}', '{}', 10003, NULL, NULL, NULL),
+        ('tinybird_insert', 'resolved', 'uncertain', 'facts', 'pending_facts:messages',
+         '[{"batch":3}]', '{"status":"written"}', 10004, 10004, 'confirm-written', 'proof')
+    `);
+
+    let filteredQuery = '';
+    let filteredCursor: { readonly rowsRead: number } | undefined;
+    const measuredSql = new Proxy(sql, {
+      get(target, property, receiver) {
+        if (property === 'exec') {
+          const exec = target.exec.bind(target);
+          return (query: string, ...args: unknown[]) => {
+            const cursor = exec(query, ...args);
+            if (query.includes('AND kind = ?')) {
+              filteredQuery = query;
+              filteredCursor = cursor;
+            }
+            return cursor;
+          };
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const measuredStorage: DurableObjectStorage = new Proxy(state.storage, {
+      get(target, property, receiver) {
+        if (property === 'sql') return measuredSql;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const measured = new TinybirdRecoveryStore(measuredStorage);
+
+    expect(measured.list({ kind: 'tinybird_insert', limit: 1 })).toMatchObject({
+      records: [{ id: 5001, kind: 'tinybird_insert', state: 'blocked' }],
+      nextAfterId: 5001,
+    });
+    expect(filteredCursor?.rowsRead).toBeGreaterThanOrEqual(5_000);
+    expect(
+      measured.list({ kind: 'tinybird_insert', state: 'blocked', afterId: 5001, limit: 100 }),
+    ).toMatchObject({
+      records: [{ id: 10002, kind: 'tinybird_insert', state: 'blocked' }],
+      nextAfterId: null,
+    });
+    expect(measured.list({ kind: 'tinybird_insert', state: 'resolved' })).toMatchObject({
+      records: [{ id: 10004, kind: 'tinybird_insert', state: 'resolved' }],
+      nextAfterId: null,
+    });
+    expect(measured.list({ kind: 'repair', limit: 1 }).records[0]?.kind).toBe('repair');
+    expect(measured.list({ kind: 'dlq' }).records[0]?.kind).toBe('dlq');
+    expect(measured.list({ limit: 1 }).records[0]?.kind).toBe('repair');
+    expect(() => measured.list({ kind: 'unknown' as 'repair' })).toThrow('invalid recovery kind');
+    expect(() => measured.list({ kind: '' as 'repair' })).toThrow('invalid recovery kind');
+    expect(() => measured.list({ afterId: -1, kind: 'repair' })).toThrow(
+      'afterId must be a non-negative integer',
+    );
+    expect(() => measured.list({ limit: 101, kind: 'repair' })).toThrow(
+      'limit must be between 1 and 100',
+    );
+
+    const plan = sql
+      .exec<{ detail: string }>(
+        `EXPLAIN QUERY PLAN ${filteredQuery}`,
+        0,
+        'blocked',
+        'tinybird_insert',
+        2,
+      )
+      .toArray()
+      .map(({ detail }) => detail)
+      .join('\n');
+    expect(plan).toContain('idx_recovery_records_blocked');
+    expect(plan).not.toContain('TEMP B-TREE');
+  });
+});
+
 it('counts blocked recovery rows from the bounded recovery-items side of the join', async () => {
   const batcher = env.AGENT_FACT_BATCHER.get(env.AGENT_FACT_BATCHER.newUniqueId());
   await runInDurableObject(batcher, (_instance: AgentFactBatcherInstance, state) => {

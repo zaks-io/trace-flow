@@ -12,9 +12,6 @@ import {
 } from './frozen-repair-reconciliation-contract';
 import type { LegacyIngestionState } from './legacy-ingestion-state';
 
-const MAX_DATABASE_SIZE_BYTES = 10 * 1024 ** 3;
-const TRANSACTION_HEADROOM_BYTES = 1024 * 1024;
-
 interface FrozenRepairReconciliationContext {
   storage: DurableObjectStorage;
   recovery: TinybirdRecoveryStore;
@@ -91,11 +88,7 @@ export async function reconcileFrozenRepairs(
     0,
   );
   if (unresolved.length > 0) {
-    const availableBytes =
-      MAX_DATABASE_SIZE_BYTES - databaseSizeBeforeBytes + releasedRecoveryBytes;
-    if (availableBytes < hydratedRepairBytes + tombstoneBytes + TRANSACTION_HEADROOM_BYTES) {
-      throw new Error('frozen repair reconciliation has uncertain SQLite capacity headroom');
-    }
+    assertFrozenRepairReleaseCapacity(releasedRecoveryBytes, hydratedRepairBytes, tombstoneBytes);
   }
   const resolved =
     unresolved.length === 0
@@ -279,4 +272,14 @@ function inspectRecoveryRecord(
 
 function utf8Length(value: string): number {
   return new TextEncoder().encode(value).byteLength;
+}
+
+export function assertFrozenRepairReleaseCapacity(
+  releasedRecoveryBytes: number,
+  hydratedRepairBytes: number,
+  tombstoneBytes: number,
+): void {
+  if (releasedRecoveryBytes < hydratedRepairBytes + tombstoneBytes) {
+    throw new Error('frozen repair reconciliation cannot release enough logical bytes');
+  }
 }
