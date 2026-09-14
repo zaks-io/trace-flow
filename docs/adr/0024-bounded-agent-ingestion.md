@@ -73,6 +73,8 @@ greatest `IngestedAt` per natural identity across the retained window, matching 
 ordering. Identical retries collapse; conflicting full rows with the same identity and `IngestedAt`
 stop migration. The preserved legacy tables are not rewritten. Verification selects the global
 winner before filtering each date chunk, so an event-date correction cannot revive the older row.
+On resume, winner selection and equal-time conflict checks still use the original Copy window;
+current retention filters the selected winners afterward.
 Organization discovery scans one datasource and at most 31 dates per query, sequentially, and enforces
 the organization limit across the complete result.
 

@@ -82,7 +82,7 @@ try {
         await new Promise((resolve) => setTimeout(resolve, 5_000));
       }
       await recovery.call('freezeIngestionMigration', { migrationId: MIGRATION_ID });
-      let categories = await inspectBaseline(runtime.tb, orgId, retainedWindow);
+      let categories = await inspectBaseline(runtime.tb, orgId, retainedWindow, copyWindow);
       const before = await recovery.call('inspectIngestionMigration', {});
       const jobs: string[] = [];
       if (!before.migration) {
@@ -92,9 +92,9 @@ try {
         }
       }
       retainedWindow = intersectMigrationWindows(copyWindow, retainedMigrationWindow());
-      categories = await inspectBaseline(runtime.tb, orgId, retainedWindow);
+      categories = await inspectBaseline(runtime.tb, orgId, retainedWindow, copyWindow);
       for (const category of categories)
-        await verifyBaseline(runtime.tb, orgId, retainedWindow, category);
+        await verifyBaseline(runtime.tb, orgId, retainedWindow, category, copyWindow);
       const dirtyDays = [...new Set(categories.flatMap((category) => category.days))].sort();
       const baselineProof = {
         migration: MIGRATION_ID,

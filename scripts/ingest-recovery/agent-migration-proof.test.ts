@@ -229,6 +229,40 @@ describe('latest baseline selection', () => {
 });
 
 describe('verifyBaseline', () => {
+  test('resumed inspection and parity keep the original winner window after retention advances', async () => {
+    const retained = { startDay: '2026-08-14', endDay: '2026-09-13' };
+    const copied = { startDay: '2026-08-13', endDay: '2026-09-13' };
+    const inspections: string[] = [];
+    const inspector = {
+      async sql(query: string) {
+        inspections.push(query);
+        return {
+          data: query.includes('HAVING uniqExact') ? [] : [{ rows: 0, days: [] }],
+          meta: [],
+        };
+      },
+    } as unknown as AgentTinybirdClient;
+    await inspectBaseline(inspector, 'org-proof', retained, copied);
+    for (const query of inspections) {
+      if (query.includes('HAVING uniqExact')) {
+        expect(query).toContain("'2026-08-13'");
+        expect(query).not.toContain("'2026-08-14'");
+      } else {
+        const [selection, output] = query.split(') WHERE latest_time');
+        expect(selection).toContain("'2026-08-13'");
+        expect(selection).not.toContain("'2026-08-14'");
+        expect(output).toContain("'2026-08-14'");
+      }
+    }
+    const { client, queries } = fakeTinybird([0, 0]);
+    await verifyBaseline(client, 'org-proof', retained, messageProof(0), copied);
+    expect(queries).toHaveLength(2);
+    for (const query of queries) {
+      expect(query.split('max(IngestedAt)')[1]).toContain("'2026-08-13'");
+      expect(query).toContain("'2026-08-14'");
+    }
+  });
+
   test('keeps Copy arguments immutable while verification follows current retention', () => {
     expect(
       intersectMigrationWindows(

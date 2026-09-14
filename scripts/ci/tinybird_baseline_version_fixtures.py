@@ -2,6 +2,7 @@
 
 import json
 import re
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -63,14 +64,18 @@ def verify_baseline_versions(client, sources, query_rows, run_copy) -> None:
         new = {**old, "UserId": "newer", timestamp: new_time, "IngestedAt": new_time}
         if category == "messages":
             new["cost_usd"] = None
-        payload = "\n".join(json.dumps(row) for row in [old, new, new])
+        backdated_old = {**old, key: "baseline-backdated-fact", timestamp: new_time}
+        backdated_new = {**new, key: "baseline-backdated-fact", timestamp: old_time}
+        payload = "\n".join(
+            json.dumps(row) for row in [old, new, new, backdated_old, backdated_new]
+        )
         receipt = client._req(
             f"/v0/events?name={table}&wait=true",
             method="POST",
             data=payload.encode(),
             headers={"Content-Type": "application/json"},
         )
-        if receipt.get("successful_rows") != 3 or receipt.get("quarantined_rows") != 0:
+        if receipt.get("successful_rows") != 5 or receipt.get("quarantined_rows") != 0:
             raise RuntimeError(f"Baseline version fixture insert failed for {category}")
         run_copy(
             client,
@@ -90,7 +95,7 @@ def verify_baseline_versions(client, sources, query_rows, run_copy) -> None:
                 DeliverySequence, IsDeleted,
                 ContentHash=lower(hex(SHA256(toJSONString(tuple({projection}))))) AS hash_matches
                 {',isNull(cost_usd) AS null_preserved' if category == 'messages' else ''}
-                FROM {target} FINAL WHERE OrgId='{org}'""",
+                FROM {target} FINAL WHERE OrgId='{org}' AND {key}='baseline-fact'""",
         )
         if len(rows) == 1:
             rows[0]["DeliverySequence"] = int(rows[0]["DeliverySequence"])
@@ -104,6 +109,56 @@ def verify_baseline_versions(client, sources, query_rows, run_copy) -> None:
         }:
             raise RuntimeError(f"Baseline Copy did not preserve the exact latest version in {category}")
         count = query_rows(client, f"SELECT count() AS n FROM {table} WHERE OrgId='{org}'")
-        if int(count[0]["n"]) != 3:
+        if int(count[0]["n"]) != 5:
             raise RuntimeError(f"Baseline Copy changed preserved source rows in {category}")
+    verify_resumed_proof(client, org, previous, today, query_rows)
     print("Baseline Copy version regressions passed for all six categories")
+
+
+def verify_resumed_proof(client, org, previous, today, query_rows) -> None:
+    renderer = """
+        import {inspectBaseline,verifyBaseline} from './scripts/ingest-recovery/agent-migration-proof';
+        import {CATEGORIES} from './scripts/ingest-recovery/agent-data';
+        const {org,copyWindow,retainedWindow}=JSON.parse(await Bun.stdin.text());
+        const queries=[];
+        let currentCategory;
+        const capture={sql:async query=>{
+            const kind=query.includes('HAVING uniqExact')?'conflict':query.includes('argMax(')?'inspection':'parity';
+            queries.push({kind,query,category:currentCategory});
+            return {data:kind==='conflict'?[]:kind==='inspection'?[{rows:0,days:[]}]:[
+                {source_rows:0,target_rows:0,invalid_metadata:0,missing_target:0,unexpected_target:0}
+            ],meta:[]};
+        }};
+        await inspectBaseline(capture,org,retainedWindow,copyWindow);
+        for(const category of CATEGORIES) {
+            currentCategory=category;
+            await verifyBaseline(capture,org,retainedWindow,{category,rows:0,days:[]},copyWindow);
+        }
+        console.log(JSON.stringify(queries));
+    """
+    inputs = {
+        "org": org,
+        "copyWindow": {"startDay": previous.strftime("%Y-%m-%d"), "endDay": today.strftime("%Y-%m-%d")},
+        "retainedWindow": {
+            "startDay": (previous + timedelta(days=1)).strftime("%Y-%m-%d"),
+            "endDay": today.strftime("%Y-%m-%d"),
+        },
+    }
+    rendered = subprocess.check_output(["bun", "-e", renderer], input=json.dumps(inputs), text=True)
+    totals = {}
+    for entry in json.loads(rendered):
+        rows = query_rows(client, entry["query"])
+        if entry["kind"] == "conflict":
+            valid = rows == []
+        elif entry["kind"] == "inspection":
+            valid = len(rows) == 1 and int(rows[0]["rows"]) == 1 and rows[0]["days"] == [today.strftime("%Y-%m-%d")]
+        else:
+            valid = len(rows) == 1 and int(rows[0]["source_rows"]) == int(rows[0]["target_rows"])
+            valid = valid and not any(int(rows[0].get(field, 0)) for field in ["invalid_metadata", "missing_target", "unexpected_target"])
+            kind = "content" if "invalid_metadata" in entry["query"] else "index"
+            key = (entry["category"], kind)
+            totals[key] = totals.get(key, 0) + int(rows[0]["source_rows"])
+        if not valid:
+            raise RuntimeError(f"Resumed baseline {entry['kind']} revived an aged-out correction")
+    if totals != {(category, kind): 1 for category in BASELINE_KEYS for kind in ["content", "index"]}:
+        raise RuntimeError("Resumed baseline proof did not cover every retained winner")

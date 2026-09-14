@@ -106,6 +106,7 @@ export async function inspectBaseline(
   tb: AgentTinybirdClient,
   org: string,
   window: MigrationWindow,
+  copyWindow: MigrationWindow = window,
 ): Promise<BaselineCategoryProof[]> {
   const proofs: BaselineCategoryProof[] = [];
   for (const category of CATEGORIES) {
@@ -114,7 +115,7 @@ export async function inspectBaseline(
     const projection = baselineProjection(category);
     const conflicts = (
       await tb.sql(`SELECT 1 FROM ${DATASOURCES[category]}
-        WHERE ${migrationScope(category, org, window)}
+        WHERE ${migrationScope(category, org, copyWindow)}
         GROUP BY ${identity},IngestedAt
         HAVING uniqExact(tuple(${projection})) > 1
         LIMIT 1`)
@@ -130,9 +131,10 @@ export async function inspectBaseline(
         FROM (
           SELECT argMax(${time},IngestedAt) AS latest_time
           FROM ${DATASOURCES[category]}
-          WHERE ${migrationScope(category, org, window)}
+          WHERE ${migrationScope(category, org, copyWindow)}
           GROUP BY ${identity}
-        )`)
+        ) WHERE latest_time >= toDateTime(${quote(window.startDay)})
+          AND latest_time < toDateTime(${quote(window.endDay)}) + INTERVAL 1 DAY`)
     ).data;
     const row = rows[0];
     if (
@@ -153,6 +155,7 @@ export async function verifyBaseline(
   org: string,
   window: MigrationWindow,
   proof: BaselineCategoryProof,
+  copyWindow: MigrationWindow = window,
 ): Promise<void> {
   const { category } = proof;
   const target = FACT_VERSION_DATASOURCES[category];
@@ -166,7 +169,7 @@ export async function verifyBaseline(
 
   for (const chunk of chunkAgentDayRange(window)) {
     const scope = migrationScope(category, org, chunk);
-    const sourceRows = latestBaselineRows(category, org, window, chunk, projection);
+    const sourceRows = latestBaselineRows(category, org, copyWindow, chunk, projection);
     const content = (
       await tb.sql(`WITH
         source_rows AS (
@@ -214,7 +217,7 @@ export async function verifyBaseline(
     const sourceIndex = latestBaselineRows(
       category,
       org,
-      window,
+      copyWindow,
       chunk,
       `${identity} AS FactIdentity, toDate(${time}) AS EventDay`,
     );
