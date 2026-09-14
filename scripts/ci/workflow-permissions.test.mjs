@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { YAML } from 'bun';
+import { Glob, YAML } from 'bun';
 import { readFileSync } from 'node:fs';
 
 function workflow(name) {
@@ -309,6 +309,38 @@ describe('preview credential boundary', () => {
 });
 
 describe('credentialed CI checks', () => {
+  test('Tinybird fixtures have the runtimes and workspace dependencies used by migration proofs', () => {
+    const steps = ci.jobs['tinybird-schema-check'].steps;
+    const fixture = steps.findIndex(
+      (step) => step.name === 'Build and test against Tinybird Local',
+    );
+    const prerequisites = steps.slice(0, fixture);
+    expect(fixture).toBeGreaterThan(0);
+    expect(prerequisites.some((step) => step.uses === 'oven-sh/setup-bun@v2')).toBe(true);
+    expect(
+      prerequisites.some(
+        (step) => step.uses === 'actions/setup-node@v6' && step.with['node-version'] === 24,
+      ),
+    ).toBe(true);
+    const install = prerequisites.findIndex((step) => step.run === 'bun install --frozen-lockfile');
+    const bun = prerequisites.findIndex((step) => step.uses === 'oven-sh/setup-bun@v2');
+    expect(install).toBeGreaterThan(bun);
+  });
+
+  test('Tinybird checks run when Copy SQL or its fixtures change independently', () => {
+    const filters = YAML.parse(
+      ci.jobs.changes.steps.find((step) => step.id === 'filter').with.filters,
+    );
+    for (const path of [
+      'copies/repair_agent_messages_versions_baseline.pipe',
+      'fixtures/agent_message_facts.ndjson',
+      'scripts/ci/tinybird-local-fixture-tests.py',
+      'scripts/ci/tinybird_baseline_version_fixtures.py',
+    ]) {
+      expect(filters.tinybird.some((pattern) => new Glob(pattern).match(path))).toBe(true);
+    }
+  });
+
   const cloudCheck = workflow('ci').jobs['tinybird-schema-check'].steps.find(
     (step) => step.name === 'Tinybird deploy --check (trace_flow_prod)',
   ).if;

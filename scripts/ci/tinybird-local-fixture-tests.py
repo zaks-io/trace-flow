@@ -11,6 +11,7 @@ from tinybird.tb.modules import test_common
 from tinybird.tb.modules.build_common import process as build_project
 from tinybird.tb.modules.local_common import get_tinybird_local_client
 from tinybird.tb.modules.project import Project
+from tinybird_baseline_version_fixtures import verify_baseline_versions
 
 
 ROOT = Path.cwd()
@@ -160,6 +161,7 @@ def main() -> None:
             # assertions, so seed through the production Copy contracts at this exact boundary.
             seed_versioned_facts(client)
             seed_published_snapshots(client)
+            verify_baseline_versions(client, BASELINE_SOURCES, query_rows, run_copy)
         return error
 
     request_ms: dict[str, float] = {}

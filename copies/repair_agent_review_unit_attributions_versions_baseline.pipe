@@ -5,7 +5,7 @@ DESCRIPTION >
 NODE baseline
 SQL >
     %
-    SELECT
+    SELECT DISTINCT
         toUInt64(1) AS DeliverySequence,
         lower(hex(SHA256(toJSONString(tuple(`OrgId`, `UserId`, `CollectorId`, `CollectorCredentialId`, `session_pk`, `review_unit_attribution_pk`, `repo_fingerprint`, `repo_source`, `source`, `parser_version`, `DecidedAt`, `IngestedAt`, `vendor_session_id`, `review_unit_key`, `review_url`, `review_host`, `review_owner`, `review_repo`, `review_number`, `git_branch`, `attribution_method`, `confidence`, `status`, `ambiguity_reason`, `evidence_pull_request_link_pk`, `rule_version`))))) AS ContentHash,
         toUInt8(0) AS IsDeleted,
@@ -39,6 +39,14 @@ SQL >
     WHERE OrgId = {{ String(org_id) }}
       AND DecidedAt >= toDateTime({{ Date(start_day) }})
       AND DecidedAt < toDateTime({{ Date(end_day) }}) + INTERVAL 1 DAY
+      AND tuple(OrgId, session_pk, review_unit_attribution_pk, IngestedAt) IN (
+        SELECT OrgId, session_pk, review_unit_attribution_pk, max(IngestedAt) AS IngestedAt
+        FROM agent_review_unit_attributions
+        WHERE OrgId = {{ String(org_id) }}
+          AND DecidedAt >= toDateTime({{ Date(start_day) }})
+          AND DecidedAt < toDateTime({{ Date(end_day) }}) + INTERVAL 1 DAY
+        GROUP BY OrgId, session_pk, review_unit_attribution_pk
+      )
       AND {{ UInt64(copy_attempt) }} >= 1
     SETTINGS max_threads = 1
 

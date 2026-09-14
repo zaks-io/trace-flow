@@ -40,46 +40,106 @@ export function migrationScope(category: Category, org: string, window: Migratio
   return `OrgId = ${quote(org)} AND ${time} >= toDateTime(${quote(window.startDay)}) AND ${time} < toDateTime(${quote(window.endDay)}) + INTERVAL 1 DAY`;
 }
 
+export function latestBaselineRows(
+  category: Category,
+  org: string,
+  fullWindow: MigrationWindow,
+  outerChunk?: MigrationWindow,
+  projection = '*',
+): string {
+  const source = DATASOURCES[category];
+  const identity = ROW_IDENTITY_FIELDS[category].join(',');
+  const latestIdentity = [...ROW_IDENTITY_FIELDS[category], 'IngestedAt'].join(',');
+  const outerScopes = [migrationScope(category, org, fullWindow)];
+  if (outerChunk) outerScopes.push(migrationScope(category, org, outerChunk));
+  return `SELECT DISTINCT ${projection} FROM ${source}
+    WHERE ${outerScopes.join(' AND ')}
+      AND tuple(${latestIdentity}) IN (
+        SELECT ${identity},max(IngestedAt) AS IngestedAt
+        FROM ${source}
+        WHERE ${migrationScope(category, org, fullWindow)}
+        GROUP BY ${identity}
+      )`;
+}
+
 export async function migrationOrganizations(
   tb: AgentTinybirdClient,
   window: MigrationWindow,
 ): Promise<string[]> {
-  const union = CATEGORIES.map(
-    (category) =>
-      `SELECT DISTINCT OrgId FROM ${DATASOURCES[category]} WHERE ${migrationScope(category, '', window).replace("OrgId = '' AND ", '')}`,
-  ).join(' UNION ALL ');
-  const rows = (await tb.sql(`SELECT DISTINCT OrgId FROM (${union}) ORDER BY OrgId LIMIT 1001`))
-    .data;
-  if (rows.length > 1000)
-    throw new Error(
-      'Migration organization bound exceeded; use paginated migration before proceeding',
-    );
-  return rows.map((row) => {
-    if (typeof row.OrgId !== 'string' || !/^[a-zA-Z0-9_-]{1,256}$/.test(row.OrgId))
-      throw new Error('Invalid migration organization');
-    return row.OrgId;
-  });
+  const organizations = new Set<string>();
+  const chunks = chunkAgentDayRange(window);
+  for (const category of CATEGORIES) {
+    for (const chunk of chunks) {
+      const context = `${category} for ${chunk.startDay} through ${chunk.endDay}`;
+      let rows: unknown;
+      try {
+        rows = (
+          await tb.sql(
+            `SELECT DISTINCT OrgId FROM ${DATASOURCES[category]} WHERE ${migrationScope(category, '', chunk).replace("OrgId = '' AND ", '')} LIMIT 1001`,
+          )
+        ).data;
+      } catch {
+        throw new Error(`Migration organization discovery failed in ${context}`);
+      }
+      if (!Array.isArray(rows)) {
+        throw new Error(`Invalid migration organization response in ${context}`);
+      }
+      for (const row of rows) {
+        const orgId =
+          row && typeof row === 'object' ? (row as Record<string, unknown>).OrgId : undefined;
+        if (typeof orgId !== 'string' || !/^[a-zA-Z0-9_-]{1,256}$/.test(orgId)) {
+          throw new Error(`Invalid migration organization in ${context}`);
+        }
+        organizations.add(orgId);
+        if (organizations.size > 1000) {
+          throw new Error(
+            `Migration organization bound exceeded in ${context}; use paginated migration before proceeding`,
+          );
+        }
+      }
+    }
+  }
+  return [...organizations].sort();
 }
 
 export async function inspectBaseline(
   tb: AgentTinybirdClient,
   org: string,
   window: MigrationWindow,
+  copyWindow: MigrationWindow,
 ): Promise<BaselineCategoryProof[]> {
   const proofs: BaselineCategoryProof[] = [];
   for (const category of CATEGORIES) {
     const time = category === 'review_unit_attributions' ? 'DecidedAt' : 'EventAt';
     const identity = ROW_IDENTITY_FIELDS[category].join(',');
+    const projection = baselineProjection(category);
+    const conflicts = (
+      await tb.sql(`SELECT 1 FROM ${DATASOURCES[category]}
+        WHERE ${migrationScope(category, org, copyWindow)}
+        GROUP BY ${identity},IngestedAt
+        HAVING uniqExact(tuple(${projection})) > 1
+        LIMIT 1`)
+    ).data;
+    if (!Array.isArray(conflicts) || conflicts.length > 0) {
+      throw new Error(
+        `Source ${category} has conflicting equal-time versions; baseline requires repair`,
+      );
+    }
     const rows = (
-      await tb.sql(
-        `SELECT count() AS rows, uniqExact(tuple(${identity})) AS identities, arraySort(groupUniqArray(toString(toDate(${time})))) AS days FROM ${DATASOURCES[category]} WHERE ${migrationScope(category, org, window)}`,
-      )
+      await tb.sql(`SELECT count() AS rows,
+        arraySort(groupUniqArray(toString(toDate(latest_time)))) AS days
+        FROM (
+          SELECT argMax(${time},IngestedAt) AS latest_time
+          FROM ${DATASOURCES[category]}
+          WHERE ${migrationScope(category, org, copyWindow)}
+          GROUP BY ${identity}
+        ) WHERE latest_time >= toDateTime(${quote(window.startDay)})
+          AND latest_time < toDateTime(${quote(window.endDay)}) + INTERVAL 1 DAY`)
     ).data;
     const row = rows[0];
     if (
       !row ||
       !Number.isSafeInteger(Number(row.rows)) ||
-      Number(row.rows) !== Number(row.identities) ||
       !Array.isArray(row.days) ||
       row.days.length > 367
     ) {
@@ -95,15 +155,11 @@ export async function verifyBaseline(
   org: string,
   window: MigrationWindow,
   proof: BaselineCategoryProof,
+  copyWindow: MigrationWindow,
 ): Promise<void> {
   const { category } = proof;
-  const source = DATASOURCES[category],
-    target = FACT_VERSION_DATASOURCES[category];
-  const columns = [
-    ...readFileSync(`datasources/${source}.datasource`, 'utf8').matchAll(/^\s+`([^`]+)`\s/gm),
-  ].map((match) => `\`${match[1]}\``);
-  if (columns.length === 0) throw new Error(`Missing ${source} schema`);
-  const projection = columns.join(',');
+  const target = FACT_VERSION_DATASOURCES[category];
+  const projection = baselineProjection(category);
   const time = category === 'review_unit_attributions' ? 'DecidedAt' : 'EventAt';
   const identity = `concat(${ROW_IDENTITY_FIELDS[category].join(', char(31), ')})`;
   let verifiedSourceRows = 0;
@@ -113,10 +169,11 @@ export async function verifyBaseline(
 
   for (const chunk of chunkAgentDayRange(window)) {
     const scope = migrationScope(category, org, chunk);
+    const sourceRows = latestBaselineRows(category, org, copyWindow, chunk, projection);
     const content = (
       await tb.sql(`WITH
         source_rows AS (
-          SELECT ${projection} FROM ${source} WHERE ${scope}
+          ${sourceRows}
         ),
         target_rows AS (
           SELECT ${projection}, DeliverySequence, ContentHash, IsDeleted
@@ -142,10 +199,10 @@ export async function verifyBaseline(
             ) LIMIT 1
           )) > 0) AS unexpected_target`)
     ).data[0];
-    const sourceRows = safeCount(content?.source_rows, `${category} source rows`);
+    const sourceRowCount = safeCount(content?.source_rows, `${category} source rows`);
     const targetRows = safeCount(content?.target_rows, `${category} target rows`);
     if (
-      sourceRows !== targetRows ||
+      sourceRowCount !== targetRows ||
       safeCount(content?.invalid_metadata, `${category} invalid metadata`) !== 0 ||
       Number(content?.missing_target) ||
       Number(content?.unexpected_target)
@@ -154,10 +211,16 @@ export async function verifyBaseline(
         `Exact ${category} baseline parity failed for ${chunk.startDay} through ${chunk.endDay}`,
       );
     }
-    verifiedSourceRows += sourceRows;
+    verifiedSourceRows += sourceRowCount;
     verifiedTargetRows += targetRows;
 
-    const sourceIndex = `SELECT ${identity} AS FactIdentity, toDate(${time}) AS EventDay FROM ${source} WHERE ${scope}`;
+    const sourceIndex = latestBaselineRows(
+      category,
+      org,
+      copyWindow,
+      chunk,
+      `${identity} AS FactIdentity, toDate(${time}) AS EventDay`,
+    );
     const targetIndex = `SELECT FactIdentity, EventDay FROM agent_fact_identity_days FINAL WHERE OrgId=${quote(org)} AND Category=${quote(category)} AND DeliverySequence=1 AND EventDay>=toDate(${quote(chunk.startDay)}) AND EventDay<=toDate(${quote(chunk.endDay)})`;
     const index = (
       await tb.sql(`WITH
@@ -210,4 +273,13 @@ function safeCount(value: unknown, label: string): number {
   const count = Number(value);
   if (!Number.isSafeInteger(count) || count < 0) throw new Error(`Invalid ${label}`);
   return count;
+}
+
+function baselineProjection(category: Category): string {
+  const source = DATASOURCES[category];
+  const columns = [
+    ...readFileSync(`datasources/${source}.datasource`, 'utf8').matchAll(/^\s+`([^`]+)`\s/gm),
+  ].map((match) => `\`${match[1]}\``);
+  if (columns.length === 0) throw new Error(`Missing ${source} schema`);
+  return columns.join(',');
 }
