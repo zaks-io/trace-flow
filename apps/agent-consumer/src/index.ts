@@ -1,4 +1,10 @@
-import type { BaselineCopyCheckpoint, BaselineMigrationWindow } from './baseline-copy-migration';
+import type {
+  BaselineCopyCheckpoint,
+  BaselineMigrationWindow,
+  BeginBaselineCopyInput,
+  ConfirmBaselineCopyInput,
+  RetryBaselineCopyInput,
+} from './baseline-copy-migration';
 /**
  * Queue entrypoint for encrypted fact deliveries and published analytics snapshots.
  * Legacy queue messages remain supported during migration and frozen-fact recovery.
@@ -224,18 +230,51 @@ export class TraceRecovery extends WorkerEntrypoint<AgentConsumerEnv> {
       `baseline:${normalizeAgentShardId(orgId)}`,
     ).getBaselineCopy(input);
   }
-  beginBaselineCopy(orgId: string, input: Omit<BaselineCopyCheckpoint, 'jobId' | 'complete'>) {
+  beginBaselineCopy(orgId: string, input: BeginBaselineCopyInput) {
     return this.env.AGENT_DELIVERY_COORDINATOR.getByName(
       `baseline:${normalizeAgentShardId(orgId)}`,
     ).beginBaselineCopy(input);
   }
-  confirmBaselineCopy(
-    orgId: string,
-    input: { category: BaselineCopyCheckpoint['category']; jobId: string; complete: boolean },
-  ) {
+  confirmBaselineCopy(orgId: string, input: ConfirmBaselineCopyInput) {
     return this.env.AGENT_DELIVERY_COORDINATOR.getByName(
       `baseline:${normalizeAgentShardId(orgId)}`,
     ).confirmBaselineCopy(input);
+  }
+
+  async retryBaselineCopy(orgId: string, input: RetryBaselineCopyInput) {
+    const normalized = normalizeAgentShardId(orgId);
+    const organization = this.env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${normalized}`);
+    const baseline = this.env.AGENT_DELIVERY_COORDINATOR.getByName(`baseline:${normalized}`);
+    const [migration, stats, legacy] = await Promise.all([
+      organization.getIngestionMigrationState(),
+      organization.getStats({}),
+      getAgentBatcher(this.env, normalized).getIngestionMigrationState(),
+    ]);
+    if (migration !== null)
+      throw new Error('Baseline Copy retry is forbidden after migration seed');
+    if (
+      stats.lastDeliverySequence !== 1 ||
+      stats.lastSnapshotGeneration !== 0 ||
+      stats.activeDeliveries !== 0 ||
+      stats.dirtyDays !== 0 ||
+      stats.incompleteDays !== 0 ||
+      stats.dirtyDayLinks !== 0 ||
+      stats.capturedSnapshotDays !== 0 ||
+      stats.gatePhase !== 'open' ||
+      stats.activeSnapshotGeneration !== null ||
+      stats.gateExpiresAtMs !== null ||
+      stats.erasureStarted
+    ) {
+      throw new Error('Baseline Copy retry requires an empty organization coordinator');
+    }
+    if (
+      legacy.migrationId !== 'bounded-agent-ingestion-v1' ||
+      legacy.queuedRows !== 0 ||
+      legacy.flushing !== false
+    ) {
+      throw new Error('Baseline Copy retry requires frozen, drained legacy ingestion');
+    }
+    return baseline.retryBaselineCopy(input);
   }
 
   inspectGlobalIngestionMigration() {

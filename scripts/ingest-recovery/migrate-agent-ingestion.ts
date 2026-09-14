@@ -27,6 +27,7 @@ const { values } = parseArgs({
     status: { type: 'boolean' },
     apply: { type: 'boolean' },
     'previous-ref': { type: 'string' },
+    'retry-journal': { type: 'string' },
   },
 });
 if (
@@ -88,7 +89,11 @@ try {
       if (!before.migration) {
         for (const category of categories) {
           if (category.rows === 0) continue;
-          jobs.push(await runBaselineCopy(runtime.tb, recovery, category.category, copyWindow));
+          jobs.push(
+            await runBaselineCopy(runtime.tb, recovery, category.category, copyWindow, {
+              retryJournalRoot: values['retry-journal'],
+            }),
+          );
         }
       }
       retainedWindow = intersectMigrationWindows(copyWindow, retainedMigrationWindow());

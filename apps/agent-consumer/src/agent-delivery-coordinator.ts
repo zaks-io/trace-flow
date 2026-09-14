@@ -3,8 +3,12 @@ import {
   beginBaselineCopy,
   beginBaselineMigrationWindow,
   confirmBaselineCopy,
+  retryBaselineCopy,
   type BaselineCopyCheckpoint,
   type BaselineMigrationWindow,
+  type BeginBaselineCopyInput,
+  type ConfirmBaselineCopyInput,
+  type RetryBaselineCopyInput,
 } from './baseline-copy-migration';
 import {
   initializeIngestionMigration,
@@ -117,15 +121,14 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
   getBaselineCopy(input: { category: BaselineCopyCheckpoint['category'] }) {
     return baselineCopyCheckpoint(this.ctx.storage, input.category);
   }
-  beginBaselineCopy(input: Omit<BaselineCopyCheckpoint, 'jobId' | 'complete'>) {
+  beginBaselineCopy(input: BeginBaselineCopyInput) {
     return beginBaselineCopy(this.ctx.storage, input);
   }
-  confirmBaselineCopy(input: {
-    category: BaselineCopyCheckpoint['category'];
-    jobId: string;
-    complete: boolean;
-  }) {
+  confirmBaselineCopy(input: ConfirmBaselineCopyInput) {
     return confirmBaselineCopy(this.ctx.storage, input);
+  }
+  retryBaselineCopy(input: RetryBaselineCopyInput) {
+    return retryBaselineCopy(this.ctx.storage, input);
   }
   beginBaselineMigrationWindow(input: BaselineMigrationWindow) {
     return beginBaselineMigrationWindow(this.ctx.storage, input);

@@ -15,6 +15,7 @@ const AGENT_METHODS = new Set([
   'beginBaselineMigrationWindow',
   'beginBaselineCopy',
   'confirmBaselineCopy',
+  'retryBaselineCopy',
   'completeIngestionMigration',
   'completeGlobalIngestionMigration',
   'beginFactRebuild',

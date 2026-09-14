@@ -8,6 +8,7 @@ import {
   beginBaselineCopy,
   beginBaselineMigrationWindow,
   confirmBaselineCopy,
+  retryBaselineCopy,
 } from '../baseline-copy-migration';
 
 const env = workerEnv as unknown as {
@@ -59,6 +60,7 @@ describe('baseline Copy durability', () => {
       expect(
         await confirmBaselineCopy(state.storage, {
           category: 'messages',
+          copyAttempt: intent.copyAttempt,
           jobId: 'job-1',
           complete: false,
         }),
@@ -66,6 +68,7 @@ describe('baseline Copy durability', () => {
       await expect(
         confirmBaselineCopy(state.storage, {
           category: 'messages',
+          copyAttempt: intent.copyAttempt,
           jobId: 'job-2',
           complete: true,
         }),
@@ -73,6 +76,7 @@ describe('baseline Copy durability', () => {
       expect(
         await confirmBaselineCopy(state.storage, {
           category: 'messages',
+          copyAttempt: intent.copyAttempt,
           jobId: 'job-1',
           complete: true,
         }),
@@ -80,10 +84,123 @@ describe('baseline Copy durability', () => {
       expect(
         await confirmBaselineCopy(state.storage, {
           category: 'messages',
+          copyAttempt: intent.copyAttempt,
           jobId: 'job-1',
           complete: false,
         }),
       ).toMatchObject({ complete: true });
+    });
+  });
+
+  it('arms one retry with an exact old-job compare-and-swap and preserves the window', async () => {
+    const host = env.AGENT_FACT_BATCHER.get(env.AGENT_FACT_BATCHER.newUniqueId());
+    await runInDurableObject(host, async (_instance, state) => {
+      await beginBaselineCopy(state.storage, intent);
+      await confirmBaselineCopy(state.storage, {
+        category: 'messages',
+        copyAttempt: intent.copyAttempt,
+        jobId: 'job-failed',
+        complete: false,
+      });
+      const proof = {
+        category: 'messages' as const,
+        expectedJobId: 'job-failed',
+        expectedCopyAttempt: intent.copyAttempt,
+        nextCopyAttempt: intent.copyAttempt + 1,
+        observedAt: intent.startedAt + 1,
+        providerErrorSha256: 'a'.repeat(64),
+        journalSha256: 'b'.repeat(64),
+      };
+      await expect(retryBaselineCopy(state.storage, proof)).resolves.toEqual({
+        ...intent,
+        copyAttempt: intent.copyAttempt + 1,
+        failedAttempt: {
+          copyAttempt: intent.copyAttempt,
+          jobId: 'job-failed',
+          status: 'error',
+          observedAt: intent.startedAt + 1,
+          providerErrorSha256: 'a'.repeat(64),
+          journalSha256: 'b'.repeat(64),
+        },
+        complete: false,
+      });
+      await expect(retryBaselineCopy(state.storage, proof)).rejects.toThrow('retry conflict');
+      await expect(
+        confirmBaselineCopy(state.storage, {
+          category: 'messages',
+          copyAttempt: intent.copyAttempt,
+          jobId: 'job-failed',
+          complete: true,
+        }),
+      ).rejects.toThrow('confirmation conflict');
+      await expect(
+        confirmBaselineCopy(state.storage, {
+          category: 'messages',
+          copyAttempt: intent.copyAttempt + 1,
+          jobId: 'job-retry',
+          complete: false,
+        }),
+      ).resolves.toMatchObject({ jobId: 'job-retry', copyAttempt: intent.copyAttempt + 1 });
+      await expect(
+        retryBaselineCopy(state.storage, {
+          ...proof,
+          expectedJobId: 'another-job',
+          nextCopyAttempt: intent.copyAttempt + 2,
+        }),
+      ).rejects.toThrow('retry conflict');
+    });
+  });
+
+  it('never retries a completed checkpoint or a failed dedicated attempt', async () => {
+    const completed = env.AGENT_FACT_BATCHER.get(env.AGENT_FACT_BATCHER.newUniqueId());
+    await runInDurableObject(completed, async (_instance, state) => {
+      await beginBaselineCopy(state.storage, intent);
+      await confirmBaselineCopy(state.storage, {
+        category: 'messages',
+        copyAttempt: intent.copyAttempt,
+        jobId: 'job-done',
+        complete: true,
+      });
+      await expect(
+        retryBaselineCopy(state.storage, {
+          category: 'messages',
+          expectedJobId: 'job-done',
+          expectedCopyAttempt: intent.copyAttempt,
+          nextCopyAttempt: intent.copyAttempt + 1,
+          observedAt: intent.startedAt + 1,
+          providerErrorSha256: 'a'.repeat(64),
+          journalSha256: 'b'.repeat(64),
+        }),
+      ).rejects.toThrow('retry conflict');
+    });
+
+    const retried = env.AGENT_FACT_BATCHER.get(env.AGENT_FACT_BATCHER.newUniqueId());
+    await runInDurableObject(retried, async (_instance, state) => {
+      await state.storage.put('baseline-copy:messages', {
+        ...intent,
+        copyAttempt: intent.copyAttempt + 1,
+        jobId: 'job-retry-failed',
+        failedAttempt: {
+          copyAttempt: intent.copyAttempt,
+          jobId: 'job-first-failed',
+          status: 'error',
+          observedAt: intent.startedAt + 1,
+          providerErrorSha256: 'a'.repeat(64),
+          journalSha256: 'b'.repeat(64),
+        },
+        complete: false,
+      });
+      await expect(
+        retryBaselineCopy(state.storage, {
+          category: 'messages',
+          expectedJobId: 'job-retry-failed',
+          expectedCopyAttempt: intent.copyAttempt + 1,
+          nextCopyAttempt: intent.copyAttempt + 2,
+          observedAt: intent.startedAt + 2,
+          providerErrorSha256: 'c'.repeat(64),
+          journalSha256: 'd'.repeat(64),
+        }),
+      ).rejects.toThrow('retry conflict');
     });
   });
 });
