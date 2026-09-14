@@ -27,14 +27,17 @@ if (childMode) {
   spyOn(console, 'error').mockImplementation((...values) => {
     diagnostics.push(values.map(String).join(' '));
   });
-  globalThis.fetch = mock(async (input: string | URL) => {
-    calls.push(new URL(String(input)).pathname);
-    return Response.json({
-      migrationTarget: { tinybirdHost, appendTokenSha256 },
-      legacy: { migrationId: 'bounded-agent-ingestion-v1' },
-      migration: null,
-    });
-  }) as typeof fetch;
+  globalThis.fetch = Object.assign(
+    mock(async (input: string | URL | Request) => {
+      calls.push(new URL(input instanceof Request ? input.url : String(input)).pathname);
+      return Response.json({
+        migrationTarget: { tinybirdHost, appendTokenSha256 },
+        legacy: { migrationId: 'bounded-agent-ingestion-v1' },
+        migration: null,
+      });
+    }),
+    { preconnect: mock(() => {}) },
+  );
   process.argv.splice(
     0,
     process.argv.length,

@@ -9,7 +9,7 @@ describe('baseline Copy latest-row contracts', () => {
       const copy = readFileSync(`copies/repair_agent_${category}_versions_baseline.pipe`, 'utf8');
       const schema = readFileSync(`datasources/${source}.datasource`, 'utf8');
       const columns = [...schema.matchAll(/^\s+`([^`]+)`\s/gm)].map((match) => match[1]!);
-      const selected = /AS IsDeleted,\n([\s\S]+?)\n    FROM/.exec(copy)?.[1];
+      const selected = /AS IsDeleted,\n([\s\S]+?)\n {4}FROM/.exec(copy)?.[1];
       const hashed = /SHA256\(toJSONString\(tuple\(([^)]+)\)\)\)/.exec(copy)?.[1];
       const identity = ROW_IDENTITY_FIELDS[category];
 

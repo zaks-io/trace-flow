@@ -68,11 +68,23 @@ deploys the compatible consumer, pauses producer acceptance, drains and freezes 
 and copies retained baseline facts at revision 1. New deliveries start at revision 2. A durable
 baseline Copy checkpoint prevents a restart from launching another job after an unknown outcome.
 
+Legacy MergeTree tables can contain multiple versions of one identity. The baseline selects the
+greatest `IngestedAt` per natural identity across the retained window, matching the existing recovery
+ordering. Identical retries collapse; conflicting full rows with the same identity and `IngestedAt`
+stop migration. The preserved legacy tables are not rewritten. Verification selects the global
+winner before filtering each date chunk, so an event-date correction cannot revive the older row.
+Organization discovery scans one datasource and at most 31 dates per query, sequentially, and enforces
+the organization limit across the complete result.
+
 Migration verifies all original fact columns in both directions, natural-identity uniqueness,
 identity-index parity, and grouped values in all nine published snapshots. The endpoint switch and
 producer reopening follow successful verification. A failed migration keeps acceptance paused and
 retains the old data. Read-only frozen-ledger export and priced recovery do not allocate another
 history-sized confirmation ledger in the full Durable Object.
+
+The proof compares the selected legacy versions to canonical facts first, then canonical facts to
+published snapshots. Targeted frozen recovery also requires a completed migration and a matching
+Tinybird workspace before it creates a journal or replays data.
 
 Organization deletion fences new deliveries and snapshots, waits for admitted writes and Copy
 intents to settle, erases old organization storage and matching legacy dead letters, and removes
@@ -90,6 +102,12 @@ Tinybird proof uses an isolated cloud branch, including two million messages acr
 Execution time and rows/bytes read are measured separately; a passing small fixture does not prove
 full-history performance. Production completion requires a successful CI cutover plus comparison
 against the Collector's local identity inventory.
+
+A read-only production preflight on 2026-09-14 found that the combined six-table organization scan
+timed out after 20 seconds. The sequential 31-day scans completed all 72 queries in 6.16 seconds of
+combined database execution, with a maximum of 0.56 seconds per query. `system.query_log` recorded
+0.84 seconds of combined user and system CPU time for those 72 queries, reading 2,546,263 rows and
+124,766,887 bytes. These measurements cover organization discovery, not the complete migration.
 
 The isolated branch produced these measurements on 2026-09-13:
 
