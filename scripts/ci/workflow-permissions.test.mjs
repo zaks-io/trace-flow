@@ -381,6 +381,12 @@ describe('production Worker secret boundary', () => {
     const status = deploy.jobs['agent-delivery-migration-status'].steps.find(
       (step) => step.name === 'Read migration status',
     );
+    for (const jobName of ['agent-delivery-migration-status', 'migrate-agent-ingestion']) {
+      const setupNode = deploy.jobs[jobName].steps.find((step) =>
+        step.uses?.startsWith('actions/setup-node@'),
+      );
+      expect(setupNode.with['node-version']).toBe(24);
+    }
     expect(status.run).toContain('--status');
     expect(status.run).toContain('migration_required');
     expect(status.env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_OPERATOR_TOKEN }}');
