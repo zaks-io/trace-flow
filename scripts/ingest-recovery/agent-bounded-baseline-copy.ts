@@ -107,18 +107,18 @@ export async function runBoundedBaselineCopy(
   while (checkpoint.completedJobs.length < checkpoint.plan.chunks.length) {
     const chunkIndex = checkpoint.completedJobs.length;
     const chunk = checkpoint.plan.chunks[chunkIndex]!;
+    // Retention rolls forward at UTC midnight while a long run is in flight. Decide the retained
+    // slice once per chunk so the source proof, the arm, the Copy POST, and the target proof all
+    // cover exactly the same days. A fully expired chunk must never be armed.
+    const retained = retainedSlice(chunk, retainedMigrationWindow());
     if (!checkpoint.activeJob) {
-      // Retention rolls forward at UTC midnight while a long run is in flight. The proofs only
-      // cover the retained slice of a chunk, so decide the slice once, before the intent is
-      // durably armed, and post exactly that slice. A fully expired chunk must never be armed.
-      const retained = retainedSlice(chunk, retainedMigrationWindow());
       if (!retained) {
         throw new Error(
           'Bounded baseline Copy chunk is fully outside analytics retention; replan before resuming',
         );
       }
       await freshExternalGuards();
-      await verifyChunkSource(tb, recovery, checkpoint, chunk);
+      await verifyChunkSource(tb, recovery, checkpoint, chunk, retained);
       await requireEmptyChunkTarget(tb, recovery, checkpoint, chunk);
       await freshExternalGuards();
       const copyAttempt = Date.now();
@@ -149,7 +149,7 @@ export async function runBoundedBaselineCopy(
     }
     await freshExternalGuards();
     await verifyChunkSource(tb, recovery, checkpoint, chunk);
-    await verifyCompletedChunkTarget(tb, recovery, checkpoint, chunk);
+    await verifyCompletedChunkTarget(tb, recovery, checkpoint, chunk, retained);
     await freshExternalGuards();
     checkpoint = (await recovery.call('completeBoundedBaselineCopyChunk', {
       category: checkpoint.category,

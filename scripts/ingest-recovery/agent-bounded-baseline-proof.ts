@@ -46,8 +46,8 @@ export async function verifyChunkSource(
   recovery: AgentRecoveryClient,
   checkpoint: BoundedBaselineCopyCheckpoint,
   chunk: BaselineCopyChunk,
+  retained: MigrationWindow | null = retainedSlice(chunk, retainedMigrationWindow()),
 ): Promise<number> {
-  const retained = retainedSlice(chunk, retainedMigrationWindow());
   const expected = expectedRetained(checkpoint, chunk, retained);
   if (!retained) return 0;
   const projection = baselineProjection(checkpoint.category);
@@ -77,8 +77,8 @@ export async function verifyCompletedChunkTarget(
   recovery: AgentRecoveryClient,
   checkpoint: BoundedBaselineCopyCheckpoint,
   chunk: BaselineCopyChunk,
+  retained: MigrationWindow | null = retainedSlice(chunk, retainedMigrationWindow()),
 ): Promise<void> {
-  const retained = retainedSlice(chunk, retainedMigrationWindow());
   const expected = expectedRetained(checkpoint, chunk, retained);
   if (!retained) return;
   const scope = migrationScope(checkpoint.category, recovery.org, retained);
