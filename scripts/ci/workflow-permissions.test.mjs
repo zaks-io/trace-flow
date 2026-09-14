@@ -417,7 +417,14 @@ describe('production Worker secret boundary', () => {
     const resume = deploy.jobs['deploy-agent-ingest'].steps.find(
       (step) => step.name === 'Deploy Agent Ingest Worker',
     );
-    expect(resume.with.command).toContain('AGENT_INGEST_MAINTENANCE:false');
+    expect(deploy.on.workflow_dispatch.inputs.agent_ingest_maintenance).toMatchObject({
+      type: 'boolean',
+      required: false,
+      default: false,
+    });
+    expect(resume.with.command).toContain(
+      "AGENT_INGEST_MAINTENANCE:${{ github.event_name == 'workflow_dispatch' && inputs.agent_ingest_maintenance && 'true' || 'false' }}",
+    );
   });
 
   test('maps the dedicated delivery key to both Workers and scoped tokens to the consumer', () => {
