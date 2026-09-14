@@ -5,6 +5,7 @@ import { CATEGORIES, ROW_IDENTITY_FIELDS, rowIdentity, stableHash, type Category
 import { backfillPendingFactIdentities } from './fact-pending-migration';
 import type {
   FrozenFactIdentity,
+  FrozenFactIdentityPage,
   FrozenFactSelector,
   FrozenFactSource,
   FrozenFactSourceMetadata,
@@ -280,19 +281,7 @@ export class AgentFactMaintenance {
     orgId: string,
     input: Pick<ListRebuildFactsInput, 'after' | 'limit'>,
   ): ListRebuildFactsResult {
-    const limit = validateLimit(input.limit);
-    const after = validateCursor(input.after);
-    const rows = [
-      ...this.storage.sql.exec<StoredLedgerFactMetadata>(
-        `SELECT category, fact_id, content_hash
-         FROM fact_ledger
-         WHERE (category, fact_id) > (?, ?)
-         ORDER BY category, fact_id LIMIT ?`,
-        after?.category ?? '',
-        after?.factId ?? '',
-        limit + 1,
-      ),
-    ];
+    const { limit, rows } = this.frozenLedgerPage(input);
     const facts: RebuildFact[] = [];
     let pageBytes = 64;
     for (const row of rows.slice(0, limit)) {
@@ -303,13 +292,7 @@ export class AgentFactMaintenance {
       pageBytes += factBytes + 1;
     }
     const last = facts[facts.length - 1];
-    const hasMore = rows.some(
-      (row) =>
-        !last ||
-        row.category > last.category ||
-        (row.category === last.category && row.fact_id > last.factId),
-    );
-    const nextAfter = hasMore && last ? { category: last.category, factId: last.factId } : null;
+    const nextAfter = nextFrozenCursor(rows, last);
     const result = { facts, nextAfter, serializedBytes: 0 };
     let measured = -1;
     while (result.serializedBytes !== measured) {
@@ -317,6 +300,17 @@ export class AgentFactMaintenance {
       result.serializedBytes = utf8Bytes(JSON.stringify(result));
     }
     return result;
+  }
+
+  listFrozenIdentities(
+    input: Pick<ListRebuildFactsInput, 'after' | 'limit'>,
+  ): FrozenFactIdentityPage {
+    const { limit, rows } = this.frozenLedgerPage(input);
+    const facts = rows.slice(0, limit).map(({ category, fact_id: factId }) => ({
+      category,
+      factId,
+    }));
+    return { facts, nextAfter: nextFrozenCursor(rows, facts.at(-1)) };
   }
 
   readFrozen(orgId: string, input: { facts: FrozenFactSelector[] }): FrozenFactSource[] {
@@ -713,6 +707,26 @@ export class AgentFactMaintenance {
     };
   }
 
+  private frozenLedgerPage(input: Pick<ListRebuildFactsInput, 'after' | 'limit'>): {
+    limit: number;
+    rows: StoredLedgerFactMetadata[];
+  } {
+    const limit = validateLimit(input.limit);
+    const after = validateCursor(input.after);
+    const rows = [
+      ...this.storage.sql.exec<StoredLedgerFactMetadata>(
+        `SELECT category, fact_id, content_hash
+         FROM fact_ledger
+         WHERE (category, fact_id) > (?, ?)
+         ORDER BY category, fact_id LIMIT ?`,
+        after?.category ?? '',
+        after?.factId ?? '',
+        limit + 1,
+      ),
+    ];
+    return { limit, rows };
+  }
+
   private missingLedgerPayloads(): Iterable<StoredLedgerFact> {
     return this.storage.sql.exec<StoredLedgerFact>(
       `SELECT category, fact_id, content_hash, COALESCE(data, '') AS data
@@ -925,6 +939,18 @@ function validateLimit(value: number | undefined): number {
   if (!Number.isSafeInteger(value) || value < 1 || value > MAX_PAGE_ROWS)
     throw new Error(`fact rebuild limit must be between 1 and ${MAX_PAGE_ROWS}`);
   return value;
+}
+
+function nextFrozenCursor(
+  rows: StoredLedgerFactMetadata[],
+  last: { category: Category; factId: string } | undefined,
+): RebuildFactCursor | null {
+  if (!last) return null;
+  const hasMore = rows.some(
+    (row) =>
+      row.category > last.category || (row.category === last.category && row.fact_id > last.factId),
+  );
+  return hasMore ? { category: last.category, factId: last.factId } : null;
 }
 
 function validateCursor(value: RebuildFactCursor | undefined): RebuildFactCursor | undefined {

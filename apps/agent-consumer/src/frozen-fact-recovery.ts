@@ -27,6 +27,7 @@ export {
 export type {
   ExpectedCanonicalFact,
   FrozenFactIdentity,
+  FrozenFactIdentityPage,
   FrozenFactSelector,
   ReplayFrozenFactsInput,
 } from './frozen-fact-contract';
