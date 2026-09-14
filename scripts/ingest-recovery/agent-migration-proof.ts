@@ -106,7 +106,7 @@ export async function inspectBaseline(
   tb: AgentTinybirdClient,
   org: string,
   window: MigrationWindow,
-  copyWindow: MigrationWindow = window,
+  copyWindow: MigrationWindow,
 ): Promise<BaselineCategoryProof[]> {
   const proofs: BaselineCategoryProof[] = [];
   for (const category of CATEGORIES) {
@@ -155,7 +155,7 @@ export async function verifyBaseline(
   org: string,
   window: MigrationWindow,
   proof: BaselineCategoryProof,
-  copyWindow: MigrationWindow = window,
+  copyWindow: MigrationWindow,
 ): Promise<void> {
   const { category } = proof;
   const target = FACT_VERSION_DATASOURCES[category];

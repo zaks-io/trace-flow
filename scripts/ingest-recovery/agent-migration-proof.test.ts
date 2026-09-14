@@ -184,10 +184,11 @@ describe('latest baseline selection', () => {
       },
     } as unknown as AgentTinybirdClient;
 
-    const proof = await inspectBaseline(client, 'org-proof', {
+    const window = {
       startDay: '2026-09-12',
       endDay: '2026-09-13',
-    });
+    };
+    const proof = await inspectBaseline(client, 'org-proof', window, window);
 
     expect(proof).toEqual(
       CATEGORIES.map((category) => ({
@@ -215,12 +216,10 @@ describe('latest baseline selection', () => {
       },
     } as unknown as AgentTinybirdClient;
 
-    await expect(
-      inspectBaseline(client, 'org-proof', {
-        startDay: '2026-09-12',
-        endDay: '2026-09-13',
-      }),
-    ).rejects.toThrow('messages has conflicting equal-time versions');
+    const window = { startDay: '2026-09-12', endDay: '2026-09-13' };
+    await expect(inspectBaseline(client, 'org-proof', window, window)).rejects.toThrow(
+      'messages has conflicting equal-time versions',
+    );
     expect(queries).toHaveLength(1);
     expect(queries[0]).toContain('uniqExact(tuple(`OrgId`');
     expect(queries[0]).toContain('> 1');
@@ -274,12 +273,8 @@ describe('verifyBaseline', () => {
 
   test('checks content, metadata, and identity parity in bounded 31-day chunks', async () => {
     const { client, queries } = fakeTinybird([2, 2, 1, 1]);
-    await verifyBaseline(
-      client,
-      'org-proof',
-      { startDay: '2026-08-13', endDay: '2026-09-13' },
-      messageProof(3),
-    );
+    const window = { startDay: '2026-08-13', endDay: '2026-09-13' };
+    await verifyBaseline(client, 'org-proof', window, messageProof(3), window);
 
     expect(queries).toHaveLength(4);
     expect(queries.every((query) => query.includes('max(IngestedAt)'))).toBe(true);
@@ -290,13 +285,9 @@ describe('verifyBaseline', () => {
 
   test('fails when bounded verification totals do not match the inspection proof', async () => {
     const { client } = fakeTinybird([0, 0]);
+    const window = { startDay: '2026-09-13', endDay: '2026-09-13' };
     await expect(
-      verifyBaseline(
-        client,
-        'org-proof',
-        { startDay: '2026-09-13', endDay: '2026-09-13' },
-        messageProof(1),
-      ),
+      verifyBaseline(client, 'org-proof', window, messageProof(1), window),
     ).rejects.toThrow('does not match inspection proof');
   });
 });
