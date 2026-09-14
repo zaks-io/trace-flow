@@ -37,15 +37,6 @@ const IDENTITY_INDEXES = [
   ],
 ] as const;
 
-const OLD_FACTS = new Map([
-  ['agent_message_fact_versions', 'agent_message_facts'],
-  ['agent_tool_event_fact_versions', 'agent_tool_event_facts'],
-  ['agent_file_event_fact_versions', 'agent_file_event_facts'],
-  ['agent_capability_snapshot_fact_versions', 'agent_capability_snapshot_facts'],
-  ['agent_pull_request_fact_versions', 'agent_pull_request_facts'],
-  ['agent_review_unit_attribution_versions', 'agent_review_unit_attributions'],
-]);
-
 interface Column {
   name: string;
   type: string;
@@ -158,11 +149,9 @@ function expectedSnapshotQuery(snapshot: string, orgId: string, days: string[]):
   const file = readFileSync(path, 'utf8');
   const match = /NODE snapshot\nSQL >\n\s+%\n([\s\S]+?)\n\nTYPE COPY/.exec(file);
   if (!match) throw new Error(`Cannot read snapshot query from ${path}`);
-  let sql = match[1]!.replace(/^ {4}/gm, '').replace(/\nSETTINGS max_threads = 1\s*$/, '');
-  for (const [versioned, old] of OLD_FACTS) sql = sql.replaceAll(versioned, old);
-  sql = sql
-    .replaceAll(' FINAL', '')
-    .replace(/^\s*AND IsDeleted = 0\s*$/gm, '')
+  const sql = match[1]!
+    .replace(/^ {4}/gm, '')
+    .replace(/\nSETTINGS max_threads = 1\s*$/, '')
     .replaceAll('{{ String(org_id) }}', quote(orgId))
     .replaceAll(
       "{{ Array(snapshot_days, 'Date') }}",

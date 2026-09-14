@@ -5,7 +5,7 @@ DESCRIPTION >
 NODE baseline
 SQL >
     %
-    SELECT
+    SELECT DISTINCT
         toUInt64(1) AS DeliverySequence,
         lower(hex(SHA256(toJSONString(tuple(`OrgId`, `UserId`, `CollectorId`, `CollectorCredentialId`, `session_pk`, `message_pk`, `repo_fingerprint`, `repo_source`, `source`, `parser_version`, `EventAt`, `IngestedAt`, `VendorStartedAt`, `vendor_session_id`, `vendor_message_id`, `turn_index`, `role`, `model`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_creation_tokens`, `cache_creation_5m_tokens`, `cache_creation_1h_tokens`, `reasoning_tokens`, `token_coverage`, `cache_coverage`, `agent_depth`, `is_subagent_spawn`, `is_sidechain`, `agent_id`, `normalized_git_remote`, `repo_path_fallback`, `git_branch`, `git_head_sha`, `dropped_sensitive`, `cost_usd`))))) AS ContentHash,
         toUInt8(0) AS IsDeleted,
@@ -50,6 +50,14 @@ SQL >
     WHERE OrgId = {{ String(org_id) }}
       AND EventAt >= toDateTime({{ Date(start_day) }})
       AND EventAt < toDateTime({{ Date(end_day) }}) + INTERVAL 1 DAY
+      AND tuple(OrgId, session_pk, message_pk, IngestedAt) IN (
+        SELECT OrgId, session_pk, message_pk, max(IngestedAt) AS IngestedAt
+        FROM agent_message_facts
+        WHERE OrgId = {{ String(org_id) }}
+          AND EventAt >= toDateTime({{ Date(start_day) }})
+          AND EventAt < toDateTime({{ Date(end_day) }}) + INTERVAL 1 DAY
+        GROUP BY OrgId, session_pk, message_pk
+      )
       AND {{ UInt64(copy_attempt) }} >= 1
     SETTINGS max_threads = 1
 

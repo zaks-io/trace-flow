@@ -5,7 +5,7 @@ DESCRIPTION >
 NODE baseline
 SQL >
     %
-    SELECT
+    SELECT DISTINCT
         toUInt64(1) AS DeliverySequence,
         lower(hex(SHA256(toJSONString(tuple(`OrgId`, `UserId`, `CollectorId`, `CollectorCredentialId`, `session_pk`, `tool_use_pk`, `repo_fingerprint`, `repo_source`, `source`, `parser_version`, `EventAt`, `IngestedAt`, `vendor_session_id`, `vendor_message_id`, `tool_use_id`, `source_block_index`, `tool_name`, `command_family`, `command_program`, `command_subcommand`, `status`, `error_category`, `error_category_coverage`, `exit_code`, `duration_ms`, `is_navigation`, `navigation_kind`, `navigation_hint_coverage`, `navigation_path_hint`, `navigation_pattern_hint`, `repo_relative_paths`, `extracted_provider`, `extracted_repo`, `extracted_pr_number`, `command_excerpt`, `error_excerpt`, `extracted_subagent_agent_id`, `extracted_subagent_model`, `extracted_subagent_input_tokens`, `extracted_subagent_output_tokens`, `extracted_subagent_cache_read_tokens`, `extracted_subagent_cache_creation_tokens`, `dropped_sensitive`))))) AS ContentHash,
         toUInt8(0) AS IsDeleted,
@@ -56,6 +56,14 @@ SQL >
     WHERE OrgId = {{ String(org_id) }}
       AND EventAt >= toDateTime({{ Date(start_day) }})
       AND EventAt < toDateTime({{ Date(end_day) }}) + INTERVAL 1 DAY
+      AND tuple(OrgId, session_pk, tool_use_pk, IngestedAt) IN (
+        SELECT OrgId, session_pk, tool_use_pk, max(IngestedAt) AS IngestedAt
+        FROM agent_tool_event_facts
+        WHERE OrgId = {{ String(org_id) }}
+          AND EventAt >= toDateTime({{ Date(start_day) }})
+          AND EventAt < toDateTime({{ Date(end_day) }}) + INTERVAL 1 DAY
+        GROUP BY OrgId, session_pk, tool_use_pk
+      )
       AND {{ UInt64(copy_attempt) }} >= 1
     SETTINGS max_threads = 1
 

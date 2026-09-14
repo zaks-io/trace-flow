@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  inspectBaseline,
   intersectMigrationWindows,
+  latestBaselineRows,
   migrationOrganizations,
   verifyBaseline,
   type BaselineCategoryProof,
@@ -153,6 +155,79 @@ describe('migrationOrganizations', () => {
   });
 });
 
+describe('latest baseline selection', () => {
+  test('selects distinct latest rows using full-window maxima for a narrower output chunk', () => {
+    const query = latestBaselineRows(
+      'messages',
+      'org-proof',
+      { startDay: '2026-08-01', endDay: '2026-09-13' },
+      { startDay: '2026-09-01', endDay: '2026-09-13' },
+      'message_pk,EventAt,IngestedAt',
+    );
+
+    expect(query).toContain('SELECT DISTINCT message_pk,EventAt,IngestedAt');
+    expect(query).toContain('tuple(OrgId,session_pk,message_pk,IngestedAt) IN');
+    expect(query).toContain('SELECT OrgId,session_pk,message_pk,max(IngestedAt) AS IngestedAt');
+    expect(query).toContain('GROUP BY OrgId,session_pk,message_pk');
+    expect(query.match(/toDateTime\('2026-08-01'\)/g)).toHaveLength(2);
+    expect(query.match(/toDateTime\('2026-09-01'\)/g)).toHaveLength(1);
+  });
+
+  test('inspects one latest row per identity after rejecting only conflicting equal-time rows', async () => {
+    const queries: string[] = [];
+    const client = {
+      async sql(query: string) {
+        queries.push(query);
+        return query.includes('HAVING uniqExact')
+          ? { data: [], meta: [] }
+          : { data: [{ rows: '2', days: ['2026-09-12', '2026-09-13'] }], meta: [] };
+      },
+    } as unknown as AgentTinybirdClient;
+
+    const proof = await inspectBaseline(client, 'org-proof', {
+      startDay: '2026-09-12',
+      endDay: '2026-09-13',
+    });
+
+    expect(proof).toEqual(
+      CATEGORIES.map((category) => ({
+        category,
+        rows: 2,
+        days: ['2026-09-12', '2026-09-13'],
+      })),
+    );
+    expect(queries).toHaveLength(CATEGORIES.length * 2);
+    const guards = queries.filter((query) => query.includes('HAVING uniqExact'));
+    expect(guards).toHaveLength(CATEGORIES.length);
+    expect(guards.every((query) => query.includes('GROUP BY OrgId,session_pk'))).toBe(true);
+    expect(guards.every((query) => query.includes(',IngestedAt'))).toBe(true);
+    const inspections = queries.filter((query) => query.includes('argMax('));
+    expect(inspections).toHaveLength(CATEGORIES.length);
+    expect(inspections.every((query) => query.includes('GROUP BY OrgId,session_pk'))).toBe(true);
+  });
+
+  test('fails before counting when full rows conflict at the same identity and ingestion time', async () => {
+    const queries: string[] = [];
+    const client = {
+      async sql(query: string) {
+        queries.push(query);
+        return { data: [{ conflict: 1 }], meta: [] };
+      },
+    } as unknown as AgentTinybirdClient;
+
+    await expect(
+      inspectBaseline(client, 'org-proof', {
+        startDay: '2026-09-12',
+        endDay: '2026-09-13',
+      }),
+    ).rejects.toThrow('messages has conflicting equal-time versions');
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toContain('uniqExact(tuple(`OrgId`');
+    expect(queries[0]).toContain('> 1');
+    expect(queries[0]).toContain('LIMIT 1');
+  });
+});
+
 describe('verifyBaseline', () => {
   test('keeps Copy arguments immutable while verification follows current retention', () => {
     expect(
@@ -173,8 +248,9 @@ describe('verifyBaseline', () => {
     );
 
     expect(queries).toHaveLength(4);
-    expect(queries.slice(0, 2).every((query) => !query.includes("'2026-09-13'"))).toBe(true);
-    expect(queries.slice(2).every((query) => query.includes("'2026-09-13'"))).toBe(true);
+    expect(queries.every((query) => query.includes('max(IngestedAt)'))).toBe(true);
+    expect(queries.every((query) => query.includes("'2026-09-13'"))).toBe(true);
+    expect(queries.slice(0, 2).every((query) => query.includes("'2026-09-12'"))).toBe(true);
     expect(queries.filter((query) => query.includes('EXCEPT DISTINCT'))).toHaveLength(4);
   });
 

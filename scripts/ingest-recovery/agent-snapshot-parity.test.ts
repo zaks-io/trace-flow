@@ -32,7 +32,20 @@ describe('verifyAgentSnapshotParity', () => {
     expect(queries.filter((query) => query.includes('missing_actual'))).toHaveLength(15);
     expect(queries.every((query) => query.includes("'org-proof'"))).toBe(true);
     expect(queries.some((query) => query.includes('agent_session_signals_snapshots'))).toBe(true);
-    expect(queries.some((query) => query.includes('agent_message_facts'))).toBe(true);
+    const snapshotQueries = queries.slice(6);
+    expect(snapshotQueries).toHaveLength(9);
+    expect(snapshotQueries.every((query) => query.includes('_fact_versions FINAL'))).toBe(true);
+    expect(snapshotQueries.every((query) => query.includes('AND IsDeleted = 0'))).toBe(true);
+    for (const legacy of [
+      'agent_message_facts',
+      'agent_tool_event_facts',
+      'agent_file_event_facts',
+      'agent_capability_snapshot_facts',
+      'agent_pull_request_facts',
+      'agent_review_unit_attributions',
+    ]) {
+      expect(snapshotQueries.some((query) => query.includes(legacy))).toBe(false);
+    }
   });
 
   test('fails closed when an identity index differs', async () => {
