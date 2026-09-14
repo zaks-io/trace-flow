@@ -35,6 +35,8 @@ SQL >
     WHERE OrgId = {{ String(org_id) }}
       AND EventAt >= toDateTime({{ Date(start_day) }})
       AND EventAt < toDateTime({{ Date(end_day) }}) + INTERVAL 1 DAY
+      AND EventAt >= toDateTime({{ Date(chunk_start_day) }})
+      AND EventAt < toDateTime({{ Date(chunk_end_day) }}) + INTERVAL 1 DAY
       AND tuple(OrgId, session_pk, capability_snapshot_pk, IngestedAt) IN (
         SELECT OrgId, session_pk, capability_snapshot_pk, max(IngestedAt) AS IngestedAt
         FROM agent_capability_snapshot_facts

@@ -11,6 +11,19 @@ import {
   type RetryBaselineCopyInput,
 } from './baseline-copy-migration';
 import {
+  armBoundedBaselineCopyChunk,
+  beginBoundedBaselineCopy,
+  completeBoundedBaselineCopy,
+  completeBoundedBaselineCopyChunk,
+  confirmBoundedBaselineCopyChunk,
+} from './bounded-baseline-copy';
+import type {
+  BaselineCopyChunkInput,
+  BeginBoundedBaselineCopyInput,
+  CompleteBoundedBaselineCopyInput,
+  ConfirmBaselineCopyChunkInput,
+} from './baseline-copy-contract';
+import {
   initializeIngestionMigration,
   ingestionMigrationState,
   seedIngestionMigration,
@@ -129,6 +142,21 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
   }
   retryBaselineCopy(input: RetryBaselineCopyInput) {
     return retryBaselineCopy(this.ctx.storage, input);
+  }
+  beginBoundedBaselineCopy(input: BeginBoundedBaselineCopyInput) {
+    return beginBoundedBaselineCopy(this.ctx.storage, input);
+  }
+  armBoundedBaselineCopyChunk(input: BaselineCopyChunkInput) {
+    return armBoundedBaselineCopyChunk(this.ctx.storage, input);
+  }
+  confirmBoundedBaselineCopyChunk(input: ConfirmBaselineCopyChunkInput) {
+    return confirmBoundedBaselineCopyChunk(this.ctx.storage, input);
+  }
+  completeBoundedBaselineCopyChunk(input: ConfirmBaselineCopyChunkInput) {
+    return completeBoundedBaselineCopyChunk(this.ctx.storage, input);
+  }
+  completeBoundedBaselineCopy(input: CompleteBoundedBaselineCopyInput) {
+    return completeBoundedBaselineCopy(this.ctx.storage, input);
   }
   beginBaselineMigrationWindow(input: BaselineMigrationWindow) {
     return beginBaselineMigrationWindow(this.ctx.storage, input);

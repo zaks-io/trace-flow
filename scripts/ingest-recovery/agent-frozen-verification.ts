@@ -38,28 +38,50 @@ export async function verifyAllFrozenFacts(
   if (!index.complete) throw new Error('Canonical hash index export is incomplete');
   const report = emptyReport();
   const digest = createHash('sha256');
-  let after: { category: Category; factId: string } | undefined;
+  let page = await readFrozenPage(recovery);
   for (let pageNumber = 0; pageNumber < 100_000; pageNumber++) {
-    const page = await recovery.call('listFrozenFacts', { after, limit: 100 });
-    if (!Array.isArray(page?.facts) || page.facts.length > 100) {
-      throw new Error('Invalid frozen fact page');
-    }
-    const identities = page.facts.map(validatePageIdentity);
-    if (identities.length > 0) await verifyFrozenPage(recovery, index, identities, report, digest);
+    const identities = page.facts;
     if (page.nextAfter === null) {
+      if (identities.length > 0)
+        await verifyFrozenPage(recovery, index, identities, report, digest);
       report.eligibleForLegacyRetirement = report.missing === 0 && report.conflicts === 0;
       report.verificationSha256 = digest.digest('hex');
       return report;
     }
-    after = validatePageIdentity(page.nextAfter);
+    // Drain both reads on failure before the caller closes the canonical index.
+    const [verified, next] = await Promise.allSettled([
+      identities.length > 0
+        ? verifyFrozenPage(recovery, index, identities, report, digest)
+        : Promise.resolve(),
+      readFrozenPage(recovery, page.nextAfter),
+    ]);
+    if (verified.status === 'rejected') throw verified.reason;
+    if (next.status === 'rejected') throw next.reason;
+    page = next.value;
   }
   throw new Error('Frozen fact verification page bound exceeded');
+}
+
+async function readFrozenPage(
+  recovery: AgentRecoveryClient,
+  after?: { category: Category; factId: string },
+) {
+  const value: unknown = await recovery.call('listFrozenFacts', { after, limit: 100 });
+  if (!value || typeof value !== 'object') throw new Error('Invalid frozen fact page');
+  const page = value as Record<string, unknown>;
+  if (!Array.isArray(page.facts) || page.facts.length > 100) {
+    throw new Error('Invalid frozen fact page');
+  }
+  return {
+    facts: page.facts.map(validatePageIdentity),
+    nextAfter: page.nextAfter === null ? null : validatePageIdentity(page.nextAfter),
+  };
 }
 
 async function verifyFrozenPage(
   recovery: AgentRecoveryClient,
   index: CanonicalHashIndex,
-  identities: Array<{ category: Category; factId: string }>,
+  identities: { category: Category; factId: string }[],
   report: FrozenVerificationReport,
   digest: ReturnType<typeof createHash>,
 ): Promise<void> {
@@ -138,7 +160,7 @@ function validateMetadata(value: FrozenSourceMetadata): void {
     !Number.isSafeInteger(value.payloadBytes) ||
     value.payloadBytes < 2 ||
     !/^\d{4}-\d{2}-\d{2}$/.test(value.eventDay) ||
-    !Number.isFinite(Date.parse(value.ingestedAt.replace(' ', 'T') + 'Z'))
+    !Number.isFinite(Date.parse(`${value.ingestedAt.replace(' ', 'T')}Z`))
   ) {
     throw new Error('Invalid frozen source metadata');
   }
@@ -161,8 +183,8 @@ function* sourceBatches(sources: FrozenSourceMetadata[]): Generator<FrozenSource
 }
 
 function assertExactIdentities(
-  requested: Array<{ category: Category; factId: string }>,
-  returned: Array<{ category: Category; factId: string }>,
+  requested: { category: Category; factId: string }[],
+  returned: { category: Category; factId: string }[],
 ): void {
   const expected = requested.map(factKey).sort();
   const actual = returned.map(factKey).sort();

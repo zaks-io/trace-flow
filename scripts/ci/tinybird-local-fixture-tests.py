@@ -11,7 +11,10 @@ from tinybird.tb.modules import test_common
 from tinybird.tb.modules.build_common import process as build_project
 from tinybird.tb.modules.local_common import get_tinybird_local_client
 from tinybird.tb.modules.project import Project
-from tinybird_baseline_version_fixtures import verify_baseline_versions
+from tinybird_baseline_version_fixtures import (
+    bounded_day_chunks,
+    verify_baseline_versions,
+)
 
 
 ROOT = Path.cwd()
@@ -82,16 +85,21 @@ def seed_versioned_facts(client) -> None:
             """,
         )
         for row in rows:
-            run_copy(
-                client,
-                f"repair_agent_{category}_versions_baseline",
-                {
-                    "org_id": str(row["OrgId"]),
-                    "start_day": str(row["StartDay"]),
-                    "end_day": str(row["EndDay"]),
-                    "copy_attempt": copy_attempt,
-                },
-            )
+            start_day = str(row["StartDay"])
+            end_day = str(row["EndDay"])
+            for chunk_start_day, chunk_end_day in bounded_day_chunks(start_day, end_day):
+                run_copy(
+                    client,
+                    f"repair_agent_{category}_versions_baseline",
+                    {
+                        "org_id": str(row["OrgId"]),
+                        "start_day": start_day,
+                        "end_day": end_day,
+                        "chunk_start_day": chunk_start_day,
+                        "chunk_end_day": chunk_end_day,
+                        "copy_attempt": copy_attempt,
+                    },
+                )
 
 
 def published_days(client) -> dict[str, list[str]]:

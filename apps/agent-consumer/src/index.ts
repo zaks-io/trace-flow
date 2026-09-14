@@ -1,8 +1,11 @@
 import type {
   BaselineCopyCheckpoint,
   BaselineMigrationWindow,
-  BeginBaselineCopyInput,
+  BaselineCopyChunkInput,
+  BeginBoundedBaselineCopyInput,
+  CompleteBoundedBaselineCopyInput,
   ConfirmBaselineCopyInput,
+  ConfirmBaselineCopyChunkInput,
   RetryBaselineCopyInput,
 } from './baseline-copy-migration';
 /**
@@ -220,28 +223,7 @@ export class AgentIngestion extends WorkerEntrypoint<AgentConsumerEnv> {
 }
 
 export class TraceRecovery extends WorkerEntrypoint<AgentConsumerEnv> {
-  beginBaselineMigrationWindow(_shardId: string, input: BaselineMigrationWindow) {
-    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(
-      'migration:bounded-agent-ingestion-v1',
-    ).beginBaselineMigrationWindow(input);
-  }
-  getBaselineCopy(orgId: string, input: { category: BaselineCopyCheckpoint['category'] }) {
-    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(
-      `baseline:${normalizeAgentShardId(orgId)}`,
-    ).getBaselineCopy(input);
-  }
-  beginBaselineCopy(orgId: string, input: BeginBaselineCopyInput) {
-    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(
-      `baseline:${normalizeAgentShardId(orgId)}`,
-    ).beginBaselineCopy(input);
-  }
-  confirmBaselineCopy(orgId: string, input: ConfirmBaselineCopyInput) {
-    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(
-      `baseline:${normalizeAgentShardId(orgId)}`,
-    ).confirmBaselineCopy(input);
-  }
-
-  async retryBaselineCopy(orgId: string, input: RetryBaselineCopyInput) {
+  async #requireBaselineMutation(orgId: string) {
     const normalized = normalizeAgentShardId(orgId);
     const organization = this.env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${normalized}`);
     const baseline = this.env.AGENT_DELIVERY_COORDINATOR.getByName(`baseline:${normalized}`);
@@ -251,7 +233,7 @@ export class TraceRecovery extends WorkerEntrypoint<AgentConsumerEnv> {
       getAgentBatcher(this.env, normalized).getIngestionMigrationState(),
     ]);
     if (migration !== null)
-      throw new Error('Baseline Copy retry is forbidden after migration seed');
+      throw new Error('Baseline Copy mutation is forbidden after migration seed');
     if (
       stats.lastDeliverySequence !== 1 ||
       stats.lastSnapshotGeneration !== 0 ||
@@ -265,16 +247,56 @@ export class TraceRecovery extends WorkerEntrypoint<AgentConsumerEnv> {
       stats.gateExpiresAtMs !== null ||
       stats.erasureStarted
     ) {
-      throw new Error('Baseline Copy retry requires an empty organization coordinator');
+      throw new Error('Baseline Copy mutation requires an empty organization coordinator');
     }
     if (
       legacy.migrationId !== 'bounded-agent-ingestion-v1' ||
       legacy.queuedRows !== 0 ||
       legacy.flushing !== false
     ) {
-      throw new Error('Baseline Copy retry requires frozen, drained legacy ingestion');
+      throw new Error('Baseline Copy mutation requires frozen, drained legacy ingestion');
     }
-    return baseline.retryBaselineCopy(input);
+    return baseline;
+  }
+
+  beginBaselineMigrationWindow(_shardId: string, input: BaselineMigrationWindow) {
+    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(
+      'migration:bounded-agent-ingestion-v1',
+    ).beginBaselineMigrationWindow(input);
+  }
+  getBaselineCopy(orgId: string, input: { category: BaselineCopyCheckpoint['category'] }) {
+    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(
+      `baseline:${normalizeAgentShardId(orgId)}`,
+    ).getBaselineCopy(input);
+  }
+  confirmBaselineCopy(orgId: string, input: ConfirmBaselineCopyInput) {
+    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(
+      `baseline:${normalizeAgentShardId(orgId)}`,
+    ).confirmBaselineCopy(input);
+  }
+
+  async retryBaselineCopy(orgId: string, input: RetryBaselineCopyInput) {
+    return (await this.#requireBaselineMutation(orgId)).retryBaselineCopy(input);
+  }
+
+  async beginBoundedBaselineCopy(orgId: string, input: BeginBoundedBaselineCopyInput) {
+    return (await this.#requireBaselineMutation(orgId)).beginBoundedBaselineCopy(input);
+  }
+
+  async armBoundedBaselineCopyChunk(orgId: string, input: BaselineCopyChunkInput) {
+    return (await this.#requireBaselineMutation(orgId)).armBoundedBaselineCopyChunk(input);
+  }
+
+  async confirmBoundedBaselineCopyChunk(orgId: string, input: ConfirmBaselineCopyChunkInput) {
+    return (await this.#requireBaselineMutation(orgId)).confirmBoundedBaselineCopyChunk(input);
+  }
+
+  async completeBoundedBaselineCopyChunk(orgId: string, input: ConfirmBaselineCopyChunkInput) {
+    return (await this.#requireBaselineMutation(orgId)).completeBoundedBaselineCopyChunk(input);
+  }
+
+  async completeBoundedBaselineCopy(orgId: string, input: CompleteBoundedBaselineCopyInput) {
+    return (await this.#requireBaselineMutation(orgId)).completeBoundedBaselineCopy(input);
   }
 
   inspectGlobalIngestionMigration() {

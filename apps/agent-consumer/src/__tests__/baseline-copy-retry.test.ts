@@ -64,6 +64,23 @@ describe('baseline Copy retry service guard', () => {
     );
     expect(unfrozen.retry).not.toHaveBeenCalled();
   });
+
+  it('applies the actual organization guards to bounded plan mutations', async () => {
+    const fixture = serviceFixture();
+    const input = { category: 'tool_events' } as never;
+    await expect(fixture.recovery.beginBoundedBaselineCopy('org-1', input)).resolves.toEqual({
+      armed: true,
+    });
+    expect(fixture.beginBounded).toHaveBeenCalledWith(input);
+
+    const seeded = serviceFixture({
+      migration: { proofSha256: 'c'.repeat(64), complete: false },
+    });
+    await expect(seeded.recovery.beginBoundedBaselineCopy('org-1', input)).rejects.toThrow(
+      'forbidden after migration seed',
+    );
+    expect(seeded.beginBounded).not.toHaveBeenCalled();
+  });
 });
 
 function serviceFixture(
@@ -74,12 +91,13 @@ function serviceFixture(
   } = {},
 ) {
   const retry = vi.fn(async () => ({ armed: true }));
+  const beginBounded = vi.fn(async () => ({ armed: true }));
   const names: string[] = [];
   const organization = {
     getIngestionMigrationState: vi.fn(async () => overrides.migration ?? null),
     getStats: vi.fn(async () => overrides.stats ?? emptyStats),
   };
-  const baseline = { retryBaselineCopy: retry };
+  const baseline = { retryBaselineCopy: retry, beginBoundedBaselineCopy: beginBounded };
   const env = {
     AGENT_DELIVERY_COORDINATOR: {
       getByName(name: string) {
@@ -104,6 +122,7 @@ function serviceFixture(
   } as unknown as AgentConsumerEnv;
   return {
     retry,
+    beginBounded,
     names,
     recovery: new TraceRecovery(createExecutionContext(), env),
   };

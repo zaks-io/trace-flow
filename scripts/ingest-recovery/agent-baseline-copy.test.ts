@@ -8,7 +8,7 @@ import {
   type AgentRecoveryClient,
   type AgentTinybirdClient,
 } from './agent-transport';
-import type { BaselineCopyCheckpoint } from '../../apps/agent-consumer/src/baseline-copy-contract';
+import type { LegacyBaselineCopyCheckpoint } from '../../apps/agent-consumer/src/baseline-copy-contract';
 
 const window = { startDay: '2026-09-01', endDay: '2026-09-13' };
 const originalFetch = globalThis.fetch;
@@ -62,7 +62,7 @@ function restoreEnvironment(name: string, value: string | undefined): void {
 const failedJobRow = JSON.parse(
   readFileSync(new URL('./fixtures/tinybird-copy-error-job.json', import.meta.url), 'utf8'),
 ) as Record<string, unknown>;
-function fixture(initial: BaselineCopyCheckpoint | null = null) {
+function fixture(initial: LegacyBaselineCopyCheckpoint | null = null) {
   let checkpoint = initial;
   let loseCopyReceipt = false;
   let jobApiExpired = false;
@@ -71,6 +71,7 @@ function fixture(initial: BaselineCopyCheckpoint | null = null) {
   let proofOverrides: Record<string, unknown> = {};
   const requests: string[] = [];
   const queries: string[] = [];
+  let boundedInput: Record<string, unknown> | undefined;
   const jobDetails = new Map<string, Record<string, unknown>>([
     ['job-one', { job_id: 'job-one', status: 'done' }],
     ['job-old', { job_id: 'job-old', status: 'done' }],
@@ -91,8 +92,12 @@ function fixture(initial: BaselineCopyCheckpoint | null = null) {
     org: 'org-proof',
     async call(method: string, input: Record<string, unknown>) {
       if (method === 'getBaselineCopy') return checkpoint;
+      if (method === 'beginBoundedBaselineCopy') {
+        boundedInput = input;
+        throw new Error('bounded transition armed');
+      }
       if (method === 'beginBaselineCopy') {
-        checkpoint = { ...input, complete: false } as unknown as BaselineCopyCheckpoint;
+        checkpoint = { ...input, complete: false } as unknown as LegacyBaselineCopyCheckpoint;
         return { ...checkpoint, created: true };
       }
       if (method === 'confirmBaselineCopy') {
@@ -102,7 +107,7 @@ function fixture(initial: BaselineCopyCheckpoint | null = null) {
         ) {
           throw new Error('confirmation conflict');
         }
-        checkpoint = { ...checkpoint, ...input } as BaselineCopyCheckpoint;
+        checkpoint = { ...checkpoint, ...input } as LegacyBaselineCopyCheckpoint;
         return checkpoint;
       }
       if (method === 'retryBaselineCopy') {
@@ -171,6 +176,9 @@ function fixture(initial: BaselineCopyCheckpoint | null = null) {
     get checkpoint() {
       return checkpoint;
     },
+    get boundedInput() {
+      return boundedInput;
+    },
     loseReceipt() {
       loseCopyReceipt = true;
     },
@@ -193,6 +201,13 @@ function fixture(initial: BaselineCopyCheckpoint | null = null) {
 }
 
 const retryJournal = () => mkdtempSync(join(tmpdir(), 'baseline-copy-retry-'));
+
+const toolProof = () => ({
+  category: 'tool_events' as const,
+  rows: 1,
+  days: [window.startDay],
+  dailyStats: [{ day: window.startDay, rows: 1, projectedBytes: 10 }],
+});
 
 describe('baseline Copy restart safety', () => {
   test('reads only verified tinybird.jobs_log columns for failed-job proof', async () => {
@@ -220,9 +235,12 @@ describe('baseline Copy restart safety', () => {
         jobId: 'job-failed',
         complete: false,
       });
-      await runBaselineCopy(f.tb, f.recovery, 'tool_events', window, {
-        retryJournalRoot: journal,
-      });
+      await expect(
+        runBaselineCopy(f.tb, f.recovery, 'tool_events', window, {
+          retryJournalRoot: journal,
+          sourceProof: toolProof(),
+        }),
+      ).rejects.toThrow('bounded transition armed');
       const query = f.queries.find((candidate) => candidate.includes(' AS target_rows'))!;
       expect(query).toContain('job_metadata');
       expect(query).not.toMatch(/^\s+pipe_name,/m);
@@ -232,30 +250,40 @@ describe('baseline Copy restart safety', () => {
   });
 
   test('a completed Copy is reused without writing again', async () => {
-    const f = fixture();
-    expect(await runBaselineCopy(f.tb, f.recovery, 'messages', window)).toBe('job-one');
+    const f = fixture({
+      category: 'messages',
+      ...window,
+      startedAt: 1,
+      copyAttempt: 1,
+      jobId: 'job-one',
+      complete: true,
+    });
+    expect(await runBaselineCopy(f.tb, f.recovery, 'messages', window)).toEqual(['job-one']);
     expect(f.checkpoint?.complete).toBe(true);
-    expect(f.requests[0]).toContain('copy_attempt=');
-    expect(f.requests[0]).not.toContain('on_demand_compute');
     const count = f.requests.length;
     await runBaselineCopy(f.tb, f.recovery, 'messages', window);
     expect(f.requests).toHaveLength(count);
   });
-  test('a lost submission response never causes a blind duplicate Copy', async () => {
-    const f = fixture();
-    f.loseReceipt();
+  test('an unresolved durable intent never causes a blind duplicate Copy', async () => {
+    const f = fixture({
+      category: 'messages',
+      ...window,
+      startedAt: 1,
+      copyAttempt: 1,
+      complete: false,
+    });
     await expect(runBaselineCopy(f.tb, f.recovery, 'messages', window)).rejects.toThrow(
-      'Connection lost',
+      'unresolved',
     );
     expect(f.checkpoint?.jobId).toBeUndefined();
     await expect(runBaselineCopy(f.tb, f.recovery, 'messages', window)).rejects.toThrow(
       'unresolved',
     );
-    expect(f.requests).toHaveLength(1);
+    expect(f.requests).toHaveLength(0);
     f.jobs([{ job_id: 'job-recovered', status: 'done' }]);
-    expect(await runBaselineCopy(f.tb, f.recovery, 'messages', window)).toBe('job-recovered');
+    expect(await runBaselineCopy(f.tb, f.recovery, 'messages', window)).toEqual(['job-recovered']);
     expect(f.checkpoint?.complete).toBe(true);
-    expect(f.requests.filter((path) => path.includes('/copy?'))).toHaveLength(1);
+    expect(f.requests.filter((path) => path.includes('/copy?'))).toHaveLength(0);
     expect(f.queries[f.queries.length - 1]).toContain("'copy_attempt'");
     expect(f.queries[f.queries.length - 1]).not.toContain('created_at >=');
   });
@@ -271,7 +299,7 @@ describe('baseline Copy restart safety', () => {
     f.expireJobApi();
     f.jobs([{ job_id: 'job-old', status: 'done' }]);
 
-    expect(await runBaselineCopy(f.tb, f.recovery, 'messages', window)).toBe('job-old');
+    expect(await runBaselineCopy(f.tb, f.recovery, 'messages', window)).toEqual(['job-old']);
     expect(f.queries[f.queries.length - 1]).toContain("job_id = 'job-old'");
     expect(f.checkpoint?.complete).toBe(true);
   });
@@ -293,7 +321,7 @@ describe('baseline Copy restart safety', () => {
     expect(f.requests).toHaveLength(0);
   });
 
-  test('retries one exact failed job on dedicated compute and preserves private evidence', async () => {
+  test('transitions a verified failed whole-window job to a bounded plan without another whole Copy', async () => {
     const journal = retryJournal();
     try {
       const f = fixture({
@@ -304,35 +332,27 @@ describe('baseline Copy restart safety', () => {
         jobId: 'job-failed',
         complete: false,
       });
-
-      expect(
-        await runBaselineCopy(f.tb, f.recovery, 'tool_events', window, {
+      const sourceProof = toolProof();
+      await expect(
+        runBaselineCopy(f.tb, f.recovery, 'tool_events', window, {
           retryJournalRoot: journal,
+          sourceProof,
         }),
-      ).toBe('job-retry');
-      const copyRequests = f.requests.filter((path) => path.includes('/copy?'));
-      expect(copyRequests).toHaveLength(1);
-      expect(copyRequests[0]).toContain('on_demand_compute=true');
-      expect(copyRequests[0]).toContain('start_day=2026-09-01');
-      expect(copyRequests[0]).toContain('end_day=2026-09-13');
-      expect(f.checkpoint).toMatchObject({
-        jobId: 'job-retry',
-        complete: true,
-        failedAttempt: {
-          copyAttempt: 1,
-          jobId: 'job-failed',
-          status: 'error',
-        },
+      ).rejects.toThrow('bounded transition armed');
+      expect(f.requests.filter((path) => path.includes('/copy?'))).toHaveLength(0);
+      expect(f.boundedInput).toMatchObject({
+        category: 'tool_events',
+        startDay: window.startDay,
+        endDay: window.endDay,
+        legacyFailure: { expectedJobId: 'job-failed', expectedCopyAttempt: 1 },
       });
-      const entries = readdirSync(journal);
-      expect(entries).toEqual(['tool_events-job-failed.json']);
-      const preserved = readFileSync(join(journal, entries[0]!), 'utf8');
-      expect(preserved).toContain('private provider SQL');
-      expect(f.checkpoint?.failedAttempt?.journalSha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(readdirSync(journal)).toEqual(['tool_events-job-failed.json']);
+      expect(readFileSync(join(journal, 'tool_events-job-failed.json'), 'utf8')).toContain(
+        'private provider SQL',
+      );
       expect(guardRequests.filter((url) => url.includes('collector.trace-flow.dev'))).toHaveLength(
         2,
       );
-      expect(guardRequests.filter((url) => url.includes('/queues?'))).toHaveLength(2);
       expect(f.queries.find((query) => query.includes(' AS target_rows'))).toContain(
         'FROM agent_tool_event_fact_versions FINAL WHERE OrgId',
       );
@@ -341,44 +361,7 @@ describe('baseline Copy restart safety', () => {
     }
   });
 
-  test('recovers a lost dedicated-compute receipt by the exact new attempt', async () => {
-    const journal = retryJournal();
-    try {
-      const f = fixture({
-        category: 'tool_events',
-        ...window,
-        startedAt: 1,
-        copyAttempt: 1,
-        jobId: 'job-failed',
-        complete: false,
-      });
-      f.loseReceipt();
-      await expect(
-        runBaselineCopy(f.tb, f.recovery, 'tool_events', window, {
-          retryJournalRoot: journal,
-        }),
-      ).rejects.toThrow('Connection lost');
-      const retryAttempt = f.checkpoint!.copyAttempt;
-      expect(f.checkpoint?.jobId).toBeUndefined();
-      f.jobs([{ job_id: 'job-retry', status: 'done' }]);
-
-      expect(
-        await runBaselineCopy(f.tb, f.recovery, 'tool_events', window, {
-          retryJournalRoot: journal,
-        }),
-      ).toBe('job-retry');
-      expect(f.requests.filter((path) => path.includes('/copy?'))).toHaveLength(1);
-      const recoveryQuery = [...f.queries]
-        .reverse()
-        .find((query) => query.includes('copy_attempt') && !query.includes(' AS target_rows'));
-      expect(recoveryQuery).toContain(`'${retryAttempt}'`);
-      expect(f.checkpoint?.failedAttempt?.jobId).toBe('job-failed');
-    } finally {
-      rmSync(journal, { recursive: true });
-    }
-  });
-
-  test('refuses terminal non-error jobs and nonempty category targets', async () => {
+  test('refuses terminal non-error jobs, nonempty targets, and mismatched failed metadata', async () => {
     const cancelled = fixture({
       category: 'tool_events',
       ...window,
@@ -391,7 +374,6 @@ describe('baseline Copy restart safety', () => {
     await expect(
       runBaselineCopy(cancelled.tb, cancelled.recovery, 'tool_events', window),
     ).rejects.toThrow('terminal status cancelled; retry refused');
-    expect(cancelled.requests.filter((path) => path.includes('/copy?'))).toHaveLength(0);
 
     const journal = retryJournal();
     try {
@@ -407,17 +389,10 @@ describe('baseline Copy restart safety', () => {
       await expect(
         runBaselineCopy(populated.tb, populated.recovery, 'tool_events', window, {
           retryJournalRoot: journal,
+          sourceProof: toolProof(),
         }),
       ).rejects.toThrow('empty organization category target');
-      expect(populated.requests.filter((path) => path.includes('/copy?'))).toHaveLength(0);
-    } finally {
-      rmSync(journal, { recursive: true });
-    }
-  });
 
-  test('requires exact failed-job metadata and never retries a second failure', async () => {
-    const journal = retryJournal();
-    try {
       const mismatch = fixture({
         category: 'tool_events',
         ...window,
@@ -438,19 +413,28 @@ describe('baseline Copy restart safety', () => {
       await expect(
         runBaselineCopy(mismatch.tb, mismatch.recovery, 'tool_events', window, {
           retryJournalRoot: journal,
+          sourceProof: toolProof(),
         }),
       ).rejects.toThrow('does not match its durable intent');
+      expect(populated.requests.filter((path) => path.includes('/copy?'))).toHaveLength(0);
       expect(mismatch.requests.filter((path) => path.includes('/copy?'))).toHaveLength(0);
+    } finally {
+      rmSync(journal, { recursive: true });
+    }
+  });
 
-      const exhausted = fixture({
+  test('preserves the original failed attempt when transitioning a second failed receipt', async () => {
+    const journal = retryJournal();
+    try {
+      const f = fixture({
         category: 'tool_events',
         ...window,
         startedAt: 1,
         copyAttempt: 2,
-        jobId: 'job-retry',
+        jobId: 'job-failed',
         failedAttempt: {
           copyAttempt: 1,
-          jobId: 'job-failed',
+          jobId: 'job-original',
           status: 'error',
           observedAt: 2,
           providerErrorSha256: 'a'.repeat(64),
@@ -458,13 +442,26 @@ describe('baseline Copy restart safety', () => {
         },
         complete: false,
       });
-      exhausted.setJob('job-retry', { status: 'error', error: 'Retry timed out' });
-      await expect(
-        runBaselineCopy(exhausted.tb, exhausted.recovery, 'tool_events', window, {
-          retryJournalRoot: journal,
+      f.setProof({
+        job_metadata: JSON.stringify({
+          ...JSON.parse(failedJobRow.job_metadata as string),
+          parameters: {
+            ...JSON.parse(failedJobRow.job_metadata as string).parameters,
+            copy_attempt: '2',
+          },
         }),
-      ).rejects.toThrow('retry limit reached');
-      expect(exhausted.requests.filter((path) => path.includes('/copy?'))).toHaveLength(0);
+      });
+      await expect(
+        runBaselineCopy(f.tb, f.recovery, 'tool_events', window, {
+          retryJournalRoot: journal,
+          sourceProof: toolProof(),
+        }),
+      ).rejects.toThrow('bounded transition armed');
+      expect(f.checkpoint?.failedAttempt?.jobId).toBe('job-original');
+      expect(f.boundedInput).toMatchObject({
+        legacyFailure: { expectedJobId: 'job-failed', expectedCopyAttempt: 2 },
+      });
+      expect(f.requests.filter((path) => path.includes('/copy?'))).toHaveLength(0);
     } finally {
       rmSync(journal, { recursive: true });
     }

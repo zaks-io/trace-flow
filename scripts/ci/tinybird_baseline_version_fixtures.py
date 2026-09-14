@@ -3,7 +3,7 @@
 import json
 import re
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -18,6 +18,21 @@ BASELINE_KEYS = {
     ),
     "tool_events": ("tool_use_pk", "agent_tool_event_fact_versions"),
 }
+
+
+def bounded_day_chunks(start_day: str, end_day: str) -> list[tuple[str, str]]:
+    start = date.fromisoformat(start_day)
+    end = date.fromisoformat(end_day)
+    if end < start:
+        raise ValueError("Baseline fixture window ends before it starts")
+
+    chunks: list[tuple[str, str]] = []
+    chunk_start = start
+    while chunk_start <= end:
+        chunk_end = min(chunk_start + timedelta(days=6), end)
+        chunks.append((chunk_start.isoformat(), chunk_end.isoformat()))
+        chunk_start = chunk_end + timedelta(days=1)
+    return chunks
 
 
 def verify_baseline_versions(client, sources, query_rows, run_copy) -> None:
@@ -77,37 +92,86 @@ def verify_baseline_versions(client, sources, query_rows, run_copy) -> None:
         )
         if receipt.get("successful_rows") != 5 or receipt.get("quarantined_rows") != 0:
             raise RuntimeError(f"Baseline version fixture insert failed for {category}")
-        run_copy(
-            client,
-            f"repair_agent_{category}_versions_baseline",
-            {
-                "org_id": org,
-                "start_day": previous.strftime("%Y-%m-%d"),
-                "end_day": today.strftime("%Y-%m-%d"),
-                "copy_attempt": str(int(today.timestamp() * 1000)),
-            },
+        start_day = previous.strftime("%Y-%m-%d")
+        end_day = today.strftime("%Y-%m-%d")
+        copy_attempt = str(int(today.timestamp() * 1000))
+
+        chunks = bounded_day_chunks(start_day, end_day)
+
+        def copy_chunk(chunk_start_day: str, chunk_end_day: str) -> None:
+            run_copy(
+                client,
+                f"repair_agent_{category}_versions_baseline",
+                {
+                    "org_id": org,
+                    "start_day": start_day,
+                    "end_day": end_day,
+                    "chunk_start_day": chunk_start_day,
+                    "chunk_end_day": chunk_end_day,
+                    "copy_attempt": copy_attempt,
+                },
+            )
+
+        columns = re.findall(
+            r"^\s+`([^`]+)`\s",
+            Path(f"datasources/{table}.datasource").read_text(),
+            re.M,
         )
-        columns = re.findall(r"^\s+`([^`]+)`\s", Path(f"datasources/{table}.datasource").read_text(), re.M)
         projection = ",".join(f"`{column}`" for column in columns)
-        rows = query_rows(
-            client,
-            f"""SELECT UserId,toString(toDate({timestamp})) AS EventDay,
+
+        def canonical_rows() -> list[dict]:
+            rows = query_rows(
+                client,
+                f"""SELECT {key} AS FactKey, UserId,
+                toString(toDate({timestamp})) AS EventDay,
                 DeliverySequence, IsDeleted,
                 ContentHash=lower(hex(SHA256(toJSONString(tuple({projection}))))) AS hash_matches
                 {',isNull(cost_usd) AS null_preserved' if category == 'messages' else ''}
-                FROM {target} FINAL WHERE OrgId='{org}' AND {key}='baseline-fact'""",
-        )
-        if len(rows) == 1:
-            rows[0]["DeliverySequence"] = int(rows[0]["DeliverySequence"])
-        if len(rows) != 1 or rows[0] != {
-            "UserId": "newer",
-            "EventDay": today.strftime("%Y-%m-%d"),
-            "DeliverySequence": 1,
-            "IsDeleted": 0,
-            "hash_matches": 1,
-            **({"null_preserved": 1} if category == "messages" else {}),
-        }:
-            raise RuntimeError(f"Baseline Copy did not preserve the exact latest version in {category}")
+                FROM {target} FINAL
+                WHERE OrgId='{org}'
+                  AND {key} IN ('baseline-fact', 'baseline-backdated-fact')
+                ORDER BY FactKey""",
+            )
+            for row in rows:
+                row["DeliverySequence"] = int(row["DeliverySequence"])
+            return rows
+
+        def expected_row(fact_key: str, event_day: str) -> dict:
+            return {
+                "FactKey": fact_key,
+                "UserId": "newer",
+                "EventDay": event_day,
+                "DeliverySequence": 1,
+                "IsDeleted": 0,
+                "hash_matches": 1,
+                **({"null_preserved": 1} if category == "messages" else {}),
+            }
+
+        copy_chunk(*chunks[0])
+        earlier_chunk_rows = canonical_rows()
+        expected_earlier_rows = [expected_row("baseline-backdated-fact", start_day)]
+        if earlier_chunk_rows != expected_earlier_rows:
+            raise RuntimeError(
+                f"Baseline Copy narrowed latest-version selection to the earlier chunk in {category}"
+            )
+
+        for chunk in chunks[1:]:
+            copy_chunk(*chunk)
+        expected_union = [
+            expected_row("baseline-backdated-fact", start_day),
+            expected_row("baseline-fact", end_day),
+        ]
+        if canonical_rows() != expected_union:
+            raise RuntimeError(
+                f"Baseline Copy chunks did not union to the exact latest versions in {category}"
+            )
+
+        for chunk in chunks:
+            copy_chunk(*chunk)
+        if canonical_rows() != expected_union:
+            raise RuntimeError(
+                f"Baseline Copy retry did not deduplicate identical chunk output in {category}"
+            )
         count = query_rows(client, f"SELECT count() AS n FROM {table} WHERE OrgId='{org}'")
         if int(count[0]["n"]) != 5:
             raise RuntimeError(f"Baseline Copy changed preserved source rows in {category}")
@@ -125,14 +189,14 @@ def verify_resumed_proof(client, org, previous, today, query_rows) -> None:
         const capture={sql:async query=>{
             const kind=query.includes('HAVING uniqExact')?'conflict':query.includes('argMax(')?'inspection':'parity';
             queries.push({kind,query,category:currentCategory});
-            return {data:kind==='conflict'?[]:kind==='inspection'?[{rows:0,days:[]}]:[
+            return {data:kind==='conflict'?[]:kind==='inspection'?[]:[
                 {source_rows:0,target_rows:0,invalid_metadata:0,missing_target:0,unexpected_target:0}
             ],meta:[]};
         }};
         await inspectBaseline(capture,org,retainedWindow,copyWindow);
         for(const category of CATEGORIES) {
             currentCategory=category;
-            await verifyBaseline(capture,org,retainedWindow,{category,rows:0,days:[]},copyWindow);
+            await verifyBaseline(capture,org,retainedWindow,{category,rows:0,days:[],dailyStats:[]},copyWindow);
         }
         console.log(JSON.stringify(queries));
     """
@@ -151,7 +215,12 @@ def verify_resumed_proof(client, org, previous, today, query_rows) -> None:
         if entry["kind"] == "conflict":
             valid = rows == []
         elif entry["kind"] == "inspection":
-            valid = len(rows) == 1 and int(rows[0]["rows"]) == 1 and rows[0]["days"] == [today.strftime("%Y-%m-%d")]
+            valid = (
+                len(rows) == 1
+                and int(rows[0]["rows"]) == 1
+                and rows[0]["day"] == today.strftime("%Y-%m-%d")
+                and int(rows[0]["projected_bytes"]) > 0
+            )
         else:
             valid = len(rows) == 1 and int(rows[0]["source_rows"]) == int(rows[0]["target_rows"])
             valid = valid and not any(int(rows[0].get(field, 0)) for field in ["invalid_metadata", "missing_target", "unexpected_target"])
