@@ -1,8 +1,12 @@
-import { mkdtempSync, openSync, writeFileSync, closeSync, unlinkSync, rmSync } from 'node:fs';
+import { closeSync, mkdtempSync, openSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { AgentTinybirdClient, AgentTinybirdRequestError } from './agent-transport';
+import { migrationBridgeFailure, migrationWranglerCommand } from './agent-migration-process';
+
+const repositoryRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 export function requiredMigrationEnvironment(name: string): string {
   const value = process.env[name];
@@ -11,6 +15,8 @@ export function requiredMigrationEnvironment(name: string): string {
 }
 
 export async function startMigrationRuntime() {
+  const port = 8798;
+  const wrangler = migrationWranglerCommand(port);
   const directory = mkdtempSync(join(tmpdir(), 'trace-flow-ingestion-migration-'));
   const config = join(directory, 'tinybird.json');
   writeFileSync(
@@ -27,8 +33,8 @@ export async function startMigrationRuntime() {
   } finally {
     unlinkSync(config);
   }
-  const log = openSync(join(directory, 'bridge.log'), 'wx', 0o600);
-  const port = 8798;
+  const logPath = join(directory, 'bridge.log');
+  const log = openSync(logPath, 'wx', 0o600);
   const url = `http://127.0.0.1:${port}`;
   try {
     await fetch(url, { signal: AbortSignal.timeout(500) });
@@ -37,45 +43,48 @@ export async function startMigrationRuntime() {
     if (error instanceof Error && error.message === 'Migration bridge port is already in use')
       throw error;
   }
-  const child = spawn(
-    'bunx',
-    [
-      'wrangler',
-      'dev',
-      '--config',
-      'scripts/ingest-recovery/wrangler.jsonc',
-      '--env',
-      'production',
-      '--ip',
-      '127.0.0.1',
-      '--port',
-      String(port),
-      '--inspector-port',
-      '0',
-      '--show-interactive-dev-session',
-      'false',
-    ],
-    { stdio: ['ignore', log, log] },
-  );
+  const child = spawn(wrangler.command, wrangler.args, {
+    cwd: repositoryRoot,
+    stdio: ['ignore', log, log],
+  });
+  let spawnError: Error | undefined;
+  child.once('error', (error) => {
+    spawnError = error;
+  });
+  let closed = false;
   const close = () => {
-    child.once('exit', () => rmSync(directory, { recursive: true, force: true }));
-    child.kill('SIGTERM');
+    if (closed) return;
+    closed = true;
     closeSync(log);
-    if (child.exitCode !== null) rmSync(directory, { recursive: true, force: true });
+    const cleanup = () => rmSync(directory, { recursive: true, force: true });
+    if (child.pid && child.exitCode === null && child.signalCode === null) {
+      child.once('close', cleanup);
+      child.kill('SIGTERM');
+    } else {
+      cleanup();
+    }
   };
   try {
     const deadline = Date.now() + 90_000;
     while (true) {
-      if (child.exitCode !== null)
-        throw new Error(`Migration bridge failed; private diagnostic: ${directory}`);
+      if (spawnError) {
+        throw migrationBridgeFailure(`Migration bridge failed: ${spawnError.message}`, logPath);
+      }
+      if (child.exitCode !== null) {
+        throw migrationBridgeFailure(
+          `Migration bridge failed with exit code ${child.exitCode}`,
+          logPath,
+        );
+      }
       try {
         const response = await fetch(url, { signal: AbortSignal.timeout(1_000) });
         if (response.status === 400) break;
       } catch {
         /* Wrangler establishes its remote service bindings before listening. */
       }
-      if (Date.now() >= deadline)
-        throw new Error(`Migration bridge did not start; private diagnostic: ${directory}`);
+      if (Date.now() >= deadline) {
+        throw migrationBridgeFailure('Migration bridge did not start before its deadline', logPath);
+      }
       await new Promise((resolve) => setTimeout(resolve, 1_000));
     }
     return { tb, url, directory, close };

@@ -112,6 +112,11 @@ curl --fail-with-body -H 'Content-Type: application/json' \
 
 Follow `nextAfterId` using `options.afterId` until it is null. Payloads are complete
 and can contain private analytics metadata. Keep the files private.
+Use `options.kind` with `tinybird_insert`, `repair`, or `dlq` to inspect one recovery
+kind without materializing nonmatching payloads. This read uses the existing state and
+row-ID traversal because adding an index to a near-capacity recovery object is unsafe.
+It can still scan nonmatching record metadata in a large blocked history; count, byte,
+state, and cursor bounds remain unchanged.
 
 ## Reconciliation
 
@@ -269,6 +274,41 @@ record in the organization's legacy batcher first. Those records can contain a n
 source than the ledger row, so they cannot be discarded as queue residue. Records in the shared
 `org:__dlq__` batcher require their own verified replay or organization-scoped cleanup and are
 never deleted by legacy-ledger retirement.
+
+Blocked repair reconciliation is an explicit destructive operator action. Get owner approval,
+then dispatch the existing Deploy workflow on `main` with `agent_ingest_maintenance=true`. After
+the maintenance response is live, run the command below from a reviewed checkout. It inventories
+every blocked record into a private `0600` SQLite journal and validates the complete journal before
+the first mutation. The journal may require several gigabytes, and the command refuses to start or
+drain records unless at least 1 GiB remains free. Each proof-bound batch leaves a compact resolution
+tombstone while releasing that record's recovery payload and outcome copies; the full originals
+remain in the journal. Preserve and reuse the same journal after an uncertain response. Once the
+reconciliation and later retirement checks finish, dispatch the same Deploy workflow with
+`agent_ingest_maintenance=false` to resume ingestion.
+
+Each batch must release at least as many logical recovery bytes as it adds through repair hydration
+and tombstone metadata. Logical release does not guarantee that SQLite immediately reuses pages. A
+SQLite allocation failure or measured database growth aborts and rolls back the whole batch, then
+stops the command with the private journal intact.
+
+Resolve blocked `tinybird_insert` records before this repair command. Enumerate them through
+`listRecovery` with `options.kind="tinybird_insert"`, prove the exact submitted rows are fully
+present at the target, and use the existing `confirm-written` reconciliation. If any row is absent
+or partial, stop without resolving the record. Do not use `confirm-not-written` or attempt a legacy
+flush after freeze. Require a separate reviewed recovery plan that writes and verifies the current
+canonical target before confirming the record written. Verify the resulting frozen source against
+canonical storage afterward.
+`confirm-written` marks the linked pending rows sent and may delete them, so a recovery record or
+HTTP outcome alone is not sufficient proof. The repair command remains blocked while insert
+recovery items exist and does not reconcile them.
+
+```sh
+bun scripts/ingest-recovery/recover-frozen-agent.ts \
+  --org ORGANIZATION_ID --reconcile-blocked-repairs --apply \
+  --confirm-org ORGANIZATION_ID \
+  --canonical-index /private/frozen-canonical.sqlite \
+  --journal /private/frozen-repair-reconciliation.sqlite
+```
 
 After the read-only report is clean, run the same full verification and retirement in one
 invocation. `--retire` requires the producer maintenance check, drained queues, zero active

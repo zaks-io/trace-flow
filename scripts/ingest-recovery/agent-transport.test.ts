@@ -109,7 +109,7 @@ test('recovery reads retry temporary bridge failures with the same page cursor',
   }
 });
 
-test('recovery fails after bounded read retries and never retries uncertain mutations', async () => {
+test('retries bounded reads and idempotent reconciliation but not uncertain mutations', async () => {
   let count = 0;
   const server = Bun.serve({
     hostname: '127.0.0.1',
@@ -122,6 +122,11 @@ test('recovery fails after bounded read retries and never retries uncertain muta
   try {
     const recovery = new AgentRecoveryClient('org', `http://127.0.0.1:${server.port}`);
     await expect(recovery.call('listRebuildFacts', {})).rejects.toThrow('HTTP 502');
+    expect(count).toBe(3);
+    count = 0;
+    await expect(recovery.call('reconcileFrozenRepairs', { repairs: [] })).rejects.toThrow(
+      'HTTP 502',
+    );
     expect(count).toBe(3);
     for (const method of [
       'beginFactRebuild',
@@ -136,4 +141,4 @@ test('recovery fails after bounded read retries and never retries uncertain muta
   } finally {
     server.stop(true);
   }
-});
+}, 10_000);

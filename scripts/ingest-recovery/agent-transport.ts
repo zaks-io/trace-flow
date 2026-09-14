@@ -71,6 +71,7 @@ export class AgentRecoveryClient {
       'listFrozenFacts',
       'inspectFrozenFactSources',
       'readFrozenFactSources',
+      'reconcileFrozenRepairs',
     ].includes(method)
       ? 3
       : 1;
@@ -89,7 +90,7 @@ export class AgentRecoveryClient {
       if (attempt === attempts) break;
       await response?.body?.cancel();
       response = undefined;
-      console.warn(`Retrying recovery read ${method} after a temporary connection failure`);
+      console.warn(`Retrying recovery request ${method} after a temporary connection failure`);
       await new Promise((resolve) => setTimeout(resolve, attempt * 1_000));
     }
     if (!response) throw new Error(`Recovery ${method} returned no response`);

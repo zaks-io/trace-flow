@@ -381,6 +381,12 @@ describe('production Worker secret boundary', () => {
     const status = deploy.jobs['agent-delivery-migration-status'].steps.find(
       (step) => step.name === 'Read migration status',
     );
+    for (const jobName of ['agent-delivery-migration-status', 'migrate-agent-ingestion']) {
+      const setupNode = deploy.jobs[jobName].steps.find((step) =>
+        step.uses?.startsWith('actions/setup-node@'),
+      );
+      expect(setupNode.with['node-version']).toBe(24);
+    }
     expect(status.run).toContain('--status');
     expect(status.run).toContain('migration_required');
     expect(status.env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_OPERATOR_TOKEN }}');
@@ -417,7 +423,14 @@ describe('production Worker secret boundary', () => {
     const resume = deploy.jobs['deploy-agent-ingest'].steps.find(
       (step) => step.name === 'Deploy Agent Ingest Worker',
     );
-    expect(resume.with.command).toContain('AGENT_INGEST_MAINTENANCE:false');
+    expect(deploy.on.workflow_dispatch.inputs.agent_ingest_maintenance).toMatchObject({
+      type: 'boolean',
+      required: false,
+      default: false,
+    });
+    expect(resume.with.command).toContain(
+      "AGENT_INGEST_MAINTENANCE:${{ github.event_name == 'workflow_dispatch' && inputs.agent_ingest_maintenance && 'true' || 'false' }}",
+    );
   });
 
   test('maps the dedicated delivery key to both Workers and scoped tokens to the consumer', () => {

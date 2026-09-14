@@ -94,8 +94,12 @@ export class FrozenFactSourceReader {
     )) {
       const hydrated = this.hydrateRepair(repair);
       const verified = proof.verifySync(hydrated, orgId);
-      if (!verified.verified || verified.value.recovery.state !== 'blocked') continue;
-      yield parseRow(verified.value.recovery.payload);
+      if (verified.verified && verified.value.recovery.state === 'blocked') {
+        yield parseRow(verified.value.recovery.payload);
+        continue;
+      }
+      const journaled = proof.verifyJournaledSync(repair, orgId);
+      if (journaled.verified) yield parseRow(journaled.value.row.data!);
     }
   }
 

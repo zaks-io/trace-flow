@@ -22,6 +22,7 @@ export interface RecoveryPageOptions {
   afterId?: number;
   limit?: number;
   state?: RecoveryState;
+  kind?: RecoveryKind;
 }
 
 export interface RecoveryPage {
@@ -311,13 +312,14 @@ export class TinybirdRecoveryStore {
   }
 
   list(options: RecoveryPageOptions = {}): RecoveryPage {
-    const { afterId, limit, state } = validateRecoveryPageOptions(options);
+    const { afterId, limit, state, kind } = validateRecoveryPageOptions(options);
     const rows = [
       ...this.storage.sql.exec<StoredRecoveryRecord>(
-        'SELECT * FROM recovery_records WHERE id > ? AND state = ? ORDER BY id LIMIT ?',
-        afterId,
-        state,
-        limit + 1,
+        kind
+          ? `SELECT * FROM recovery_records
+             WHERE id > ? AND state = ? AND kind = ? ORDER BY id LIMIT ?`
+          : 'SELECT * FROM recovery_records WHERE id > ? AND state = ? ORDER BY id LIMIT ?',
+        ...(kind ? [afterId, state, kind, limit + 1] : [afterId, state, limit + 1]),
       ),
     ];
     const records: RecoveryRecord[] = [];
@@ -379,6 +381,41 @@ export class TinybirdRecoveryStore {
       );
     });
     return this.get(id);
+  }
+
+  resolveBatchWithMutation(
+    entries: { id: number; resolution: string; reason: string }[],
+    mutate: () => void,
+    validate: () => void,
+  ): RecoveryRecord[] {
+    if (entries.length === 0 || new Set(entries.map(({ id }) => id)).size !== entries.length) {
+      throw new Error('recovery resolution batch is invalid');
+    }
+    const validated = entries.map((entry) => ({
+      ...entry,
+      reason: requireRecoveryReason(entry.reason),
+      record: this.getStored(entry.id),
+    }));
+    if (validated.some(({ record }) => record.state !== 'blocked')) {
+      throw new Error('recovery record is not blocked');
+    }
+    this.storage.transactionSync(() => {
+      mutate();
+      for (const entry of validated) {
+        this.storage.sql.exec('DELETE FROM recovery_items WHERE recovery_id = ?', entry.id);
+        const updated = this.storage.sql.exec(
+          `UPDATE recovery_records SET state = 'resolved', resolved_at_ms = ?, resolution = ?,
+           resolution_reason = ? WHERE id = ? AND state = 'blocked'`,
+          Date.now(),
+          entry.resolution,
+          entry.reason,
+          entry.id,
+        ).rowsWritten;
+        if (updated !== 1) throw new Error('recovery record changed during batch resolution');
+      }
+      validate();
+    });
+    return entries.map(({ id }) => this.get(id));
   }
 
   countBlockedRows(): number {
@@ -529,7 +566,12 @@ export function serializeTinybirdFailure(error: unknown): string {
   });
 }
 
-function validateRecoveryPageOptions(options: RecoveryPageOptions): Required<RecoveryPageOptions> {
+function validateRecoveryPageOptions(options: RecoveryPageOptions): {
+  afterId: number;
+  limit: number;
+  state: RecoveryState;
+  kind: RecoveryKind | undefined;
+} {
   const afterId = options.afterId ?? 0;
   const limit = options.limit ?? 50;
   const state = options.state ?? 'blocked';
@@ -538,7 +580,10 @@ function validateRecoveryPageOptions(options: RecoveryPageOptions): Required<Rec
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
     throw new Error('limit must be between 1 and 100');
   if (state !== 'blocked' && state !== 'resolved') throw new Error('invalid recovery state');
-  return { afterId, limit, state };
+  if (options.kind !== undefined && !['tinybird_insert', 'repair', 'dlq'].includes(options.kind)) {
+    throw new Error('invalid recovery kind');
+  }
+  return { afterId, limit, state, kind: options.kind };
 }
 
 export function splitUtf8Chunks(value: string, maxBytes: number): string[] {

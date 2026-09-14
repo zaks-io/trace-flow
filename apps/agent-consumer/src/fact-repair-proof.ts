@@ -72,6 +72,54 @@ export class FactRepairProof {
     return this.verifyWithRecovery(verifiable.value, orgId, recovery);
   }
 
+  verifyJournaledSync(
+    row: StoredFactRepair,
+    orgId: string,
+  ): FactRepairVerification<Omit<VerifiedFactRepairDuplicate, 'proofSha256'>> {
+    const verifiable = validateInlineRow(row);
+    if (!verifiable.verified) return verifiable;
+    const recovery = this.recovery.repairByDedupeKey(verifiable.value.recovery_dedupe_key);
+    if (!recovery) return issue('matching repair recovery is absent');
+    try {
+      const payload = parseRecord(verifiable.value.data);
+      if (
+        recovery.kind !== 'repair' ||
+        recovery.state !== 'resolved' ||
+        recovery.classification !== 'changed' ||
+        recovery.target !== null ||
+        !['frozen-journal-exact', 'frozen-journal-superseded', 'frozen-journal-expired'].includes(
+          recovery.resolution ?? '',
+        ) ||
+        !/^[a-f0-9]{64}$/.test(recovery.resolutionReason ?? '') ||
+        recovery.payload !== '' ||
+        recovery.outcome !== '' ||
+        stableHash(payload) !== verifiable.value.new_hash ||
+        rowIdentity(payload, ROW_IDENTITY_FIELDS[verifiable.value.category]) !==
+          verifiable.value.fact_id ||
+        payload.OrgId !== orgId ||
+        JSON.stringify([
+          verifiable.value.category,
+          verifiable.value.fact_id,
+          verifiable.value.old_hash,
+          verifiable.value.new_hash,
+          factIngestedAtMs(payload),
+        ]) !== verifiable.value.recovery_dedupe_key
+      ) {
+        return issue('journaled repair tombstone or payload metadata differs');
+      }
+      return {
+        verified: true,
+        value: {
+          row: verifiable.value,
+          recovery,
+          dataBytes: utf8Length(verifiable.value.data),
+        },
+      };
+    } catch (error) {
+      return issue(`journaled repair payload is invalid: ${errorMessage(error)}`);
+    }
+  }
+
   private verifyWithRecovery(
     row: VerifiableFactRepair,
     orgId: string,

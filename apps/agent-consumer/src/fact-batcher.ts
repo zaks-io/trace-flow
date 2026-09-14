@@ -73,6 +73,11 @@ export type { AgentFactBatcherStats } from './fact-batcher-helpers';
 import { DlqCleanup } from './dlq-cleanup';
 import { retireFrozenLegacyLedger } from './legacy-ledger-retirement';
 import type { LegacyRetirementProof, LegacyRetirementRecord } from './legacy-retirement';
+import { reconcileFrozenRepairs } from './frozen-repair-reconciliation';
+import type {
+  ReconcileFrozenRepairsInput,
+  ReconcileFrozenRepairsResult,
+} from './frozen-repair-reconciliation-contract';
 
 const BATCH_SIZE = 10_000;
 // Agent dashboards do not need sub-minute ingest visibility; fewer larger inserts reduce part churn.
@@ -750,6 +755,22 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
       pendingRows: () => this.countPendingRows(),
       blockedRows: () => this.recovery.countBlockedRows(),
       blockedRecords: () => this.recovery.countBlockedRecords(),
+    });
+  }
+
+  async reconcileFrozenRepairs(
+    orgId: string,
+    input: ReconcileFrozenRepairsInput,
+  ): Promise<ReconcileFrozenRepairsResult> {
+    return reconcileFrozenRepairs(orgId, input, {
+      storage: this.ctx.storage,
+      recovery: this.recovery,
+      coordinators: this.env.AGENT_DELIVERY_COORDINATOR,
+      legacyState: this.legacyState,
+      flushInProgress: this.flushInProgress,
+      assertMaintenanceUnlocked: () => this.maintenance.assertUnlocked(),
+      pendingRows: () => this.countPendingRows(),
+      blockedRows: () => this.recovery.countBlockedRows(),
     });
   }
 

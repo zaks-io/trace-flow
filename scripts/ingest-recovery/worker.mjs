@@ -9,6 +9,7 @@ const AGENT_METHODS = new Set([
   'readFrozenFactSources',
   'replayFrozenFacts',
   'retireFrozenLedger',
+  'reconcileFrozenRepairs',
   'freezeIngestionMigration',
   'seedIngestionMigration',
   'beginBaselineMigrationWindow',
