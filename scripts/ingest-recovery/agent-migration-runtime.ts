@@ -249,7 +249,8 @@ export async function controlPlaneMigrationLock(
     throw new Error(
       `Control-plane migration lock failed (${code}, ${diagnostic.length} diagnostic bytes)`,
     );
-  const result: unknown = JSON.parse(output);
+  // `convex run` prints nothing when a function returns null, which is the `complete` contract.
+  const result: unknown = output.trim() === '' ? null : JSON.parse(output);
   if (
     (phase === 'begin' && typeof result !== 'boolean') ||
     (phase === 'complete' && result !== null)
