@@ -1,12 +1,16 @@
-import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { afterEach, expect, test } from 'bun:test';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   AGENT_APPEND_DATASOURCES,
   AGENT_TINYBIRD_TOKENS,
   configureAgentTinybirdTokens,
 } from './configure-agent-tinybird-tokens.mjs';
+import {
+  ensureAgentTinybirdTokenDatafiles,
+  validateAgentTinybirdTokenDatafiles,
+} from './configure-agent-tinybird-tokens-datafiles.mjs';
 
 const directories = [];
 afterEach(async () =>
@@ -18,7 +22,88 @@ function scope(value) {
   return { type: `${type}:${permission}`, resource: resource.join(':') };
 }
 
-test('keeps the combined append token scoped to every drain and revision datasource', () => {
+function deployedTokens() {
+  return AGENT_TINYBIRD_TOKENS.map((definition) => ({
+    name: definition.name,
+    token: `p.${definition.name}`,
+    scopes: [...definition.scopes].reverse().map(scope),
+  }));
+}
+
+async function outputPath() {
+  const directory = await mkdtemp(join(tmpdir(), 'agent-tokens-'));
+  directories.push(directory);
+  return join(directory, 'worker.env');
+}
+
+function datafileForScope(root, scope) {
+  const [kind, , resource] = scope.split(':');
+  if (kind === 'DATASOURCES') return join(root, 'datasources', `${resource}.datasource`);
+  const directory = resource.startsWith('repair_') ? 'copies' : 'pipes';
+  return join(root, directory, `${resource}.pipe`);
+}
+
+async function datafileFixture(includeDeclarations = false) {
+  const root = await mkdtemp(join(tmpdir(), 'agent-token-datafiles-'));
+  directories.push(root);
+  const expectedBase = new Map();
+  for (const definition of AGENT_TINYBIRD_TOKENS) {
+    for (const scopeValue of definition.scopes) {
+      const [, permission] = scopeValue.split(':');
+      const path = datafileForScope(root, scopeValue);
+      const base = 'DESCRIPTION >\n    preserved bytes\n\nTOKEN existing_reader READ\n';
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(
+        path,
+        includeDeclarations ? `${base}TOKEN ${definition.name} ${permission}\n` : base,
+      );
+      expectedBase.set(path, base);
+    }
+  }
+  return { root, expectedBase };
+}
+
+test('defines the exact deployed token names, Worker variables, and resource scopes', () => {
+  expect(AGENT_TINYBIRD_TOKENS).toEqual([
+    {
+      name: 'trace_flow_agent_delivery_read',
+      variable: 'TINYBIRD_AGENT_DELIVERY_READ_TOKEN',
+      scopes: ['PIPES:READ:agent_delivery_receipt', 'PIPES:READ:agent_fact_identity_day'],
+    },
+    {
+      name: 'trace_flow_agent_snapshot_worker',
+      variable: 'TINYBIRD_AGENT_SNAPSHOT_TOKEN',
+      scopes: [
+        'DATASOURCES:APPEND:agent_snapshot_manifest',
+        'PIPES:READ:agent_snapshot_job',
+        'PIPES:READ:agent_snapshot_copy_intent_jobs',
+        'PIPES:READ:agent_snapshot_manifest_latest',
+        'DATASOURCES:APPEND:agent_context_call_buckets_hourly_snapshots',
+        'DATASOURCES:APPEND:agent_repositories_snapshots',
+        'DATASOURCES:APPEND:agent_session_file_signals_snapshots',
+        'DATASOURCES:APPEND:agent_session_signals_snapshots',
+        'DATASOURCES:APPEND:agent_session_summaries_snapshots',
+        'DATASOURCES:APPEND:agent_tool_usage_daily_snapshots',
+        'DATASOURCES:APPEND:agent_tool_usage_hourly_snapshots',
+        'DATASOURCES:APPEND:agent_usage_daily_snapshots',
+        'DATASOURCES:APPEND:agent_usage_hourly_snapshots',
+        'PIPES:READ:repair_agent_context_call_buckets_hourly_snapshots',
+        'PIPES:READ:repair_agent_repositories_snapshots',
+        'PIPES:READ:repair_agent_session_file_signals_snapshots',
+        'PIPES:READ:repair_agent_session_signals_snapshots',
+        'PIPES:READ:repair_agent_session_summaries_snapshots',
+        'PIPES:READ:repair_agent_tool_usage_daily_snapshots',
+        'PIPES:READ:repair_agent_tool_usage_hourly_snapshots',
+        'PIPES:READ:repair_agent_usage_daily_snapshots',
+        'PIPES:READ:repair_agent_usage_hourly_snapshots',
+      ],
+    },
+    {
+      name: 'trace_flow_agent_facts_append',
+      variable: 'TINYBIRD_TOKEN',
+      scopes: AGENT_APPEND_DATASOURCES.map((name) => `DATASOURCES:APPEND:${name}`),
+    },
+  ]);
   expect(AGENT_APPEND_DATASOURCES).toEqual([
     'agent_messages',
     'agent_tool_events',
@@ -38,100 +123,111 @@ test('keeps the combined append token scoped to every drain and revision datasou
     'agent_pull_request_fact_versions',
     'agent_review_unit_attribution_versions',
   ]);
-  expect(
-    AGENT_TINYBIRD_TOKENS.find(({ variable }) => variable === 'TINYBIRD_TOKEN')?.scopes,
-  ).toEqual(AGENT_APPEND_DATASOURCES.map((name) => `DATASOURCES:APPEND:${name}`));
 });
 
-test('creates missing least-privilege tokens without exposing the deploy token', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'agent-tokens-'));
-  directories.push(directory);
-  const output = join(directory, 'worker.env');
+test('reads and exports deployed least-privilege tokens without mutation', async () => {
+  const output = await outputPath();
   const calls = [];
-  const created = [];
-  const fetchImpl = async (url, init = {}) => {
-    calls.push({
-      url: String(url),
-      method: init.method ?? 'GET',
-      body: init.body?.toString(),
-      authorization: init.headers.Authorization,
-    });
-    if (String(url).endsWith('/v0/tokens')) return Response.json({ tokens: created });
-    const name = new URLSearchParams(init.body).get('name');
-    const token = {
-      name,
-      scopes: new URLSearchParams(init.body).getAll('scope').map(scope),
-      token: `p.${name}`,
-    };
-    created.push(token);
-    return Response.json(token);
-  };
   await configureAgentTinybirdTokens(output, {
-    fetchImpl,
     host: 'https://tinybird.test',
-    deployToken: 'deploy-secret',
+    deployToken: 'operator-secret',
+    fetchImpl: async (url, init = {}) => {
+      calls.push({
+        url: String(url),
+        method: init.method ?? 'GET',
+        authorization: init.headers.Authorization,
+        body: init.body,
+      });
+      return Response.json({ tokens: deployedTokens() });
+    },
   });
 
-  const contents = await readFile(output, 'utf8');
-  expect(contents).not.toContain('deploy-secret');
-  for (const definition of AGENT_TINYBIRD_TOKENS) {
-    expect(contents).toContain(`${definition.variable}=p.${definition.name}`);
-    const create = calls.find((call) => call.body?.includes(`name=${definition.name}`));
-    for (const expected of definition.scopes)
-      expect(create.body).toContain(`scope=${encodeURIComponent(expected)}`);
-  }
+  expect(calls).toEqual([
+    {
+      url: 'https://tinybird.test/v0/tokens',
+      method: 'GET',
+      authorization: 'Bearer operator-secret',
+      body: undefined,
+    },
+  ]);
+  expect(await readFile(output, 'utf8')).toBe(
+    AGENT_TINYBIRD_TOKENS.map(({ name, variable }) => `${variable}=p.${name}`).join('\n') + '\n',
+  );
   expect((await stat(output)).mode & 0o777).toBe(0o600);
 });
 
-describe('existing Tinybird tokens', () => {
-  test('updates a scope mismatch while preserving the token value', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-tokens-'));
-    directories.push(directory);
-    const output = join(directory, 'worker.env');
-    const tokens = AGENT_TINYBIRD_TOKENS.map((definition) => ({
-      name: definition.name,
-      token: `p.${definition.name}`,
-      scopes: definition.scopes.map(scope),
-    }));
-    tokens[0].scopes = [{ type: 'ADMIN' }];
-    const calls = [];
-    const fetchImpl = async (url, init = {}) => {
-      calls.push({ url: String(url), method: init.method ?? 'GET' });
-      if ((init.method ?? 'GET') === 'GET') return Response.json({ tokens });
-      tokens[0].scopes = new URLSearchParams(init.body).getAll('scope').map(scope);
-      return Response.json({});
-    };
-    await configureAgentTinybirdTokens(output, {
-      fetchImpl,
+test('fails without writing an export when a deployed token is missing', async () => {
+  const output = await outputPath();
+  const tokens = deployedTokens().slice(1);
+  await expect(
+    configureAgentTinybirdTokens(output, {
       host: 'https://tinybird.test',
-      deployToken: 'deploy-secret',
-    });
-    expect(calls.filter((call) => call.method === 'PUT')).toEqual([
-      {
-        method: 'PUT',
-        url: 'https://tinybird.test/v0/tokens/p.trace_flow_agent_delivery_read',
-      },
-    ]);
-  });
+      deployToken: 'operator-secret',
+      fetchImpl: async () => Response.json({ tokens }),
+    }),
+  ).rejects.toThrow('Tinybird did not deploy token trace_flow_agent_delivery_read');
+  await expect(readFile(output, 'utf8')).rejects.toThrow();
+});
 
-  test('does not rotate tokens whose scopes already match', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'agent-tokens-'));
-    directories.push(directory);
-    const output = join(directory, 'worker.env');
-    const tokens = AGENT_TINYBIRD_TOKENS.map((definition) => ({
-      name: definition.name,
-      token: `p.${definition.name}`,
-      scopes: [...definition.scopes].reverse().map(scope),
-    }));
-    const calls = [];
-    await configureAgentTinybirdTokens(output, {
+test('fails without writing an export when deployed scopes are not exact', async () => {
+  const output = await outputPath();
+  const tokens = deployedTokens();
+  tokens[0].scopes = [{ type: 'ADMIN' }];
+  await expect(
+    configureAgentTinybirdTokens(output, {
       host: 'https://tinybird.test',
-      deployToken: 'deploy-secret',
-      fetchImpl: async (url, init = {}) => {
-        calls.push(init.method ?? 'GET');
-        return Response.json({ tokens });
-      },
-    });
-    expect(calls).toEqual(['GET', 'GET']);
-  });
+      deployToken: 'operator-secret',
+      fetchImpl: async () => Response.json({ tokens }),
+    }),
+  ).rejects.toThrow(
+    'Tinybird did not preserve the exact scopes for trace_flow_agent_delivery_read',
+  );
+  await expect(readFile(output, 'utf8')).rejects.toThrow();
+});
+
+test('adds every missing datafile binding without changing existing bytes or tokens', async () => {
+  const { root, expectedBase } = await datafileFixture();
+  expect(await ensureAgentTinybirdTokenDatafiles(root)).toEqual({ added: 41, present: 0 });
+  const inventory = await validateAgentTinybirdTokenDatafiles(root);
+  expect(inventory).toEqual(
+    Object.fromEntries(AGENT_TINYBIRD_TOKENS.map(({ name, scopes }) => [name, [...scopes].sort()])),
+  );
+  for (const [path, base] of expectedBase) {
+    const withoutAgentToken = (await readFile(path, 'utf8'))
+      .split('\n')
+      .filter((line) => !line.startsWith('TOKEN trace_flow_agent_'))
+      .join('\n');
+    expect(withoutAgentToken).toBe(base);
+  }
+});
+
+test('keeps one existing exact datafile binding byte-for-byte', async () => {
+  const { root, expectedBase } = await datafileFixture(true);
+  const before = await Promise.all(
+    [...expectedBase.keys()].map(async (path) => [path, await readFile(path, 'utf8')]),
+  );
+  expect(await ensureAgentTinybirdTokenDatafiles(root)).toEqual({ added: 0, present: 41 });
+  for (const [path, contents] of before) expect(await readFile(path, 'utf8')).toBe(contents);
+});
+
+test('rejects a wrong datafile permission', async () => {
+  const { root } = await datafileFixture();
+  const path = datafileForScope(root, AGENT_TINYBIRD_TOKENS[0].scopes[0]);
+  await writeFile(
+    path,
+    `${await readFile(path, 'utf8')}TOKEN trace_flow_agent_delivery_read APPEND\n`,
+  );
+  await expect(ensureAgentTinybirdTokenDatafiles(root)).rejects.toThrow(
+    'Invalid trace_flow_agent_delivery_read directive',
+  );
+});
+
+test('rejects duplicate datafile bindings', async () => {
+  const { root } = await datafileFixture();
+  const path = datafileForScope(root, AGENT_TINYBIRD_TOKENS[0].scopes[0]);
+  const directive = 'TOKEN trace_flow_agent_delivery_read READ\n';
+  await writeFile(path, `${await readFile(path, 'utf8')}${directive}${directive}`);
+  await expect(ensureAgentTinybirdTokenDatafiles(root)).rejects.toThrow(
+    'Invalid trace_flow_agent_delivery_read directive',
+  );
 });

@@ -322,6 +322,11 @@ prepare_phase_project() {
 
 prepare_phase_project "$DEPLOY_PHASE"
 
+if [[ "$DEPLOY_PHASE" != "cleanup" ]]; then
+  node "$ROOT_DIR/scripts/ci/configure-agent-tinybird-tokens-datafiles.mjs" \
+    --ensure-datafiles "$DEPLOY_DIR"
+fi
+
 "$ROOT_DIR/scripts/verify-tinybird-copy-policy.sh" "$DEPLOY_DIR"
 
 if [[ "${TINYBIRD_VALIDATE_DEPLOY_TREE_ONLY:-}" == "1" ]]; then

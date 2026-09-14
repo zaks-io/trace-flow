@@ -27,3 +27,4 @@ TARGET_DATASOURCE agent_repositories_snapshots
 COPY_MODE append
 
 TOKEN agent_snapshot_worker READ
+TOKEN trace_flow_agent_snapshot_worker READ

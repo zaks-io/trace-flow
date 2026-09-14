@@ -1,4 +1,6 @@
 import { chmod, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const SNAPSHOT_DATASOURCES = [
   'agent_context_call_buckets_hourly_snapshots',
@@ -66,23 +68,15 @@ function normalizedScopes(scopes) {
   return scopes.map((scope) => `${scope.type}${scope.resource ? `:${scope.resource}` : ''}`).sort();
 }
 
-async function request(fetchImpl, host, deployToken, path, init = {}) {
+async function request(fetchImpl, host, deployToken, path) {
   const response = await fetchImpl(new URL(path, host), {
-    ...init,
     headers: {
       Authorization: `Bearer ${deployToken}`,
-      ...(init.body ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
     },
   });
   const body = await response.json();
   if (!response.ok) throw new Error(`Tinybird Token API request failed: HTTP ${response.status}`);
   return body;
-}
-
-function tokenForm(definition) {
-  const form = new URLSearchParams({ name: definition.name });
-  for (const scope of definition.scopes) form.append('scope', scope);
-  return form;
 }
 
 export async function configureAgentTinybirdTokens(outputPath, options = {}) {
@@ -97,20 +91,13 @@ export async function configureAgentTinybirdTokens(outputPath, options = {}) {
   for (const definition of AGENT_TINYBIRD_TOKENS) {
     const matches = listing.tokens.filter((token) => token.name === definition.name);
     if (matches.length > 1) throw new Error(`Tinybird returned duplicate token ${definition.name}`);
-    let token = matches[0];
-    if (!token) {
-      token = await request(fetchImpl, host, deployToken, '/v0/tokens/', {
-        method: 'POST',
-        body: tokenForm(definition),
-      });
-    } else if (
+    const token = matches[0];
+    if (!token) throw new Error(`Tinybird did not deploy token ${definition.name}`);
+    if (
       JSON.stringify(normalizedScopes(token.scopes ?? [])) !==
       JSON.stringify([...definition.scopes].sort())
     ) {
-      await request(fetchImpl, host, deployToken, `/v0/tokens/${encodeURIComponent(token.token)}`, {
-        method: 'PUT',
-        body: tokenForm(definition),
-      });
+      throw new Error(`Tinybird did not preserve the exact scopes for ${definition.name}`);
     }
     if (typeof token.token !== 'string' || token.token.length === 0 || /[\r\n]/.test(token.token)) {
       throw new Error(`Tinybird returned an invalid value for ${definition.name}`);
@@ -118,22 +105,11 @@ export async function configureAgentTinybirdTokens(outputPath, options = {}) {
     values.push(`${definition.variable}=${token.token}`);
   }
 
-  const verified = await request(fetchImpl, host, deployToken, '/v0/tokens');
-  for (const definition of AGENT_TINYBIRD_TOKENS) {
-    const matches = verified.tokens?.filter((token) => token.name === definition.name);
-    if (
-      matches?.length !== 1 ||
-      JSON.stringify(normalizedScopes(matches[0].scopes ?? [])) !==
-        JSON.stringify([...definition.scopes].sort())
-    ) {
-      throw new Error(`Tinybird did not preserve the exact scopes for ${definition.name}`);
-    }
-  }
   await writeFile(outputPath, `${values.join('\n')}\n`, { mode: 0o600 });
   await chmod(outputPath, 0o600);
 }
 
-if (import.meta.main) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   await configureAgentTinybirdTokens(process.argv[2]);
-  console.log('Configured scoped Agent Tinybird tokens.');
+  console.log('Exported deployed Agent Tinybird tokens.');
 }

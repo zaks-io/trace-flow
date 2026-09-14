@@ -37,3 +37,4 @@ ENGINE_PARTITION_KEY "toYYYYMMDD(EventAt)"
 ENGINE_TTL "toDateTime(EventAt) + toIntervalYear(1)"
 
 TOKEN "agent_consumer_append" APPEND
+TOKEN trace_flow_agent_facts_append APPEND
