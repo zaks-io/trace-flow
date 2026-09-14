@@ -47,6 +47,8 @@ export function preserveBaselineCopyFailure(
     if (!isAlreadyExists(caught)) throw caught;
     const existing = readFileSync(path, 'utf8');
     const preserved = parsePreservedEntry(path, existing, entry);
+    syncFile(path);
+    syncFile(directory);
     return {
       journalSha256: sha256(existing),
       providerErrorSha256: sha256(preserved.providerJob.error as string),

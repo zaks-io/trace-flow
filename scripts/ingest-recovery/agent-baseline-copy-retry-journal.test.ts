@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
+import * as fs from 'node:fs';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +17,7 @@ describe('baseline Copy retry journal', () => {
       jobId: 'job-failed',
       complete: false,
     };
+    const fsync = spyOn(fs, 'fsyncSync');
     try {
       const first = preserveBaselineCopyFailure(root, {
         version: 1,
@@ -29,6 +31,7 @@ describe('baseline Copy retry journal', () => {
           query_sql: 'first full provider record',
         },
       });
+      expect(fsync).toHaveBeenCalledTimes(2);
       const second = preserveBaselineCopyFailure(root, {
         version: 1,
         orgId: 'org-proof',
@@ -43,10 +46,12 @@ describe('baseline Copy retry journal', () => {
       });
 
       expect(second).toEqual(first);
+      expect(fsync).toHaveBeenCalledTimes(4);
       expect(readFileSync(join(root, 'tool_events-job-failed.json'), 'utf8')).toContain(
         'first full provider record',
       );
     } finally {
+      fsync.mockRestore();
       rmSync(root, { recursive: true });
     }
   });
