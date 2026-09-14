@@ -67,6 +67,16 @@ CI first expands the Tinybird schema while preserving the exact previously deplo
 deploys the compatible consumer, pauses producer acceptance, drains and freezes the old batchers,
 and copies retained baseline facts at revision 1. New deliveries start at revision 2. A durable
 baseline Copy checkpoint prevents a restart from launching another job after an unknown outcome.
+Each category's source proof becomes an immutable plan of at most seven calendar days, 50,000
+global-winner rows, and 64 MiB of projected tuple JSON per Copy. The checkpoint records one active
+intent and ordered job receipts, so a lost response is recovered from one exact `jobs_log` match and
+a terminal partial failure cannot submit another chunk.
+
+A terminal failed whole-window checkpoint transitions to this bounded plan only through the local
+operator with `--retry-journal` pointing at a private filesystem directory. The journal is fsynced
+before the coordinator archives the failed receipt and its evidence hashes. The deployment Action
+does not supply this option: it stops at a failed legacy checkpoint until the operator preserves the
+provider record and arms the bounded plan, after which an ordinary rerun resumes its chunks.
 
 Legacy MergeTree tables can contain multiple versions of one identity. The baseline selects the
 greatest `IngestedAt` per natural identity across the retained window, matching the existing recovery
