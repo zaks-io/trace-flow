@@ -211,8 +211,24 @@ fn append_snapshots(
     });
     let mut baseline_parts = 0usize;
     let mut baseline_bytes = 0u64;
-    for candidate in candidates {
-        let class = if live_sessions.iter().any(|(source, session, _)| {
+    for mut candidate in candidates {
+        let base_part = candidate.part.clone();
+        candidate.part = match spool.current_part(candidate.source, &candidate.session, &base_part)
+        {
+            Ok(part) => part,
+            Err(_) => {
+                prepared.errors.push("archive_spool_corrupt".to_string());
+                continue;
+            }
+        };
+        if spool
+            .blocked_part(candidate.source, &candidate.session, &candidate.part)
+            .is_err()
+        {
+            prepared.errors.push("archive_spool_corrupt".to_string());
+            continue;
+        }
+        let mut class = if live_sessions.iter().any(|(source, session, _)| {
             *source == candidate.source && session == &candidate.session
         }) {
             ArchiveWorkClass::Live
@@ -223,10 +239,18 @@ fn append_snapshots(
             .progress_part(candidate.source, &candidate.session, &candidate.part)
             .ok()
             .flatten();
+        let rewrite_candidate = progress.as_ref().is_some_and(|checkpoint| {
+            candidate.complete_extent < checkpoint.last_complete_byte_offset
+                || candidate.size < checkpoint.observed_file_size
+        });
         if progress.as_ref().is_some_and(|checkpoint| {
-            checkpoint.last_complete_byte_offset >= candidate.complete_extent
+            candidate.complete_extent == checkpoint.last_complete_byte_offset
+                && candidate.size >= checkpoint.observed_file_size
         }) {
             continue;
+        }
+        if rewrite_candidate {
+            class = ArchiveWorkClass::Live;
         }
         if class == ArchiveWorkClass::Baseline {
             let exceeds_read_budget =
@@ -267,6 +291,7 @@ fn append_snapshots(
         prepared.snapshots.push(ArchiveSnapshot {
             source: candidate.source,
             source_session_id: candidate.session,
+            base_transcript_part_id: base_part,
             source_transcript_part_id: candidate.part,
             transcript_part_identity: candidate.part_identity,
             bytes: Vec::new(),

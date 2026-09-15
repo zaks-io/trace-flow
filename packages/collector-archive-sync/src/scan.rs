@@ -1,6 +1,7 @@
 use collector_archive::{
     claude_transcript_part_id, default_transcript_part_id, scan_claude_jsonl,
-    scan_claude_jsonl_part, scan_codex_jsonl, ArchiveSource, CompletedScanCheckpoint, JsonlScan,
+    scan_claude_jsonl_part, scan_codex_jsonl, scan_jsonl_part, ArchiveSource,
+    CompletedScanCheckpoint, JsonlScan,
 };
 use serde_json::Value;
 
@@ -89,6 +90,24 @@ pub fn scan_snapshot(
         ArchiveSource::Codex => scan_codex_jsonl(source_session_id, bytes, observed_at, prior)?,
     };
     Ok(scan)
+}
+
+pub fn scan_snapshot_part(
+    source: ArchiveSource,
+    source_session_id: &str,
+    source_transcript_part_id: &str,
+    bytes: &[u8],
+    observed_at: i64,
+    prior: Option<&CompletedScanCheckpoint>,
+) -> ArchiveSyncResult<JsonlScan> {
+    Ok(scan_jsonl_part(
+        source,
+        source_session_id,
+        source_transcript_part_id,
+        bytes,
+        observed_at,
+        prior,
+    )?)
 }
 
 fn claude_is_subagent_path(path: &str) -> bool {

@@ -16,6 +16,7 @@ use crate::spool::ArchiveSpool;
 pub struct ArchiveSnapshot {
     pub source: ArchiveSource,
     pub source_session_id: String,
+    pub base_transcript_part_id: String,
     pub source_transcript_part_id: String,
     pub transcript_part_identity: Option<String>,
     pub bytes: Vec<u8>,
@@ -30,23 +31,6 @@ pub struct DeferredArchiveSnapshot {
     pub path: PathBuf,
     pub prior_offset: u64,
     pub minimum_observed_size: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ArchiveTarget {
-    pub source: ArchiveSource,
-    pub source_session_id: String,
-    pub source_transcript_part_id: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ArchiveTargetError {
-    pub error_class: String,
-    pub source: ArchiveSource,
-    pub source_session_id: String,
-    pub source_transcript_part_id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +50,17 @@ pub struct ArchiveSourceHistoryReport {
     pub ambiguous_excluded_sessions: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchiveForkEvent {
+    pub source: ArchiveSource,
+    pub source_session_id: String,
+    pub previous_part_id: String,
+    pub new_part_id: String,
+    pub reason: String,
+    pub previous_offset: u64,
+    pub new_size: u64,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct ArchiveCycleReport {
     pub uploaded: u32,
@@ -75,9 +70,9 @@ pub struct ArchiveCycleReport {
     pub frozen: bool,
     pub halted: bool,
     pub blocked: u32,
+    pub forked: u32,
+    pub fork_events: Vec<ArchiveForkEvent>,
     pub first_error: Option<String>,
-    pub target_errors: Vec<ArchiveTargetError>,
-    pub validated_targets: Vec<ArchiveTarget>,
     pub history: Vec<ArchiveSourceHistoryReport>,
 }
 
@@ -155,9 +150,34 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
             None
         };
         if policy.uploads() {
+            if policy.captures() && !part.pending.is_empty() {
+                if let Some(snapshot) = part.snapshot {
+                    let blocked_before = report.blocked;
+                    let _ = persist_snapshot(
+                        spool,
+                        snapshot,
+                        &mut report,
+                        cancel,
+                        source_bytes.as_deref(),
+                    );
+                    if report.blocked > blocked_before {
+                        continue;
+                    }
+                }
+            }
             let mut pending_failed = false;
             let mut part_blocked = false;
             for pending in &part.pending {
+                match spool.contains_slice(pending) {
+                    Ok(true) => {}
+                    Ok(false) => continue,
+                    Err(err) => {
+                        report.failed += 1;
+                        record_error(&mut report, err.class());
+                        pending_failed = true;
+                        break;
+                    }
+                }
                 match upload_pending(
                     uploader,
                     spool,

@@ -3,7 +3,7 @@ use collector_archive::{
 };
 
 use crate::error::{ArchiveSyncError, ArchiveSyncResult};
-use crate::scan::scan_snapshot;
+use crate::scan::{scan_snapshot, scan_snapshot_part};
 use crate::spool::PendingArchiveRequest;
 
 /// Archive API uncompressed JSON body limit (`apps/archive-api` `MAX_ARCHIVE_UPLOAD_BYTES`).
@@ -32,6 +32,26 @@ pub fn build_bounded_pending(
     )
 }
 
+pub fn build_bounded_pending_for_part(
+    source: ArchiveSource,
+    source_session_id: &str,
+    source_transcript_part_id: &str,
+    bytes: &[u8],
+    observed_at: i64,
+    prior: Option<&CompletedScanCheckpoint>,
+) -> ArchiveSyncResult<Option<PendingArchiveRequest>> {
+    build_bounded_pending_for_part_with_limits(
+        source,
+        source_session_id,
+        source_transcript_part_id,
+        bytes,
+        observed_at,
+        prior,
+        MAX_ARCHIVE_UPLOAD_BYTES,
+        MAX_UPLOAD_OBSERVATIONS,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn build_bounded_pending_with_limits(
     source: ArchiveSource,
@@ -51,6 +71,64 @@ pub fn build_bounded_pending_with_limits(
         observed_at,
         prior,
     )?;
+    let source_transcript_part_id = scan.checkpoint.source_transcript_part_id().to_string();
+    build_bounded_pending_from_scan(
+        source,
+        source_session_id,
+        &source_transcript_part_id,
+        bytes,
+        observed_at,
+        prior,
+        max_bytes,
+        max_observations,
+        scan,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_bounded_pending_for_part_with_limits(
+    source: ArchiveSource,
+    source_session_id: &str,
+    source_transcript_part_id: &str,
+    bytes: &[u8],
+    observed_at: i64,
+    prior: Option<&CompletedScanCheckpoint>,
+    max_bytes: usize,
+    max_observations: usize,
+) -> ArchiveSyncResult<Option<PendingArchiveRequest>> {
+    let scan = scan_snapshot_part(
+        source,
+        source_session_id,
+        source_transcript_part_id,
+        bytes,
+        observed_at,
+        prior,
+    )?;
+    build_bounded_pending_from_scan(
+        source,
+        source_session_id,
+        source_transcript_part_id,
+        bytes,
+        observed_at,
+        prior,
+        max_bytes,
+        max_observations,
+        scan,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_bounded_pending_from_scan(
+    source: ArchiveSource,
+    source_session_id: &str,
+    source_transcript_part_id: &str,
+    bytes: &[u8],
+    observed_at: i64,
+    prior: Option<&CompletedScanCheckpoint>,
+    max_bytes: usize,
+    max_observations: usize,
+    scan: JsonlScan,
+) -> ArchiveSyncResult<Option<PendingArchiveRequest>> {
     if scan.observations.is_empty() {
         return Ok(None);
     }
@@ -67,7 +145,7 @@ pub fn build_bounded_pending_with_limits(
     let fitted = max_fitting_records(
         source,
         source_session_id,
-        transcript_part_identity,
+        source_transcript_part_id,
         bytes,
         observed_at,
         prior,
@@ -89,10 +167,10 @@ pub fn build_bounded_pending_with_limits(
         });
     }
     let prefix_end = ends[prior_count + fitted - 1];
-    let bounded = scan_snapshot(
+    let bounded = scan_snapshot_part(
         source,
         source_session_id,
-        transcript_part_identity,
+        source_transcript_part_id,
         &bytes[..prefix_end],
         observed_at,
         prior,
@@ -108,7 +186,7 @@ pub fn build_bounded_pending_with_limits(
 fn max_fitting_records(
     source: ArchiveSource,
     source_session_id: &str,
-    transcript_part_identity: Option<&str>,
+    source_transcript_part_id: &str,
     bytes: &[u8],
     observed_at: i64,
     prior: Option<&CompletedScanCheckpoint>,
@@ -125,7 +203,7 @@ fn max_fitting_records(
     if request_fits(
         source,
         source_session_id,
-        transcript_part_identity,
+        source_transcript_part_id,
         bytes,
         observed_at,
         prior,
@@ -139,7 +217,7 @@ fn max_fitting_records(
             || request_fits(
                 source,
                 source_session_id,
-                transcript_part_identity,
+                source_transcript_part_id,
                 bytes,
                 observed_at,
                 prior,
@@ -162,7 +240,7 @@ fn max_fitting_records(
         if request_fits(
             source,
             source_session_id,
-            transcript_part_identity,
+            source_transcript_part_id,
             bytes,
             observed_at,
             prior,
@@ -184,7 +262,7 @@ fn max_fitting_records(
 fn request_fits(
     source: ArchiveSource,
     source_session_id: &str,
-    transcript_part_identity: Option<&str>,
+    source_transcript_part_id: &str,
     bytes: &[u8],
     observed_at: i64,
     prior: Option<&CompletedScanCheckpoint>,
@@ -198,10 +276,10 @@ fn request_fits(
         return Ok(false);
     }
     let prefix_end = ends[prior_count + count - 1];
-    let scan = scan_snapshot(
+    let scan = scan_snapshot_part(
         source,
         source_session_id,
-        transcript_part_identity,
+        source_transcript_part_id,
         &bytes[..prefix_end],
         observed_at,
         prior,

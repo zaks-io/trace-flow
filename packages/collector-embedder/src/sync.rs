@@ -33,7 +33,8 @@ use collector_archive_sync::{
 };
 
 pub use collector_archive_sync::{
-    cleanup_obligation_exists, ArchiveKeyStore, ArchivePolicy, ArchiveSpool, MemoryKeyStore,
+    cleanup_obligation_exists, ArchiveForkEvent, ArchiveKeyStore, ArchivePolicy, ArchiveSpool,
+    MemoryKeyStore,
 };
 use collector_contracts::AgentSource;
 use collector_sync::{
@@ -94,6 +95,13 @@ pub struct ArchiveRunConfig {
     pub key_store: Arc<dyn ArchiveKeyStore>,
     pub policy: ArchivePolicy,
     pub authorized_sources: Vec<ArchiveAuthorizedSource>,
+    fork_event_sink: Option<fn(&ArchiveForkEvent)>,
+}
+
+impl ArchiveRunConfig {
+    pub fn set_fork_event_sink(&mut self, sink: fn(&ArchiveForkEvent)) {
+        self.fork_event_sink = Some(sink);
+    }
 }
 
 /// The inputs a sync run needs that don't come from saved state: where the ingest worker is and the
@@ -170,6 +178,7 @@ fn archive_run_config_from_enrollment(
             key_store,
             policy: ArchivePolicy::Revoked,
             authorized_sources: Vec::new(),
+            fork_event_sink: None,
         }));
     }
     if policy == ArchivePolicy::Inactive {
@@ -182,6 +191,7 @@ fn archive_run_config_from_enrollment(
         key_store,
         policy,
         authorized_sources: enrollment.authorized_sources,
+        fork_event_sink: None,
     }))
 }
 
@@ -578,7 +588,7 @@ async fn run_archive_work(
         }
     };
 
-    run_archive_cycle(
+    let report = run_archive_cycle(
         &uploader,
         &mut spool,
         archive.key_store.as_ref(),
@@ -587,7 +597,17 @@ async fn run_archive_work(
         plan,
         None,
     )
-    .await
+    .await;
+    emit_archive_fork_events(archive, &report);
+    report
+}
+
+fn emit_archive_fork_events(archive: &ArchiveRunConfig, report: &ArchiveCycleReport) {
+    if let Some(sink) = archive.fork_event_sink {
+        for event in &report.fork_events {
+            sink(event);
+        }
+    }
 }
 
 fn open_spool_for_policy(
@@ -653,6 +673,11 @@ mod tests {
 
     const CLAUDE: &[u8] = include_bytes!("../../collector-archive/tests/fixtures/claude.jsonl");
     const CODEX: &[u8] = include_bytes!("../../collector-archive/tests/fixtures/codex.jsonl");
+    static OBSERVED_FORK_EVENTS: Mutex<Vec<ArchiveForkEvent>> = Mutex::new(Vec::new());
+
+    fn observe_fork_event(event: &ArchiveForkEvent) {
+        OBSERVED_FORK_EVENTS.lock().unwrap().push(event.clone());
+    }
 
     fn authorization(source: ArchiveSource) -> ArchiveAuthorizedSource {
         ArchiveAuthorizedSource {
@@ -671,6 +696,50 @@ mod tests {
             expected_appended_records: 1,
             body: body.to_vec(),
         }
+    }
+
+    #[test]
+    fn fork_event_sink_observes_each_event_exactly_once() {
+        OBSERVED_FORK_EVENTS.lock().unwrap().clear();
+        let mut archive = ArchiveRunConfig {
+            archive_url: "https://archive.example".to_string(),
+            spool_dir: PathBuf::from("archive-spool"),
+            enrollment_path: PathBuf::from("archive-enrollment.json"),
+            key_store: Arc::new(MemoryKeyStore::new()),
+            policy: ArchivePolicy::Enrolled,
+            authorized_sources: Vec::new(),
+            fork_event_sink: None,
+        };
+        archive.set_fork_event_sink(observe_fork_event);
+        let events = vec![
+            ArchiveForkEvent {
+                source: ArchiveSource::Claude,
+                source_session_id: "session-1".to_string(),
+                previous_part_id: "claude:part:primary".to_string(),
+                new_part_id: format!("claude:part:sha256:{}", "a".repeat(64)),
+                reason: "prefix_changed".to_string(),
+                previous_offset: 10,
+                new_size: 20,
+            },
+            ArchiveForkEvent {
+                source: ArchiveSource::Codex,
+                source_session_id: "session-2".to_string(),
+                previous_part_id: "codex:part:primary".to_string(),
+                new_part_id: format!("codex:part:sha256:{}", "b".repeat(64)),
+                reason: "prefix_shortened".to_string(),
+                previous_offset: 30,
+                new_size: 15,
+            },
+        ];
+        let report = ArchiveCycleReport {
+            forked: events.len() as u32,
+            fork_events: events.clone(),
+            ..ArchiveCycleReport::default()
+        };
+
+        emit_archive_fork_events(&archive, &report);
+
+        assert_eq!(*OBSERVED_FORK_EVENTS.lock().unwrap(), events);
     }
 
     #[test]
@@ -944,6 +1013,7 @@ mod tests {
                     authorization(ArchiveSource::Claude),
                     authorization(ArchiveSource::Codex),
                 ],
+                fork_event_sink: None,
             }),
         )
         .await;
@@ -1078,6 +1148,7 @@ mod tests {
                 key_store: keys.clone(),
                 policy: ArchivePolicy::Enrolled,
                 authorized_sources: vec![authorization(ArchiveSource::Codex)],
+                fork_event_sink: None,
             }),
         )
         .await;
@@ -1107,6 +1178,7 @@ mod tests {
                 key_store: keys,
                 policy: ArchivePolicy::Enrolled,
                 authorized_sources: vec![authorization(ArchiveSource::Codex)],
+                fork_event_sink: None,
             }),
         )
         .await;
@@ -1147,6 +1219,7 @@ mod tests {
                     authorization(ArchiveSource::Claude),
                     authorization(ArchiveSource::Codex),
                 ],
+                fork_event_sink: None,
             }),
         )
         .await;
@@ -1365,6 +1438,7 @@ mod tests {
             key_store: Arc::new(MemoryKeyStore::new()),
             policy: ArchivePolicy::Enrolled,
             authorized_sources: original.authorized_sources.clone(),
+            fork_event_sink: None,
         };
         let mut report = ArchiveCycleReport {
             frozen: true,
@@ -1415,6 +1489,7 @@ mod tests {
                 key_store: keys.clone(),
                 policy: ArchivePolicy::Revoked,
                 authorized_sources: Vec::new(),
+                fork_event_sink: None,
             }),
         )
         .await;
@@ -1464,6 +1539,7 @@ mod tests {
                 key_store: keys.clone(),
                 policy: ArchivePolicy::Enrolled,
                 authorized_sources: vec![authorization(ArchiveSource::Claude)],
+                fork_event_sink: None,
             }),
         )
         .await;
@@ -1514,6 +1590,7 @@ mod tests {
                 key_store: keys.clone(),
                 policy: ArchivePolicy::Frozen,
                 authorized_sources: vec![authorization(ArchiveSource::Claude)],
+                fork_event_sink: None,
             }),
         )
         .await;
@@ -1562,6 +1639,7 @@ mod tests {
                 key_store: keys.clone(),
                 policy: ArchivePolicy::Grace,
                 authorized_sources: vec![authorization(ArchiveSource::Claude)],
+                fork_event_sink: None,
             }),
         )
         .await;
@@ -1623,6 +1701,7 @@ mod tests {
                 key_store: keys.clone(),
                 policy: ArchivePolicy::Grace,
                 authorized_sources: vec![authorization(ArchiveSource::Claude)],
+                fork_event_sink: None,
             }),
         )
         .await;

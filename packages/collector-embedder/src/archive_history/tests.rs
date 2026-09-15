@@ -1,7 +1,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 
-use collector_archive::ArchiveSource;
+use collector_archive::{default_transcript_part_id, rewrite_transcript_part_id, ArchiveSource};
 use collector_archive_sync::{
     ArchiveAuthorizedSource, ArchiveHistoryChoice, ArchiveSpool, ArchiveWorkClass, MemoryKeyStore,
 };
@@ -187,6 +187,90 @@ fn registered_complete_extent_survives_a_shorter_partial_tail() {
     prepare(home.path(), &spool, &[auth], 11);
     let second = spool.history_state(ArchiveSource::Codex).unwrap().unwrap();
     assert_eq!(second.targets()[0], target);
+}
+
+#[test]
+fn a_shrunk_candidate_is_scheduled_as_live_rewrite_work() {
+    let home = TempDir::new().unwrap();
+    let spool_dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let original = format!(
+        "{}{{\"type\":\"event_msg\",\"payload\":{{\"id\":\"two\"}}}}\n",
+        codex("shrunk", "2020-01-01T00:00:00Z", "one")
+    );
+    write_codex(&home, "sessions", "shrunk.jsonl", &original);
+    let spool = open_spool(&spool_dir, &keys);
+    let base_part = default_transcript_part_id(ArchiveSource::Codex);
+    let checkpoint = collector_archive_sync::scan_snapshot_part(
+        ArchiveSource::Codex,
+        "shrunk",
+        &base_part,
+        original.as_bytes(),
+        10,
+        None,
+    )
+    .unwrap()
+    .checkpoint;
+    spool
+        .persist_progress(ArchiveSource::Codex, "shrunk", &checkpoint)
+        .unwrap();
+    let compacted = codex("shrunk", "2020-01-01T00:00:00Z", "compacted");
+    write_codex(&home, "sessions", "shrunk.jsonl", &compacted);
+
+    let prepared = prepare(
+        home.path(),
+        &spool,
+        &[authorization(
+            ArchiveSource::Codex,
+            ArchiveHistoryChoice::AllHistory,
+        )],
+        11,
+    );
+
+    assert_eq!(prepared.snapshots.len(), 1);
+    assert_eq!(prepared.snapshots[0].class, ArchiveWorkClass::Live);
+    assert_eq!(prepared.snapshots[0].base_transcript_part_id, base_part);
+}
+
+#[test]
+fn a_candidate_resolves_to_the_current_generation_part() {
+    let home = TempDir::new().unwrap();
+    let spool_dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let bytes = codex("generation", "2026-01-01T00:00:00Z", "one");
+    write_codex(&home, "sessions", "generation.jsonl", &bytes);
+    let spool = open_spool(&spool_dir, &keys);
+    let base_part = default_transcript_part_id(ArchiveSource::Codex);
+    let current_part =
+        rewrite_transcript_part_id(ArchiveSource::Codex, &base_part, bytes.as_bytes()).unwrap();
+    spool
+        .fork_part(
+            ArchiveSource::Codex,
+            "generation",
+            &base_part,
+            &base_part,
+            &current_part,
+            "prefix_changed",
+            10,
+        )
+        .unwrap();
+
+    let prepared = prepare(
+        home.path(),
+        &spool,
+        &[authorization(
+            ArchiveSource::Codex,
+            ArchiveHistoryChoice::AllHistory,
+        )],
+        11,
+    );
+
+    assert_eq!(prepared.snapshots.len(), 1);
+    assert_eq!(prepared.snapshots[0].base_transcript_part_id, base_part);
+    assert_eq!(
+        prepared.snapshots[0].source_transcript_part_id,
+        current_part
+    );
 }
 
 #[test]

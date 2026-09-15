@@ -20,14 +20,15 @@ mod spool;
 
 pub use ack::{acknowledgement_matches, ArchiveAcknowledgement};
 pub use bound::{
-    build_bounded_pending, build_bounded_pending_with_limits, MAX_ARCHIVE_UPLOAD_BYTES,
-    MAX_UPLOAD_OBSERVATIONS,
+    build_bounded_pending, build_bounded_pending_for_part,
+    build_bounded_pending_for_part_with_limits, build_bounded_pending_with_limits,
+    MAX_ARCHIVE_UPLOAD_BYTES, MAX_UPLOAD_OBSERVATIONS,
 };
 pub use client::{ArchiveClient, ArchiveClientConfig, ArchiveUploader};
 pub use collector_archive::ArchiveSource;
 pub use cycle::{
-    run_archive_cycle, ArchiveCycleReport, ArchiveInitialImport, ArchiveSnapshot,
-    ArchiveSourceHistoryReport, ArchiveTarget, ArchiveTargetError, DeferredArchiveSnapshot,
+    run_archive_cycle, ArchiveCycleReport, ArchiveForkEvent, ArchiveInitialImport, ArchiveSnapshot,
+    ArchiveSourceHistoryReport, DeferredArchiveSnapshot,
 };
 pub use enrollment::ArchiveEnrollmentRecord;
 pub use error::{ArchiveClientError, ArchiveSyncError, ArchiveSyncResult};
@@ -43,11 +44,12 @@ pub use policy::{
 };
 pub use scan::{
     archive_source_session_id, archive_source_session_id_from_records, parse_jsonl_records,
-    scan_snapshot, transcript_part_for, transcript_part_for_records,
+    scan_snapshot, scan_snapshot_part, transcript_part_for, transcript_part_for_records,
 };
 pub use spool::{
-    cleanup_obligation_exists, finish_terminal_cleanup, ArchiveSpool, BlockedArchiveRecord,
-    PendingArchiveRequest, PendingLoad, ARCHIVE_RECORD_POLICY_VERSION, ARCHIVE_SPOOL_CAP_BYTES,
+    cleanup_obligation_exists, finish_terminal_cleanup, ArchiveGenerationHistoryEntry,
+    ArchiveGenerationRecord, ArchiveSpool, BlockedArchiveRecord, PendingArchiveRequest,
+    PendingLoad, ARCHIVE_RECORD_POLICY_VERSION, ARCHIVE_SPOOL_CAP_BYTES,
     ARCHIVE_SPOOL_KEYRING_SERVICE,
 };
 
