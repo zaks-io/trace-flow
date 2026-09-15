@@ -1,6 +1,6 @@
 use collector_archive::{
-    claude_transcript_part_id, default_transcript_part_id, scan_claude_jsonl,
-    scan_claude_jsonl_part, scan_codex_jsonl, ArchiveSource, CompletedScanCheckpoint, JsonlScan,
+    claude_transcript_part_id, default_transcript_part_id, scan_jsonl_part, ArchiveSource,
+    CompletedScanCheckpoint, JsonlScan,
 };
 use serde_json::Value;
 
@@ -39,10 +39,9 @@ pub fn archive_source_session_id_from_records(
 
 /// Resolve Claude parent vs subagent part identity from the transcript path and records.
 ///
-/// Parent files use [`scan_claude_jsonl`] (`claude:part:parent`). A `subagents/` path uses
-/// [`scan_claude_jsonl_part`] with `agentId` when present, otherwise a stable path-derived
-/// identity. Subagent paths never fall back to the parent part. Codex is always
-/// `codex:part:primary`.
+/// Parent files use `claude:part:parent`. A `subagents/` path uses `agentId` when present,
+/// otherwise a stable path-derived identity. Subagent paths never fall back to the parent part.
+/// Codex is always `codex:part:primary`.
 pub fn transcript_part_for(
     source: ArchiveSource,
     transcript_path: Option<&str>,
@@ -71,24 +70,22 @@ pub fn transcript_part_for_records(
     }
 }
 
-pub fn scan_snapshot(
+pub fn scan_snapshot_part(
     source: ArchiveSource,
     source_session_id: &str,
-    transcript_part_identity: Option<&str>,
+    source_transcript_part_id: &str,
     bytes: &[u8],
     observed_at: i64,
     prior: Option<&CompletedScanCheckpoint>,
 ) -> ArchiveSyncResult<JsonlScan> {
-    let scan = match source {
-        ArchiveSource::Claude => match transcript_part_identity {
-            Some(identity) => {
-                scan_claude_jsonl_part(source_session_id, identity, bytes, observed_at, prior)?
-            }
-            None => scan_claude_jsonl(source_session_id, bytes, observed_at, prior)?,
-        },
-        ArchiveSource::Codex => scan_codex_jsonl(source_session_id, bytes, observed_at, prior)?,
-    };
-    Ok(scan)
+    Ok(scan_jsonl_part(
+        source,
+        source_session_id,
+        source_transcript_part_id,
+        bytes,
+        observed_at,
+        prior,
+    )?)
 }
 
 fn claude_is_subagent_path(path: &str) -> bool {

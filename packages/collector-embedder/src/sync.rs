@@ -33,7 +33,8 @@ use collector_archive_sync::{
 };
 
 pub use collector_archive_sync::{
-    cleanup_obligation_exists, ArchiveKeyStore, ArchivePolicy, ArchiveSpool, MemoryKeyStore,
+    cleanup_obligation_exists, ArchiveForkEvent, ArchiveKeyStore, ArchivePolicy, ArchiveSpool,
+    MemoryKeyStore,
 };
 use collector_contracts::AgentSource;
 use collector_sync::{
@@ -344,6 +345,7 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
             &cfg.credential,
             &history.snapshots,
             &history.plan,
+            cfg.now_ms,
         )
         .await;
         for class in &history.errors {
@@ -533,6 +535,7 @@ async fn run_archive_work(
     credential: &str,
     snapshots: &[ArchiveSnapshot],
     plan: &ArchiveHistoryPlan,
+    now_ms: i64,
 ) -> ArchiveCycleReport {
     if archive.policy.purges() || cleanup_obligation_exists(&archive.spool_dir) {
         let mut report = ArchiveCycleReport::default();
@@ -585,6 +588,7 @@ async fn run_archive_work(
         snapshots,
         archive.policy,
         plan,
+        now_ms,
         None,
     )
     .await

@@ -12,6 +12,7 @@ use crate::types::{
 };
 
 const CLAUDE_TRANSCRIPT_PART_DOMAIN: &[u8] = b"trace-flow/archive/claude-transcript-part/v1";
+const REWRITE_TRANSCRIPT_PART_DOMAIN: &[u8] = b"trace-flow/archive/rewrite-part/v1";
 #[derive(Debug, Clone)]
 pub(crate) struct JsonlLine<'a> {
     pub(crate) bytes: &'a [u8],
@@ -83,6 +84,29 @@ pub fn scan_jsonl(
         source,
         source_session_id,
         default_transcript_part_id(source),
+        bytes,
+        observed_at,
+        prior_checkpoint,
+        identity,
+    )
+}
+
+pub fn scan_jsonl_part(
+    source: ArchiveSource,
+    source_session_id: impl Into<String>,
+    source_transcript_part_id: impl Into<String>,
+    bytes: &[u8],
+    observed_at: i64,
+    prior_checkpoint: Option<&CompletedScanCheckpoint>,
+) -> Result<JsonlScan, JsonlError> {
+    let identity = match source {
+        ArchiveSource::Claude => claude_identity,
+        ArchiveSource::Codex => codex_identity,
+    };
+    scan_jsonl_with_part(
+        source,
+        source_session_id,
+        source_transcript_part_id.into(),
         bytes,
         observed_at,
         prior_checkpoint,
@@ -199,6 +223,21 @@ pub fn claude_transcript_part_id(raw_identity: &str) -> Result<String, JsonlErro
     Ok(format!("claude:part:{digest}"))
 }
 
+pub fn rewrite_transcript_part_id(
+    source: ArchiveSource,
+    previous_part_id: &str,
+    bytes: &[u8],
+) -> Result<String, JsonlError> {
+    crate::types::validate_transcript_part_id(source, previous_part_id)?;
+    let complete_offset = complete_prefix_offset(bytes)?;
+    let prefix_sha256 = sha256(&bytes[..complete_offset]);
+    let digest = hash_framed(
+        REWRITE_TRANSCRIPT_PART_DOMAIN,
+        &[previous_part_id.as_bytes(), prefix_sha256.as_bytes()],
+    );
+    Ok(format!("{}:part:{digest}", source.as_str()))
+}
+
 fn claude_identity(
     value: &Value,
     record_index: usize,
@@ -282,5 +321,32 @@ mod tests {
             crate::complete_record_end_offsets(br#"{"a":1}"#).unwrap(),
             vec![7]
         );
+    }
+
+    #[test]
+    fn rewrite_part_ids_are_deterministic_and_valid_for_both_sources() {
+        let bytes = b"{\"record\":1}\n{\"partial\":";
+        for source in [ArchiveSource::Claude, ArchiveSource::Codex] {
+            let previous = default_transcript_part_id(source);
+            let first = rewrite_transcript_part_id(source, &previous, bytes).unwrap();
+            let second = rewrite_transcript_part_id(source, &previous, bytes).unwrap();
+            assert_eq!(first, second);
+            crate::types::validate_transcript_part_id(source, &first).unwrap();
+        }
+    }
+
+    #[test]
+    fn codex_rewrite_part_validation_is_canonical() {
+        let valid = format!("codex:part:sha256:{}", "a".repeat(64));
+        crate::types::validate_transcript_part_id(ArchiveSource::Codex, &valid).unwrap();
+        for invalid in [
+            format!("codex:part:sha256:{}", "a".repeat(63)),
+            format!("codex:part:sha256:{}", "A".repeat(64)),
+            format!("codex:part:sha256:{}", "g".repeat(64)),
+        ] {
+            assert!(
+                crate::types::validate_transcript_part_id(ArchiveSource::Codex, &invalid).is_err()
+            );
+        }
     }
 }

@@ -28,8 +28,8 @@ pub use elements::{ArchiveRecord, ChainElement, CommittedScanCheckpoint};
 pub use encoding::{EncodedPayload, PayloadEncoding};
 pub use framing::hash_framed;
 pub use jsonl::{
-    claude_transcript_part_id, scan_claude_jsonl, scan_claude_jsonl_part, scan_codex_jsonl,
-    scan_jsonl, JsonlError,
+    claude_transcript_part_id, rewrite_transcript_part_id, scan_claude_jsonl,
+    scan_claude_jsonl_part, scan_codex_jsonl, scan_jsonl, scan_jsonl_part, JsonlError,
 };
 pub use jsonl_prefix::complete_record_end_offsets;
 pub use manifest::{ArchiveSessionManifest, ChunkByteRange, ManifestElement, ManifestError};

@@ -36,21 +36,56 @@ pub(crate) fn history_reports(
                     completed += 1;
                     continue;
                 }
-                if let Ok(Some(progress)) = spool.progress_part(
+                let generation = match spool.generation_record(
                     state.generation.source,
                     &target.source_session_id,
                     &target.source_transcript_part_id,
                 ) {
-                    if progress.last_complete_byte_offset >= target.registered_complete_byte_offset
-                    {
-                        completed += 1;
+                    Ok(generation) => generation,
+                    Err(err) => {
+                        report.failed += 1;
+                        record_error(report, err.class());
                         continue;
                     }
+                };
+                let (part, required_offset) = match generation {
+                    Some(generation) => (
+                        generation.current_part_id,
+                        plan.complete_extent(
+                            state.generation.source,
+                            &target.source_session_id,
+                            &target.source_transcript_part_id,
+                        ),
+                    ),
+                    None => (
+                        target.source_transcript_part_id.clone(),
+                        Some(target.registered_complete_byte_offset),
+                    ),
+                };
+                let progress = match spool.progress_part(
+                    state.generation.source,
+                    &target.source_session_id,
+                    &part,
+                ) {
+                    Ok(progress) => progress,
+                    Err(err) => {
+                        report.failed += 1;
+                        record_error(report, err.class());
+                        continue;
+                    }
+                };
+                if required_offset.is_some_and(|required_offset| {
+                    progress.is_some_and(|progress| {
+                        progress.last_complete_byte_offset >= required_offset
+                    })
+                }) {
+                    completed += 1;
+                    continue;
                 }
                 if !snapshots.iter().any(|snapshot| {
                     snapshot.source == state.generation.source
                         && snapshot.source_session_id == target.source_session_id
-                        && snapshot.source_transcript_part_id == target.source_transcript_part_id
+                        && snapshot.base_transcript_part_id == target.source_transcript_part_id
                 }) && !plan.part_is_present(
                     state.generation.source,
                     &target.source_session_id,

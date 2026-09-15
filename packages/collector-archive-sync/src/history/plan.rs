@@ -42,9 +42,17 @@ mod tests {
 pub struct ArchiveHistoryPlan {
     states: Vec<ArchiveHistoryState>,
     live_sessions: Vec<(ArchiveSource, String, i64)>,
-    present_parts: Vec<(ArchiveSource, String, String)>,
+    present_parts: Vec<PresentPart>,
     failed_sources: Vec<ArchiveSource>,
     ambiguous_excluded: Vec<(ArchiveSource, u32)>,
+}
+
+#[derive(Debug, Clone)]
+struct PresentPart {
+    source: ArchiveSource,
+    session: String,
+    part: String,
+    complete_extent: Option<u64>,
 }
 
 impl ArchiveHistoryPlan {
@@ -86,7 +94,31 @@ impl ArchiveHistoryPlan {
         mut self,
         present_parts: Vec<(ArchiveSource, String, String)>,
     ) -> Self {
-        self.present_parts = present_parts;
+        self.present_parts = present_parts
+            .into_iter()
+            .map(|(source, session, part)| PresentPart {
+                source,
+                session,
+                part,
+                complete_extent: None,
+            })
+            .collect();
+        self
+    }
+
+    pub fn with_present_part_extents(
+        mut self,
+        present_parts: Vec<(ArchiveSource, String, String, u64)>,
+    ) -> Self {
+        self.present_parts = present_parts
+            .into_iter()
+            .map(|(source, session, part, complete_extent)| PresentPart {
+                source,
+                session,
+                part,
+                complete_extent: Some(complete_extent),
+            })
+            .collect();
         self
     }
 
@@ -96,13 +128,27 @@ impl ArchiveHistoryPlan {
         source_session_id: &str,
         source_transcript_part_id: &str,
     ) -> bool {
+        self.present_parts.iter().any(|candidate| {
+            candidate.source == source
+                && candidate.session == source_session_id
+                && candidate.part == source_transcript_part_id
+        })
+    }
+
+    pub fn complete_extent(
+        &self,
+        source: ArchiveSource,
+        source_session_id: &str,
+        source_transcript_part_id: &str,
+    ) -> Option<u64> {
         self.present_parts
             .iter()
-            .any(|(candidate_source, session, part)| {
-                *candidate_source == source
-                    && session == source_session_id
-                    && part == source_transcript_part_id
+            .find(|candidate| {
+                candidate.source == source
+                    && candidate.session == source_session_id
+                    && candidate.part == source_transcript_part_id
             })
+            .and_then(|candidate| candidate.complete_extent)
     }
 
     pub fn with_live_sessions(mut self, live_sessions: Vec<(ArchiveSource, String, i64)>) -> Self {

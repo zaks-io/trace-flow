@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import vectorsJson from '../../../../packages/collector-archive/tests/fixtures/archive-identifiers.json?raw';
-import { ArchiveContractError, assertIdentifier, decodeBase64Bytes } from '../archive-contract';
+import {
+  ArchiveContractError,
+  assertIdentifier,
+  assertTranscriptPartId,
+  decodeBase64Bytes,
+} from '../archive-contract';
 
 const vectors = JSON.parse(vectorsJson) as {
   controls: string[];
@@ -81,4 +86,18 @@ describe('archive base64 contract', () => {
       );
     },
   );
+});
+
+describe('archive transcript part contract', () => {
+  it('accepts canonical Codex rewrite parts and rejects noncanonical digests', () => {
+    expect(() =>
+      assertTranscriptPartId('codex', `codex:part:sha256:${'a'.repeat(64)}`),
+    ).not.toThrow();
+    expect(() =>
+      assertTranscriptPartId('codex', `codex:part:sha256:${'A'.repeat(64)}`),
+    ).toThrowError(ArchiveContractError);
+    expect(() =>
+      assertTranscriptPartId('codex', `codex:part:sha256:${'a'.repeat(63)}`),
+    ).toThrowError(ArchiveContractError);
+  });
 });

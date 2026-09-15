@@ -184,7 +184,15 @@ pub(crate) fn validate_transcript_part_id(
                                 .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
                     })
         }
-        ArchiveSource::Codex => value == "codex:part:primary",
+        ArchiveSource::Codex => {
+            value == "codex:part:primary"
+                || value.strip_prefix("codex:part:sha256:").is_some_and(|hex| {
+                    hex.len() == 64
+                        && hex
+                            .bytes()
+                            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+                })
+        }
     };
     if valid {
         Ok(())

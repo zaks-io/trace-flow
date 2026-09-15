@@ -16,7 +16,6 @@ pub(super) struct Candidate {
     pub source: ArchiveSource,
     pub session: String,
     pub part: String,
-    pub part_identity: Option<String>,
     pub started_at: Option<i64>,
     pub activity_rank_ms: i64,
     pub size: u64,
@@ -40,14 +39,13 @@ pub(super) fn identify(
         .and_then(|_| transcript_part_for_records(source, Some(path), &records).ok());
     let started_at = source_started_at(source, &records);
     let session = session.map_err(|_| "invalid_archive_session")?;
-    let (part, part_identity) = part.ok_or("invalid_archive_session")?;
+    let (part, _) = part.ok_or("invalid_archive_session")?;
     let complete_extent = complete_extent(&path_buf).map_err(|_| "archive_io")?;
     Ok(Candidate {
         path: path_buf,
         source,
         session,
         part,
-        part_identity,
         started_at,
         activity_rank_ms: mtime_ms,
         size,

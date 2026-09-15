@@ -41,6 +41,20 @@ Claude / Codex collector capture
   -> durable acknowledgement after storage verification and budget commit
 ```
 
+### Archive coverage audit
+
+Run the read-only coverage tool against copies of the spool progress and generation directories:
+
+```sh
+cargo build -p collector-archive-sync --example archive_coverage
+mkdir -p /tmp/spool-copy
+cp -R "$HOME/Library/Application Support/trace-flow/archive-spool-<org>/progress" /tmp/spool-copy/progress
+if [ -d "$HOME/Library/Application Support/trace-flow/archive-spool-<org>/generations" ]; then
+  cp -R "$HOME/Library/Application Support/trace-flow/archive-spool-<org>/generations" /tmp/spool-copy/generations
+fi
+target/debug/examples/archive_coverage /tmp/spool-copy <org>
+```
+
 ### Cloud-Dev Archive smoke
 
 The smoke is restricted in code to the canonical Cloud-Dev Convex deployment and Archive API origin.

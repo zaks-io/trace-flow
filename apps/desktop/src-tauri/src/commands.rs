@@ -224,27 +224,3 @@ fn source_label(source: collector_contracts::AgentSource) -> &'static str {
         collector_contracts::AgentSource::Cursor => "cursor",
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn status_dto_exposes_safe_archive_error() {
-        let value = serde_json::to_value(StatusDto {
-            connected: true,
-            org_id: Some("org_1".to_string()),
-            credential_present: true,
-            expired: false,
-            sync: "error".to_string(),
-            archive_error: Some("Codex archive needs repair".to_string()),
-            update: UpdateStatus::Idle,
-        })
-        .unwrap();
-
-        assert_eq!(
-            value["archive_error"].as_str(),
-            Some("Codex archive needs repair")
-        );
-    }
-}

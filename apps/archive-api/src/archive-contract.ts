@@ -200,7 +200,7 @@ export function assertIdentifier(value: unknown, errorClass: string): asserts va
 export function assertTranscriptPartId(source: ArchiveSource, value: string): void {
   const valid =
     source === 'codex'
-      ? value === 'codex:part:primary'
+      ? value === 'codex:part:primary' || /^codex:part:sha256:[0-9a-f]{64}$/u.test(value)
       : value === 'claude:part:parent' || /^claude:part:sha256:[0-9a-f]{64}$/u.test(value);
   if (!valid) throw new ArchiveContractError('invalid_transcript_part_id');
 }

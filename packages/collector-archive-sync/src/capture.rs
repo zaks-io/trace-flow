@@ -3,11 +3,9 @@ use std::borrow::Cow;
 use tokio_util::sync::CancellationToken;
 
 use crate::ack::acknowledgement_matches;
-use crate::bound::build_bounded_pending;
+use crate::bound::build_bounded_pending_for_part;
 use crate::client::ArchiveUploader;
-use crate::cycle::{
-    record_error, ArchiveCycleReport, ArchiveSnapshot, ArchiveTarget, ArchiveTargetError,
-};
+use crate::cycle::{record_error, ArchiveCycleReport, ArchiveForkEvent, ArchiveSnapshot};
 use crate::error::ArchiveSyncError;
 use crate::history::read_capture_window;
 use crate::key_store::ArchiveKeyStore;
@@ -16,125 +14,36 @@ use crate::spool::{
     ArchiveSpool, BlockedArchiveRecord, PendingArchiveRequest, ARCHIVE_RECORD_POLICY_VERSION,
 };
 
-pub(crate) async fn capture_snapshot<U: ArchiveUploader>(
-    uploader: &U,
-    spool: &mut ArchiveSpool,
-    key_store: &dyn ArchiveKeyStore,
-    snapshot: &ArchiveSnapshot,
-    report: &mut ArchiveCycleReport,
-    cancel: Option<&CancellationToken>,
-    prefetched_source_bytes: Option<&[u8]>,
-) -> Result<(), &'static str> {
-    if spool.cleanup_required() {
-        match spool.finish_cleanup(key_store) {
-            Ok(()) => return Err("purged"),
-            Err(err) => {
-                report.failed += 1;
-                record_error(report, err.class());
-                report.halted = true;
-                return Err("halt");
-            }
-        }
-    }
-    let loaded_source_bytes;
-    let source_bytes = match prefetched_source_bytes {
-        Some(bytes) => bytes,
-        None => {
-            loaded_source_bytes = match snapshot_bytes(snapshot) {
-                Ok(bytes) => bytes,
-                Err(_) => {
-                    report.failed += 1;
-                    record_error(report, "archive_io");
-                    return Err("archive_io");
-                }
-            };
-            loaded_source_bytes.as_ref()
-        }
-    };
-    if let Err(class) = persist_snapshot_bytes(spool, snapshot, source_bytes, report, cancel) {
-        if class == "purged" || class == "halt" {
-            return Err(class);
-        }
-    }
-    if cancel.is_some_and(CancellationToken::is_cancelled) {
-        return Ok(());
-    }
-    let slices = match spool.slices_for_part(
-        snapshot.source,
-        &snapshot.source_session_id,
-        &snapshot.source_transcript_part_id,
-    ) {
-        Ok(slices) => slices,
-        Err(err) => {
-            report.failed += 1;
-            record_error(report, err.class());
-            return Ok(());
-        }
-    };
-    for pending in slices {
-        if cancel.is_some_and(CancellationToken::is_cancelled) {
-            return Ok(());
-        }
-        match upload_pending(
-            uploader,
-            spool,
-            key_store,
-            &pending,
-            Some(source_bytes),
-            cancel,
-        )
-        .await
-        {
-            Ok(UploadOutcome::Advanced) => {
-                report.uploaded += 1;
-                record_validated_target(report, snapshot);
-            }
-            Ok(UploadOutcome::Blocked) => {
-                report.blocked += 1;
-                return Ok(());
-            }
-            Ok(UploadOutcome::Frozen) => {
-                report.frozen = true;
-                return Ok(());
-            }
-            Ok(UploadOutcome::Purged) => return Err("purged"),
-            Ok(UploadOutcome::Halt(class)) => {
-                report.failed += 1;
-                record_error(report, class);
-                report.halted = true;
-                return Err("halt");
-            }
-            Err(class) => {
-                report.failed += 1;
-                record_error(report, class);
-                return Err(class);
-            }
-        }
-    }
-    Ok(())
-}
-
 fn persist_observed_slices(
     spool: &ArchiveSpool,
     snapshot: &ArchiveSnapshot,
     bytes: &[u8],
     report: &mut ArchiveCycleReport,
+    now_ms: i64,
     cancel: Option<&CancellationToken>,
-) -> Result<(u32, bool), &'static str> {
-    match spool.blocked_part(
+) -> Result<u32, &'static str> {
+    let mut current_part = match spool.current_part(
         snapshot.source,
         &snapshot.source_session_id,
-        &snapshot.source_transcript_part_id,
+        &snapshot.base_transcript_part_id,
     ) {
+        Ok(part) => part,
+        Err(err) => {
+            report.failed += 1;
+            record_error(report, err.class());
+            return Err(err.class());
+        }
+    };
+    match spool.blocked_part(snapshot.source, &snapshot.source_session_id, &current_part) {
         Ok(Some(blocked)) if blocked.matches_source(bytes) => {
             report.blocked += 1;
-            return Ok((0, false));
+            return Ok(0);
         }
         Ok(Some(_)) => {
             if let Err(err) = spool.clear_blocked_part(
                 snapshot.source,
                 &snapshot.source_session_id,
-                &snapshot.source_transcript_part_id,
+                &current_part,
             ) {
                 report.failed += 1;
                 record_error(report, err.class());
@@ -148,49 +57,41 @@ fn persist_observed_slices(
             return Err(err.class());
         }
     }
-    let progress = match spool.progress_part(
-        snapshot.source,
-        &snapshot.source_session_id,
-        &snapshot.source_transcript_part_id,
-    ) {
-        Ok(progress) => progress,
-        Err(err) => {
-            report.failed += 1;
-            record_error(report, err.class());
-            return Err(err.class());
-        }
-    };
-    let validated_against_progress = progress.is_some();
-    let existing = match spool.slices_for_part(
-        snapshot.source,
-        &snapshot.source_session_id,
-        &snapshot.source_transcript_part_id,
-    ) {
-        Ok(existing) => existing,
-        Err(err) => {
-            report.failed += 1;
-            record_error(report, err.class());
-            return Err(err.class());
-        }
-    };
+    let mut progress =
+        match spool.progress_part(snapshot.source, &snapshot.source_session_id, &current_part) {
+            Ok(progress) => progress,
+            Err(err) => {
+                report.failed += 1;
+                record_error(report, err.class());
+                return Err(err.class());
+            }
+        };
+    let mut existing =
+        match spool.slices_for_part(snapshot.source, &snapshot.source_session_id, &current_part) {
+            Ok(existing) => existing,
+            Err(err) => {
+                report.failed += 1;
+                record_error(report, err.class());
+                return Err(err.class());
+            }
+        };
+    let mut prior_from_pending = !existing.is_empty();
     let mut prior = match existing
         .iter()
         .max_by_key(|record| record.expected_record_count)
     {
         Some(last) => Some(pending_checkpoint(last)?),
-        None => progress,
+        None => progress.clone(),
     };
     let mut persisted = 0u32;
-    let mut completed = true;
     loop {
         if cancel.is_some_and(CancellationToken::is_cancelled) {
-            completed = false;
             break;
         }
-        let pending = match build_bounded_pending(
+        let pending = match build_bounded_pending_for_part(
             snapshot.source,
             &snapshot.source_session_id,
-            snapshot.transcript_part_identity.as_deref(),
+            &current_part,
             bytes,
             snapshot.observed_at,
             prior.as_ref(),
@@ -205,7 +106,7 @@ fn persist_observed_slices(
                 let blocked = BlockedArchiveRecord {
                     source: snapshot.source,
                     source_session_id: snapshot.source_session_id.clone(),
-                    source_transcript_part_id: snapshot.source_transcript_part_id.clone(),
+                    source_transcript_part_id: current_part.clone(),
                     source_record_identity: Some(source_record_identity),
                     record_size_bytes: Some(record_size_bytes),
                     limit_bytes,
@@ -223,11 +124,90 @@ fn persist_observed_slices(
                 report.blocked += 1;
                 report.failed += 1;
                 record_error(report, "archive_record_too_large");
-                return Ok((persisted, validated_against_progress));
+                return Ok(persisted);
+            }
+            Err(
+                err @ ArchiveSyncError::Scan(
+                    collector_archive::JsonlError::HistoricalPrefixChanged
+                    | collector_archive::JsonlError::HistoricalPrefixShortened,
+                ),
+            ) => {
+                if prior_from_pending {
+                    if let Err(clear_error) = spool.clear_slices_for_part(
+                        snapshot.source,
+                        &snapshot.source_session_id,
+                        &current_part,
+                    ) {
+                        report.failed += 1;
+                        record_error(report, clear_error.class());
+                        return Err(clear_error.class());
+                    }
+                    existing.clear();
+                    prior = progress.clone();
+                    prior_from_pending = false;
+                    continue;
+                }
+                let Some(previous) = progress.as_ref() else {
+                    report.failed += 1;
+                    record_error(report, err.class());
+                    return Err(err.class());
+                };
+                let reason = match err {
+                    ArchiveSyncError::Scan(
+                        collector_archive::JsonlError::HistoricalPrefixChanged,
+                    ) => "prefix_changed",
+                    ArchiveSyncError::Scan(
+                        collector_archive::JsonlError::HistoricalPrefixShortened,
+                    ) => "prefix_shortened",
+                    _ => unreachable!("matched historical prefix error"),
+                };
+                let previous_offset = previous.last_complete_byte_offset;
+                let new_part = match collector_archive::rewrite_transcript_part_id(
+                    snapshot.source,
+                    &current_part,
+                    bytes,
+                ) {
+                    Ok(part) => part,
+                    Err(error) => {
+                        let error = ArchiveSyncError::Scan(error);
+                        report.failed += 1;
+                        record_error(report, error.class());
+                        return Err(error.class());
+                    }
+                };
+                if let Err(error) = spool.fork_part(
+                    snapshot.source,
+                    &snapshot.source_session_id,
+                    &snapshot.base_transcript_part_id,
+                    &current_part,
+                    &new_part,
+                    reason,
+                    now_ms,
+                ) {
+                    report.failed += 1;
+                    record_error(report, error.class());
+                    return Err(error.class());
+                }
+                report.fork_events.push(ArchiveForkEvent {
+                    source: snapshot.source,
+                    source_session_id: snapshot.source_session_id.clone(),
+                    previous_part_id: current_part.clone(),
+                    new_part_id: new_part.clone(),
+                    reason: reason.to_string(),
+                    previous_offset,
+                    new_size: bytes.len() as u64,
+                });
+                report.forked += 1;
+                current_part = new_part;
+                progress = None;
+                existing.clear();
+                prior = None;
+                prior_from_pending = false;
+                continue;
             }
             Err(err) => {
                 report.failed += 1;
-                record_target_error(report, snapshot, err.class());
+                record_error(report, err.class());
                 return Err(err.class());
             }
         };
@@ -245,42 +225,16 @@ fn persist_observed_slices(
         }
         persisted += 1;
         prior = Some(pending_checkpoint(&pending)?);
+        prior_from_pending = true;
     }
-    Ok((persisted, validated_against_progress && completed))
-}
-
-fn record_target_error(
-    report: &mut ArchiveCycleReport,
-    snapshot: &ArchiveSnapshot,
-    error_class: &str,
-) {
-    record_error(report, error_class);
-    let error = ArchiveTargetError {
-        error_class: error_class.to_string(),
-        source: snapshot.source,
-        source_session_id: snapshot.source_session_id.clone(),
-        source_transcript_part_id: snapshot.source_transcript_part_id.clone(),
-    };
-    if !report.target_errors.contains(&error) {
-        report.target_errors.push(error);
-    }
-}
-
-fn record_validated_target(report: &mut ArchiveCycleReport, snapshot: &ArchiveSnapshot) {
-    let target = ArchiveTarget {
-        source: snapshot.source,
-        source_session_id: snapshot.source_session_id.clone(),
-        source_transcript_part_id: snapshot.source_transcript_part_id.clone(),
-    };
-    if !report.validated_targets.contains(&target) {
-        report.validated_targets.push(target);
-    }
+    Ok(persisted)
 }
 
 pub(crate) fn persist_snapshot(
     spool: &ArchiveSpool,
     snapshot: &ArchiveSnapshot,
     report: &mut ArchiveCycleReport,
+    now_ms: i64,
     cancel: Option<&CancellationToken>,
     prefetched_source_bytes: Option<&[u8]>,
 ) -> Result<(), &'static str> {
@@ -296,7 +250,7 @@ pub(crate) fn persist_snapshot(
             loaded_source_bytes.as_ref()
         }
     };
-    persist_snapshot_bytes(spool, snapshot, source_bytes, report, cancel)
+    persist_snapshot_bytes(spool, snapshot, source_bytes, report, now_ms, cancel)
 }
 
 fn persist_snapshot_bytes(
@@ -304,13 +258,10 @@ fn persist_snapshot_bytes(
     snapshot: &ArchiveSnapshot,
     bytes: &[u8],
     report: &mut ArchiveCycleReport,
+    now_ms: i64,
     cancel: Option<&CancellationToken>,
 ) -> Result<(), &'static str> {
-    let (persisted, validated_against_progress) =
-        persist_observed_slices(spool, snapshot, bytes, report, cancel)?;
-    if validated_against_progress {
-        record_validated_target(report, snapshot);
-    }
+    let persisted = persist_observed_slices(spool, snapshot, bytes, report, now_ms, cancel)?;
     report.captured += persisted;
     Ok(())
 }
