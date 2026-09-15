@@ -1281,6 +1281,101 @@ async fn unchanged_unsupported_record_is_durably_blocked_without_retrying() {
 }
 
 #[tokio::test]
+async fn fitting_slices_upload_before_a_later_oversized_record_stays_blocked() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let source = ArchiveSource::Claude;
+    let session = "partially-blocked-session";
+    let part = default_transcript_part_id(source);
+    let mut bytes = Vec::new();
+    for (index, pad) in [
+        (0, 9_000_000),
+        (1, 9_000_000),
+        (2, MAX_ARCHIVE_UPLOAD_BYTES + 1),
+    ] {
+        let line = format!(
+            r#"{{"sessionId":"{session}","uuid":"r{index}","pad":"{}"}}"#,
+            "x".repeat(pad)
+        );
+        bytes.extend_from_slice(line.as_bytes());
+        bytes.push(b'\n');
+    }
+    let current = snapshot(source, &bytes, 10);
+    let uploader = AckingUploader::new();
+
+    let first = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        std::slice::from_ref(&current),
+        ArchivePolicy::Enrolled,
+        &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
+        None,
+    )
+    .await;
+    assert_eq!(first.uploaded, 2);
+    assert_eq!(first.failed, 1);
+    assert_eq!(first.blocked, 1);
+    assert_eq!(uploader.bodies.borrow().len(), 2);
+    assert!(spool
+        .blocked_part(source, session, &part)
+        .unwrap()
+        .is_some());
+
+    let second = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        std::slice::from_ref(&current),
+        ArchivePolicy::Enrolled,
+        &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
+        None,
+    )
+    .await;
+    assert_eq!(second.uploaded, 0);
+    assert_eq!(second.failed, 0);
+    assert_eq!(second.blocked, 1);
+    assert_eq!(uploader.bodies.borrow().len(), 2);
+    assert!(spool
+        .slices_for_part(source, session, &part)
+        .unwrap()
+        .is_empty());
+
+    let fitting = format!(
+        r#"{{"sessionId":"{session}","uuid":"r3","pad":"{}"}}"#,
+        "x".repeat(1_000)
+    );
+    bytes.extend_from_slice(fitting.as_bytes());
+    bytes.push(b'\n');
+    let third = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[snapshot(source, &bytes, 11)],
+        ArchivePolicy::Enrolled,
+        &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
+        None,
+    )
+    .await;
+    assert_eq!(third.uploaded, 0);
+    assert_eq!(third.failed, 1);
+    assert_eq!(third.blocked, 1);
+    assert_eq!(uploader.bodies.borrow().len(), 2);
+    assert!(spool
+        .blocked_part(source, session, &part)
+        .unwrap()
+        .is_some());
+    assert!(spool
+        .slices_for_part(source, session, &part)
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
 async fn server_stored_element_rejection_is_blocked_without_format_fallback() {
     let dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();

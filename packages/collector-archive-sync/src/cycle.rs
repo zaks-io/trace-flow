@@ -154,6 +154,7 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
         } else {
             None
         };
+        let mut persist_blocked = false;
         if policy.captures() {
             if let (Some(snapshot), Some(source_bytes)) = (part.snapshot, source_bytes.as_deref()) {
                 let blocked_before = report.blocked;
@@ -165,9 +166,7 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
                     cancel,
                     Some(source_bytes),
                 );
-                if report.blocked > blocked_before {
-                    continue;
-                }
+                persist_blocked = report.blocked > blocked_before;
             }
         }
         if report.purged || report.frozen || report.halted {
@@ -241,7 +240,9 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
                 }
             }
             if part_blocked {
-                report.blocked += 1;
+                if !persist_blocked {
+                    report.blocked += 1;
+                }
                 if snapshot_read_failed && !policy.captures() {
                     report.failed += 1;
                     record_error(&mut report, "archive_io");
