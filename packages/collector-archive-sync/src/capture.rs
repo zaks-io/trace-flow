@@ -14,117 +14,12 @@ use crate::spool::{
     ArchiveSpool, BlockedArchiveRecord, PendingArchiveRequest, ARCHIVE_RECORD_POLICY_VERSION,
 };
 
-pub(crate) async fn capture_snapshot<U: ArchiveUploader>(
-    uploader: &U,
-    spool: &mut ArchiveSpool,
-    key_store: &dyn ArchiveKeyStore,
-    snapshot: &ArchiveSnapshot,
-    report: &mut ArchiveCycleReport,
-    cancel: Option<&CancellationToken>,
-    prefetched_source_bytes: Option<&[u8]>,
-) -> Result<(), &'static str> {
-    if spool.cleanup_required() {
-        match spool.finish_cleanup(key_store) {
-            Ok(()) => return Err("purged"),
-            Err(err) => {
-                report.failed += 1;
-                record_error(report, err.class());
-                report.halted = true;
-                return Err("halt");
-            }
-        }
-    }
-    let loaded_source_bytes;
-    let source_bytes = match prefetched_source_bytes {
-        Some(bytes) => bytes,
-        None => {
-            loaded_source_bytes = match snapshot_bytes(snapshot) {
-                Ok(bytes) => bytes,
-                Err(_) => {
-                    report.failed += 1;
-                    record_error(report, "archive_io");
-                    return Err("archive_io");
-                }
-            };
-            loaded_source_bytes.as_ref()
-        }
-    };
-    if let Err(class) = persist_snapshot_bytes(spool, snapshot, source_bytes, report, cancel) {
-        if class == "purged" || class == "halt" {
-            return Err(class);
-        }
-    }
-    if cancel.is_some_and(CancellationToken::is_cancelled) {
-        return Ok(());
-    }
-    let current_part = match spool.current_part(
-        snapshot.source,
-        &snapshot.source_session_id,
-        &snapshot.base_transcript_part_id,
-    ) {
-        Ok(part) => part,
-        Err(err) => {
-            report.failed += 1;
-            record_error(report, err.class());
-            return Ok(());
-        }
-    };
-    let slices =
-        match spool.slices_for_part(snapshot.source, &snapshot.source_session_id, &current_part) {
-            Ok(slices) => slices,
-            Err(err) => {
-                report.failed += 1;
-                record_error(report, err.class());
-                return Ok(());
-            }
-        };
-    for pending in slices {
-        if cancel.is_some_and(CancellationToken::is_cancelled) {
-            return Ok(());
-        }
-        match upload_pending(
-            uploader,
-            spool,
-            key_store,
-            &pending,
-            Some(source_bytes),
-            cancel,
-        )
-        .await
-        {
-            Ok(UploadOutcome::Advanced) => {
-                report.uploaded += 1;
-            }
-            Ok(UploadOutcome::Blocked) => {
-                report.blocked += 1;
-                return Ok(());
-            }
-            Ok(UploadOutcome::Frozen) => {
-                report.frozen = true;
-                return Ok(());
-            }
-            Ok(UploadOutcome::Purged) => return Err("purged"),
-            Ok(UploadOutcome::Halt(class)) => {
-                report.failed += 1;
-                record_error(report, class);
-                report.halted = true;
-                return Err("halt");
-            }
-            Err(class) => {
-                report.failed += 1;
-                record_error(report, class);
-                return Err(class);
-            }
-        }
-    }
-    Ok(())
-}
-
 fn persist_observed_slices(
     spool: &ArchiveSpool,
     snapshot: &ArchiveSnapshot,
     bytes: &[u8],
     report: &mut ArchiveCycleReport,
+    now_ms: i64,
     cancel: Option<&CancellationToken>,
 ) -> Result<u32, &'static str> {
     let mut current_part = match spool.current_part(
@@ -287,7 +182,7 @@ fn persist_observed_slices(
                     &current_part,
                     &new_part,
                     reason,
-                    snapshot.observed_at,
+                    now_ms,
                 ) {
                     report.failed += 1;
                     record_error(report, error.class());
@@ -339,6 +234,7 @@ pub(crate) fn persist_snapshot(
     spool: &ArchiveSpool,
     snapshot: &ArchiveSnapshot,
     report: &mut ArchiveCycleReport,
+    now_ms: i64,
     cancel: Option<&CancellationToken>,
     prefetched_source_bytes: Option<&[u8]>,
 ) -> Result<(), &'static str> {
@@ -354,7 +250,7 @@ pub(crate) fn persist_snapshot(
             loaded_source_bytes.as_ref()
         }
     };
-    persist_snapshot_bytes(spool, snapshot, source_bytes, report, cancel)
+    persist_snapshot_bytes(spool, snapshot, source_bytes, report, now_ms, cancel)
 }
 
 fn persist_snapshot_bytes(
@@ -362,9 +258,10 @@ fn persist_snapshot_bytes(
     snapshot: &ArchiveSnapshot,
     bytes: &[u8],
     report: &mut ArchiveCycleReport,
+    now_ms: i64,
     cancel: Option<&CancellationToken>,
 ) -> Result<(), &'static str> {
-    let persisted = persist_observed_slices(spool, snapshot, bytes, report, cancel)?;
+    let persisted = persist_observed_slices(spool, snapshot, bytes, report, now_ms, cancel)?;
     report.captured += persisted;
     Ok(())
 }

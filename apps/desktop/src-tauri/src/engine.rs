@@ -740,18 +740,14 @@ fn cycle_archive_config(
             }
         }
     }
-    let (mut config, error) = match (archive, confirmed) {
+    match (archive, confirmed) {
         (Some((url, keys)), Some(record)) => {
             sync::prepare_confirmed_archive(paths, org_id, url, keys, record)
         }
         (None, Some(record)) => sync::prepare_desktop_confirmed_archive(paths, org_id, record),
         (Some((url, keys)), None) => sync::prepare_serialized_archive(paths, org_id, url, keys),
         (None, None) => sync::prepare_desktop_serialized_archive(paths, org_id),
-    };
-    if let Some(config) = &mut config {
-        config.set_fork_event_sink(log_archive_fork);
     }
-    (config, error)
 }
 
 fn log_archive_fork(fork: &sync::ArchiveForkEvent) {
@@ -916,6 +912,9 @@ fn run_cycle_blocking_with_policy_memory(
             }
             if let Some(archive) = &outcome.archive {
                 tracing::info!(history = ?archive.history, "archive history progress");
+                for fork in &archive.fork_events {
+                    log_archive_fork(fork);
+                }
                 failed += archive.failed;
                 archive_recovered |= archive.first_error.is_none()
                     && (archive.uploaded > 0 || archive.captured > 0 || archive.purged);

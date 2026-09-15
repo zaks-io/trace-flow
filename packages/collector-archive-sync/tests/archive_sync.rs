@@ -26,6 +26,7 @@ use tokio_util::sync::CancellationToken;
 const CLAUDE: &[u8] = include_bytes!("../../collector-archive/tests/fixtures/claude.jsonl");
 const CODEX: &[u8] = include_bytes!("../../collector-archive/tests/fixtures/codex.jsonl");
 const ALL_ARCHIVE_SOURCES: &[ArchiveSource] = &[ArchiveSource::Claude, ArchiveSource::Codex];
+const TEST_NOW_MS: i64 = 1_800_000_000_000;
 
 fn plan_for(sources: &[ArchiveSource]) -> ArchiveHistoryPlan {
     ArchiveHistoryPlan::new(
@@ -131,7 +132,6 @@ fn snapshot(source: ArchiveSource, bytes: &[u8], observed_at: i64) -> ArchiveSna
         source_session_id,
         base_transcript_part_id: default_transcript_part_id(source),
         source_transcript_part_id: default_transcript_part_id(source),
-        transcript_part_identity: None,
         bytes: bytes.to_vec(),
         deferred_file: None,
         observed_at,
@@ -147,14 +147,12 @@ fn snapshot_for_path(
     observed_at: i64,
 ) -> ArchiveSnapshot {
     let source_session_id = archive_source_session_id(source, bytes).unwrap();
-    let (source_transcript_part_id, transcript_part_identity) =
-        transcript_part_for(source, Some(path), bytes).unwrap();
+    let (source_transcript_part_id, _) = transcript_part_for(source, Some(path), bytes).unwrap();
     ArchiveSnapshot {
         source,
         source_session_id,
         base_transcript_part_id: source_transcript_part_id.clone(),
         source_transcript_part_id,
-        transcript_part_identity,
         bytes: bytes.to_vec(),
         deferred_file: None,
         observed_at,
@@ -186,9 +184,16 @@ fn pending_from_bytes(
     observed_at: i64,
 ) -> PendingArchiveRequest {
     let session = collector_archive_sync::archive_source_session_id(source, bytes).unwrap();
-    let scan =
-        collector_archive_sync::scan_snapshot(source, &session, None, bytes, observed_at, None)
-            .unwrap();
+    let part = default_transcript_part_id(source);
+    let scan = collector_archive_sync::scan_snapshot_part(
+        source,
+        &session,
+        &part,
+        bytes,
+        observed_at,
+        None,
+    )
+    .unwrap();
     let request = scan.into_upload_request(bytes).unwrap();
     PendingArchiveRequest::from_upload(source, &request, serde_json::to_vec(&request).unwrap())
 }
@@ -514,6 +519,7 @@ async fn exact_body_retry_posts_the_persisted_bytes() {
         &[],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -543,6 +549,7 @@ async fn acknowledgement_mismatch_does_not_advance() {
         &[],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -580,6 +587,7 @@ async fn session_error_does_not_block_other_sessions() {
         &[],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -615,6 +623,7 @@ async fn cursor_snapshots_are_not_required_for_jsonl_uploads() {
         &[claude],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -641,6 +650,7 @@ async fn unauthorized_source_is_neither_captured_nor_uploaded() {
         &[snapshot(ArchiveSource::Codex, CODEX, 11)],
         ArchivePolicy::Enrolled,
         &plan_for(&[ArchiveSource::Claude]),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -680,6 +690,7 @@ async fn terminal_revocation_purges_spool_key_and_progress() {
         &[],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -714,6 +725,7 @@ async fn expired_credential_retains_pending_spool_key_and_progress() {
         &[],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -743,6 +755,7 @@ async fn local_revoked_policy_purges_without_uploading() {
         &[snapshot(ArchiveSource::Claude, CLAUDE, 10)],
         ArchivePolicy::Revoked,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -768,6 +781,7 @@ async fn server_frozen_denial_does_not_purge_or_advance() {
         &[snapshot(ArchiveSource::Claude, CLAUDE, 10)],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -800,6 +814,7 @@ async fn live_frozen_during_capture_stops_later_sessions() {
         &[claude, codex],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -834,6 +849,7 @@ async fn grace_and_frozen_retain_without_uploading() {
             &[snapshot(ArchiveSource::Claude, CLAUDE, 10)],
             policy,
             &plan_for(ALL_ARCHIVE_SOURCES),
+            TEST_NOW_MS,
             None,
         )
         .await;
@@ -868,6 +884,7 @@ async fn inactive_pending_denial_stops_later_parts_without_capturing() {
         &[later],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1130,10 +1147,10 @@ async fn oversized_session_splits_at_byte_limit() {
     let keys = MemoryKeyStore::new();
     let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
     let bytes = padded_records(24, 400_000, "big-session");
-    let full = collector_archive_sync::scan_snapshot(
+    let full = collector_archive_sync::scan_snapshot_part(
         ArchiveSource::Claude,
         "big-session",
-        None,
+        &default_transcript_part_id(ArchiveSource::Claude),
         &bytes,
         10,
         None,
@@ -1151,6 +1168,7 @@ async fn oversized_session_splits_at_byte_limit() {
         &[snapshot(ArchiveSource::Claude, &bytes, 10)],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1194,6 +1212,7 @@ async fn unchanged_unsupported_record_is_durably_blocked_without_retrying() {
         std::slice::from_ref(&current),
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1231,6 +1250,7 @@ async fn unchanged_unsupported_record_is_durably_blocked_without_retrying() {
         &[current],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1248,6 +1268,7 @@ async fn unchanged_unsupported_record_is_durably_blocked_without_retrying() {
         &[snapshot(ArchiveSource::Claude, &changed, 11)],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1278,6 +1299,7 @@ async fn server_stored_element_rejection_is_blocked_without_format_fallback() {
         std::slice::from_ref(&current),
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1316,6 +1338,7 @@ async fn server_stored_element_rejection_is_blocked_without_format_fallback() {
         &[current],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1448,6 +1471,7 @@ async fn changed_prefix_after_ack_forks_and_uploads_from_record_zero() {
         &[original_snapshot],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1469,6 +1493,7 @@ async fn changed_prefix_after_ack_forks_and_uploads_from_record_zero() {
         &[snapshot(ArchiveSource::Codex, &changed, 11)],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1532,6 +1557,7 @@ async fn shortened_compaction_forks_and_uploads_the_rewritten_prefix() {
         &[snapshot(ArchiveSource::Codex, original, 10)],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1544,6 +1570,7 @@ async fn shortened_compaction_forks_and_uploads_the_rewritten_prefix() {
         &[snapshot(ArchiveSource::Codex, compacted, 11)],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1563,6 +1590,92 @@ async fn shortened_compaction_forks_and_uploads_the_rewritten_prefix() {
         .unwrap()
         .unwrap();
     assert_eq!(generation.history[0].reason, "prefix_shortened");
+    assert_eq!(generation.history[0].superseded_at, TEST_NOW_MS);
+}
+
+#[tokio::test]
+async fn compacted_baseline_completes_at_the_current_local_extent() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let original = br#"{"type":"session_meta","payload":{"id":"baseline-compaction"}}
+{"type":"event_msg","payload":{"value":"before"}}
+{"type":"event_msg","payload":{"value":"after"}}
+"#;
+    let partial = br#"{"type":"session_meta","payload":{"id":"baseline-compaction"}}
+{"type":"event_msg","payload":{"value":"before"}}
+"#;
+    let compacted_complete = br#"{"type":"session_meta","payload":{"id":"baseline-compaction"}}
+{"type":"compacted","payload":{"summary":"current"}}
+"#;
+    let mut compacted = compacted_complete.to_vec();
+    compacted.extend_from_slice(br#"{"type":"event_msg","payload":{"value":"unfinished"}"#);
+    let source = ArchiveSource::Codex;
+    let session = "baseline-compaction";
+    let base_part = default_transcript_part_id(source);
+    let state = ArchiveHistoryState::new(
+        ArchiveHistoryGeneration {
+            source,
+            history_choice: ArchiveHistoryChoice::AllHistory,
+            authorized_at: 10,
+        },
+        10,
+        vec![ArchiveBaselineTarget {
+            source_session_id: session.to_string(),
+            source_transcript_part_id: base_part.clone(),
+            activity_rank_ms: 10,
+            registered_size_bytes: original.len() as u64,
+            registered_complete_byte_offset: original.len() as u64,
+        }],
+    );
+    let initial_plan =
+        ArchiveHistoryPlan::new(vec![state.clone()]).with_present_part_extents(vec![(
+            source,
+            session.to_string(),
+            base_part.clone(),
+            partial.len() as u64,
+        )]);
+    let initial = run_archive_cycle(
+        &AckingUploader::new(),
+        &mut spool,
+        &keys,
+        &[snapshot(source, partial, 10)],
+        ArchivePolicy::Enrolled,
+        &initial_plan,
+        TEST_NOW_MS,
+        None,
+    )
+    .await;
+    assert_eq!(
+        initial.history[0].initial_import,
+        ArchiveInitialImport::InProgress
+    );
+
+    let current_plan = ArchiveHistoryPlan::new(vec![state]).with_present_part_extents(vec![(
+        source,
+        session.to_string(),
+        base_part,
+        compacted_complete.len() as u64,
+    )]);
+    let report = run_archive_cycle(
+        &AckingUploader::new(),
+        &mut spool,
+        &keys,
+        &[snapshot(source, &compacted, 11)],
+        ArchivePolicy::Enrolled,
+        &current_plan,
+        TEST_NOW_MS,
+        None,
+    )
+    .await;
+
+    assert_eq!(report.failed, 0);
+    assert_eq!(report.forked, 1);
+    assert_eq!(report.history[0].completed_targets, 1);
+    assert_eq!(
+        report.history[0].initial_import,
+        ArchiveInitialImport::Complete
+    );
 }
 
 #[tokio::test]
@@ -1580,6 +1693,7 @@ async fn changed_prefix_drops_unacknowledged_slices_before_forking_from_progress
         &[snapshot(ArchiveSource::Codex, original, 10)],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1616,6 +1730,7 @@ async fn changed_prefix_drops_unacknowledged_slices_before_forking_from_progress
         &[snapshot(ArchiveSource::Codex, rewritten, 12)],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1647,6 +1762,7 @@ async fn a_second_rewrite_forks_from_the_current_part() {
         &[snapshot(ArchiveSource::Codex, original, 10)],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1661,6 +1777,7 @@ async fn a_second_rewrite_forks_from_the_current_part() {
         &[first_snapshot],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1676,6 +1793,7 @@ async fn a_second_rewrite_forks_from_the_current_part() {
         &[second_snapshot],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1709,6 +1827,7 @@ async fn append_after_a_fork_continues_on_the_current_part() {
         &[snapshot(ArchiveSource::Codex, original, 10)],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1723,6 +1842,7 @@ async fn append_after_a_fork_continues_on_the_current_part() {
         &[rewrite_snapshot],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1739,6 +1859,7 @@ async fn append_after_a_fork_continues_on_the_current_part() {
         &[append_snapshot],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1775,6 +1896,7 @@ async fn server_rejection_keeps_exact_single_record_metadata() {
         &[],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1823,6 +1945,7 @@ async fn unsupported_wire_stays_pending_and_retries_the_identical_body() {
             &[],
             ArchivePolicy::Enrolled,
             &plan_for(ALL_ARCHIVE_SOURCES),
+            TEST_NOW_MS,
             None,
         )
         .await;
@@ -1854,10 +1977,10 @@ async fn bounded_upload_failure_keeps_later_records_after_source_disappears() {
     let keys = MemoryKeyStore::new();
     let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
     let bytes = padded_records(300, 30_000, "disappear-session");
-    let first = collector_archive_sync::build_bounded_pending(
+    let first = collector_archive_sync::build_bounded_pending_for_part(
         ArchiveSource::Claude,
         "disappear-session",
-        None,
+        &default_transcript_part_id(ArchiveSource::Claude),
         &bytes,
         10,
         None,
@@ -1877,6 +2000,7 @@ async fn bounded_upload_failure_keeps_later_records_after_source_disappears() {
         &[snapshot(ArchiveSource::Claude, &bytes, 10)],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1921,6 +2045,7 @@ async fn bounded_upload_failure_keeps_later_records_after_source_disappears() {
         &[],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -1951,10 +2076,10 @@ async fn existing_pending_does_not_strand_later_observed_bytes() {
     let keys = MemoryKeyStore::new();
     let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
     let bytes = padded_records(300, 30_000, "pending-session");
-    let first = collector_archive_sync::build_bounded_pending(
+    let first = collector_archive_sync::build_bounded_pending_for_part(
         ArchiveSource::Claude,
         "pending-session",
-        None,
+        &default_transcript_part_id(ArchiveSource::Claude),
         &bytes,
         10,
         None,
@@ -1991,6 +2116,7 @@ async fn existing_pending_does_not_strand_later_observed_bytes() {
         &[snapshot(ArchiveSource::Claude, &bytes, 11)],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -2027,6 +2153,7 @@ async fn existing_pending_does_not_strand_later_observed_bytes() {
         &[],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -2046,10 +2173,10 @@ async fn oversized_session_splits_at_observation_count() {
     let keys = MemoryKeyStore::new();
     let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
     let bytes = padded_records(5, 8, "count-session");
-    let pending = collector_archive_sync::build_bounded_pending_with_limits(
+    let pending = collector_archive_sync::build_bounded_pending_for_part_with_limits(
         ArchiveSource::Claude,
         "count-session",
-        None,
+        &default_transcript_part_id(ArchiveSource::Claude),
         &bytes,
         10,
         None,
@@ -2069,6 +2196,7 @@ async fn oversized_session_splits_at_observation_count() {
         &[],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -2078,10 +2206,10 @@ async fn oversized_session_splits_at_observation_count() {
         .unwrap()
         .unwrap();
     assert_eq!(progress.record_count, 2);
-    let rest = collector_archive_sync::build_bounded_pending_with_limits(
+    let rest = collector_archive_sync::build_bounded_pending_for_part_with_limits(
         ArchiveSource::Claude,
         "count-session",
-        None,
+        &default_transcript_part_id(ArchiveSource::Claude),
         &bytes,
         11,
         Some(&progress),
@@ -2116,6 +2244,7 @@ async fn acknowledgement_at_exact_cap_clears_pending() {
         &[],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -2193,6 +2322,7 @@ async fn corrupt_claude_pending_does_not_block_codex() {
         &[],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -2237,7 +2367,6 @@ async fn claude_parent_and_subagent_same_session_upload_independently() {
             source_session_id: "session-1".to_string(),
             base_transcript_part_id: parent_part.clone(),
             source_transcript_part_id: parent_part.clone(),
-            transcript_part_identity: None,
             bytes: parent_bytes.to_vec(),
             deferred_file: None,
             observed_at: 10,
@@ -2249,7 +2378,6 @@ async fn claude_parent_and_subagent_same_session_upload_independently() {
             source_session_id: "session-1".to_string(),
             base_transcript_part_id: sub_part.clone(),
             source_transcript_part_id: sub_part.clone(),
-            transcript_part_identity: Some("agent-001".to_string()),
             bytes: subagent_bytes.to_vec(),
             deferred_file: None,
             observed_at: 11,
@@ -2265,6 +2393,7 @@ async fn claude_parent_and_subagent_same_session_upload_independently() {
         &snapshots,
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -2334,10 +2463,6 @@ async fn missing_or_empty_agent_id_subagent_does_not_collide_with_parent_across_
         let parent = snapshot_for_path(ArchiveSource::Claude, parent_path, parent_bytes, 11);
         let parent_part = default_transcript_part_id(ArchiveSource::Claude);
         let child_part = claude_transcript_part_id(expected_identity).unwrap();
-        assert_eq!(
-            child.transcript_part_identity.as_deref(),
-            Some(expected_identity)
-        );
         assert_eq!(child.source_transcript_part_id, child_part);
         assert_eq!(parent.source_transcript_part_id, parent_part);
         assert_ne!(child_part, parent_part);
@@ -2351,6 +2476,7 @@ async fn missing_or_empty_agent_id_subagent_does_not_collide_with_parent_across_
             &[child.clone(), parent.clone()],
             ArchivePolicy::Enrolled,
             &plan_for(ALL_ARCHIVE_SOURCES),
+            TEST_NOW_MS,
             None,
         )
         .await;
@@ -2388,6 +2514,7 @@ async fn missing_or_empty_agent_id_subagent_does_not_collide_with_parent_across_
             &[child, parent_append],
             ArchivePolicy::Enrolled,
             &plan_for(ALL_ARCHIVE_SOURCES),
+            TEST_NOW_MS,
             None,
         )
         .await;
@@ -2620,6 +2747,7 @@ async fn session_aggregate_duplicate_parent_rescan_advances() {
         &[],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -2653,6 +2781,7 @@ async fn failing_keyring_delete_does_not_claim_purge() {
         &[snapshot(ArchiveSource::Claude, CLAUDE, 10)],
         ArchivePolicy::Revoked,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -2680,6 +2809,7 @@ async fn failing_keyring_delete_does_not_claim_purge() {
         &[],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -2709,6 +2839,7 @@ async fn failing_keyring_delete_does_not_claim_purge() {
         &[later],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -2742,6 +2873,7 @@ async fn enrollment_invalid_failed_delete_retries_cleanup_after_relaunch() {
         &[],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -2772,6 +2904,7 @@ async fn enrollment_invalid_failed_delete_retries_cleanup_after_relaunch() {
         &[later],
         policy,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -2819,6 +2952,7 @@ async fn failing_policy_replace_blocks_all_sources_and_retries_purge() {
         &[later],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -2849,6 +2983,7 @@ async fn failing_policy_replace_blocks_all_sources_and_retries_purge() {
         &[relaunch_later],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -2928,6 +3063,7 @@ async fn current_new_only_authority_retains_excluded_pending() {
         &[],
         ArchivePolicy::Enrolled,
         &plan,
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -2985,6 +3121,7 @@ async fn unreadable_excluded_directory_does_not_block_permitted_pending() {
         &[],
         ArchivePolicy::Enrolled,
         &plan,
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -3031,6 +3168,7 @@ async fn deferred_oversized_snapshot_makes_bounded_progress() {
         std::slice::from_ref(&deferred),
         ArchivePolicy::Enrolled,
         &plan_for(&[ArchiveSource::Claude]),
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -3073,6 +3211,7 @@ async fn invalid_source_state_does_not_block_another_source() {
         &[],
         ArchivePolicy::Enrolled,
         &plan,
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -3114,6 +3253,7 @@ async fn ambiguous_new_only_exclusion_is_reported_without_operational_failure() 
         &[],
         ArchivePolicy::Enrolled,
         &plan,
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -3154,6 +3294,7 @@ async fn live_session_runs_before_baseline_after_plan_rebuild() {
         &[baseline, live],
         ArchivePolicy::Enrolled,
         &plan,
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -3225,6 +3366,7 @@ async fn missing_baseline_stays_in_progress() {
         &[],
         ArchivePolicy::Enrolled,
         &plan,
+        TEST_NOW_MS,
         None,
     )
     .await;
@@ -3278,6 +3420,7 @@ async fn acknowledgement_of_complete_records_finishes_a_partial_tail_target() {
         &[target],
         ArchivePolicy::Enrolled,
         &plan,
+        TEST_NOW_MS,
         None,
     )
     .await;

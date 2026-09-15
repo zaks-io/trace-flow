@@ -124,6 +124,7 @@ pub fn prepare(
                 candidate.source,
                 candidate.session.clone(),
                 candidate.part.clone(),
+                candidate.complete_extent,
             ));
             let is_live = candidate
                 .started_at
@@ -151,7 +152,7 @@ pub fn prepare(
     }
     prepared.plan = ArchiveHistoryPlan::new(states)
         .with_live_sessions(live_sessions)
-        .with_present_parts(present_parts)
+        .with_present_part_extents(present_parts)
         .with_failed_sources(failed_sources)
         .with_ambiguous_excluded(ambiguous_excluded);
     prepared
@@ -221,13 +222,6 @@ fn append_snapshots(
                 continue;
             }
         };
-        if spool
-            .blocked_part(candidate.source, &candidate.session, &candidate.part)
-            .is_err()
-        {
-            prepared.errors.push("archive_spool_corrupt".to_string());
-            continue;
-        }
         let mut class = if live_sessions.iter().any(|(source, session, _)| {
             *source == candidate.source && session == &candidate.session
         }) {
@@ -293,7 +287,6 @@ fn append_snapshots(
             source_session_id: candidate.session,
             base_transcript_part_id: base_part,
             source_transcript_part_id: candidate.part,
-            transcript_part_identity: candidate.part_identity,
             bytes: Vec::new(),
             deferred_file: Some(DeferredArchiveSnapshot {
                 path: candidate.path,

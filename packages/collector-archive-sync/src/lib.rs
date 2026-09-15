@@ -20,8 +20,7 @@ mod spool;
 
 pub use ack::{acknowledgement_matches, ArchiveAcknowledgement};
 pub use bound::{
-    build_bounded_pending, build_bounded_pending_for_part,
-    build_bounded_pending_for_part_with_limits, build_bounded_pending_with_limits,
+    build_bounded_pending_for_part, build_bounded_pending_for_part_with_limits,
     MAX_ARCHIVE_UPLOAD_BYTES, MAX_UPLOAD_OBSERVATIONS,
 };
 pub use client::{ArchiveClient, ArchiveClientConfig, ArchiveUploader};
@@ -44,7 +43,7 @@ pub use policy::{
 };
 pub use scan::{
     archive_source_session_id, archive_source_session_id_from_records, parse_jsonl_records,
-    scan_snapshot, scan_snapshot_part, transcript_part_for, transcript_part_for_records,
+    scan_snapshot_part, transcript_part_for, transcript_part_for_records,
 };
 pub use spool::{
     cleanup_obligation_exists, finish_terminal_cleanup, ArchiveGenerationHistoryEntry,

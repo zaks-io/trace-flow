@@ -537,16 +537,6 @@ impl ArchiveSpool {
         Ok(slices)
     }
 
-    pub fn contains_slice(&self, pending: &PendingArchiveRequest) -> ArchiveSyncResult<bool> {
-        Ok(self
-            .slices_for_part(
-                pending.source,
-                &pending.source_session_id,
-                &pending.source_transcript_part_id,
-            )?
-            .contains(pending))
-    }
-
     pub fn persist_progress(
         &self,
         source: ArchiveSource,
@@ -704,9 +694,11 @@ impl ArchiveSpool {
         let plaintext = serde_json::to_vec(&generation)?;
         let aad = self.aad("generation", source, source_session_id, base_part);
         let blob = encrypt(&self.key, &aad, &plaintext)?;
-        self.write_capped(
+        self.write_capped_reserving(
             &self.generation_path(source, source_session_id, base_part)?,
             &blob,
+            0,
+            atomic_write_strict,
         )
     }
 
@@ -1478,6 +1470,22 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> ArchiveSyncResult<()> {
         file.sync_all()?;
     }
     fs::rename(&tmp, path)?;
+    sync_parent_best_effort(path);
+    Ok(())
+}
+
+fn atomic_write_strict(path: &Path, bytes: &[u8]) -> ArchiveSyncResult<()> {
+    let tmp = path.with_extension("tmp");
+    {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    fs::rename(&tmp, path)?;
     sync_parent(path)
 }
 
@@ -1875,7 +1883,8 @@ fn atomic_write_named(path: &Path, bytes: &[u8]) -> ArchiveSyncResult<()> {
         file.sync_all()?;
     }
     fs::rename(&tmp, path)?;
-    sync_parent(path)
+    sync_parent_best_effort(path);
+    Ok(())
 }
 
 fn walkdir_files(root: &Path) -> ArchiveSyncResult<Vec<PathBuf>> {
@@ -1913,6 +1922,14 @@ fn remove_dir_if_present(path: &Path) -> ArchiveSyncResult<()> {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(err.into()),
+    }
+}
+
+fn sync_parent_best_effort(path: &Path) {
+    if let Some(parent) = path.parent() {
+        if let Ok(directory) = File::open(parent) {
+            let _ = directory.sync_all();
+        }
     }
 }
 
