@@ -47,7 +47,8 @@ export async function replayFrozenFactSelection(
     frozenDeliveryDays(deliveryRows),
     canonicalProof(validated),
   );
-  await delivery.process({ ...reference, delivery_revision: deliverySequence });
+  const result = await delivery.process({ ...reference, delivery_revision: deliverySequence });
+  if (result !== 'complete') throw new Error('Frozen fact replay delivery is not complete');
   return {
     status: 'confirmed',
     deliveryId: validated.deliveryId,

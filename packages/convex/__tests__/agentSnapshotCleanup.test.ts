@@ -20,7 +20,10 @@ afterEach(() => {
 function transport(rows: unknown[], failJob = false) {
   const deletes: { datasource: string; condition: string }[] = [];
   const pipeParams: URLSearchParams[] = [];
+  const requests: string[] = [];
   let jobs = 0;
+  let activeJobs = 0;
+  let maxActiveJobs = 0;
   vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-13T01:00:00Z'));
   vi.stubGlobal(
     'fetch',
@@ -31,6 +34,9 @@ function transport(rows: unknown[], failJob = false) {
         return Response.json({ data: rows });
       }
       if (url.pathname.endsWith('/delete')) {
+        activeJobs++;
+        maxActiveJobs = Math.max(maxActiveJobs, activeJobs);
+        requests.push(`delete:${url.pathname.split('/')[3]}`);
         deletes.push({
           datasource: url.pathname.split('/')[3]!,
           condition: new URLSearchParams(String(init?.body)).get('delete_condition')!,
@@ -39,6 +45,8 @@ function transport(rows: unknown[], failJob = false) {
       }
       if (url.pathname.includes('/jobs/')) {
         const parts = url.pathname.split('/');
+        requests.push(`status:${parts[parts.length - 1]}`);
+        if (!failJob) activeJobs--;
         return Response.json({
           job_id: parts[parts.length - 1],
           status: failJob ? 'error' : 'done',
@@ -47,12 +55,12 @@ function transport(rows: unknown[], failJob = false) {
       throw new Error('Unexpected cleanup request');
     }),
   );
-  return { deletes, pipeParams };
+  return { deletes, pipeParams, requests, maxActiveJobs: () => maxActiveJobs };
 }
 
 describe('superseded snapshot cleanup', () => {
   it('deletes only superseded generations after the reader grace, keeping cross-day commits whole', async () => {
-    const { deletes, pipeParams } = transport([
+    const { deletes, pipeParams, requests, maxActiveJobs } = transport([
       old,
       { SnapshotDay: '2026-09-12', SnapshotGeneration: 12, PublishedAt: '2026-09-13 00:59:00.000' },
     ]);
@@ -72,6 +80,13 @@ describe('superseded snapshot cleanup', () => {
       "arrayAll(day -> ((day = toDate('2026-09-10') AND SnapshotGeneration < 10)), SnapshotDays)",
     );
     expect(deletes[9]!.condition).not.toContain('2026-09-12');
+    expect(requests).toEqual(
+      deletes.flatMap((deletion, index) => [
+        `delete:${deletion.datasource}`,
+        `status:job-${index + 1}`,
+      ]),
+    );
+    expect(maxActiveJobs()).toBe(1);
   });
 
   it('uses each day generation so a quiet baseline day does not prevent hot-day cleanup', async () => {
@@ -96,10 +111,11 @@ describe('superseded snapshot cleanup', () => {
   });
 
   it('does not report cleanup completion when a deletion job fails', async () => {
-    transport([old], true);
+    const { deletes } = transport([old], true);
     await expect(cleanupAgentSnapshots(env, 'org', undefined, undefined)).rejects.toThrow(
       'deletion job failed',
     );
+    expect(deletes).toHaveLength(1);
   });
 
   it('rejects duplicate day pointers before requesting any mutation', async () => {

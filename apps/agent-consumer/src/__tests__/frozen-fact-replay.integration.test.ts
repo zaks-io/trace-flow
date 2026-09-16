@@ -135,6 +135,19 @@ describe('frozen ledger replay', () => {
       ],
     };
 
+    const coordinator = env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${orgId}`);
+    const predecessor = { deliveryId: 'earlier-delivery', payloadSha256: 'a'.repeat(64) };
+    await coordinator.reserve({
+      ...predecessor,
+      dirtyDays: ['2026-09-01'],
+      createdAtMs: Date.now(),
+      expiresAtMs: Date.now() + 60_000,
+    });
+    await expect(replayFrozenFactSelection(env, orgId, input, batcher)).rejects.toThrow(
+      'Frozen fact replay delivery is not complete',
+    );
+    expect(writes).toHaveLength(0);
+    await coordinator.complete(predecessor);
     const first = await replayFrozenFactSelection(env, orgId, input, batcher);
     const second = await replayFrozenFactSelection(env, orgId, input, batcher);
 

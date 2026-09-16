@@ -22,6 +22,14 @@ afterEach(() => {
 });
 
 describe('DLQ delivery replay', () => {
+  it('does not confirm a pending migrated delivery', async () => {
+    const { env } = makeEnv({ process: vi.fn(async () => 'retry') });
+    await expect(replayAgentDlqPayload(queueMessage(), env)).rejects.toThrow(
+      'Direct DLQ replay cannot schedule a Queue retry',
+    );
+    expect(processAgentRecoveryPayload).not.toHaveBeenCalled();
+  });
+
   it('keeps nonmigrated organizations on the legacy recovery path', async () => {
     const body = queueMessage();
     const { env, put, register, process, migrationState } = makeEnv({
@@ -47,6 +55,7 @@ describe('DLQ delivery replay', () => {
     const process = vi.fn(async () => {
       order.push('process');
       await processGate;
+      return 'complete';
     });
     const { env, put, register } = makeEnv({
       process,
@@ -144,7 +153,7 @@ function makeEnv(
     options.onRegister?.();
     return 7;
   });
-  const process = options.process ?? vi.fn(async () => undefined);
+  const process = options.process ?? vi.fn(async () => 'complete');
   const factBatcherGetByName = vi.fn((_name: string): unknown => ({
     getIngestionMigrationState: legacyState,
   }));

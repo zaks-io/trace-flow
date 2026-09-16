@@ -70,7 +70,6 @@ export async function cleanupAgentSnapshots(
   )
     return null;
   const deadline = Date.now() + 4 * 60 * 1000;
-  const jobs: string[] = [];
   const org = sqlLiteral(orgId);
   const versions = eligible
     .map(
@@ -79,14 +78,7 @@ export async function cleanupAgentSnapshots(
     )
     .join(' OR ');
   for (const datasource of AGENT_SNAPSHOT_TARGETS) {
-    jobs.push(
-      await startDeleteRows({
-        baseUrl: env.TINYBIRD_HOST,
-        token: env.TINYBIRD_AGENT_SNAPSHOT_CLEANUP_TOKEN,
-        datasource,
-        condition: `OrgId = ${org} AND (${versions})`,
-      }),
-    );
+    await deleteRowsAndWait(env, datasource, `OrgId = ${org} AND (${versions})`, deadline);
   }
   const supersededDays = eligible
     .map(
@@ -94,21 +86,30 @@ export async function cleanupAgentSnapshots(
         `(day = toDate('${row.SnapshotDay}') AND SnapshotGeneration < ${row.SnapshotGeneration})`,
     )
     .join(' OR ');
-  jobs.push(
-    await startDeleteRows({
-      baseUrl: env.TINYBIRD_HOST,
-      token: env.TINYBIRD_AGENT_SNAPSHOT_CLEANUP_TOKEN,
-      datasource: 'agent_snapshot_manifest',
-      condition: `OrgId = ${org} AND notEmpty(SnapshotDays) AND arrayAll(day -> (${supersededDays}), SnapshotDays)`,
-    }),
+  await deleteRowsAndWait(
+    env,
+    'agent_snapshot_manifest',
+    `OrgId = ${org} AND notEmpty(SnapshotDays) AND arrayAll(day -> (${supersededDays}), SnapshotDays)`,
+    deadline,
   );
-  for (const jobId of jobs)
-    await waitForDeleteRows(
-      { baseUrl: env.TINYBIRD_HOST, token: env.TINYBIRD_AGENT_SNAPSHOT_CLEANUP_TOKEN },
-      jobId,
-      deadline,
-    );
   return fingerprint;
+}
+
+async function deleteRowsAndWait(
+  env: CleanupEnv,
+  datasource: string,
+  condition: string,
+  deadlineMs: number,
+): Promise<void> {
+  const options = {
+    baseUrl: env.TINYBIRD_HOST,
+    token: env.TINYBIRD_AGENT_SNAPSHOT_CLEANUP_TOKEN,
+    datasource,
+    condition,
+    deadlineMs,
+  };
+  const jobId = await startDeleteRows(options);
+  await waitForDeleteRows(options, jobId, deadlineMs);
 }
 
 function sqlLiteral(value: string): string {

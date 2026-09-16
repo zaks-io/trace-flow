@@ -1,7 +1,6 @@
 import { AGENT_SNAPSHOT_TARGETS } from '@trace-flow/tinybird-client';
 import {
   AGENT_SNAPSHOT_COPY_ATTEMPT_MULTIPLIER,
-  AgentDeliveryCoordinatorRetryableError,
   MAX_AGENT_SNAPSHOT_COPY_DAYS,
   MAX_AGENT_SNAPSHOT_LEASE_MS,
   type AgentSnapshotProgress,
@@ -69,7 +68,7 @@ export function claimAgentSnapshot(
   storage: DurableObjectStorage,
   claimId: string,
   now: number,
-): AgentSnapshotProgress {
+): AgentSnapshotProgress | null {
   const validatedClaimId = validateSnapshotClaimId(claimId);
   return storage.transactionSync(() => {
     const state = readCoordinatorState(storage);
@@ -82,7 +81,7 @@ export function claimAgentSnapshot(
       state.gate_expires_at_ms !== null &&
       now < state.gate_expires_at_ms
     ) {
-      throw new AgentDeliveryCoordinatorRetryableError('snapshot generation has an active claim');
+      return null;
     }
     storage.sql.exec(
       'UPDATE snapshot_progress SET claim_id = ? WHERE generation = ?',

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { stageAgentDelivery } from '@trace-flow/utils';
 import type { AgentDeliveryReference, AgentDeliveryStagedReference } from '@trace-flow/types';
 import { AgentDelivery } from '../agent-delivery';
+import { processDeliveryReferences } from '../delivery-queue';
 import { priceDelivery, storeDeliveryRows } from '../delivery-rows';
 import { emptyQueueFacts, messageFact, queueMessage } from './factories';
 import { makeKv } from './harness';
@@ -12,12 +13,13 @@ const writes: Record<string, unknown>[][] = [];
 
 async function staged(
   options: {
+    orgId?: string;
     days?: string[];
     legacySourceOrder?: boolean;
     message?: ReturnType<typeof queueMessage>;
   } = {},
 ) {
-  const orgId = `test-${crypto.randomUUID()}`;
+  const orgId = options.orgId ?? `test-${crypto.randomUUID()}`;
   const source =
     options.message ??
     queueMessage({
@@ -181,6 +183,36 @@ afterEach(() => {
 });
 
 describe('bounded delivery durability', () => {
+  it('retries an out-of-order delivery without throwing or acknowledging unfinished work', async () => {
+    mockTransport();
+    const first = await staged();
+    const second = await staged({ orgId: first.orgId });
+    await expect(second.host.process(second.reference)).resolves.toBe('retry');
+    expect(writes).toHaveLength(0);
+    expect(await env.AGENT_DELIVERIES.head(second.reference.key)).not.toBeNull();
+
+    const message: Message<AgentDeliveryReference> = {
+      id: 'second-delivery',
+      timestamp: new Date(),
+      attempts: 1,
+      body: second.reference,
+      ack: vi.fn(),
+      retry: vi.fn(),
+    };
+    await processDeliveryReferences([message], env);
+    expect(message.retry).toHaveBeenCalledExactlyOnceWith({ delaySeconds: 60 });
+    expect(message.ack).not.toHaveBeenCalled();
+
+    await expect(first.host.process(first.reference)).resolves.toBe('complete');
+    await processDeliveryReferences([message], env);
+    expect(message.ack).toHaveBeenCalledOnce();
+    expect(message.retry).toHaveBeenCalledTimes(1);
+    expect(writes).toHaveLength(2);
+    expect(await env.AGENT_DELIVERIES.head(second.reference.key)).toBeNull();
+    await expect(second.host.process(second.reference)).resolves.toBe('complete');
+    expect(writes).toHaveLength(2);
+  });
+
   it('commits once, deletes encrypted bodies, and retains a small duplicate receipt', async () => {
     mockTransport();
     const { host, reference, orgId } = await staged();

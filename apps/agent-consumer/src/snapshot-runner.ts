@@ -8,7 +8,6 @@ import {
   assertSnapshotDaysRetained,
   beforeSnapshotDeadline,
   continueAgentSnapshot,
-  isSnapshotRetryable,
   requireCurrentSnapshotIntent,
   requireSnapshotIntent,
   snapshotCopyPlans,
@@ -62,16 +61,13 @@ export async function runAgentSnapshot(
   if (initial.erasureStarted) return { status: 'idle' };
   let progress: AgentSnapshotProgress;
   if (initial.gatePhase === 'snapshot') {
-    try {
-      progress = await beforeSnapshotDeadline(
-        () => coordinator.claimSnapshot({ claimId }),
-        hardDeadlineAt,
-        'claim snapshot',
-      );
-    } catch (error) {
-      if (isSnapshotRetryable(error)) return { status: 'retry', reason: 'gate-active' };
-      throw error;
-    }
+    const claimed = await beforeSnapshotDeadline(
+      () => coordinator.claimSnapshot({ claimId }),
+      hardDeadlineAt,
+      'claim snapshot',
+    );
+    if (claimed === null) return { status: 'retry', reason: 'gate-active' };
+    progress = claimed;
   } else {
     if (initial.gatePhase === 'open' && initial.dirtyDays <= initial.incompleteDays) {
       return { status: 'idle' };
