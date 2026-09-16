@@ -29,6 +29,39 @@ describe('startDeleteRows', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    new Headers({ 'Retry-After': 'Wed, 16 Sep 2026 00:00:02 GMT' }),
+    new Headers({ 'Retry-After': 'Tue, 15 Sep 2026 00:00:00 GMT', 'X-RateLimit-Reset': '2' }),
+  ])('respects usable date or fallback delays', async (headers) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-16T00:00:00Z'));
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(null, { status: 429, headers }))
+      .mockResolvedValueOnce(Response.json({ job_id: 'job-1' }));
+
+    const result = startDeleteRows(options);
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(result).resolves.toBe('job-1');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a stale retry date without a usable fallback', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-16T00:00:00Z'));
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(null, {
+        status: 429,
+        headers: { 'Retry-After': 'Tue, 15 Sep 2026 00:00:00 GMT' },
+      }),
+    );
+
+    await expect(startDeleteRows(options)).rejects.toThrow('HTTP 429 without a valid retry delay');
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it('fails loud when the retry delay would exceed the caller deadline', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response(null, { status: 429, headers: { 'Retry-After': '60' } }),

@@ -97,7 +97,8 @@ function rateLimitDelayMs(headers: Headers): number | null {
     const seconds = Number(retryAfter);
     if (Number.isFinite(seconds) && seconds >= 0) return Math.max(100, seconds * 1_000);
     const retryAt = Date.parse(retryAfter);
-    if (Number.isFinite(retryAt)) return Math.max(100, retryAt - Date.now());
+    const delayMs = retryAt - Date.now();
+    if (Number.isFinite(delayMs) && delayMs > 0) return Math.max(100, delayMs);
   }
   const reset = headers.get('X-RateLimit-Reset');
   const resetSeconds = reset === null || reset.trim() === '' ? Number.NaN : Number(reset);
