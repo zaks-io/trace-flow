@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use collector_contracts::AgentSource;
 use collector_sync::{
     assemble_sync_unit_with_lineage, select_changed, walk_transcripts, CodexLineage, CursorStore,
-    CursorStoreError, DiscoveredFile, GitRemoteCache, ImportWindow, SyncUnit,
+    CursorStoreError, DiscoveredFile, GitRemoteCache, ImportWindow, SyncUnit, DISCOVERY_INCOMPLETE,
 };
 
 use crate::sync::SourceReport;
@@ -28,16 +28,25 @@ impl FactSources {
         reparse_known: bool,
         report: &mut SourceReport,
     ) -> Result<Self, CursorStoreError> {
-        let mut files: Vec<_> = roots
-            .iter()
-            .flat_map(|root| walk_transcripts(root))
-            .collect();
+        let mut skipped_errors = 0usize;
+        let mut files = Vec::new();
+        for root in roots {
+            let walk = walk_transcripts(root);
+            skipped_errors += walk.skipped_errors;
+            files.extend(walk.files);
+        }
         files.sort_by(|a, b| {
             a.mtime_ms
                 .total_cmp(&b.mtime_ms)
                 .then_with(|| a.path.cmp(&b.path))
         });
         report.source_files_scanned = files.len();
+        if skipped_errors > 0 {
+            report.discovery_errors = skipped_errors as u32;
+            report
+                .first_error
+                .get_or_insert_with(|| DISCOVERY_INCOMPLETE.to_string());
+        }
         let lineage = (source == AgentSource::Codex).then(|| CodexLineage::index(&files));
         let files = if replay || reparse_known {
             let mut selected = Vec::new();
@@ -125,7 +134,7 @@ mod tests {
         let second = write_jsonl(home.path(), "second.jsonl", json!({"b":2}));
         let mut store = CursorStore::open_in_memory("org").unwrap();
         store.set_active_parser_version("0.1.0");
-        for file in walk_transcripts(home.path()) {
+        for file in walk_transcripts(home.path()).files {
             let content_hash_head = head_hash(&std::fs::read_to_string(&file.path).unwrap());
             store
                 .advance(
@@ -209,6 +218,53 @@ mod tests {
         let mut tiny = source(&[1; ASSEMBLY_BATCH_FILES + 1]);
         assert_eq!(tiny.take_batch().len(), ASSEMBLY_BATCH_FILES);
         assert_eq!(tiny.take_batch().len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_subtree_marks_discovery_incomplete_without_paths() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempfile::TempDir::new().unwrap();
+        write_jsonl(home.path(), "visible.jsonl", json!({"a":1}));
+        let locked = home.path().join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        write_jsonl(&locked, "hidden.jsonl", json!({"b":2}));
+        struct RestorePerms(std::path::PathBuf);
+        impl Drop for RestorePerms {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+            }
+        }
+        let restore = RestorePerms(locked.clone());
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read_dir(&locked).is_ok() {
+            return;
+        }
+
+        let store = CursorStore::open_in_memory("org").unwrap();
+        let mut report = SourceReport::default();
+        let sources = FactSources::discover(
+            &[home.path().to_path_buf()],
+            AgentSource::Claude,
+            &store,
+            ImportWindow::first_incremental(24 * 60 * 60 * 1000),
+            false,
+            false,
+            &mut report,
+        )
+        .unwrap();
+        let _ = std::fs::set_permissions(&restore.0, std::fs::Permissions::from_mode(0o755));
+        drop(restore);
+
+        assert!(report.discovery_errors >= 1);
+        assert!(!report.is_complete());
+        assert_eq!(report.first_error.as_deref(), Some(DISCOVERY_INCOMPLETE));
+        assert!(!report.first_error.as_deref().unwrap_or("").contains('/'));
+        assert_eq!(report.source_files_scanned, 1);
+        assert_eq!(report.selected, 1);
+        assert_eq!(sources.files.len(), 1);
+        assert!(sources.files[0].path.ends_with("visible.jsonl"));
     }
 
     #[test]

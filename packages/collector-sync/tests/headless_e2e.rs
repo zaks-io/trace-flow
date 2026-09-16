@@ -106,7 +106,7 @@ async fn headless_run_posts_real_claude_transcripts_and_advances_cursors() {
         "no Claude transcript root at {root:?}; this E2E needs a box with real ~/.claude history"
     );
 
-    let files = walk_transcripts(&root);
+    let files = walk_transcripts(&root).files;
     assert!(
         !files.is_empty(),
         "discovery found no .jsonl under {root:?}"

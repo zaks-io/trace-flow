@@ -20,7 +20,8 @@
 //! ingest, used only for this test.
 //!
 //! I/O here is synchronous to match the synchronous [`CursorStore`]; the embedder runs a pass off its
-//! hot path. The walk is best-effort (an unreadable entry is skipped and reappears next scan); only a
+//! hot path. The walk is best-effort: an unreadable entry is skipped and counted on
+//! [`DiscoveryWalk::skipped_errors`] so the embedder can hold the incremental watermark. Only a
 //! [`CursorStore`] failure — a broken local DB — aborts a selection.
 
 use std::fs::File;
@@ -52,18 +53,48 @@ pub struct DiscoveredFile {
     pub size_bytes: u64,
 }
 
+/// Stable, path-free class for a walk that skipped WalkDir or metadata errors.
+pub const DISCOVERY_INCOMPLETE: &str = "discovery_incomplete";
+
+/// Files found under one root, plus a count of skipped filesystem errors.
+///
+/// `skipped_errors` is the public incomplete signal. It is a count only — never a path, error
+/// message, or transcript byte — so callers can hold the watermark without leaking local FS
+/// details. A missing root is complete and empty (the normal first-run state).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct DiscoveryWalk {
+    pub files: Vec<DiscoveredFile>,
+    pub skipped_errors: usize,
+}
+
+impl DiscoveryWalk {
+    /// True when the walk skipped no WalkDir or metadata errors.
+    pub fn is_complete(&self) -> bool {
+        self.skipped_errors == 0
+    }
+}
+
 /// Walk `root` and stat every `.jsonl` transcript file beneath it, sorted oldest-mtime-first (then by
 /// path) so a partial pass makes progress on the oldest files first and the order is deterministic.
 ///
-/// A missing root yields an empty list — the normal first-run state before the agent has written any
-/// transcript. Entries that fail to read or stat are skipped rather than failing the whole walk; they
-/// reappear on the next scan.
-pub fn walk_transcripts(root: &Path) -> Vec<DiscoveredFile> {
+/// A missing root yields an empty complete walk — the normal first-run state before the agent has
+/// written any transcript. WalkDir and metadata failures are skipped rather than failing the whole
+/// walk; they increment [`DiscoveryWalk::skipped_errors`] so the embedder can keep those files in
+/// the next incremental window instead of advancing the watermark.
+pub fn walk_transcripts(root: &Path) -> DiscoveryWalk {
     if !root.exists() {
-        return Vec::new();
+        return DiscoveryWalk::default();
     }
-    let mut found = Vec::new();
-    for entry in WalkDir::new(root).follow_links(false).into_iter().flatten() {
+    let mut files = Vec::new();
+    let mut skipped_errors = 0;
+    for entry in WalkDir::new(root).follow_links(false) {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                skipped_errors += 1;
+                continue;
+            }
+        };
         if !entry.file_type().is_file() {
             continue;
         }
@@ -76,21 +107,28 @@ pub fn walk_transcripts(root: &Path) -> Vec<DiscoveredFile> {
         let Some(path) = entry.path().to_str() else {
             continue;
         };
-        let Ok(meta) = entry.metadata() else {
-            continue;
+        let meta = match entry.metadata() {
+            Ok(meta) => meta,
+            Err(_) => {
+                skipped_errors += 1;
+                continue;
+            }
         };
-        found.push(DiscoveredFile {
+        files.push(DiscoveredFile {
             path: path.to_string(),
             mtime_ms: mtime_to_ms(&meta),
             size_bytes: meta.len(),
         });
     }
-    found.sort_by(|a, b| {
+    files.sort_by(|a, b| {
         a.mtime_ms
             .total_cmp(&b.mtime_ms)
             .then_with(|| a.path.cmp(&b.path))
     });
-    found
+    DiscoveryWalk {
+        files,
+        skipped_errors,
+    }
 }
 
 /// Narrow `files` to those a pass should read: inside `window` and new-or-changed since their cursor.
@@ -244,7 +282,9 @@ mod tests {
         write(&dir, "proj/b.jsonl", "{}");
 
         let found = walk_transcripts(dir.path());
+        assert!(found.is_complete());
         let names: Vec<_> = found
+            .files
             .iter()
             .map(|f| {
                 Path::new(&f.path)
@@ -253,7 +293,7 @@ mod tests {
                     .unwrap()
             })
             .collect();
-        assert_eq!(found.len(), 2);
+        assert_eq!(found.files.len(), 2);
         assert!(names.contains(&"a.jsonl"));
         assert!(names.contains(&"b.jsonl"));
         assert!(!names.contains(&"notes.txt"));
@@ -261,7 +301,52 @@ mod tests {
 
     #[test]
     fn walk_of_a_missing_root_is_empty() {
-        assert!(walk_transcripts(Path::new("/no/such/dir/here")).is_empty());
+        let walk = walk_transcripts(Path::new("/no/such/dir/here"));
+        assert!(walk.is_complete());
+        assert!(walk.files.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_counts_unreadable_subtree_without_exposing_paths() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        write(&dir, "visible.jsonl", "{}");
+        let locked = dir.path().join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::write(locked.join("hidden.jsonl"), "{}").unwrap();
+        struct RestorePerms(std::path::PathBuf);
+        impl Drop for RestorePerms {
+            fn drop(&mut self) {
+                let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755));
+            }
+        }
+        let restore = RestorePerms(locked.clone());
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read_dir(&locked).is_ok() {
+            // Root (or a capable process) can still read mode 000; the error path is untestable here.
+            return;
+        }
+
+        let walk = walk_transcripts(dir.path());
+        let _ = fs::set_permissions(&restore.0, fs::Permissions::from_mode(0o755));
+        drop(restore);
+
+        assert!(!walk.is_complete());
+        assert!(walk.skipped_errors >= 1);
+        assert_eq!(walk.files.len(), 1);
+        assert!(
+            Path::new(&walk.files[0].path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                == Some("visible.jsonl")
+        );
+        // The public incomplete signal is a count and a class, never a path or transcript body.
+        assert_eq!(DISCOVERY_INCOMPLETE, "discovery_incomplete");
+        assert!(!DISCOVERY_INCOMPLETE.contains('/'));
+        assert!(!DISCOVERY_INCOMPLETE.contains("hidden"));
+        assert!(!DISCOVERY_INCOMPLETE.contains('{'));
     }
 
     #[test]

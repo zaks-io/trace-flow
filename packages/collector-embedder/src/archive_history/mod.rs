@@ -165,7 +165,7 @@ fn discover(home: &Path, source: ArchiveSource, errors: &mut Vec<String>) -> Vec
     };
     let mut groups: HashMap<(String, String), Vec<Candidate>> = HashMap::new();
     for root in source_roots(home, agent_source) {
-        for file in walk_transcripts(&root) {
+        for file in walk_transcripts(&root).files {
             match identify(source, &file.path, file.mtime_ms as i64, file.size_bytes) {
                 Ok(candidate) => groups
                     .entry((candidate.session.clone(), candidate.part.clone()))
