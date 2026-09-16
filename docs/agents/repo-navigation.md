@@ -34,7 +34,7 @@ For agent workflow or Linear work, also read:
 | `apps/agent-ingest`    | Agent conversation ingest worker.                                                         | Parsed agent fact upload, ingest validation, queue enqueue.                            |
 | `apps/agent-consumer`  | Agent conversation queue consumer.                                                        | Agent analytics rows, pricing, transcript fact processing.                             |
 | `apps/analyst-sandbox` | Sealed Cloudflare Sandbox Worker that runs Analyst code execution and the Pi data agent.  | Analyst tool runs, sandbox egress seal, run events, snapshots, sandbox pricing.        |
-| `apps/archive-api`     | Conversation Archive data plane; upload path implemented, not deployed.                   | Enrolled lossless upload, Session Ledger, Storage Budget, R2 chunks, audit, integrity. |
+| `apps/archive-api`     | Conversation Archive data plane; live in production as the permanent raw store.           | Enrolled lossless upload, Session Ledger, Storage Budget, R2 chunks, audit, integrity. |
 | `apps/cli`             | User-facing collector CLI.                                                                | Login, source listing, sync, status, disconnect, release packaging.                    |
 | `apps/desktop`         | Tauri desktop collector.                                                                  | Tray UX, keychain storage, first-egress gate, desktop sync loop, autostart.            |
 
