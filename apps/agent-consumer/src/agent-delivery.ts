@@ -138,7 +138,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     return result.deliverySequence;
   }
 
-  process(reference: AgentDeliveryReference): Promise<void> {
+  process(reference: AgentDeliveryReference): Promise<'complete' | 'retry'> {
     return this.exclusive(async () => {
       if (validateAgentDeliveryReference(reference)) throw new Error('Invalid agent delivery');
       const state = await this.ctx.storage.get<DeliveryState>('receipt');
@@ -154,7 +154,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
       }
       if (state.phase === 'complete') {
         await this.removeBodies(state);
-        return;
+        return 'complete';
       }
       if (reference.expires_at <= Date.now() || state.phase === 'expired') {
         throw new Error('Agent delivery expired before completion');
@@ -175,10 +175,10 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
           payloadSha256: reference.sha256,
         }))
       )
-        throw new Error('Agent delivery is waiting for earlier accepted work');
+        return 'retry';
       if (state.phase === 'committing') {
         await this.finishCommit(state, reference, coordinator, reservation !== null);
-        return;
+        return 'complete';
       }
       const rowsKey = this.rowsKey(reference.key);
       let canonicalProofChecked = false;
@@ -259,6 +259,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
       state.phase = 'committing';
       await this.ctx.storage.put('receipt', state);
       await this.finishCommit(state, reference, coordinator, reservation !== null);
+      return 'complete';
     });
   }
 

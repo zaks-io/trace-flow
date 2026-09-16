@@ -102,7 +102,7 @@ export async function waitForSnapshotJob(
   deadlineAt: number,
 ): Promise<'done' | 'error' | null> {
   while (Date.now() < deadlineAt) {
-    const status = await beforeSnapshotDeadline(
+    let status = await beforeSnapshotDeadline(
       () => snapshotJobStatus(env, jobId),
       deadlineAt,
       'poll snapshot job',
@@ -117,9 +117,7 @@ export async function waitForSnapshotJob(
       if (discovered.id !== jobId) {
         throw new Error('Snapshot Copy discovery changed its attached job receipt');
       }
-      return discovered.status === 'done' || discovered.status === 'error'
-        ? discovered.status
-        : null;
+      status = discovered.status;
     }
     if (status === 'done' || status === 'error') return status;
     const remainingMs = deadlineAt - Date.now();
@@ -170,12 +168,6 @@ export async function beforeSnapshotDeadline<T>(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
-}
-
-export function isSnapshotRetryable(error: unknown): boolean {
-  return (
-    typeof error === 'object' && error !== null && 'retryable' in error && error.retryable === true
-  );
 }
 
 export function assertSnapshotOrgId(orgId: string): void {

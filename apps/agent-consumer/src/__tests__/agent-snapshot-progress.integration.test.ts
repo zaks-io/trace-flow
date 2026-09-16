@@ -48,6 +48,42 @@ describe('agent snapshot progress', () => {
     return withCoordinator((coordinator) => coordinator.beginSnapshot({ claimId: 'claim-a' }));
   }
 
+  it('returns contention without changing the active claim and permits its owner to renew', async () => {
+    const snapshot = await beginSnapshot();
+    const progress = await withCoordinator((coordinator) =>
+      coordinator.getSnapshotProgress({ generation: snapshot.generation, claimId: 'claim-a' }),
+    );
+    await expect(
+      withCoordinator((coordinator) => coordinator.claimSnapshot({ claimId: 'claim-b' })),
+    ).resolves.toBeNull();
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.getSnapshotProgress({ generation: snapshot.generation, claimId: 'claim-a' }),
+      ),
+    ).resolves.toEqual(progress);
+    await expect(
+      withCoordinator((coordinator) => coordinator.claimSnapshot({ claimId: 'claim-a' })),
+    ).resolves.toMatchObject({ generation: snapshot.generation, claimId: 'claim-a' });
+  });
+
+  it('returns a pending claim across the Durable Object RPC boundary', async () => {
+    vi.useRealTimers();
+    const coordinator = workerEnv.AGENT_DELIVERY_COORDINATOR.getByName(crypto.randomUUID());
+    const delivery = { deliveryId: 'delivery-1', payloadSha256 };
+    await coordinator.reserve({
+      ...delivery,
+      dirtyDays: [new Date().toISOString().slice(0, 10)],
+      createdAtMs: Date.now(),
+      expiresAtMs: Date.now() + 60_000,
+    });
+    await coordinator.complete(delivery);
+    const snapshot = await coordinator.beginSnapshot({ claimId: 'claim-a' });
+    await expect(coordinator.claimSnapshot({ claimId: 'claim-b' })).resolves.toBeNull();
+    await expect(
+      coordinator.getSnapshotProgress({ generation: snapshot.generation, claimId: 'claim-a' }),
+    ).resolves.toMatchObject({ claimId: 'claim-a', nextCopyIndex: 0 });
+  });
+
   it('fences an expired owner and resumes the same cursor under a new claim', async () => {
     const snapshot = await beginSnapshot();
     vi.advanceTimersByTime(MAX_AGENT_SNAPSHOT_LEASE_MS);

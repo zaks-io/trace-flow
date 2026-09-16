@@ -12,6 +12,15 @@ vi.mock('@sentry/cloudflare', async (importOriginal) => ({
 const ROOT_KEY = btoa('a'.repeat(32));
 
 describe('legacy inline delivery migration', () => {
+  it('retries a pending delivery without acknowledging the legacy source', async () => {
+    const { env } = makeEnv({ process: vi.fn(async () => 'retry') });
+    const message = stubMessage(queueMessage());
+
+    await expect(processMigratedLegacyMessage(message, env)).resolves.toBe(true);
+    expect(message.retry).toHaveBeenCalledExactlyOnceWith({ delaySeconds: 60 });
+    expect(message.ack).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     vi.spyOn(Date, 'now').mockReturnValue(EVENT_AT);
   });
@@ -107,6 +116,7 @@ describe('legacy inline delivery migration', () => {
       process: vi.fn(async () => {
         order.push('process');
         await processGate;
+        return 'complete';
       }),
     });
     const message = stubMessage(queueMessage(), () => order.push('ack'));
@@ -242,7 +252,7 @@ function makeEnv(
     complete: options.migrationComplete ?? options.migrationId !== null,
   }));
   const register = options.register ?? vi.fn(async () => 7);
-  const process = options.process ?? vi.fn(async () => undefined);
+  const process = options.process ?? vi.fn(async () => 'complete');
   const delivery = { register, process };
   const env = {
     AGENT_FACT_BATCHER: { getByName: vi.fn(() => ({ getIngestionMigrationState: legacyState })) },

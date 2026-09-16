@@ -75,10 +75,9 @@ describe('agent snapshot runner', () => {
   });
 
   it('retries while another worker holds the active generation claim', async () => {
-    const retryable = Object.assign(new Error('active claim'), { retryable: true });
     const { coordinator, env } = makeSnapshotRunner(plan, {
       initialStats: { gatePhase: 'snapshot' },
-      overrides: { claimSnapshot: vi.fn().mockRejectedValue(retryable) },
+      overrides: { claimSnapshot: vi.fn().mockResolvedValue(null) },
     });
 
     await expect(runAgentSnapshot(env, 'org-1')).resolves.toEqual({
@@ -200,25 +199,66 @@ describe('agent snapshot runner', () => {
     expect(startSnapshotCopy).toHaveBeenCalledTimes(AGENT_SNAPSHOT_TARGETS.length - 1);
   });
 
-  it('hands off before the four-minute invocation deadline while a job is running', async () => {
+  it('polls a rediscovered running job without immediately publishing another continuation', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-13T17:40:00.000Z'));
-    vi.mocked(snapshotJobStatus).mockResolvedValue('working');
-    const { coordinator, env } = makeSnapshotRunner(plan);
+    const target = AGENT_SNAPSHOT_TARGETS[0];
+    const knownIntent = {
+      generation: plan.generation,
+      target,
+      copyAttempt: plan.generation,
+      startedAt: Date.now() - 11 * 60_000,
+      jobId: 'job-older-than-status-window',
+    };
+    vi.mocked(snapshotJobStatus).mockResolvedValueOnce(null);
+    vi.mocked(discoverSnapshotCopy).mockResolvedValueOnce({
+      id: knownIntent.jobId,
+      status: 'working',
+    });
+    const { coordinator, env, queueSend } = makeSnapshotRunner(plan, {
+      initialStats: { gatePhase: 'snapshot' },
+      initialIntent: knownIntent,
+    });
 
     const running = runAgentSnapshot(env, 'org-1');
-    await vi.advanceTimersByTimeAsync(
-      AGENT_SNAPSHOT_WORK_DEADLINE_MS + AGENT_SNAPSHOT_POLL_INTERVAL_MS,
-    );
-
-    await expect(running).resolves.toMatchObject({
-      status: 'continued',
-      generation: 3,
-      nextCopyIndex: 0,
-    });
-    expect(coordinator.failSnapshot).not.toHaveBeenCalled();
-    expect(coordinator.settleSnapshotCopyIntent).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(AGENT_SNAPSHOT_POLL_INTERVAL_MS - 1);
+    expect(snapshotJobStatus).toHaveBeenCalledOnce();
+    expect(queueSend).not.toHaveBeenCalled();
+    expect(coordinator.releaseSnapshotClaim).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(running).resolves.toMatchObject({ status: 'complete' });
+    expect(queueSend).not.toHaveBeenCalled();
+    expect(startSnapshotCopy).toHaveBeenCalledTimes(AGENT_SNAPSHOT_TARGETS.length - 1);
   });
+
+  it.each([false, true])(
+    'hands off before the deadline for a running job (rediscovered: %s)',
+    async (rediscovered) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-13T17:40:00.000Z'));
+      vi.mocked(snapshotJobStatus).mockResolvedValue(rediscovered ? null : 'working');
+      if (rediscovered) {
+        vi.mocked(discoverSnapshotCopy).mockResolvedValue({
+          id: `job-${AGENT_SNAPSHOT_TARGETS[0]}`,
+          status: 'working',
+        });
+      }
+      const { coordinator, env } = makeSnapshotRunner(plan);
+
+      const running = runAgentSnapshot(env, 'org-1');
+      await vi.advanceTimersByTimeAsync(
+        AGENT_SNAPSHOT_WORK_DEADLINE_MS + AGENT_SNAPSHOT_POLL_INTERVAL_MS,
+      );
+
+      await expect(running).resolves.toMatchObject({
+        status: 'continued',
+        generation: 3,
+        nextCopyIndex: 0,
+      });
+      expect(coordinator.failSnapshot).not.toHaveBeenCalled();
+      expect(coordinator.settleSnapshotCopyIntent).not.toHaveBeenCalled();
+    },
+  );
 
   it('abandons a completed Copy set that crossed midnight out of retention', async () => {
     vi.useFakeTimers();

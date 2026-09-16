@@ -44,8 +44,10 @@ export async function processMigratedLegacyMessage(
     throw new Error('Agent delivery returned an invalid revision');
   }
   const reference: AgentDeliveryReference = { ...staged, delivery_revision: revision };
-  await delivery.process(reference);
-  message.ack();
+  const result = await delivery.process(reference);
+  if (result === 'retry') message.retry({ delaySeconds: 60 });
+  else if (result === 'complete') message.ack();
+  else throw new Error('Invalid agent delivery result');
   return true;
 }
 
