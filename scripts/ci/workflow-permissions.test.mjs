@@ -505,3 +505,57 @@ describe('production Worker secret boundary', () => {
     expect(configure.run).not.toContain('TINYBIRD_AGENT_SNAPSHOT_CLEANUP_TOKEN');
   });
 });
+
+function matchesFilter(filters, name, path) {
+  return filters[name].some((pattern) => new Glob(pattern).match(path));
+}
+
+describe('MCP Worker change detection', () => {
+  const filters = YAML.parse(
+    ci.jobs.changes.steps.find((step) => step.id === 'filter').with.filters,
+  );
+  const mcpJob = ci.jobs.mcp;
+  const stepCommands = mcpJob.steps.map((step) => step.run ?? '').join('\n');
+
+  test('exposes an mcp change output and schedules the MCP Worker job from it', () => {
+    expect(ci.jobs.changes.outputs.mcp).toBe('${{ steps.filter.outputs.mcp }}');
+    expect(mcpJob.name).toBe('MCP Worker');
+    expect(mcpJob.if).toBe(
+      "needs.changes.outputs.mcp == 'true' || needs.changes.outputs.root == 'true'",
+    );
+    expect(ci.jobs.status.needs).toContain('mcp');
+    expect(ci.jobs.status.steps[0].run).toContain("contains(needs.*.result, 'failure')");
+    expect(ci.jobs.status.steps[0].run).toContain("contains(needs.*.result, 'cancelled')");
+  });
+
+  test('app-only MCP changes select the MCP Worker without the Analyst Sandbox', () => {
+    expect(matchesFilter(filters, 'mcp', 'apps/mcp/src/index.ts')).toBe(true);
+    expect(matchesFilter(filters, 'mcp', 'apps/mcp/src/__tests__/index.test.ts')).toBe(true);
+    expect(matchesFilter(filters, 'analyst-sandbox', 'apps/mcp/src/index.ts')).toBe(false);
+    expect(matchesFilter(filters, 'mcp', 'apps/web/src/app/page.tsx')).toBe(false);
+  });
+
+  test('MCP runtime dependency changes select the MCP Worker and remaining package checks', () => {
+    expect(matchesFilter(filters, 'mcp', 'packages/mcp-core/src/index.ts')).toBe(true);
+    expect(matchesFilter(filters, 'analyst-sandbox', 'packages/mcp-core/src/index.ts')).toBe(true);
+    expect(matchesFilter(filters, 'mcp', 'packages/logging/src/index.ts')).toBe(true);
+    expect(matchesFilter(filters, 'mcp', 'packages/utils/src/index.ts')).toBe(true);
+    expect(matchesFilter(filters, 'utils', 'packages/utils/src/index.ts')).toBe(true);
+  });
+
+  test('MCP Worker check runs format, lint, type-check, tests, and local Wrangler validation', () => {
+    expect(stepCommands).toContain('bun prettier --check "apps/mcp/**/*.{ts,tsx,js,jsx,json}"');
+    expect(stepCommands).toContain('bunx turbo run lint --filter=@trace-flow/mcp');
+    expect(stepCommands).toContain('bunx turbo run type-check --filter=@trace-flow/mcp');
+    expect(stepCommands).toContain('bunx turbo run test --filter=@trace-flow/mcp');
+    const wranglerCommands = stepCommands
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.includes('wrangler deploy'));
+    expect(wranglerCommands).toEqual([
+      'bunx wrangler deploy --env="" --dry-run',
+      'bunx wrangler deploy --env preview --dry-run',
+      'bunx wrangler deploy --env production --dry-run',
+    ]);
+  });
+});
