@@ -120,7 +120,7 @@ where
 pub fn detect(home: &std::path::Path) -> Vec<DetectedSource> {
     detect_with(
         home,
-        |root| collector_sync::walk_transcripts(root).len(),
+        |root| collector_sync::walk_transcripts(root).files.len(),
         |db| db.exists(),
     )
 }

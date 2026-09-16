@@ -16,8 +16,9 @@
 //!
 //! The window is the 24h active-session grace for `sync`, measured back from the last complete pass
 //! recorded in the cursor store (or from now on the very first pass), or a `HistoryPreset` for
-//! `import`/`--since`. A pass that finishes with no failures records its start time as the new
-//! watermark, so time the collector spent not running is rescanned, never skipped.
+//! `import`/`--since`. A pass that finishes with no discovery, assembly, or ingest failures records
+//! its start time as the new watermark, so time the collector spent not running is rescanned, never
+//! skipped. A skipped filesystem error holds the prior watermark so unread files cannot age out.
 //! Batch ids are minted per POST from a process counter seeded by the wall clock so they are unique
 //! within a run without needing `Date.now()` at the cursor seam.
 
@@ -81,10 +82,20 @@ pub struct SourceReport {
     pub selected: usize,
     pub advanced: u32,
     pub failed: u32,
+    /// WalkDir or metadata errors skipped while scanning this Source. Count only — no paths.
+    pub discovery_errors: u32,
     /// True when a cycle-fatal error (bad credential, too-old client, rate limit) stopped the pass.
     pub aborted_early: bool,
     /// The first ingest error class of the pass, surfaced so a failed sync says *why* (no secrets).
     pub first_error: Option<String>,
+}
+
+impl SourceReport {
+    /// A pass is complete only when every configured scan and upload finished with no discovery,
+    /// assembly, transport, or cycle-fatal failure.
+    pub fn is_complete(&self) -> bool {
+        self.failed == 0 && !self.aborted_early && self.discovery_errors == 0
+    }
 }
 
 /// Archive inputs that stay off the fact `IngestClient` path.
@@ -402,13 +413,12 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
 
     apply_archive_policy_after_cycle(cfg.archive.as_ref(), cfg.org_id, archive.as_mut(), &reports);
 
-    let complete = reports
-        .iter()
-        .all(|(_, report)| report.failed == 0 && !report.aborted_early);
+    let complete = reports.iter().all(|(_, report)| report.is_complete());
     if complete {
         store.mark_parser_version(PARSER_VERSION)?;
         // The pass started at `now_ms`; anything modified after that is caught by the next pass's
-        // grace window. A pass with failures keeps the old watermark so the failed files stay in scope.
+        // grace window. A pass with discovery, assembly, or ingest failures keeps the old watermark
+        // so unread or failed files stay in the next incremental window.
         store
             .mark_complete_sync(cfg.now_ms)
             .context("record complete sync")?;
@@ -1169,6 +1179,84 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unreadable_archive_subtree_is_not_reported_as_successful() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        write_home_transcripts(home.path());
+        let locked = home.path().join(".codex").join("sessions").join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::write(locked.join("hidden.jsonl"), CODEX).unwrap();
+        struct RestorePerms(std::path::PathBuf);
+        impl Drop for RestorePerms {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+            }
+        }
+        let restore = RestorePerms(locked.clone());
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read_dir(&locked).is_ok() {
+            let uid = std::process::Command::new("id")
+                .arg("-u")
+                .output()
+                .ok()
+                .and_then(|out| String::from_utf8(out.stdout).ok());
+            if uid.as_deref().map(str::trim) == Some("0") {
+                return;
+            }
+            panic!("chmod 000 did not deny listing on a non-root process");
+        }
+
+        let ingest_url = spawn_http(|_raw| {
+            raw_response(
+                202,
+                "Accepted",
+                r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#,
+            )
+        })
+        .await;
+        let archive_url = spawn_http(|raw| archive_ack(&request_body(&raw))).await;
+
+        let outcome = run_with_servers(
+            home.path(),
+            state.path(),
+            ingest_url,
+            Some(ArchiveRunConfig {
+                archive_url,
+                spool_dir: state.path().join("archive-spool-org_1"),
+                enrollment_path: state.path().join("archive-enrollment-org_1.json"),
+                key_store: Arc::new(MemoryKeyStore::new()),
+                policy: ArchivePolicy::Enrolled,
+                authorized_sources: vec![
+                    authorization(ArchiveSource::Claude),
+                    authorization(ArchiveSource::Codex),
+                ],
+            }),
+        )
+        .await;
+        let _ = std::fs::set_permissions(&restore.0, std::fs::Permissions::from_mode(0o755));
+        drop(restore);
+
+        let archive = outcome.archive.as_ref().unwrap();
+        assert!(archive.failed >= 1);
+        assert_eq!(
+            archive.first_error.as_deref(),
+            Some(collector_sync::DISCOVERY_INCOMPLETE)
+        );
+        assert!(!archive.first_error.as_deref().unwrap_or("").contains('/'));
+        let claude = outcome
+            .reports
+            .iter()
+            .find(|(source, _)| *source == AgentSource::Claude)
+            .map(|(_, report)| report)
+            .unwrap();
+        assert!(claude.is_complete());
+        assert_eq!(claude.discovery_errors, 0);
+    }
+
     #[tokio::test]
     async fn fact_failure_does_not_advance_the_complete_sync_watermark() {
         let home = tempfile::TempDir::new().unwrap();
@@ -1181,6 +1269,221 @@ mod tests {
 
         assert!(outcome.reports.iter().any(|(_, report)| report.failed > 0));
         assert_eq!(last_complete_sync_at_ms(state.path()), None);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn discovery_errors_hold_the_watermark_so_later_passes_still_see_older_files() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{Duration, UNIX_EPOCH};
+
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        let claude_dir = home.path().join(".claude/projects/p1");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(claude_dir.join("visible.jsonl"), CLAUDE).unwrap();
+
+        let ingest_url = spawn_http(|_raw| {
+            raw_response(
+                202,
+                "Accepted",
+                r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#,
+            )
+        })
+        .await;
+
+        let t0 = 1_779_840_000_000;
+        let first = run_fact_sync(home.path(), state.path(), ingest_url.clone(), false, t0).await;
+        assert!(first.reports.iter().all(|(_, report)| report.is_complete()));
+        assert_eq!(last_complete_sync_at_ms(state.path()), Some(t0));
+
+        let locked = claude_dir.join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        let hidden = locked.join("hidden.jsonl");
+        std::fs::write(&hidden, CLAUDE).unwrap();
+        let hidden_mtime_ms = t0 + 2 * 60 * 60 * 1000;
+        std::fs::File::open(&hidden)
+            .unwrap()
+            .set_modified(UNIX_EPOCH + Duration::from_millis(hidden_mtime_ms as u64))
+            .unwrap();
+        struct RestorePerms(std::path::PathBuf);
+        impl Drop for RestorePerms {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+            }
+        }
+        let restore = RestorePerms(locked.clone());
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read_dir(&locked).is_ok() {
+            let uid = std::process::Command::new("id")
+                .arg("-u")
+                .output()
+                .ok()
+                .and_then(|out| String::from_utf8(out.stdout).ok());
+            if uid.as_deref().map(str::trim) == Some("0") {
+                return;
+            }
+            panic!("chmod 000 did not deny listing on a non-root process");
+        }
+
+        let t_later = t0 + 48 * 60 * 60 * 1000;
+        let blocked = run_fact_sync(
+            home.path(),
+            state.path(),
+            ingest_url.clone(),
+            false,
+            t_later,
+        )
+        .await;
+        let claude = blocked
+            .reports
+            .iter()
+            .find(|(source, _)| *source == AgentSource::Claude)
+            .unwrap()
+            .1
+            .clone();
+        assert!(claude.discovery_errors >= 1);
+        assert!(!claude.is_complete());
+        assert_eq!(
+            claude.first_error.as_deref(),
+            Some(collector_sync::DISCOVERY_INCOMPLETE)
+        );
+        assert!(!claude.first_error.as_deref().unwrap_or("").contains('/'));
+        assert!(!claude
+            .first_error
+            .as_deref()
+            .unwrap_or("")
+            .contains("hidden"));
+        assert_eq!(last_complete_sync_at_ms(state.path()), Some(t0));
+        assert!(cursor_store(state.path())
+            .get(AgentSource::Claude, hidden.to_str().unwrap())
+            .unwrap()
+            .is_none());
+
+        std::fs::set_permissions(&restore.0, std::fs::Permissions::from_mode(0o755)).unwrap();
+        drop(restore);
+
+        // If the blocked pass had advanced the watermark to t_later, resume_incremental would cut
+        // at t_later - 24h (t0 + 24h) and drop hidden (mtime t0 + 2h). Holding t0 keeps it in scope.
+        let recovered = run_fact_sync(home.path(), state.path(), ingest_url, false, t_later).await;
+        let claude = recovered
+            .reports
+            .iter()
+            .find(|(source, _)| *source == AgentSource::Claude)
+            .unwrap()
+            .1
+            .clone();
+        assert_eq!(claude.discovery_errors, 0);
+        assert_eq!(claude.selected, 1);
+        assert_eq!(claude.advanced, 1);
+        assert!(cursor_store(state.path())
+            .get(AgentSource::Claude, hidden.to_str().unwrap())
+            .unwrap()
+            .is_some());
+        assert_eq!(last_complete_sync_at_ms(state.path()), Some(t_later));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unreadable_root_ancestor_holds_the_watermark_so_later_passes_still_see_older_files() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{Duration, UNIX_EPOCH};
+
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        let claude_dir = home.path().join(".claude/projects/p1");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(claude_dir.join("visible.jsonl"), CLAUDE).unwrap();
+
+        let ingest_url = spawn_http(|_raw| {
+            raw_response(
+                202,
+                "Accepted",
+                r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#,
+            )
+        })
+        .await;
+
+        let t0 = 1_779_840_000_000;
+        let first = run_fact_sync(home.path(), state.path(), ingest_url.clone(), false, t0).await;
+        assert!(first.reports.iter().all(|(_, report)| report.is_complete()));
+        assert_eq!(last_complete_sync_at_ms(state.path()), Some(t0));
+
+        let delayed = claude_dir.join("delayed.jsonl");
+        std::fs::write(&delayed, CLAUDE).unwrap();
+        let delayed_mtime_ms = t0 + 2 * 60 * 60 * 1000;
+        std::fs::File::open(&delayed)
+            .unwrap()
+            .set_modified(UNIX_EPOCH + Duration::from_millis(delayed_mtime_ms as u64))
+            .unwrap();
+
+        struct RestorePerms(std::path::PathBuf);
+        impl Drop for RestorePerms {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+            }
+        }
+        let ancestor = home.path().join(".claude");
+        let restore = RestorePerms(ancestor.clone());
+        std::fs::set_permissions(&ancestor, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read_dir(&ancestor).is_ok() {
+            let uid = std::process::Command::new("id")
+                .arg("-u")
+                .output()
+                .ok()
+                .and_then(|out| String::from_utf8(out.stdout).ok());
+            if uid.as_deref().map(str::trim) == Some("0") {
+                return;
+            }
+            panic!("chmod 000 did not deny listing on a non-root process");
+        }
+
+        let t_later = t0 + 48 * 60 * 60 * 1000;
+        let blocked = run_fact_sync(
+            home.path(),
+            state.path(),
+            ingest_url.clone(),
+            false,
+            t_later,
+        )
+        .await;
+        let claude = blocked
+            .reports
+            .iter()
+            .find(|(source, _)| *source == AgentSource::Claude)
+            .unwrap()
+            .1
+            .clone();
+        assert!(claude.discovery_errors >= 1);
+        assert!(!claude.is_complete());
+        assert_eq!(
+            claude.first_error.as_deref(),
+            Some(collector_sync::DISCOVERY_INCOMPLETE)
+        );
+        assert!(!claude.first_error.as_deref().unwrap_or("").contains('/'));
+        assert_eq!(last_complete_sync_at_ms(state.path()), Some(t0));
+
+        std::fs::set_permissions(&restore.0, std::fs::Permissions::from_mode(0o755)).unwrap();
+        drop(restore);
+
+        // If the blocked pass had treated the unreadable ancestor as a missing root, the watermark
+        // would have advanced to t_later and resume_incremental would drop delayed (mtime t0+2h).
+        let recovered = run_fact_sync(home.path(), state.path(), ingest_url, false, t_later).await;
+        let claude = recovered
+            .reports
+            .iter()
+            .find(|(source, _)| *source == AgentSource::Claude)
+            .unwrap()
+            .1
+            .clone();
+        assert_eq!(claude.discovery_errors, 0);
+        assert_eq!(claude.selected, 1);
+        assert_eq!(claude.advanced, 1);
+        assert!(cursor_store(state.path())
+            .get(AgentSource::Claude, delayed.to_str().unwrap())
+            .unwrap()
+            .is_some());
+        assert_eq!(last_complete_sync_at_ms(state.path()), Some(t_later));
     }
 
     #[tokio::test]
