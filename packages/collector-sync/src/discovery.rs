@@ -60,7 +60,9 @@ pub const DISCOVERY_INCOMPLETE: &str = "discovery_incomplete";
 ///
 /// `skipped_errors` is the public incomplete signal. It is a count only — never a path, error
 /// message, or transcript byte — so callers can hold the watermark without leaking local FS
-/// details. A missing root is complete and empty (the normal first-run state).
+/// details. A missing root is complete and empty (the normal first-run state). A root or
+/// ancestor that cannot be probed is incomplete, so a permission error cannot look like
+/// first-run and advance the watermark.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct DiscoveryWalk {
     pub files: Vec<DiscoveredFile>,
@@ -78,12 +80,20 @@ impl DiscoveryWalk {
 /// path) so a partial pass makes progress on the oldest files first and the order is deterministic.
 ///
 /// A missing root yields an empty complete walk — the normal first-run state before the agent has
-/// written any transcript. WalkDir and metadata failures are skipped rather than failing the whole
-/// walk; they increment [`DiscoveryWalk::skipped_errors`] so the embedder can keep those files in
-/// the next incremental window instead of advancing the watermark.
+/// written any transcript. A root that exists but cannot be probed (permission or metadata error
+/// on the root or an ancestor) is incomplete. WalkDir and metadata failures are skipped rather
+/// than failing the whole walk; they increment [`DiscoveryWalk::skipped_errors`] so the embedder
+/// can keep those files in the next incremental window instead of advancing the watermark.
 pub fn walk_transcripts(root: &Path) -> DiscoveryWalk {
-    if !root.exists() {
-        return DiscoveryWalk::default();
+    match root.try_exists() {
+        Ok(false) => return DiscoveryWalk::default(),
+        Ok(true) => {}
+        Err(_) => {
+            return DiscoveryWalk {
+                skipped_errors: 1,
+                ..DiscoveryWalk::default()
+            };
+        }
     }
     let mut files = Vec::new();
     let mut skipped_errors = 0;
@@ -307,30 +317,47 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn deny_listing(path: &std::path::Path) -> Option<RestorePerms> {
+        use std::os::unix::fs::PermissionsExt;
+        let restore = RestorePerms(path.to_path_buf());
+        fs::set_permissions(path, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read_dir(path).is_err() {
+            return Some(restore);
+        }
+        let uid = std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .ok()
+            .and_then(|out| String::from_utf8(out.stdout).ok());
+        if uid.as_deref().map(str::trim) == Some("0") {
+            return None;
+        }
+        panic!("chmod 000 did not deny listing on a non-root process");
+    }
+
+    #[cfg(unix)]
+    struct RestorePerms(std::path::PathBuf);
+    #[cfg(unix)]
+    impl Drop for RestorePerms {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755));
+        }
+    }
+
+    #[cfg(unix)]
     #[test]
     fn walk_counts_unreadable_subtree_without_exposing_paths() {
-        use std::os::unix::fs::PermissionsExt;
-
         let dir = TempDir::new().unwrap();
         write(&dir, "visible.jsonl", "{}");
         let locked = dir.path().join("locked");
         fs::create_dir(&locked).unwrap();
         fs::write(locked.join("hidden.jsonl"), "{}").unwrap();
-        struct RestorePerms(std::path::PathBuf);
-        impl Drop for RestorePerms {
-            fn drop(&mut self) {
-                let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755));
-            }
-        }
-        let restore = RestorePerms(locked.clone());
-        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
-        if fs::read_dir(&locked).is_ok() {
-            // Root (or a capable process) can still read mode 000; the error path is untestable here.
+        let Some(restore) = deny_listing(&locked) else {
             return;
-        }
+        };
 
         let walk = walk_transcripts(dir.path());
-        let _ = fs::set_permissions(&restore.0, fs::Permissions::from_mode(0o755));
         drop(restore);
 
         assert!(!walk.is_complete());
@@ -346,6 +373,30 @@ mod tests {
         assert_eq!(DISCOVERY_INCOMPLETE, "discovery_incomplete");
         assert!(!DISCOVERY_INCOMPLETE.contains('/'));
         assert!(!DISCOVERY_INCOMPLETE.contains("hidden"));
+        assert!(!DISCOVERY_INCOMPLETE.contains('{'));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_counts_unreadable_ancestor_as_incomplete_without_exposing_paths() {
+        let dir = TempDir::new().unwrap();
+        let ancestor = dir.path().join("hidden_parent");
+        let root = ancestor.join("projects");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("session.jsonl"), "{}\n").unwrap();
+        let Some(restore) = deny_listing(&ancestor) else {
+            return;
+        };
+
+        let walk = walk_transcripts(&root);
+        drop(restore);
+
+        assert!(!walk.is_complete());
+        assert_eq!(walk.skipped_errors, 1);
+        assert!(walk.files.is_empty());
+        assert_eq!(DISCOVERY_INCOMPLETE, "discovery_incomplete");
+        assert!(!DISCOVERY_INCOMPLETE.contains('/'));
+        assert!(!DISCOVERY_INCOMPLETE.contains("hidden_parent"));
         assert!(!DISCOVERY_INCOMPLETE.contains('{'));
     }
 

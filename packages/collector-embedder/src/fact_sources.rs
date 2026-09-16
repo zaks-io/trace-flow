@@ -239,7 +239,15 @@ mod tests {
         let restore = RestorePerms(locked.clone());
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
         if std::fs::read_dir(&locked).is_ok() {
-            return;
+            let uid = std::process::Command::new("id")
+                .arg("-u")
+                .output()
+                .ok()
+                .and_then(|out| String::from_utf8(out.stdout).ok());
+            if uid.as_deref().map(str::trim) == Some("0") {
+                return;
+            }
+            panic!("chmod 000 did not deny listing on a non-root process");
         }
 
         let store = CursorStore::open_in_memory("org").unwrap();
