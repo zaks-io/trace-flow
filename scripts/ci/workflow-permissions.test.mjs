@@ -545,9 +545,9 @@ describe('MCP Worker change detection', () => {
 
   test('MCP Worker check runs format, lint, type-check, tests, and local Wrangler validation', () => {
     expect(stepCommands).toContain('bun prettier --check "apps/mcp/**/*.{ts,tsx,js,jsx,json}"');
-    expect(stepCommands).toContain('bunx turbo run lint --filter=@trace-flow/mcp');
-    expect(stepCommands).toContain('bunx turbo run type-check --filter=@trace-flow/mcp');
-    expect(stepCommands).toContain('bunx turbo run test --filter=@trace-flow/mcp');
+    expect(stepCommands).toContain('bun --cwd apps/mcp lint');
+    expect(stepCommands).toContain('bun --cwd apps/mcp type-check');
+    expect(stepCommands).toContain('bun --cwd apps/mcp test');
     const wranglerCommands = stepCommands
       .split('\n')
       .map((line) => line.trim())
@@ -557,5 +557,45 @@ describe('MCP Worker change detection', () => {
       'bunx wrangler deploy --env preview --dry-run',
       'bunx wrangler deploy --env production --dry-run',
     ]);
+  });
+
+  test('dependency-only MCP changes cannot reuse a stale Turbo type-check or test cache', () => {
+    const result = Bun.spawnSync({
+      cmd: [
+        'bunx',
+        'turbo',
+        'run',
+        'type-check',
+        'test',
+        '--filter=@trace-flow/mcp',
+        '--dry-run=json',
+      ],
+      cwd: new URL('../..', import.meta.url).pathname,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(result.exitCode).toBe(0);
+
+    const stdout = result.stdout.toString();
+    const dryRun = JSON.parse(stdout.slice(stdout.indexOf('{')));
+    expect(dryRun.tasks.map((task) => task.taskId).sort()).toEqual([
+      '@trace-flow/mcp#test',
+      '@trace-flow/mcp#type-check',
+    ]);
+
+    for (const task of dryRun.tasks) {
+      expect(task.dependencies).toEqual([]);
+      expect(task.resolvedTaskDefinition.dependsOn).toEqual([]);
+      expect(task.resolvedTaskDefinition.cache).toBe(true);
+      const hashedPaths = Object.keys(task.inputs);
+      expect(hashedPaths.length).toBeGreaterThan(0);
+      expect(hashedPaths.every((path) => !path.includes('packages/'))).toBe(true);
+      expect(hashedPaths.some((path) => path.startsWith('src/'))).toBe(true);
+    }
+
+    expect(mcpJob.steps.some((step) => step.name === 'Cache Turbo')).toBe(false);
+    expect(stepCommands).not.toContain('turbo run');
+    expect(stepCommands).toContain('bun --cwd apps/mcp type-check');
+    expect(stepCommands).toContain('bun --cwd apps/mcp test');
   });
 });
