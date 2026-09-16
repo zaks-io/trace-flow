@@ -550,3 +550,62 @@ fn corrupt_history_state_is_not_rebaselined() {
         .any(|error| error == "archive_history_corrupt"));
     assert_eq!(fs::read(path).unwrap(), before);
 }
+
+#[cfg(unix)]
+#[test]
+fn unreadable_subtree_marks_archive_discovery_incomplete_without_paths() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = TempDir::new().unwrap();
+    let spool_dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    write_codex(
+        &home,
+        "sessions",
+        "visible.jsonl",
+        &codex("visible", "2026-01-01T00:00:00Z", "one"),
+    );
+    let locked = home.path().join(".codex").join("sessions").join("locked");
+    fs::create_dir(&locked).unwrap();
+    fs::write(
+        locked.join("hidden.jsonl"),
+        codex("hidden", "2026-01-01T00:00:00Z", "two"),
+    )
+    .unwrap();
+    struct RestorePerms(std::path::PathBuf);
+    impl Drop for RestorePerms {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755));
+        }
+    }
+    let restore = RestorePerms(locked.clone());
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read_dir(&locked).is_ok() {
+        let uid = std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .ok()
+            .and_then(|out| String::from_utf8(out.stdout).ok());
+        if uid.as_deref().map(str::trim) == Some("0") {
+            return;
+        }
+        panic!("chmod 000 did not deny listing on a non-root process");
+    }
+
+    let spool = open_spool(&spool_dir, &keys);
+    let auth = authorization(ArchiveSource::Codex, ArchiveHistoryChoice::AllHistory);
+    let prepared = prepare(home.path(), &spool, std::slice::from_ref(&auth), 10);
+    let _ = fs::set_permissions(&restore.0, fs::Permissions::from_mode(0o755));
+    drop(restore);
+
+    assert!(prepared
+        .errors
+        .iter()
+        .any(|error| error == collector_sync::DISCOVERY_INCOMPLETE));
+    assert!(prepared
+        .errors
+        .iter()
+        .all(|error| !error.contains('/') && !error.contains("hidden") && !error.contains('{')));
+    assert_eq!(prepared.snapshots.len(), 1);
+    assert_eq!(prepared.snapshots[0].source_session_id, "visible");
+}

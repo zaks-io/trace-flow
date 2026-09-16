@@ -14,7 +14,7 @@ use collector_archive_sync::{
     ARCHIVE_HISTORY_STATE_VERSION,
 };
 use collector_contracts::AgentSource;
-use collector_sync::walk_transcripts;
+use collector_sync::{walk_transcripts, DISCOVERY_INCOMPLETE};
 
 use crate::sources::source_roots;
 
@@ -164,8 +164,11 @@ fn discover(home: &Path, source: ArchiveSource, errors: &mut Vec<String>) -> Vec
         ArchiveSource::Codex => AgentSource::Codex,
     };
     let mut groups: HashMap<(String, String), Vec<Candidate>> = HashMap::new();
+    let mut skipped_errors = 0usize;
     for root in source_roots(home, agent_source) {
-        for file in walk_transcripts(&root).files {
+        let walk = walk_transcripts(&root);
+        skipped_errors += walk.skipped_errors;
+        for file in walk.files {
             match identify(source, &file.path, file.mtime_ms as i64, file.size_bytes) {
                 Ok(candidate) => groups
                     .entry((candidate.session.clone(), candidate.part.clone()))
@@ -174,6 +177,9 @@ fn discover(home: &Path, source: ArchiveSource, errors: &mut Vec<String>) -> Vec
                 Err(class) => errors.push(class.to_string()),
             }
         }
+    }
+    if skipped_errors > 0 {
+        errors.push(DISCOVERY_INCOMPLETE.to_string());
     }
     let mut candidates = Vec::new();
     for mut copies in groups.into_values() {

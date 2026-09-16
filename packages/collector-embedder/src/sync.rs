@@ -1179,6 +1179,84 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unreadable_archive_subtree_is_not_reported_as_successful() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        write_home_transcripts(home.path());
+        let locked = home.path().join(".codex").join("sessions").join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::write(locked.join("hidden.jsonl"), CODEX).unwrap();
+        struct RestorePerms(std::path::PathBuf);
+        impl Drop for RestorePerms {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+            }
+        }
+        let restore = RestorePerms(locked.clone());
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read_dir(&locked).is_ok() {
+            let uid = std::process::Command::new("id")
+                .arg("-u")
+                .output()
+                .ok()
+                .and_then(|out| String::from_utf8(out.stdout).ok());
+            if uid.as_deref().map(str::trim) == Some("0") {
+                return;
+            }
+            panic!("chmod 000 did not deny listing on a non-root process");
+        }
+
+        let ingest_url = spawn_http(|_raw| {
+            raw_response(
+                202,
+                "Accepted",
+                r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#,
+            )
+        })
+        .await;
+        let archive_url = spawn_http(|raw| archive_ack(&request_body(&raw))).await;
+
+        let outcome = run_with_servers(
+            home.path(),
+            state.path(),
+            ingest_url,
+            Some(ArchiveRunConfig {
+                archive_url,
+                spool_dir: state.path().join("archive-spool-org_1"),
+                enrollment_path: state.path().join("archive-enrollment-org_1.json"),
+                key_store: Arc::new(MemoryKeyStore::new()),
+                policy: ArchivePolicy::Enrolled,
+                authorized_sources: vec![
+                    authorization(ArchiveSource::Claude),
+                    authorization(ArchiveSource::Codex),
+                ],
+            }),
+        )
+        .await;
+        let _ = std::fs::set_permissions(&restore.0, std::fs::Permissions::from_mode(0o755));
+        drop(restore);
+
+        let archive = outcome.archive.as_ref().unwrap();
+        assert!(archive.failed >= 1);
+        assert_eq!(
+            archive.first_error.as_deref(),
+            Some(collector_sync::DISCOVERY_INCOMPLETE)
+        );
+        assert!(!archive.first_error.as_deref().unwrap_or("").contains('/'));
+        let claude = outcome
+            .reports
+            .iter()
+            .find(|(source, _)| *source == AgentSource::Claude)
+            .map(|(_, report)| report)
+            .unwrap();
+        assert!(claude.is_complete());
+        assert_eq!(claude.discovery_errors, 0);
+    }
+
     #[tokio::test]
     async fn fact_failure_does_not_advance_the_complete_sync_watermark() {
         let home = tempfile::TempDir::new().unwrap();
