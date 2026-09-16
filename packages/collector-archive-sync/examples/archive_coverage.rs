@@ -113,7 +113,7 @@ fn local_row(
         Ok(ends) => (ends.last().copied().unwrap_or(0), ends.len()),
         Err(_) => (0, 0),
     };
-    let (Ok(session_id), Ok((base_part_id, _))) = (session, part) else {
+    let (Ok(session_id), Ok(base_part_id)) = (session, part) else {
         return json!({
             "kind": "unidentified",
             "source": source.as_str(),

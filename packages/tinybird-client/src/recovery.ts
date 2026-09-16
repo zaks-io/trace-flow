@@ -22,7 +22,6 @@ export interface RecoveryPageOptions {
   afterId?: number;
   limit?: number;
   state?: RecoveryState;
-  kind?: RecoveryKind;
 }
 
 export interface RecoveryPage {
@@ -312,14 +311,13 @@ export class TinybirdRecoveryStore {
   }
 
   list(options: RecoveryPageOptions = {}): RecoveryPage {
-    const { afterId, limit, state, kind } = validateRecoveryPageOptions(options);
+    const { afterId, limit, state } = validateRecoveryPageOptions(options);
     const rows = [
       ...this.storage.sql.exec<StoredRecoveryRecord>(
-        kind
-          ? `SELECT * FROM recovery_records
-             WHERE id > ? AND state = ? AND kind = ? ORDER BY id LIMIT ?`
-          : 'SELECT * FROM recovery_records WHERE id > ? AND state = ? ORDER BY id LIMIT ?',
-        ...(kind ? [afterId, state, kind, limit + 1] : [afterId, state, limit + 1]),
+        'SELECT * FROM recovery_records WHERE id > ? AND state = ? ORDER BY id LIMIT ?',
+        afterId,
+        state,
+        limit + 1,
       ),
     ];
     const records: RecoveryRecord[] = [];
@@ -365,22 +363,7 @@ export class TinybirdRecoveryStore {
     reason: string,
     mutate: () => void,
   ): RecoveryRecord {
-    const record = this.getStored(id);
-    if (record.state !== 'blocked') throw new Error('recovery record is not blocked');
-    const validatedReason = requireRecoveryReason(reason);
-    this.storage.transactionSync(() => {
-      mutate();
-      this.storage.sql.exec('DELETE FROM recovery_items WHERE recovery_id = ?', id);
-      this.storage.sql.exec(
-        `UPDATE recovery_records SET state = 'resolved', resolved_at_ms = ?, resolution = ?,
-         resolution_reason = ? WHERE id = ?`,
-        Date.now(),
-        resolution,
-        validatedReason,
-        id,
-      );
-    });
-    return this.get(id);
+    return this.resolveBatchWithMutation([{ id, resolution, reason }], mutate, () => undefined)[0]!;
   }
 
   resolveBatchWithMutation(
@@ -570,7 +553,6 @@ function validateRecoveryPageOptions(options: RecoveryPageOptions): {
   afterId: number;
   limit: number;
   state: RecoveryState;
-  kind: RecoveryKind | undefined;
 } {
   const afterId = options.afterId ?? 0;
   const limit = options.limit ?? 50;
@@ -580,10 +562,7 @@ function validateRecoveryPageOptions(options: RecoveryPageOptions): {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
     throw new Error('limit must be between 1 and 100');
   if (state !== 'blocked' && state !== 'resolved') throw new Error('invalid recovery state');
-  if (options.kind !== undefined && !['tinybird_insert', 'repair', 'dlq'].includes(options.kind)) {
-    throw new Error('invalid recovery kind');
-  }
-  return { afterId, limit, state, kind: options.kind };
+  return { afterId, limit, state };
 }
 
 export function splitUtf8Chunks(value: string, maxBytes: number): string[] {

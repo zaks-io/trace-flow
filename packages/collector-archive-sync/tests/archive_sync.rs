@@ -147,7 +147,7 @@ fn snapshot_for_path(
     observed_at: i64,
 ) -> ArchiveSnapshot {
     let source_session_id = archive_source_session_id(source, bytes).unwrap();
-    let (source_transcript_part_id, _) = transcript_part_for(source, Some(path), bytes).unwrap();
+    let source_transcript_part_id = transcript_part_for(source, Some(path), bytes).unwrap();
     ArchiveSnapshot {
         source,
         source_session_id,
