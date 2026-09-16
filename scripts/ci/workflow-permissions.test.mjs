@@ -505,3 +505,97 @@ describe('production Worker secret boundary', () => {
     expect(configure.run).not.toContain('TINYBIRD_AGENT_SNAPSHOT_CLEANUP_TOKEN');
   });
 });
+
+function matchesFilter(filters, name, path) {
+  return filters[name].some((pattern) => new Glob(pattern).match(path));
+}
+
+describe('MCP Worker change detection', () => {
+  const filters = YAML.parse(
+    ci.jobs.changes.steps.find((step) => step.id === 'filter').with.filters,
+  );
+  const mcpJob = ci.jobs.mcp;
+  const stepCommands = mcpJob.steps.map((step) => step.run ?? '').join('\n');
+
+  test('exposes an mcp change output and schedules the MCP Worker job from it', () => {
+    expect(ci.jobs.changes.outputs.mcp).toBe('${{ steps.filter.outputs.mcp }}');
+    expect(mcpJob.name).toBe('MCP Worker');
+    expect(mcpJob.if).toBe(
+      "needs.changes.outputs.mcp == 'true' || needs.changes.outputs.root == 'true'",
+    );
+    expect(ci.jobs.status.needs).toContain('mcp');
+    expect(ci.jobs.status.steps[0].run).toContain("contains(needs.*.result, 'failure')");
+    expect(ci.jobs.status.steps[0].run).toContain("contains(needs.*.result, 'cancelled')");
+  });
+
+  test('app-only MCP changes select the MCP Worker without the Analyst Sandbox', () => {
+    expect(matchesFilter(filters, 'mcp', 'apps/mcp/src/index.ts')).toBe(true);
+    expect(matchesFilter(filters, 'mcp', 'apps/mcp/src/__tests__/index.test.ts')).toBe(true);
+    expect(matchesFilter(filters, 'analyst-sandbox', 'apps/mcp/src/index.ts')).toBe(false);
+    expect(matchesFilter(filters, 'mcp', 'apps/web/src/app/page.tsx')).toBe(false);
+  });
+
+  test('MCP runtime dependency changes select the MCP Worker and remaining package checks', () => {
+    expect(matchesFilter(filters, 'mcp', 'packages/mcp-core/src/index.ts')).toBe(true);
+    expect(matchesFilter(filters, 'analyst-sandbox', 'packages/mcp-core/src/index.ts')).toBe(true);
+    expect(matchesFilter(filters, 'mcp', 'packages/logging/src/index.ts')).toBe(true);
+    expect(matchesFilter(filters, 'mcp', 'packages/utils/src/index.ts')).toBe(true);
+    expect(matchesFilter(filters, 'utils', 'packages/utils/src/index.ts')).toBe(true);
+  });
+
+  test('MCP Worker check runs format, lint, type-check, tests, and local Wrangler validation', () => {
+    expect(stepCommands).toContain('bun prettier --check "apps/mcp/**/*.{ts,tsx,js,jsx,json}"');
+    expect(stepCommands).toContain('bun --cwd apps/mcp lint');
+    expect(stepCommands).toContain('bun --cwd apps/mcp type-check');
+    expect(stepCommands).toContain('bun --cwd apps/mcp test');
+    const wranglerCommands = stepCommands
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.includes('wrangler deploy'));
+    expect(wranglerCommands).toEqual([
+      'bunx wrangler deploy --env="" --dry-run',
+      'bunx wrangler deploy --env preview --dry-run',
+      'bunx wrangler deploy --env production --dry-run',
+    ]);
+  });
+
+  test('dependency-only MCP changes cannot reuse a stale Turbo type-check or test cache', () => {
+    const result = Bun.spawnSync({
+      cmd: [
+        'bunx',
+        'turbo',
+        'run',
+        'type-check',
+        'test',
+        '--filter=@trace-flow/mcp',
+        '--dry-run=json',
+      ],
+      cwd: new URL('../..', import.meta.url).pathname,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(result.exitCode).toBe(0);
+
+    const stdout = result.stdout.toString();
+    const dryRun = JSON.parse(stdout.slice(stdout.indexOf('{')));
+    expect(dryRun.tasks.map((task) => task.taskId).sort()).toEqual([
+      '@trace-flow/mcp#test',
+      '@trace-flow/mcp#type-check',
+    ]);
+
+    for (const task of dryRun.tasks) {
+      expect(task.dependencies).toEqual([]);
+      expect(task.resolvedTaskDefinition.dependsOn).toEqual([]);
+      expect(task.resolvedTaskDefinition.cache).toBe(true);
+      const hashedPaths = Object.keys(task.inputs);
+      expect(hashedPaths.length).toBeGreaterThan(0);
+      expect(hashedPaths.every((path) => !path.includes('packages/'))).toBe(true);
+      expect(hashedPaths.some((path) => path.startsWith('src/'))).toBe(true);
+    }
+
+    expect(mcpJob.steps.some((step) => step.name === 'Cache Turbo')).toBe(false);
+    expect(stepCommands).not.toContain('turbo run');
+    expect(stepCommands).toContain('bun --cwd apps/mcp type-check');
+    expect(stepCommands).toContain('bun --cwd apps/mcp test');
+  });
+});
