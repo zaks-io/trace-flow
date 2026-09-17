@@ -19,9 +19,9 @@ attach objects from the current page to a message. Data questions run in a seale
 Sandbox where a Python analysis agent queries your Trace Flow data and reports back with its cost.
 
 We're building an opt-in archive of full agent conversations so the exchanges behind the metrics
-can become part of your own record. The upload path is implemented end to end, from the collector
-spool through the Archive API to encrypted R2 storage, but it is not deployed and archive
-availability stays off in Convex. Conversation archiving and search are not available yet. The next
+can become part of your own record. The upload path runs in production end to end, from the
+collector spool through the Archive API to encrypted R2 storage, and the archive is the permanent
+store that analytics facts derive from. Archive search is not available yet. The next
 step for Analyst is analyzing that archive to find where agents get stuck or waste time and tokens,
 with future uses in fine-tuning and alignment research.
 
@@ -207,13 +207,14 @@ promise availability. Use your own endpoints and credentials for an independent 
 - LLM documentation index: <https://trace-flow.dev/llms.txt>
 - Gateway: <https://gateway.trace-flow.dev>
 - MCP: <https://mcp.trace-flow.dev/mcp>
+- Conversation Archive: <https://archive.trace-flow.dev>
 - Desktop downloads: [macOS arm64](https://downloads.zaks.sh/trace-flow/desktop/latest/trace-flow-desktop.dmg) · [Windows x64](https://downloads.zaks.sh/trace-flow/desktop/latest/trace-flow-desktop-setup.exe)
 
-The Conversation Archive origin is intentionally absent. `apps/archive-api` implements the upload
+`apps/archive-api` implements the upload
 path: Collector Credential plus enrollment authorization, Archive Observation JSONL validation, the
 Archive Session Ledger and Storage Budget Durable Objects, encrypted chunk and manifest writes to R2,
 and integrity and audit reporting to Convex. Export and deletion routes fail closed because no Archive
-Export Grant issuer exists yet. The Worker has only a development configuration and is not deployed.
+Export Grant issuer exists yet. The Worker is deployed to production on merge to `main`.
 
 ## Deployment
 

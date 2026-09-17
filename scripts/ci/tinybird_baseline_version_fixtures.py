@@ -35,6 +35,31 @@ def bounded_day_chunks(start_day: str, end_day: str) -> list[tuple[str, str]]:
     return chunks
 
 
+def run_baseline_copy_chunk(
+    client,
+    run_copy,
+    category: str,
+    org_id: str,
+    start_day: str,
+    end_day: str,
+    chunk_start_day: str,
+    chunk_end_day: str,
+    copy_attempt: str,
+) -> None:
+    run_copy(
+        client,
+        f"repair_agent_{category}_versions_baseline",
+        {
+            "org_id": org_id,
+            "start_day": start_day,
+            "end_day": end_day,
+            "chunk_start_day": chunk_start_day,
+            "chunk_end_day": chunk_end_day,
+            "copy_attempt": copy_attempt,
+        },
+    )
+
+
 def verify_baseline_versions(client, sources, query_rows, run_copy) -> None:
     org = "org_baseline_version_regression"
     today = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
@@ -99,17 +124,16 @@ def verify_baseline_versions(client, sources, query_rows, run_copy) -> None:
         chunks = bounded_day_chunks(start_day, end_day)
 
         def copy_chunk(chunk_start_day: str, chunk_end_day: str) -> None:
-            run_copy(
+            run_baseline_copy_chunk(
                 client,
-                f"repair_agent_{category}_versions_baseline",
-                {
-                    "org_id": org,
-                    "start_day": start_day,
-                    "end_day": end_day,
-                    "chunk_start_day": chunk_start_day,
-                    "chunk_end_day": chunk_end_day,
-                    "copy_attempt": copy_attempt,
-                },
+                run_copy,
+                category,
+                org,
+                start_day,
+                end_day,
+                chunk_start_day,
+                chunk_end_day,
+                copy_attempt,
             )
 
         columns = re.findall(

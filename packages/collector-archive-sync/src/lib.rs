@@ -12,6 +12,7 @@ mod crypto;
 mod cycle;
 mod enrollment;
 mod error;
+mod generation;
 mod history;
 mod key_store;
 mod policy;
@@ -31,6 +32,7 @@ pub use cycle::{
 };
 pub use enrollment::ArchiveEnrollmentRecord;
 pub use error::{ArchiveClientError, ArchiveSyncError, ArchiveSyncResult};
+pub use generation::{ArchiveGenerationHistoryEntry, ArchiveGenerationRecord};
 pub use history::{
     ArchiveBaselineTarget, ArchiveHistoryGeneration, ArchiveHistoryPlan, ArchiveHistoryState,
     ArchiveWorkClass, ARCHIVE_CAPTURE_WINDOW_BYTES, ARCHIVE_HISTORY_STATE_VERSION,
@@ -46,9 +48,8 @@ pub use scan::{
     scan_snapshot_part, transcript_part_for, transcript_part_for_records,
 };
 pub use spool::{
-    cleanup_obligation_exists, finish_terminal_cleanup, ArchiveGenerationHistoryEntry,
-    ArchiveGenerationRecord, ArchiveSpool, BlockedArchiveRecord, PendingArchiveRequest,
-    PendingLoad, ARCHIVE_RECORD_POLICY_VERSION, ARCHIVE_SPOOL_CAP_BYTES,
+    cleanup_obligation_exists, finish_terminal_cleanup, ArchiveSpool, BlockedArchiveRecord,
+    PendingArchiveRequest, PendingLoad, ARCHIVE_RECORD_POLICY_VERSION, ARCHIVE_SPOOL_CAP_BYTES,
     ARCHIVE_SPOOL_KEYRING_SERVICE,
 };
 

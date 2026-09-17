@@ -39,7 +39,7 @@ pub(super) fn identify(
         .and_then(|_| transcript_part_for_records(source, Some(path), &records).ok());
     let started_at = source_started_at(source, &records);
     let session = session.map_err(|_| "invalid_archive_session")?;
-    let (part, _) = part.ok_or("invalid_archive_session")?;
+    let part = part.ok_or("invalid_archive_session")?;
     let complete_extent = complete_extent(&path_buf).map_err(|_| "archive_io")?;
     Ok(Candidate {
         path: path_buf,

@@ -50,19 +50,6 @@ pub struct BlockedArchiveRecord {
     pub pending_body_sha256: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ArchiveGenerationHistoryEntry {
-    pub part_id: String,
-    pub superseded_at: i64,
-    pub reason: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ArchiveGenerationRecord {
-    pub current_part_id: String,
-    pub history: Vec<ArchiveGenerationHistoryEntry>,
-}
-
 impl BlockedArchiveRecord {
     pub fn matches_source(&self, bytes: &[u8]) -> bool {
         let fingerprint_end = self.source_fingerprint_bytes as usize;
@@ -139,9 +126,9 @@ pub(crate) struct PendingLoads {
 }
 
 pub struct ArchiveSpool {
-    root: PathBuf,
+    pub(crate) root: PathBuf,
     org_id: String,
-    key: ArchiveSpoolKey,
+    pub(crate) key: ArchiveSpoolKey,
     cap_bytes: u64,
     fail_next_pending_clear: AtomicBool,
     fail_next_ack_scratch_rename: AtomicBool,
@@ -582,126 +569,6 @@ impl ArchiveSpool {
         )
     }
 
-    pub fn current_part(
-        &self,
-        source: ArchiveSource,
-        source_session_id: &str,
-        base_part: &str,
-    ) -> ArchiveSyncResult<String> {
-        Ok(self
-            .generation_record(source, source_session_id, base_part)?
-            .map(|record| record.current_part_id)
-            .unwrap_or_else(|| base_part.to_string()))
-    }
-
-    pub fn generation_record(
-        &self,
-        source: ArchiveSource,
-        source_session_id: &str,
-        base_part: &str,
-    ) -> ArchiveSyncResult<Option<ArchiveGenerationRecord>> {
-        let path = self.generation_path(source, source_session_id, base_part)?;
-        let record = self.read_encrypted(
-            &path,
-            &self.aad("generation", source, source_session_id, base_part),
-            |plain| serde_json::from_slice(plain).map_err(|_| ArchiveSyncError::Corrupt),
-        )?;
-        if let Some(record) = &record {
-            validate_generation_record(source, record)?;
-        }
-        Ok(record)
-    }
-
-    fn part_is_superseded(
-        &self,
-        source: ArchiveSource,
-        source_session_id: &str,
-        part_id: &str,
-    ) -> ArchiveSyncResult<bool> {
-        let directory = self
-            .root
-            .join("generations")
-            .join(source.as_str())
-            .join(session_dir_name(source_session_id)?);
-        let entries = match fs::read_dir(directory) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-            Err(error) => return Err(error.into()),
-        };
-        for entry in entries {
-            let path = entry?.path();
-            if path.extension().and_then(|extension| extension.to_str()) != Some("bin") {
-                continue;
-            }
-            let base_part = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .and_then(part_id_from_file_stem)
-                .ok_or(ArchiveSyncError::Corrupt)?;
-            let Some(record) = self.generation_record(source, source_session_id, &base_part)?
-            else {
-                continue;
-            };
-            if record.history.iter().any(|entry| entry.part_id == part_id) {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn fork_part(
-        &self,
-        source: ArchiveSource,
-        source_session_id: &str,
-        base_part: &str,
-        previous_part: &str,
-        new_part: &str,
-        reason: &str,
-        now_ms: i64,
-    ) -> ArchiveSyncResult<()> {
-        part_file_name(base_part)?;
-        part_file_name(previous_part)?;
-        part_file_name(new_part)?;
-        if !part_belongs_to_source(source, base_part)
-            || !part_belongs_to_source(source, previous_part)
-            || !part_belongs_to_source(source, new_part)
-            || !matches!(reason, "prefix_changed" | "prefix_shortened")
-        {
-            return Err(ArchiveSyncError::Corrupt);
-        }
-        let mut generation = self
-            .generation_record(source, source_session_id, base_part)?
-            .unwrap_or_else(|| ArchiveGenerationRecord {
-                current_part_id: base_part.to_string(),
-                history: Vec::new(),
-            });
-        if generation.current_part_id != previous_part && generation.current_part_id != new_part {
-            return Err(ArchiveSyncError::Corrupt);
-        }
-
-        self.clear_slices_for_part(source, source_session_id, previous_part)?;
-        self.clear_blocked_part(source, source_session_id, previous_part)?;
-        if generation.current_part_id == new_part {
-            return Ok(());
-        }
-        generation.history.push(ArchiveGenerationHistoryEntry {
-            part_id: previous_part.to_string(),
-            superseded_at: now_ms,
-            reason: reason.to_string(),
-        });
-        generation.current_part_id = new_part.to_string();
-        let plaintext = serde_json::to_vec(&generation)?;
-        let aad = self.aad("generation", source, source_session_id, base_part);
-        let blob = encrypt(&self.key, &aad, &plaintext)?;
-        self.write_capped_reserving(
-            &self.generation_path(source, source_session_id, base_part)?,
-            &blob,
-            0,
-            atomic_write_strict,
-        )
-    }
-
     pub fn blocked_part(
         &self,
         source: ArchiveSource,
@@ -1033,7 +900,7 @@ impl ArchiveSpool {
         self.write_capped_reserving(path, blob, 0, atomic_write)
     }
 
-    fn write_capped_reserving(
+    pub(crate) fn write_capped_reserving(
         &self,
         path: &Path,
         blob: &[u8],
@@ -1070,7 +937,7 @@ impl ArchiveSpool {
         Ok(encrypt(&self.key, &aad, &plaintext)?.len() as u64)
     }
 
-    fn read_encrypted<T>(
+    pub(crate) fn read_encrypted<T>(
         &self,
         path: &Path,
         aad: &[u8],
@@ -1422,27 +1289,13 @@ impl ArchiveSpool {
             .join(part_file_name(source_transcript_part_id)?))
     }
 
-    fn generation_path(
-        &self,
-        source: ArchiveSource,
-        source_session_id: &str,
-        base_part: &str,
-    ) -> ArchiveSyncResult<PathBuf> {
-        Ok(self
-            .root
-            .join("generations")
-            .join(source.as_str())
-            .join(session_dir_name(source_session_id)?)
-            .join(part_file_name(base_part)?))
-    }
-
     fn history_path(&self, source: ArchiveSource) -> PathBuf {
         self.root
             .join("history")
             .join(format!("{}.bin", source.as_str()))
     }
 
-    fn aad(
+    pub(crate) fn aad(
         &self,
         kind: &str,
         source: ArchiveSource,
@@ -1458,23 +1311,11 @@ impl ArchiveSpool {
     }
 }
 
-pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> ArchiveSyncResult<()> {
-    let tmp = path.with_extension("tmp");
-    {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&tmp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-    }
-    fs::rename(&tmp, path)?;
-    sync_parent_best_effort(path);
-    Ok(())
-}
-
-fn atomic_write_strict(path: &Path, bytes: &[u8]) -> ArchiveSyncResult<()> {
+fn write_atomic(
+    path: &Path,
+    bytes: &[u8],
+    sync_parent: impl FnOnce(&Path) -> ArchiveSyncResult<()>,
+) -> ArchiveSyncResult<()> {
     let tmp = path.with_extension("tmp");
     {
         let mut file = OpenOptions::new()
@@ -1487,6 +1328,17 @@ fn atomic_write_strict(path: &Path, bytes: &[u8]) -> ArchiveSyncResult<()> {
     }
     fs::rename(&tmp, path)?;
     sync_parent(path)
+}
+
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> ArchiveSyncResult<()> {
+    write_atomic(path, bytes, |path| {
+        sync_parent_best_effort(path);
+        Ok(())
+    })
+}
+
+pub(crate) fn atomic_write_strict(path: &Path, bytes: &[u8]) -> ArchiveSyncResult<()> {
+    write_atomic(path, bytes, sync_parent)
 }
 
 pub(crate) fn validate_spool_session_id(value: &str) -> ArchiveSyncResult<()> {
@@ -1508,7 +1360,7 @@ pub(crate) fn validate_spool_session_id(value: &str) -> ArchiveSyncResult<()> {
     Ok(())
 }
 
-fn session_dir_name(source_session_id: &str) -> ArchiveSyncResult<String> {
+pub(crate) fn session_dir_name(source_session_id: &str) -> ArchiveSyncResult<String> {
     validate_spool_session_id(source_session_id)?;
     Ok(source_session_id.to_string())
 }
@@ -1521,7 +1373,7 @@ fn part_dir_name(source_transcript_part_id: &str) -> ArchiveSyncResult<String> {
         .to_string())
 }
 
-fn part_file_name(source_transcript_part_id: &str) -> ArchiveSyncResult<String> {
+pub(crate) fn part_file_name(source_transcript_part_id: &str) -> ArchiveSyncResult<String> {
     if source_transcript_part_id.is_empty()
         || source_transcript_part_id.contains(['/', '\\'])
         || part_id_from_file_stem(&source_transcript_part_id.replace(':', "_")).is_none()
@@ -1534,7 +1386,7 @@ fn part_file_name(source_transcript_part_id: &str) -> ArchiveSyncResult<String> 
     ))
 }
 
-fn part_id_from_file_stem(stem: &str) -> Option<String> {
+pub(crate) fn part_id_from_file_stem(stem: &str) -> Option<String> {
     if stem == "claude_part_parent" {
         return Some("claude:part:parent".to_string());
     }
@@ -1558,28 +1410,6 @@ fn part_id_from_file_stem(stem: &str) -> Option<String> {
         }
     }
     None
-}
-
-fn validate_generation_record(
-    source: ArchiveSource,
-    record: &ArchiveGenerationRecord,
-) -> ArchiveSyncResult<()> {
-    part_file_name(&record.current_part_id)?;
-    if !part_belongs_to_source(source, &record.current_part_id)
-        || record.history.iter().any(|entry| {
-            entry.part_id == record.current_part_id
-                || !part_belongs_to_source(source, &entry.part_id)
-                || part_file_name(&entry.part_id).is_err()
-                || !matches!(entry.reason.as_str(), "prefix_changed" | "prefix_shortened")
-        })
-    {
-        return Err(ArchiveSyncError::Corrupt);
-    }
-    Ok(())
-}
-
-fn part_belongs_to_source(source: ArchiveSource, part_id: &str) -> bool {
-    part_id.starts_with(&format!("{}:part:", source.as_str()))
 }
 
 fn load_sort_key(load: &PendingLoad) -> (&str, &str, &str, u64) {
@@ -1925,38 +1755,28 @@ fn remove_dir_if_present(path: &Path) -> ArchiveSyncResult<()> {
     }
 }
 
-fn sync_parent_best_effort(path: &Path) {
-    if let Some(parent) = path.parent() {
-        if let Ok(directory) = File::open(parent) {
-            let _ = directory.sync_all();
-        }
-    }
-}
-
-#[cfg(unix)]
-fn sync_parent(path: &Path) -> ArchiveSyncResult<()> {
+fn sync_parent_dir(path: &Path) -> io::Result<()> {
     let Some(parent) = path.parent() else {
         return Ok(());
     };
-    let directory = File::open(parent)?;
-    directory.sync_all()?;
+    File::open(parent)?.sync_all()
+}
+
+fn sync_parent_best_effort(path: &Path) {
+    let _ = sync_parent_dir(path);
+}
+
+/// Only Unix guarantees a directory fsync makes the rename durable.
+fn sync_parent(path: &Path) -> ArchiveSyncResult<()> {
+    if cfg!(unix) {
+        sync_parent_dir(path)?;
+    }
     Ok(())
 }
 
-#[cfg(not(unix))]
-fn sync_parent(_path: &Path) -> ArchiveSyncResult<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
 fn sync_parent_if_present(path: &Path) -> ArchiveSyncResult<()> {
     match sync_parent(path) {
         Err(ArchiveSyncError::Io(error)) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         result => result,
     }
-}
-
-#[cfg(not(unix))]
-fn sync_parent_if_present(_path: &Path) -> ArchiveSyncResult<()> {
-    Ok(())
 }

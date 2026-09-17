@@ -46,7 +46,7 @@ pub fn transcript_part_for(
     source: ArchiveSource,
     transcript_path: Option<&str>,
     bytes: &[u8],
-) -> ArchiveSyncResult<(String, Option<String>)> {
+) -> ArchiveSyncResult<String> {
     let records = parse_jsonl_records(bytes);
     transcript_part_for_records(source, transcript_path, &records)
 }
@@ -55,18 +55,18 @@ pub fn transcript_part_for_records(
     source: ArchiveSource,
     transcript_path: Option<&str>,
     records: &[Value],
-) -> ArchiveSyncResult<(String, Option<String>)> {
+) -> ArchiveSyncResult<String> {
     match source {
         ArchiveSource::Claude => {
             if transcript_path.is_some_and(claude_is_subagent_path) {
                 let identity = claude_agent_id(records)
                     .or_else(|| transcript_path.and_then(claude_subagent_path_identity))
                     .ok_or(ArchiveSyncError::InvalidSession)?;
-                return Ok((claude_transcript_part_id(&identity)?, Some(identity)));
+                return claude_transcript_part_id(&identity).map_err(Into::into);
             }
-            Ok((default_transcript_part_id(ArchiveSource::Claude), None))
+            Ok(default_transcript_part_id(ArchiveSource::Claude))
         }
-        ArchiveSource::Codex => Ok((default_transcript_part_id(ArchiveSource::Codex), None)),
+        ArchiveSource::Codex => Ok(default_transcript_part_id(ArchiveSource::Codex)),
     }
 }
 
@@ -164,13 +164,13 @@ mod tests {
     fn parent_and_subagent_paths_resolve_distinct_parts() {
         let parent = br#"{"sessionId":"session-1","uuid":"p1"}"#;
         let subagent = br#"{"sessionId":"session-1","uuid":"s1","agentId":"agent-001"}"#;
-        let (parent_part, parent_identity) = transcript_part_for(
+        let parent_part = transcript_part_for(
             ArchiveSource::Claude,
             Some("/home/.claude/projects/p/session-1.jsonl"),
             parent,
         )
         .unwrap();
-        let (sub_part, sub_identity) = transcript_part_for(
+        let sub_part = transcript_part_for(
             ArchiveSource::Claude,
             Some("/home/.claude/projects/p/session-1/subagents/agent.jsonl"),
             subagent,
@@ -180,8 +180,6 @@ mod tests {
             parent_part,
             default_transcript_part_id(ArchiveSource::Claude)
         );
-        assert!(parent_identity.is_none());
-        assert_eq!(sub_identity.as_deref(), Some("agent-001"));
         assert_ne!(parent_part, sub_part);
         assert_eq!(sub_part, claude_transcript_part_id("agent-001").unwrap());
     }
@@ -192,14 +190,13 @@ mod tests {
         let missing = br#"{"sessionId":"session-1","uuid":"s1"}"#;
         let empty = br#"{"sessionId":"session-1","uuid":"s2","agentId":"   "}"#;
         let parent_part = default_transcript_part_id(ArchiveSource::Claude);
-        let (resolved_parent, parent_identity) = transcript_part_for(
+        let resolved_parent = transcript_part_for(
             ArchiveSource::Claude,
             Some("/home/.claude/projects/p/session-1.jsonl"),
             parent,
         )
         .unwrap();
         assert_eq!(resolved_parent, parent_part);
-        assert!(parent_identity.is_none());
 
         for (path, bytes, expected_identity) in [
             (
@@ -213,9 +210,8 @@ mod tests {
                 "path:empty.jsonl",
             ),
         ] {
-            let (part, identity) = transcript_part_for(ArchiveSource::Claude, Some(path), bytes)
+            let part = transcript_part_for(ArchiveSource::Claude, Some(path), bytes)
                 .expect("subagent path must keep a distinct part identity");
-            assert_eq!(identity.as_deref(), Some(expected_identity));
             assert_eq!(part, claude_transcript_part_id(expected_identity).unwrap());
             assert_ne!(part, parent_part);
         }

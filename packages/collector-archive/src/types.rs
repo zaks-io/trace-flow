@@ -168,6 +168,13 @@ pub fn validate_versions(
 pub(crate) use crate::archive_checkpoint::default_transcript_part_id;
 pub(crate) use crate::identifier::validate_identifier;
 
+fn is_sha256_hex(hex: &str) -> bool {
+    hex.len() == 64
+        && hex
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 pub(crate) fn validate_transcript_part_id(
     source: ArchiveSource,
     value: &str,
@@ -177,21 +184,13 @@ pub(crate) fn validate_transcript_part_id(
             value == "claude:part:parent"
                 || value
                     .strip_prefix("claude:part:sha256:")
-                    .is_some_and(|hex| {
-                        hex.len() == 64
-                            && hex
-                                .bytes()
-                                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-                    })
+                    .is_some_and(is_sha256_hex)
         }
         ArchiveSource::Codex => {
             value == "codex:part:primary"
-                || value.strip_prefix("codex:part:sha256:").is_some_and(|hex| {
-                    hex.len() == 64
-                        && hex
-                            .bytes()
-                            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-                })
+                || value
+                    .strip_prefix("codex:part:sha256:")
+                    .is_some_and(is_sha256_hex)
         }
     };
     if valid {
