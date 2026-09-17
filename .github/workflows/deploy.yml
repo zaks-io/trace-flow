@@ -794,8 +794,6 @@ jobs:
           command: deploy --env production --var CONVEX_URL:${{ needs.deploy-convex.outputs.convex_url }}
           packageManager: bun
 
-  # Archive API is deployed on merge while Convex keeps production writes disabled.
-  # TRA-228 owns enabling and verifying production capture.
   deploy-archive-api:
     name: Deploy Archive API Worker
     runs-on: blacksmith-4vcpu-ubuntu-2404

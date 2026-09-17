@@ -122,26 +122,27 @@ impl ArchiveSpool {
             return Err(ArchiveSyncError::Corrupt);
         }
 
-        self.clear_slices_for_part(source, source_session_id, previous_part)?;
-        self.clear_blocked_part(source, source_session_id, previous_part)?;
-        if generation.current_part_id == new_part {
-            return Ok(());
+        // The new generation must be durable before the superseded part's queued data goes,
+        // or a failed write leaves the old part current with its spool already emptied.
+        if generation.current_part_id != new_part {
+            generation.history.push(ArchiveGenerationHistoryEntry {
+                part_id: previous_part.to_string(),
+                superseded_at: now_ms,
+                reason: reason.to_string(),
+            });
+            generation.current_part_id = new_part.to_string();
+            let plaintext = serde_json::to_vec(&generation)?;
+            let aad = self.aad("generation", source, source_session_id, base_part);
+            let blob = encrypt(&self.key, &aad, &plaintext)?;
+            self.write_capped_reserving(
+                &self.generation_path(source, source_session_id, base_part)?,
+                &blob,
+                0,
+                atomic_write_strict,
+            )?;
         }
-        generation.history.push(ArchiveGenerationHistoryEntry {
-            part_id: previous_part.to_string(),
-            superseded_at: now_ms,
-            reason: reason.to_string(),
-        });
-        generation.current_part_id = new_part.to_string();
-        let plaintext = serde_json::to_vec(&generation)?;
-        let aad = self.aad("generation", source, source_session_id, base_part);
-        let blob = encrypt(&self.key, &aad, &plaintext)?;
-        self.write_capped_reserving(
-            &self.generation_path(source, source_session_id, base_part)?,
-            &blob,
-            0,
-            atomic_write_strict,
-        )
+        self.clear_slices_for_part(source, source_session_id, previous_part)?;
+        self.clear_blocked_part(source, source_session_id, previous_part)
     }
 
     fn generation_path(
