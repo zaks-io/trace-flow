@@ -113,11 +113,11 @@ export async function waitForSnapshotJob(
         deadlineAt,
         `rediscover ${intent.target} job`,
       );
-      if (!discovered) return null;
-      if (discovered.id !== jobId) {
+      if (discovered && discovered.id !== jobId) {
         throw new Error('Snapshot Copy discovery changed its attached job receipt');
       }
-      status = discovered.status;
+      // jobs_log trails an accepted Copy start, so a receipt with no row yet is still running.
+      status = discovered?.status ?? null;
     }
     if (status === 'done' || status === 'error') return status;
     const remainingMs = deadlineAt - Date.now();

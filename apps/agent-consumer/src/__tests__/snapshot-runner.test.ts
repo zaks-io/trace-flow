@@ -231,6 +231,40 @@ describe('agent snapshot runner', () => {
     expect(startSnapshotCopy).toHaveBeenCalledTimes(AGENT_SNAPSHOT_TARGETS.length - 1);
   });
 
+  it('keeps polling a started job that jobs_log does not show yet', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-13T17:40:00.000Z'));
+    vi.mocked(snapshotJobStatus).mockResolvedValueOnce(null);
+    const { coordinator, env, queueSend } = makeSnapshotRunner(plan);
+
+    const running = runAgentSnapshot(env, 'org-1');
+    await vi.advanceTimersByTimeAsync(AGENT_SNAPSHOT_POLL_INTERVAL_MS - 1);
+    expect(snapshotJobStatus).toHaveBeenCalledOnce();
+    expect(discoverSnapshotCopy).toHaveBeenCalledOnce();
+    expect(coordinator.releaseSnapshotClaim).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(running).resolves.toMatchObject({ status: 'complete' });
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it('hands off at the deadline when a started job never appears in jobs_log', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-13T17:40:00.000Z'));
+    vi.mocked(snapshotJobStatus).mockResolvedValue(null);
+    const { coordinator, env, queueSend } = makeSnapshotRunner(plan);
+
+    const running = runAgentSnapshot(env, 'org-1');
+    await vi.advanceTimersByTimeAsync(
+      AGENT_SNAPSHOT_WORK_DEADLINE_MS + AGENT_SNAPSHOT_POLL_INTERVAL_MS,
+    );
+
+    await expect(running).resolves.toMatchObject({ status: 'continued', nextCopyIndex: 0 });
+    expect(coordinator.releaseSnapshotClaim).toHaveBeenCalledOnce();
+    expect(queueSend).toHaveBeenCalledOnce();
+    expect(coordinator.failSnapshot).not.toHaveBeenCalled();
+    expect(coordinator.settleSnapshotCopyIntent).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])(
     'hands off before the deadline for a running job (rediscovered: %s)',
     async (rediscovered) => {
