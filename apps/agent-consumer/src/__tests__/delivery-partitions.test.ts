@@ -122,6 +122,71 @@ describe('delivery partition corrections', () => {
     expect(fetch).toHaveBeenCalled();
   });
 
+  it('looks up large deliveries six chunks at a time and keeps row order', async () => {
+    let open = 0;
+    let peak = 0;
+    const fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(
+        typeof input === 'string' ? input : input instanceof URL ? input : input.url,
+      );
+      open += 1;
+      peak = Math.max(peak, open);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      open -= 1;
+      const identities = url.searchParams.get('identities')!.split(',');
+      return Response.json({
+        data: identities
+          .filter((identity) => identity.endsWith('\x1fm-300'))
+          .map((FactIdentity) => ({
+            FactIdentity,
+            EventDay: '2026-09-12',
+            DeliverySequence: 2,
+            ContentHash: 'b'.repeat(64),
+            IngestedAt: '2026-09-13 00:00:00.000',
+          })),
+      });
+    });
+    vi.stubGlobal('fetch', fetch);
+    const plan = delivery();
+    const template = plan.rows.messages[0] as Record<string, unknown>;
+    plan.rows.messages = Array.from({ length: 321 }, (_, index) => ({
+      ...template,
+      message_pk: `m-${index}`,
+    }));
+
+    expect(await prepareDeliveryPartitions(env, plan)).toEqual(['2026-09-12', '2026-09-13']);
+    expect(fetch).toHaveBeenCalledTimes(11);
+    expect(peak).toBe(6);
+    const messages = plan.rows.messages as Record<string, unknown>[];
+    expect(messages).toHaveLength(322);
+    expect(messages.slice(0, 321).map((row) => row.message_pk)).toEqual(
+      Array.from({ length: 321 }, (_, index) => `m-${index}`),
+    );
+    expect(messages[321]).toMatchObject({ message_pk: 'm-300', IsDeleted: 1 });
+  });
+
+  it('leaves the plan untouched when a later lookup wave fails', async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        calls += 1;
+        if (calls === 9) return new Response('unavailable', { status: 503 });
+        return Response.json({ data: [] });
+      }),
+    );
+    const plan = delivery();
+    const template = plan.rows.messages[0] as Record<string, unknown>;
+    plan.rows.messages = Array.from({ length: 321 }, (_, index) => ({
+      ...template,
+      message_pk: `m-${index}`,
+    }));
+    const before = [...plan.rows.messages];
+
+    await expect(prepareDeliveryPartitions(env, plan)).rejects.toThrow();
+    expect(plan.rows.messages).toEqual(before);
+  });
+
   it('rejects a later revision or foreign identity before changing the plan', async () => {
     for (const entry of [
       {
