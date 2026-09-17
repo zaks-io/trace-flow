@@ -9,9 +9,11 @@ the skill's checklist when reviewing Trace Flow diffs or PRs.
 - **Always `tee()` request/response streams; both branches must be consumed.** CF Workers
   streams are read-once. If one tee branch is dropped, the Worker hangs. Flag any capture
   path that reads a stream without ensuring both consumers run.
-- **Defer R2 storage + queue enqueue with `c.executionCtx.waitUntil()`.** Without it the
-  Worker terminates before async ops finish → silent data loss. Flag async capture work that
-  is not wrapped in `waitUntil()`.
+- **Persist the encrypted `trace-deliveries/` envelope before terminal response EOF.**
+  Queue publication and recovery can run in `c.executionCtx.waitUntil()`, but the response
+  durability gate must wait for R2 persistence. Flag capture paths that release terminal
+  EOF before persistence succeeds. See `apps/proxy/src/index.ts` and
+  `apps/proxy/src/streaming/capture.ts`.
 
 ## Queue consumer
 

@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 #
 # CodeRabbit is on-demand only. Automatic and incremental PR reviews are OFF so the team is not
-# throttled by hosted-review rate limits; local review runs through the `code-review` skill instead.
+# throttled by hosted-review rate limits; local review runs through the `ziw-code-review` skill instead.
 # To request a review on a PR, comment `@coderabbitai review` (or `@coderabbitai full review`).
 
 reviews:
@@ -22,14 +22,81 @@ reviews:
     - '!**/target/**'
     - '!**/*.tsbuildinfo'
     - '!**/worker-configuration.d.ts'
-    - '!packages/convex/convex/_generated/**'
+    - '!packages/convex/_generated/**'
     - '!**/bun.lock'
     # Local verification/diagnostic scripts — not shipped product code; CodeRabbit doesn't review them.
     - '!scripts/verify/**'
+  path_instructions:
+    - path: '**/*'
+      instructions: |
+        Use docs/agents/repo-navigation.md to locate owning apps, shared packages,
+        data schemas, queries, tests, and deployment configuration. Use CONTEXT.md
+        for domain vocabulary and specs/README.md to find relevant specs and ADRs
+        in docs/adr/. Follow imports and callers across workspace boundaries when
+        reviewing contract changes. Read package.json and the owning app's Wrangler
+        config for commands and bindings rather than inferring them from names.
+        Verify behavior in current code; roadmaps and specs can describe unshipped
+        work. AGENTS.md takes precedence if older guidance contradicts it.
+
+        Repository map. Load the relevant source and supporting documents for the
+        changed domain, then follow its dependencies and callers as needed:
+        - apps/proxy/: LLM gateway, provider routing, streaming, capture, R2 delivery
+          envelopes, and queue publication. See packages/llm-providers/ for provider
+          parsing and packages/types/ for shared contracts.
+        - apps/proxy-consumer/: queue processing, durable batching, retries, and DLQ.
+          See packages/otel-conventions/, packages/spans/, packages/tinybird-client/,
+          datasources/, and pipes/ for the downstream ingestion contract.
+        - apps/api/: authenticated R2 body retrieval. apps/pipes-api/: Tinybird query
+          forwarding. See packages/convex/ for token minting and authorization;
+          these Workers have separate credential boundaries.
+        - apps/web/: Next.js dashboard, routes, and UI. Trace data dependencies into
+          pipes/ and packages/convex/. apps/web/public/agents.md is the public
+          integration guide. apps/web/AGENTS.md has scoped framework guidance.
+        - packages/convex/: backend schema, auth, organizations, billing, collector
+          credentials, Analyst state, and archive control plane. For auth and billing,
+          consult specs/integrations/auth0.md, specs/features/stripe-billing.md,
+          and docs/adr/0002-jwt-tinybird-auth.md.
+        - apps/mcp/: MCP transport and auth. packages/mcp-core/: tools shared by MCP
+          and Analyst. apps/analyst-sandbox/: Analyst execution and sandbox isolation.
+        - apps/archive-api/: permanent raw conversation storage, upload, ledger,
+          storage budget, audit, and integrity. Derived analytics live in
+          apps/agent-ingest/ and apps/agent-consumer/.
+        - apps/cli/ and apps/desktop/: collector interfaces. packages/collector-*/:
+          shared parsing, contracts, API clients, sync, and archive code. Read
+          docs/guides/agent-conversation-analytics/README.md and the relevant
+          roadmap sections, plus apps/cli/README.md or apps/desktop/README.md.
+        - datasources/: Tinybird schemas. pipes/: SQL queries. Consult
+          specs/architecture/data-model.md and docs/adr/0009-tinybird-analytics.md,
+          docs/adr/0005-otel-semantic-conventions.md, and
+          docs/adr/0012-agent-conversation-analytics.md for data changes.
+        - packages/utils/: shared auth, redaction, and request helpers.
+          packages/logging/: structured logs. packages/pricing/: model costs.
+          packages/emails/: email templates. packages/sdk-tests/: integration tests.
+          Find package-specific tests alongside the owning source and package.json.
+        - package.json and turbo.json: workspace commands and task dependencies.
+          App wrangler.toml or wrangler.jsonc files: bindings and environments.
+          .github/workflows/: CI, previews, releases, and production deployment.
+          scripts/: development, verification, and delivery tooling.
+        - docs/agents/: review invariants, workflow, tracker, and environment guides.
+          .agents/skills/: repo skills. skills-lock.json: managed skill versions.
+          .codex/ and .cursor/: agent configuration. For workflow changes, read
+          docs/agents/workflow/config.md and the relevant skill instructions.
 
 knowledge_base:
   code_guidelines:
     enabled: true
     filePatterns:
+      # Custom patterns extend automatic AGENTS.md discovery, including scoped files.
+      # applyTo makes documentation outside the source tree available to its reviewers.
+      - files: 'docs/agents/repo-navigation.md'
+        applyTo: '**/*'
+      - files: 'CONTEXT.md'
+        applyTo: '**/*'
       - files: 'docs/agents/review-invariants.md'
         applyTo: '**/*'
+      - files: 'docs/guides/agent-conversation-analytics/README.md'
+        applyTo: 'apps/agent-ingest/**,apps/agent-consumer/**,apps/archive-api/**,apps/cli/**,apps/desktop/**,packages/collector-*/**'
+      - files: 'apps/desktop/README.md'
+        applyTo: 'apps/desktop/**'
+      - files: 'apps/cli/README.md'
+        applyTo: 'apps/cli/**'
