@@ -42,7 +42,7 @@
     "ci:check": "bash scripts/ci-check.sh",
     "duplicates:check": "jscpd --config .jscpd.json apps packages scripts",
     "knip": "knip",
-    "prepare": "husky"
+    "prepare": "node scripts/dev/prepare-hooks.mjs"
   },
   "overrides": {
     "react": "19.2.6",

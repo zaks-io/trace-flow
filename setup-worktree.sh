@@ -11,6 +11,19 @@ fi
 REPO_ROOT=$(git rev-parse --path-format=absolute --show-toplevel)
 cd "$REPO_ROOT"
 
+# Worktrees share Git configuration; keep installs and their prepare hooks serialized.
+# The shell retains this descriptor, so the OS releases the lock when setup exits.
+exec 9>>"$(git rev-parse --path-format=absolute --git-common-dir)/setup-worktree.lock"
+python3 - <<'PY'
+import fcntl
+
+try:
+    fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    print("Waiting for another worktree setup to finish...", flush=True)
+    fcntl.flock(9, fcntl.LOCK_EX)
+PY
+
 # Get the main worktree location (git-common-dir returns /path/to/main/.git)
 MAIN_WORKTREE=$(git rev-parse --path-format=absolute --git-common-dir | sed 's|/.git$||')
 
@@ -19,7 +32,7 @@ echo "Main worktree: $MAIN_WORKTREE"
 
 # Install dependencies
 echo "Installing dependencies with bun..."
-bun install
+bun install --frozen-lockfile
 
 # Copy a gitignored local-secret/env file from the main worktree into this one. These hold dev
 # secrets that are never committed, so a fresh worktree starts without them.
@@ -30,6 +43,8 @@ copy_from_main() {
 
   if [ "$src" = "$dest" ]; then
     echo "Already in main worktree, skipping $rel"
+  elif [ -e "$dest" ] || [ -L "$dest" ]; then
+    echo "Keeping existing $rel"
   elif [ -f "$src" ]; then
     echo "Copying $rel from main worktree..."
     mkdir -p "$(dirname "$dest")"
