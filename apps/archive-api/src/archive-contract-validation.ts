@@ -1,3 +1,4 @@
+import { BYTE_ARCHIVE_FORMAT_VERSION, byteSegmentRange } from './archive-byte-segments';
 import {
   ARCHIVE_FORMAT_VERSION,
   ArchiveContractError,
@@ -26,7 +27,9 @@ export async function validateObservation(
   const observation = value as Record<string, unknown>;
   assertVersion(
     observation.archive_format_version,
-    ARCHIVE_FORMAT_VERSION,
+    observation.archive_format_version === BYTE_ARCHIVE_FORMAT_VERSION
+      ? BYTE_ARCHIVE_FORMAT_VERSION
+      : ARCHIVE_FORMAT_VERSION,
     'unsupported_archive_format_version',
   );
   assertVersion(
@@ -79,6 +82,11 @@ export async function validateObservation(
     content_sha256: observation.content_sha256,
   };
   const bytes = proofPayload ?? payloadBytes(normalized);
+  if (normalized.archive_format_version === BYTE_ARCHIVE_FORMAT_VERSION) {
+    const range = byteSegmentRange(normalized.source_record_identity);
+    if (range.end - range.start !== bytes.length)
+      throw new ArchiveContractError('invalid_byte_segment_range');
+  }
   if (
     digestString(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))) !==
     normalized.content_sha256
@@ -98,7 +106,9 @@ export function validateCheckpoint(
   const checkpoint = value as Record<string, unknown>;
   assertVersion(
     checkpoint.archive_format_version,
-    ARCHIVE_FORMAT_VERSION,
+    checkpoint.archive_format_version === BYTE_ARCHIVE_FORMAT_VERSION
+      ? BYTE_ARCHIVE_FORMAT_VERSION
+      : ARCHIVE_FORMAT_VERSION,
     'unsupported_archive_format_version',
   );
   assertVersion(
@@ -137,6 +147,16 @@ export function validateCheckpoint(
   }
   if ((checkpoint.record_count === 0) !== (checkpoint.last_source_record_identity === null)) {
     throw new ArchiveContractError('invalid_checkpoint_identity');
+  }
+  if (checkpoint.archive_format_version === BYTE_ARCHIVE_FORMAT_VERSION) {
+    if (
+      checkpoint.last_source_record_identity === null
+        ? checkpoint.last_complete_byte_offset !== 0
+        : byteSegmentRange(checkpoint.last_source_record_identity).end !==
+          checkpoint.last_complete_byte_offset
+    ) {
+      throw new ArchiveContractError('invalid_checkpoint_offset');
+    }
   }
   return {
     archive_format_version: checkpoint.archive_format_version,

@@ -1,7 +1,7 @@
 /**
  * Archive API Worker. Owns the archive.trace-flow.dev authorization boundary:
  * Collector Credential + current enrollment for uploads, and a fail-closed
- * Archive Export Grant placeholder for reads and deletion. Upload persistence
+ * Archive Export Grant for owner-authorized reads. Deletion remains fail-closed. Upload persistence
  * is serialized by the Archive Session Ledger Durable Object.
  */
 import * as Sentry from '@sentry/cloudflare';

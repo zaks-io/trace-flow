@@ -473,6 +473,8 @@ mod tests {
             source_transcript_part_id: PendingArchiveRequest::default_part(ArchiveSource::Claude),
             expected_record_count: 1,
             expected_appended_records: 1,
+            capture_authorization: None,
+            predecessor_part_id: None,
             body: b"spool remains writable".to_vec(),
         };
         spool.persist_pending(&pending).unwrap();
@@ -844,6 +846,8 @@ mod tests {
             source_transcript_part_id: PendingArchiveRequest::default_part(ArchiveSource::Claude),
             expected_record_count: 1,
             expected_appended_records: 1,
+            capture_authorization: None,
+            predecessor_part_id: None,
             body: b"pending archive data".to_vec(),
         };
         spool.persist_pending(&pending).unwrap();

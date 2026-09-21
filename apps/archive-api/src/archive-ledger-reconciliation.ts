@@ -1,5 +1,4 @@
 import {
-  ARCHIVE_FORMAT_VERSION,
   ArchiveContractError,
   CHAIN_HASH_VERSION,
   GENESIS_CHAIN_HASH,
@@ -191,7 +190,7 @@ export async function reconcileArchiveUpload(
     const sequence = state.elementCount + newElements.length;
     newElements.push({
       kind: 'checkpoint' as const,
-      archive_format_version: ARCHIVE_FORMAT_VERSION,
+      archive_format_version: upload.checkpoint.archive_format_version,
       chain_hash_version: CHAIN_HASH_VERSION,
       source: upload.checkpoint.source,
       source_session_id: upload.checkpoint.source_session_id,

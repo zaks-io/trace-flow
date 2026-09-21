@@ -7,6 +7,7 @@ export async function readBoundedJson(
   request: Request,
   maxBytes: number,
   tooLargeError: string,
+  onBytes?: (bytes: Uint8Array) => Promise<void>,
 ): Promise<unknown> {
   const contentLength = request.headers.get('content-length');
   if (contentLength !== null) {
@@ -37,6 +38,7 @@ export async function readBoundedJson(
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
+  if (onBytes) await onBytes(bytes);
   try {
     const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes);
     return JSON.parse(text);

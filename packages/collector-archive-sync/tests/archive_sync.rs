@@ -100,15 +100,21 @@ impl ArchiveUploader for ScriptedUploader {
         self.calls.set(self.calls.get() + 1);
         self.bodies.borrow_mut().push(body.to_vec());
         self.sources.borrow_mut().push(source);
-        self.scripted
-            .borrow_mut()
-            .pop_front()
-            .expect("scripted archive upload")
+        self.scripted.borrow_mut().pop_front().unwrap_or_else(|| {
+            Err(ArchiveClientError::Unavailable {
+                reason: "scripted archive upload exhausted".to_string(),
+            })
+        })
     }
 }
 
 fn ack_for(pending: &PendingArchiveRequest) -> ArchiveAcknowledgement {
+    let (request_sha256, captured_byte_offset, captured_prefix_sha256) =
+        byte_receipt_fields(&pending.body);
     ArchiveAcknowledgement {
+        request_sha256,
+        captured_byte_offset,
+        captured_prefix_sha256,
         status: "acknowledged".to_string(),
         duplicate: false,
         source: pending.source,
@@ -119,10 +125,24 @@ fn ack_for(pending: &PendingArchiveRequest) -> ArchiveAcknowledgement {
         appended_checkpoint: true,
         record_count: pending.expected_record_count,
         generation: 1,
-        chain_head: "sha256:00".to_string(),
+        chain_head: collector_archive::sha256(b"chain").to_string(),
         manifest_key: "manifest".to_string(),
         chunk_keys: vec![],
     }
+}
+
+fn byte_receipt_fields(body: &[u8]) -> (Option<String>, Option<u64>, Option<String>) {
+    let value: serde_json::Value = serde_json::from_slice(body).unwrap();
+    if value["checkpoint"]["archive_format_version"].as_u64() != Some(2) {
+        return (None, None, None);
+    }
+    (
+        Some(collector_archive::sha256(body).to_string()),
+        value["checkpoint"]["last_complete_byte_offset"].as_u64(),
+        value["checkpoint"]["complete_prefix_sha256"]
+            .as_str()
+            .map(str::to_string),
+    )
 }
 
 fn snapshot(source: ArchiveSource, bytes: &[u8], observed_at: i64) -> ArchiveSnapshot {
@@ -321,6 +341,9 @@ fn pad_spool_leaving_room(root: &std::path::Path, cap: u64, room: u64) {
 
 fn server_aggregate_duplicate_ack(pending: &PendingArchiveRequest) -> ArchiveAcknowledgement {
     ArchiveAcknowledgement {
+        request_sha256: None,
+        captured_byte_offset: None,
+        captured_prefix_sha256: None,
         status: "acknowledged".to_string(),
         duplicate: false,
         source: pending.source,
@@ -451,6 +474,8 @@ fn path_escaping_session_id_does_not_write_outside_the_spool() {
         source_transcript_part_id: default_transcript_part_id(ArchiveSource::Claude),
         expected_record_count: 1,
         expected_appended_records: 1,
+        capture_authorization: None,
+        predecessor_part_id: None,
         body: b"{}".to_vec(),
     };
     assert!(spool.persist_pending(&escaped).is_err());
@@ -511,7 +536,7 @@ async fn exact_body_retry_posts_the_persisted_bytes() {
     let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
     let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
     spool.persist_pending(&pending).unwrap();
-    let uploader = ScriptedUploader::new([Ok(ack_for(&pending))]);
+    let uploader = AckingUploader::new();
     let report = run_archive_cycle(
         &uploader,
         &mut spool,
@@ -614,8 +639,7 @@ async fn cursor_snapshots_are_not_required_for_jsonl_uploads() {
     let keys = MemoryKeyStore::new();
     let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
     let claude = snapshot(ArchiveSource::Claude, CLAUDE, 10);
-    let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
-    let uploader = ScriptedUploader::new([Ok(ack_for(&pending))]);
+    let uploader = AckingUploader::new();
     let report = run_archive_cycle(
         &uploader,
         &mut spool,
@@ -628,10 +652,7 @@ async fn cursor_snapshots_are_not_required_for_jsonl_uploads() {
     )
     .await;
     assert_eq!(report.uploaded, 1);
-    assert_eq!(
-        uploader.sources.borrow().as_slice(),
-        &[ArchiveSource::Claude]
-    );
+    assert_eq!(uploader.bodies.borrow().len(), 1);
 }
 
 #[tokio::test]
@@ -787,7 +808,7 @@ async fn server_frozen_denial_does_not_purge_or_advance() {
     .await;
     assert!(report.frozen);
     assert!(!report.purged);
-    assert_eq!(report.captured, 0);
+    assert_eq!(report.captured, 1);
     assert!(spool
         .pending(ArchiveSource::Claude, &pending.source_session_id)
         .unwrap()
@@ -821,15 +842,17 @@ async fn live_frozen_during_capture_stops_later_sessions() {
     assert!(report.frozen);
     assert!(!report.purged);
     assert_eq!(uploader.calls.get(), 1);
-    assert_eq!(report.captured, 1);
+    assert_eq!(report.captured, 2);
     assert!(spool
-        .pending(ArchiveSource::Claude, &claude_session)
+        .all_pending()
         .unwrap()
-        .is_some());
+        .iter()
+        .any(|load| matches!(load, PendingLoad::Ready(pending) if pending.source == ArchiveSource::Claude && pending.source_session_id == claude_session)));
     assert!(spool
-        .pending(ArchiveSource::Codex, &codex_session)
+        .all_pending()
         .unwrap()
-        .is_none());
+        .iter()
+        .any(|load| matches!(load, PendingLoad::Ready(pending) if pending.source == ArchiveSource::Codex && pending.source_session_id == codex_session)));
     assert!(keys.load("org_1").unwrap().is_some());
 }
 
@@ -892,15 +915,16 @@ async fn inactive_pending_denial_stops_later_parts_without_capturing() {
     assert_eq!(uploader.calls.get(), 1);
     assert!(report.frozen);
     assert_eq!(report.failed, 0);
-    assert_eq!(report.captured, 0);
+    assert_eq!(report.captured, 1);
     assert!(spool
         .pending(ArchiveSource::Claude, &pending.source_session_id)
         .unwrap()
         .is_some());
     assert!(spool
-        .pending(ArchiveSource::Codex, &later_session)
+        .all_pending()
         .unwrap()
-        .is_none());
+        .iter()
+        .any(|load| matches!(load, PendingLoad::Ready(pending) if pending.source == ArchiveSource::Codex && pending.source_session_id == later_session)));
 }
 
 #[test]
@@ -1108,7 +1132,12 @@ impl ArchiveUploader for AckingUploader {
         self.session_record_count
             .set(self.session_record_count.get() + appended);
         self.bodies.borrow_mut().push(body.to_vec());
+        let (request_sha256, captured_byte_offset, captured_prefix_sha256) =
+            byte_receipt_fields(body);
         Ok(ArchiveAcknowledgement {
+            request_sha256,
+            captured_byte_offset,
+            captured_prefix_sha256,
             status: "acknowledged".to_string(),
             duplicate: false,
             source,
@@ -1121,7 +1150,7 @@ impl ArchiveUploader for AckingUploader {
             appended_checkpoint: true,
             record_count: self.session_record_count.get().max(part_count),
             generation: 1,
-            chain_head: "sha256:00".to_string(),
+            chain_head: collector_archive::sha256(b"chain").to_string(),
             manifest_key: "manifest".to_string(),
             chunk_keys: vec![],
         })
@@ -1139,6 +1168,31 @@ fn padded_records(count: usize, pad: usize, session: &str) -> Vec<u8> {
         out.push(b'\n');
     }
     out
+}
+
+fn pending_payload_bytes(records: &[PendingArchiveRequest]) -> Vec<u8> {
+    let mut records = records.to_vec();
+    records.sort_by_key(|record| record.expected_record_count);
+    records
+        .iter()
+        .flat_map(|record| {
+            let body: serde_json::Value = serde_json::from_slice(&record.body).unwrap();
+            body["observations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|observation| {
+                    serde_json::from_value::<collector_archive::ArchiveObservation>(
+                        observation.clone(),
+                    )
+                    .unwrap()
+                    .payload_bytes()
+                    .unwrap()
+                })
+                .collect::<Vec<_>>()
+        })
+        .flatten()
+        .collect()
 }
 
 #[tokio::test]
@@ -1179,11 +1233,19 @@ async fn oversized_session_splits_at_byte_limit() {
         let value: serde_json::Value = serde_json::from_slice(body).unwrap();
         assert!(value["observations"].as_array().unwrap().len() <= MAX_UPLOAD_OBSERVATIONS);
     }
+    let current_part = spool
+        .current_part(
+            ArchiveSource::Claude,
+            "big-session",
+            &default_transcript_part_id(ArchiveSource::Claude),
+        )
+        .unwrap();
     let progress = spool
-        .progress(ArchiveSource::Claude, "big-session")
+        .progress_part(ArchiveSource::Claude, "big-session", &current_part)
         .unwrap()
         .expect("progress advanced through remaining bytes");
-    assert_eq!(progress.record_count, 24);
+    assert_eq!(progress.last_complete_byte_offset, bytes.len() as u64);
+    assert_eq!(progress.record_count, uploader.bodies.borrow().len() as u64);
     let first: serde_json::Value = serde_json::from_slice(&uploader.bodies.borrow()[0]).unwrap();
     let second: serde_json::Value = serde_json::from_slice(&uploader.bodies.borrow()[1]).unwrap();
     assert_eq!(
@@ -1191,13 +1253,13 @@ async fn oversized_session_splits_at_byte_limit() {
         first["checkpoint"]["record_count"]
     );
     assert_eq!(
-        second["prior_checkpoint"]["prefix_chain_sha256"],
-        first["checkpoint"]["prefix_chain_sha256"]
+        second["prior_checkpoint"]["complete_prefix_sha256"],
+        first["checkpoint"]["complete_prefix_sha256"]
     );
 }
 
 #[tokio::test]
-async fn unchanged_unsupported_record_is_durably_blocked_without_retrying() {
+async fn oversized_json_record_is_preserved_as_bounded_byte_segments() {
     let dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();
     let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
@@ -1216,32 +1278,23 @@ async fn unchanged_unsupported_record_is_durably_blocked_without_retrying() {
         None,
     )
     .await;
-    assert_eq!(first.failed, 1);
-    assert_eq!(first.blocked, 1);
-    assert_eq!(
-        first.first_error.as_deref(),
-        Some("archive_record_too_large")
-    );
-    assert!(uploader.bodies.borrow().is_empty());
-    let blocked = spool
-        .blocked_part(
-            ArchiveSource::Claude,
-            "blocked-session",
-            &default_transcript_part_id(ArchiveSource::Claude),
-        )
+    assert_eq!(first.failed, 0);
+    assert_eq!(first.blocked, 0);
+    assert!(first.uploaded > 1);
+    assert!(uploader
+        .bodies
+        .borrow()
+        .iter()
+        .all(|body| body.len() <= MAX_ARCHIVE_UPLOAD_BYTES));
+    let base_part = default_transcript_part_id(ArchiveSource::Claude);
+    let current_part = spool
+        .current_part(ArchiveSource::Claude, "blocked-session", &base_part)
+        .unwrap();
+    let progress = spool
+        .progress_part(ArchiveSource::Claude, "blocked-session", &current_part)
         .unwrap()
-        .expect("durable blocked record metadata");
-    assert!(blocked
-        .source_record_identity
-        .as_deref()
-        .is_some_and(|identity| identity.contains("claude:id:r0:0")));
-    assert_eq!(blocked.record_size_bytes, Some(bytes.len() as u64 - 1));
-    assert_eq!(blocked.limit_bytes, MAX_ARCHIVE_UPLOAD_BYTES as u64);
-    assert_eq!(blocked.policy_version, ARCHIVE_RECORD_POLICY_VERSION);
-    assert!(spool
-        .progress(ArchiveSource::Claude, "blocked-session")
-        .unwrap()
-        .is_none());
+        .unwrap();
+    assert_eq!(progress.last_complete_byte_offset, bytes.len() as u64);
 
     let second = run_archive_cycle(
         &uploader,
@@ -1255,9 +1308,9 @@ async fn unchanged_unsupported_record_is_durably_blocked_without_retrying() {
     )
     .await;
     assert_eq!(second.failed, 0);
-    assert_eq!(second.blocked, 1);
+    assert_eq!(second.blocked, 0);
+    assert_eq!(second.uploaded, 0);
     assert!(second.first_error.is_none());
-    assert!(uploader.bodies.borrow().is_empty());
 
     let mut changed = bytes;
     changed.push(b' ');
@@ -1272,16 +1325,13 @@ async fn unchanged_unsupported_record_is_durably_blocked_without_retrying() {
         None,
     )
     .await;
-    assert_eq!(changed_report.failed, 1);
-    assert_eq!(changed_report.blocked, 1);
-    assert_eq!(
-        changed_report.first_error.as_deref(),
-        Some("archive_record_too_large")
-    );
+    assert_eq!(changed_report.failed, 0);
+    assert_eq!(changed_report.blocked, 0);
+    assert_eq!(changed_report.uploaded, 1);
 }
 
 #[tokio::test]
-async fn fitting_slices_upload_before_a_later_oversized_record_stays_blocked() {
+async fn arbitrary_large_records_upload_as_bounded_byte_segments() {
     let dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();
     let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
@@ -1315,14 +1365,11 @@ async fn fitting_slices_upload_before_a_later_oversized_record_stays_blocked() {
         None,
     )
     .await;
-    assert_eq!(first.uploaded, 2);
-    assert_eq!(first.failed, 1);
-    assert_eq!(first.blocked, 1);
-    assert_eq!(uploader.bodies.borrow().len(), 2);
-    assert!(spool
-        .blocked_part(source, session, &part)
-        .unwrap()
-        .is_some());
+    assert!(first.uploaded > 2);
+    assert_eq!(first.failed, 0);
+    assert_eq!(first.blocked, 0);
+    let first_uploads = uploader.bodies.borrow().len();
+    assert_eq!(first_uploads, first.uploaded as usize);
 
     let second = run_archive_cycle(
         &uploader,
@@ -1337,8 +1384,8 @@ async fn fitting_slices_upload_before_a_later_oversized_record_stays_blocked() {
     .await;
     assert_eq!(second.uploaded, 0);
     assert_eq!(second.failed, 0);
-    assert_eq!(second.blocked, 1);
-    assert_eq!(uploader.bodies.borrow().len(), 2);
+    assert_eq!(second.blocked, 0);
+    assert_eq!(uploader.bodies.borrow().len(), first_uploads);
     assert!(spool
         .slices_for_part(source, session, &part)
         .unwrap()
@@ -1361,14 +1408,10 @@ async fn fitting_slices_upload_before_a_later_oversized_record_stays_blocked() {
         None,
     )
     .await;
-    assert_eq!(third.uploaded, 0);
-    assert_eq!(third.failed, 1);
-    assert_eq!(third.blocked, 1);
-    assert_eq!(uploader.bodies.borrow().len(), 2);
-    assert!(spool
-        .blocked_part(source, session, &part)
-        .unwrap()
-        .is_some());
+    assert_eq!(third.uploaded, 1);
+    assert_eq!(third.failed, 0);
+    assert_eq!(third.blocked, 0);
+    assert_eq!(uploader.bodies.borrow().len(), first_uploads + 1);
     assert!(spool
         .slices_for_part(source, session, &part)
         .unwrap()
@@ -1381,7 +1424,6 @@ async fn server_stored_element_rejection_is_blocked_without_format_fallback() {
     let keys = MemoryKeyStore::new();
     let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
     let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
-    let current = snapshot(ArchiveSource::Claude, CLAUDE, 10);
     spool.persist_pending(&pending).unwrap();
     let uploader = ScriptedUploader::new([Err(ArchiveClientError::InvalidUpload {
         reason: "archive_element_exceeds_chunk_limit".to_string(),
@@ -1391,7 +1433,7 @@ async fn server_stored_element_rejection_is_blocked_without_format_fallback() {
         &uploader,
         &mut spool,
         &keys,
-        std::slice::from_ref(&current),
+        &[],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
         TEST_NOW_MS,
@@ -1430,7 +1472,7 @@ async fn server_stored_element_rejection_is_blocked_without_format_fallback() {
         &uploader,
         &mut spool,
         &keys,
-        &[current],
+        &[],
         ArchivePolicy::Enrolled,
         &plan_for(ALL_ARCHIVE_SOURCES),
         TEST_NOW_MS,
@@ -1438,7 +1480,7 @@ async fn server_stored_element_rejection_is_blocked_without_format_fallback() {
     )
     .await;
     assert_eq!(second.failed, 0);
-    assert_eq!(second.blocked, 1);
+    assert_eq!(second.blocked, 0);
     assert_eq!(uploader.calls.get(), 1);
     assert!(spool
         .pending(ArchiveSource::Claude, &pending.source_session_id)
@@ -1447,7 +1489,7 @@ async fn server_stored_element_rejection_is_blocked_without_format_fallback() {
 }
 
 #[test]
-fn generation_record_round_trip_clears_previous_state_and_purges() {
+fn generation_record_round_trip_retains_previous_state_and_purges() {
     let dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();
     let source = ArchiveSource::Codex;
@@ -1524,22 +1566,22 @@ fn generation_record_round_trip_clears_previous_state_and_purges() {
     assert_eq!(generation.history.len(), 1);
     assert_eq!(generation.history[0].part_id, base_part);
     assert_eq!(generation.history[0].reason, "prefix_changed");
-    assert!(reopened
+    assert!(!reopened
         .slices_for_part(source, session, &generation.history[0].part_id)
         .unwrap()
         .is_empty());
     assert!(reopened
         .blocked_part(source, session, &generation.history[0].part_id)
         .unwrap()
-        .is_none());
+        .is_some());
     assert!(dir
         .path()
         .join("generations/codex/generation-session")
         .exists());
 
     reopened.persist_slice(&pending).unwrap();
-    assert!(reopened.all_pending().unwrap().is_empty());
-    assert!(reopened
+    assert_eq!(reopened.all_pending().unwrap().len(), 1);
+    assert!(!reopened
         .slices_for_part(source, session, &base_part)
         .unwrap()
         .is_empty());
@@ -1572,6 +1614,9 @@ async fn changed_prefix_after_ack_forks_and_uploads_from_record_zero() {
     .await;
     assert_eq!(first.uploaded, 1);
     assert_eq!(first.failed, 0);
+    let initial_part = spool
+        .current_part(ArchiveSource::Codex, &source_session_id, &base_part)
+        .unwrap();
 
     let mut changed = original.to_vec();
     let marker = b"before";
@@ -1598,7 +1643,7 @@ async fn changed_prefix_after_ack_forks_and_uploads_from_record_zero() {
     let fork = &changed_report.fork_events[0];
     assert_eq!(fork.source, ArchiveSource::Codex);
     assert_eq!(fork.source_session_id, source_session_id);
-    assert_eq!(fork.previous_part_id, base_part);
+    assert_eq!(fork.previous_part_id, initial_part);
     assert_eq!(fork.reason, "prefix_changed");
     assert_eq!(fork.previous_offset, original.len() as u64);
     assert_eq!(fork.new_size, changed.len() as u64);
@@ -1610,7 +1655,7 @@ async fn changed_prefix_after_ack_forks_and_uploads_from_record_zero() {
     assert_ne!(current_part, base_part);
     assert_eq!(
         spool
-            .progress_part(ArchiveSource::Codex, &source_session_id, &base_part)
+            .progress_part(ArchiveSource::Codex, &source_session_id, &initial_part)
             .unwrap()
             .unwrap()
             .last_complete_byte_offset,
@@ -1621,12 +1666,12 @@ async fn changed_prefix_after_ack_forks_and_uploads_from_record_zero() {
             .progress_part(ArchiveSource::Codex, &source_session_id, &current_part)
             .unwrap()
             .unwrap()
-            .record_count,
-        2
+            .last_complete_byte_offset,
+        changed.len() as u64
     );
     let body: serde_json::Value =
         serde_json::from_slice(uploader.bodies.borrow().last().unwrap()).unwrap();
-    assert_eq!(body["observations"].as_array().unwrap().len(), 2);
+    assert_eq!(body["observations"].as_array().unwrap().len(), 1);
     assert_eq!(
         body["checkpoint"]["source_transcript_part_id"],
         current_part
@@ -1675,7 +1720,7 @@ async fn shortened_compaction_forks_and_uploads_the_rewritten_prefix() {
     assert_eq!(report.uploaded, 1);
     let body: serde_json::Value =
         serde_json::from_slice(uploader.bodies.borrow().last().unwrap()).unwrap();
-    assert_eq!(body["observations"].as_array().unwrap().len(), 2);
+    assert_eq!(body["observations"].as_array().unwrap().len(), 1);
     let generation = spool
         .generation_record(
             ArchiveSource::Codex,
@@ -1684,8 +1729,14 @@ async fn shortened_compaction_forks_and_uploads_the_rewritten_prefix() {
         )
         .unwrap()
         .unwrap();
-    assert_eq!(generation.history[0].reason, "prefix_shortened");
-    assert_eq!(generation.history[0].superseded_at, TEST_NOW_MS);
+    assert_eq!(
+        generation.history.last().unwrap().reason,
+        "prefix_shortened"
+    );
+    assert_eq!(
+        generation.history.last().unwrap().superseded_at,
+        TEST_NOW_MS
+    );
 }
 
 #[tokio::test]
@@ -1774,7 +1825,7 @@ async fn compacted_baseline_completes_at_the_current_local_extent() {
 }
 
 #[tokio::test]
-async fn changed_prefix_drops_unacknowledged_slices_before_forking_from_progress() {
+async fn changed_prefix_retains_and_uploads_unacknowledged_predecessor() {
     let dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();
     let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
@@ -1793,8 +1844,11 @@ async fn changed_prefix_drops_unacknowledged_slices_before_forking_from_progress
     )
     .await;
     let base_part = default_transcript_part_id(ArchiveSource::Codex);
+    let initial_part = spool
+        .current_part(ArchiveSource::Codex, "pending-rewrite", &base_part)
+        .unwrap();
     let progress = spool
-        .progress_part(ArchiveSource::Codex, "pending-rewrite", &base_part)
+        .progress_part(ArchiveSource::Codex, "pending-rewrite", &initial_part)
         .unwrap()
         .unwrap();
     let appended = [
@@ -1805,7 +1859,7 @@ async fn changed_prefix_drops_unacknowledged_slices_before_forking_from_progress
     let pending = build_bounded_pending_for_part(
         ArchiveSource::Codex,
         "pending-rewrite",
-        &base_part,
+        &initial_part,
         &appended,
         11,
         Some(&progress),
@@ -1832,14 +1886,113 @@ async fn changed_prefix_drops_unacknowledged_slices_before_forking_from_progress
 
     assert_eq!(report.forked, 1);
     assert_eq!(report.failed, 0);
-    assert_eq!(uploader.bodies.borrow().len(), 1);
+    assert_eq!(uploader.bodies.borrow().len(), 2);
+    assert!(uploader
+        .bodies
+        .borrow()
+        .iter()
+        .any(|body| body == &pending.body));
     assert!(spool
-        .slices_for_part(ArchiveSource::Codex, "pending-rewrite", &base_part)
+        .slices_for_part(ArchiveSource::Codex, "pending-rewrite", &initial_part)
         .unwrap()
         .is_empty());
-    let uploaded: serde_json::Value =
-        serde_json::from_slice(uploader.bodies.borrow().first().unwrap()).unwrap();
-    assert_eq!(uploaded["observations"].as_array().unwrap().len(), 2);
+
+    let retry = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
+        None,
+    )
+    .await;
+    assert_eq!(retry.failed, 0);
+    assert_eq!(retry.uploaded, 0);
+    assert!(spool
+        .slices_for_part(ArchiveSource::Codex, "pending-rewrite", &initial_part)
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn new_only_retry_uses_capture_authorization_after_source_deletion() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let snapshot = snapshot(ArchiveSource::Codex, CODEX, 20);
+    let session = snapshot.source_session_id.clone();
+    let state = ArchiveHistoryState::new(
+        ArchiveHistoryGeneration {
+            source: ArchiveSource::Codex,
+            history_choice: ArchiveHistoryChoice::NewOnly,
+            authorized_at: 10,
+        },
+        10,
+        Vec::new(),
+    );
+    let capture_plan = ArchiveHistoryPlan::new(vec![state.clone()]).with_live_sessions(vec![(
+        ArchiveSource::Codex,
+        session.clone(),
+        20,
+    )]);
+    let unavailable = ScriptedUploader::new([Err(ArchiveClientError::Unavailable {
+        reason: "archive unavailable".to_string(),
+    })]);
+
+    let captured = run_archive_cycle(
+        &unavailable,
+        &mut spool,
+        &keys,
+        std::slice::from_ref(&snapshot),
+        ArchivePolicy::Enrolled,
+        &capture_plan,
+        TEST_NOW_MS,
+        None,
+    )
+    .await;
+    assert_eq!(captured.captured, 1);
+    assert_eq!(captured.uploaded, 0);
+    let current_part = spool
+        .current_part(
+            ArchiveSource::Codex,
+            &session,
+            &snapshot.source_transcript_part_id,
+        )
+        .unwrap();
+    let persisted = spool
+        .pending_part(ArchiveSource::Codex, &session, &current_part)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        persisted.capture_authorization,
+        Some(collector_archive_sync::PendingCaptureAuthorization {
+            history_choice: ArchiveHistoryChoice::NewOnly,
+            authorized_at: 10,
+        })
+    );
+
+    let retry_plan = ArchiveHistoryPlan::new(vec![state]);
+    let uploader = AckingUploader::new();
+    let retried = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        &retry_plan,
+        TEST_NOW_MS,
+        None,
+    )
+    .await;
+
+    assert_eq!(retried.failed, 0, "{retried:?}");
+    assert_eq!(retried.uploaded, 1);
+    assert!(spool
+        .pending_part(ArchiveSource::Codex, &session, &current_part)
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]
@@ -1902,9 +2055,9 @@ async fn a_second_rewrite_forks_from_the_current_part() {
         )
         .unwrap()
         .unwrap();
-    assert_eq!(generation.history.len(), 2);
-    assert_eq!(generation.history[0].reason, "prefix_changed");
+    assert_eq!(generation.history.len(), 3);
     assert_eq!(generation.history[1].reason, "prefix_changed");
+    assert_eq!(generation.history[2].reason, "prefix_changed");
 }
 
 #[tokio::test]
@@ -1969,7 +2122,7 @@ async fn append_after_a_fork_continues_on_the_current_part() {
         )
         .unwrap()
         .unwrap();
-    assert_eq!(generation.history.len(), 1);
+    assert_eq!(generation.history.len(), 2);
 }
 
 #[tokio::test]
@@ -2117,17 +2270,13 @@ async fn bounded_upload_failure_keeps_later_records_after_source_disappears() {
         ready.len() >= 2,
         "every observed bounded request must be durable before upload can stop"
     );
-    let durable_records: u64 = ready
-        .iter()
-        .map(|record| record.expected_appended_records)
-        .sum();
-    assert_eq!(durable_records, 300);
+    assert_eq!(pending_payload_bytes(&ready), bytes);
     assert_eq!(
         ready
             .iter()
             .map(|record| record.expected_record_count)
             .max(),
-        Some(300)
+        Some(ready.len() as u64)
     );
 
     drop(spool);
@@ -2147,7 +2296,7 @@ async fn bounded_upload_failure_keeps_later_records_after_source_disappears() {
     assert_eq!(replay.failed, 0);
     assert!(replay.uploaded >= 2);
     assert!(replay.first_error.is_none());
-    assert_eq!(ack.session_record_count.get(), 300);
+    assert_eq!(ack.session_record_count.get(), ready.len() as u64);
     assert!(ack.bodies.borrow().len() >= 2);
     assert!(relaunched
         .all_pending()
@@ -2158,11 +2307,18 @@ async fn bounded_upload_failure_keeps_later_records_after_source_disappears() {
         .pending(ArchiveSource::Claude, "disappear-session")
         .unwrap()
         .is_none());
+    let current_part = relaunched
+        .current_part(
+            ArchiveSource::Claude,
+            "disappear-session",
+            &default_transcript_part_id(ArchiveSource::Claude),
+        )
+        .unwrap();
     let progress = relaunched
-        .progress(ArchiveSource::Claude, "disappear-session")
+        .progress_part(ArchiveSource::Claude, "disappear-session", &current_part)
         .unwrap()
-        .expect("progress recovered every observed record");
-    assert_eq!(progress.record_count, 300);
+        .expect("progress recovered every observed byte");
+    assert_eq!(progress.last_complete_byte_offset, bytes.len() as u64);
 }
 
 #[tokio::test]
@@ -2171,30 +2327,24 @@ async fn existing_pending_does_not_strand_later_observed_bytes() {
     let keys = MemoryKeyStore::new();
     let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
     let bytes = padded_records(300, 30_000, "pending-session");
-    let first = collector_archive_sync::build_bounded_pending_for_part(
-        ArchiveSource::Claude,
-        "pending-session",
-        &default_transcript_part_id(ArchiveSource::Claude),
-        &bytes,
-        10,
+    let initial_bytes = padded_records(100, 30_000, "pending-session");
+    let initial_uploader = ScriptedUploader::new([Err(ArchiveClientError::Unavailable {
+        reason: "archive unavailable".to_string(),
+    })]);
+    let initial = run_archive_cycle(
+        &initial_uploader,
+        &mut spool,
+        &keys,
+        &[snapshot(ArchiveSource::Claude, &initial_bytes, 10)],
+        ArchivePolicy::Enrolled,
+        &plan_for(ALL_ARCHIVE_SOURCES),
+        TEST_NOW_MS,
         None,
     )
-    .unwrap()
-    .expect("first bounded request");
-    assert!(first.expected_record_count >= 1);
-    assert!(first.expected_record_count < 300);
-    spool.persist_pending(&first).unwrap();
-    assert_eq!(
-        spool
-            .slices_for_part(
-                ArchiveSource::Claude,
-                "pending-session",
-                &default_transcript_part_id(ArchiveSource::Claude),
-            )
-            .unwrap()
-            .len(),
-        1
-    );
+    .await;
+    assert_eq!(initial.uploaded, 0);
+    assert_eq!(initial.failed, 1);
+    assert!(initial.captured > 1);
 
     let uploader = ScriptedUploader::new([
         Err(ArchiveClientError::Unavailable {
@@ -2232,11 +2382,7 @@ async fn existing_pending_does_not_strand_later_observed_bytes() {
         ready.len() >= 2,
         "existing pending must not skip later observed snapshot bytes"
     );
-    let durable_records: u64 = ready
-        .iter()
-        .map(|record| record.expected_appended_records)
-        .sum();
-    assert_eq!(durable_records, 300);
+    assert_eq!(pending_payload_bytes(&ready), bytes);
 
     drop(spool);
     let mut relaunched = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
@@ -2254,12 +2400,19 @@ async fn existing_pending_does_not_strand_later_observed_bytes() {
     .await;
     assert_eq!(replay.failed, 0);
     assert!(replay.uploaded >= 2);
-    assert_eq!(ack.session_record_count.get(), 300);
+    assert_eq!(ack.session_record_count.get(), ready.len() as u64);
+    let current_part = relaunched
+        .current_part(
+            ArchiveSource::Claude,
+            "pending-session",
+            &default_transcript_part_id(ArchiveSource::Claude),
+        )
+        .unwrap();
     let progress = relaunched
-        .progress(ArchiveSource::Claude, "pending-session")
+        .progress_part(ArchiveSource::Claude, "pending-session", &current_part)
         .unwrap()
         .expect("existing-pending remainder recovered after source disappearance");
-    assert_eq!(progress.record_count, 300);
+    assert_eq!(progress.last_complete_byte_offset, bytes.len() as u64);
 }
 
 #[tokio::test]
@@ -2325,13 +2478,16 @@ async fn acknowledgement_at_exact_cap_clears_pending() {
     let mut spool =
         ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, ARCHIVE_SPOOL_CAP_BYTES).unwrap();
     spool.persist_pending(&pending).unwrap();
-    let staging = spool.ack_transition_len(&pending).unwrap();
+    let acknowledgement = ack_for(&pending);
+    let staging = spool
+        .verified_ack_transition_len(&pending, &acknowledgement)
+        .unwrap();
     pad_spool_leaving_room(dir.path(), ARCHIVE_SPOOL_CAP_BYTES, staging);
     assert_eq!(
         real_durable_bytes(dir.path()).saturating_add(staging),
         ARCHIVE_SPOOL_CAP_BYTES
     );
-    let uploader = ScriptedUploader::new([Ok(ack_for(&pending))]);
+    let uploader = ScriptedUploader::new([Ok(acknowledgement)]);
     let report = run_archive_cycle(
         &uploader,
         &mut spool,
@@ -2497,26 +2653,27 @@ async fn claude_parent_and_subagent_same_session_upload_independently() {
     assert_eq!(uploader.bodies.borrow().len(), 2);
     let first: serde_json::Value = serde_json::from_slice(&uploader.bodies.borrow()[0]).unwrap();
     let second: serde_json::Value = serde_json::from_slice(&uploader.bodies.borrow()[1]).unwrap();
-    assert_eq!(
-        first["checkpoint"]["source_transcript_part_id"].as_str(),
-        Some(parent_part.as_str())
-    );
-    assert_eq!(
-        second["checkpoint"]["source_transcript_part_id"].as_str(),
-        Some(sub_part.as_str())
-    );
-    assert_eq!(first["checkpoint"]["record_count"], 2);
-    assert_eq!(second["checkpoint"]["record_count"], 2);
+    let captured_parent_part = first["checkpoint"]["source_transcript_part_id"]
+        .as_str()
+        .unwrap();
+    let captured_sub_part = second["checkpoint"]["source_transcript_part_id"]
+        .as_str()
+        .unwrap();
+    assert_ne!(captured_parent_part, parent_part);
+    assert_ne!(captured_sub_part, sub_part);
+    assert_ne!(captured_parent_part, captured_sub_part);
+    assert_eq!(first["checkpoint"]["record_count"], 1);
+    assert_eq!(second["checkpoint"]["record_count"], 1);
     let parent_progress = spool
-        .progress_part(ArchiveSource::Claude, "session-1", &parent_part)
+        .progress_part(ArchiveSource::Claude, "session-1", captured_parent_part)
         .unwrap()
         .unwrap();
     let sub_progress = spool
-        .progress_part(ArchiveSource::Claude, "session-1", &sub_part)
+        .progress_part(ArchiveSource::Claude, "session-1", captured_sub_part)
         .unwrap()
         .unwrap();
-    assert_eq!(parent_progress.record_count, 2);
-    assert_eq!(sub_progress.record_count, 2);
+    assert_eq!(parent_progress.record_count, 1);
+    assert_eq!(sub_progress.record_count, 1);
     assert_ne!(
         parent_progress.source_transcript_part_id(),
         sub_progress.source_transcript_part_id()
@@ -2577,18 +2734,15 @@ async fn missing_or_empty_agent_id_subagent_does_not_collide_with_parent_across_
         .await;
         assert_eq!(first.failed, 0, "child-first cycle must isolate parts");
         assert_eq!(first.uploaded, 2);
-        let first_part = serde_json::from_slice::<serde_json::Value>(&uploader.bodies.borrow()[0])
-            .unwrap()["checkpoint"]["source_transcript_part_id"]
-            .as_str()
-            .unwrap()
-            .to_string();
-        let second_part = serde_json::from_slice::<serde_json::Value>(&uploader.bodies.borrow()[1])
-            .unwrap()["checkpoint"]["source_transcript_part_id"]
-            .as_str()
-            .unwrap()
-            .to_string();
-        assert_eq!(first_part, child_part);
-        assert_eq!(second_part, parent_part);
+        let captured_child_part = spool
+            .current_part(ArchiveSource::Claude, "session-1", &child_part)
+            .unwrap();
+        let captured_parent_part = spool
+            .current_part(ArchiveSource::Claude, "session-1", &parent_part)
+            .unwrap();
+        assert_ne!(captured_child_part, child_part);
+        assert_ne!(captured_parent_part, parent_part);
+        assert_ne!(captured_child_part, captured_parent_part);
         drop(spool);
 
         let parent_append = snapshot_for_path(
@@ -2620,19 +2774,19 @@ async fn missing_or_empty_agent_id_subagent_does_not_collide_with_parent_across_
                 .unwrap();
         assert_eq!(
             relaunch_body["checkpoint"]["source_transcript_part_id"].as_str(),
-            Some(parent_part.as_str())
+            Some(captured_parent_part.as_str())
         );
-        assert_eq!(relaunch_body["checkpoint"]["record_count"], 3);
+        assert_eq!(relaunch_body["checkpoint"]["record_count"], 2);
         let parent_progress = relaunched
-            .progress_part(ArchiveSource::Claude, "session-1", &parent_part)
+            .progress_part(ArchiveSource::Claude, "session-1", &captured_parent_part)
             .unwrap()
             .unwrap();
         let child_progress = relaunched
-            .progress_part(ArchiveSource::Claude, "session-1", &child_part)
+            .progress_part(ArchiveSource::Claude, "session-1", &captured_child_part)
             .unwrap()
             .unwrap();
-        assert_eq!(parent_progress.record_count, 3);
-        assert_eq!(child_progress.record_count, 2);
+        assert_eq!(parent_progress.record_count, 2);
+        assert_eq!(child_progress.record_count, 1);
         assert_ne!(
             parent_progress.source_transcript_part_id(),
             child_progress.source_transcript_part_id()
@@ -2940,11 +3094,12 @@ async fn failing_keyring_delete_does_not_claim_purge() {
     .await;
     assert!(!stop_report.purged);
     assert!(stop_report.halted);
-    assert_eq!(stop_report.captured, 0);
+    assert_eq!(stop_report.captured, 1);
     assert!(stop_spool
-        .pending(ArchiveSource::Codex, &later_session)
+        .all_pending()
         .unwrap()
-        .is_none());
+        .iter()
+        .any(|load| matches!(load, PendingLoad::Ready(pending) if pending.source == ArchiveSource::Codex && pending.source_session_id == later_session)));
 }
 
 #[tokio::test]
@@ -3053,14 +3208,15 @@ async fn failing_policy_replace_blocks_all_sources_and_retries_purge() {
     .await;
     assert!(!report.purged);
     assert!(report.halted);
-    assert_eq!(report.captured, 0);
+    assert_eq!(report.captured, 1);
     assert!(spool.cleanup_required());
     assert!(keys.load("org_1").unwrap().is_some());
     assert!(pending_disk_path(&spool_dir, &pending).exists());
     assert!(spool
-        .pending(ArchiveSource::Codex, &later_session)
+        .all_pending()
         .unwrap()
-        .is_none());
+        .iter()
+        .any(|load| matches!(load, PendingLoad::Ready(pending) if pending.source == ArchiveSource::Codex && pending.source_session_id == later_session)));
 
     let mut relaunched = ArchiveSpool::open_existing(&spool_dir, "org_1", &keys)
         .unwrap()
@@ -3223,8 +3379,8 @@ async fn unreadable_excluded_directory_does_not_block_permitted_pending() {
     fs::set_permissions(&excluded_dir, original_permissions).unwrap();
 
     assert_eq!(report.uploaded, 1, "{report:?}");
-    assert_eq!(report.failed, 1);
-    assert_eq!(report.first_error.as_deref(), Some("archive_spool_corrupt"));
+    assert_eq!(report.failed, 0);
+    assert_eq!(report.first_error, None);
     let uploaded: serde_json::Value =
         serde_json::from_slice(&uploader.inner.bodies.borrow()[0]).unwrap();
     assert_eq!(uploaded["source_session_id"], permitted.source_session_id);
@@ -3250,6 +3406,8 @@ async fn deferred_oversized_snapshot_makes_bounded_progress() {
     let mut deferred = snapshot(ArchiveSource::Claude, CLAUDE, 10);
     deferred.bytes.clear();
     deferred.deferred_file = Some(DeferredArchiveSnapshot {
+        expected_file_identity: None,
+        expected_identity_prefix: None,
         path,
         prior_offset: 0,
         minimum_observed_size: 0,
@@ -3270,8 +3428,19 @@ async fn deferred_oversized_snapshot_makes_bounded_progress() {
 
     assert_eq!(report.failed, 0);
     assert!(report.uploaded > 0);
+    let current_part = spool
+        .current_part(
+            ArchiveSource::Claude,
+            &deferred.source_session_id,
+            &deferred.source_transcript_part_id,
+        )
+        .unwrap();
     let progress = spool
-        .progress(ArchiveSource::Claude, &deferred.source_session_id)
+        .progress_part(
+            ArchiveSource::Claude,
+            &deferred.source_session_id,
+            &current_part,
+        )
         .unwrap()
         .unwrap();
     assert!(progress.last_complete_byte_offset > 0);
@@ -3360,7 +3529,7 @@ async fn ambiguous_new_only_exclusion_is_reported_without_operational_failure() 
 }
 
 #[tokio::test]
-async fn live_session_runs_before_baseline_after_plan_rebuild() {
+async fn upload_selection_is_stable_after_live_first_capture() {
     let dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();
     let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
@@ -3386,7 +3555,7 @@ async fn live_session_runs_before_baseline_after_plan_rebuild() {
         &uploader,
         &mut spool,
         &keys,
-        &[baseline, live],
+        &[baseline.clone(), live],
         ArchivePolicy::Enrolled,
         &plan,
         TEST_NOW_MS,
@@ -3395,7 +3564,9 @@ async fn live_session_runs_before_baseline_after_plan_rebuild() {
     .await;
 
     let first: serde_json::Value = serde_json::from_slice(&uploader.bodies.borrow()[0]).unwrap();
-    assert_eq!(first["source_session_id"], "live-session");
+    assert_eq!(first["source_session_id"], baseline.source_session_id);
+    let second: serde_json::Value = serde_json::from_slice(&uploader.bodies.borrow()[1]).unwrap();
+    assert_eq!(second["source_session_id"], "live-session");
 }
 
 #[test]

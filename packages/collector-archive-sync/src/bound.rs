@@ -20,16 +20,18 @@ pub fn build_bounded_pending_for_part(
     observed_at: i64,
     prior: Option<&CompletedScanCheckpoint>,
 ) -> ArchiveSyncResult<Option<PendingArchiveRequest>> {
-    build_bounded_pending_for_part_with_limits(
+    let scan = collector_archive::scan_source_bytes(
         source,
         source_session_id,
         source_transcript_part_id,
         bytes,
         observed_at,
         prior,
-        MAX_ARCHIVE_UPLOAD_BYTES,
-        MAX_UPLOAD_OBSERVATIONS,
-    )
+    )?;
+    if scan.observations.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(pending_from_scan(source, scan, bytes)?))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -261,7 +263,28 @@ fn pending_from_scan(
     ))
 }
 
+pub fn pending_from_byte_scan(scan: JsonlScan) -> ArchiveSyncResult<PendingArchiveRequest> {
+    if scan.checkpoint.archive_format_version() != collector_archive::BYTE_ARCHIVE_FORMAT_VERSION {
+        return Err(ArchiveSyncError::Corrupt);
+    }
+    pending_from_scan(scan.checkpoint.source, scan, &[])
+}
+
 fn serialize_scan(scan: &JsonlScan, source_bytes: &[u8]) -> ArchiveSyncResult<Vec<u8>> {
+    if scan.checkpoint.archive_format_version() == collector_archive::BYTE_ARCHIVE_FORMAT_VERSION {
+        let initial = if scan.prior_checkpoint.is_none() {
+            scan.observations
+                .first()
+                .map(|observation| observation.payload_bytes())
+                .transpose()?
+                .unwrap_or_default()
+        } else {
+            vec![]
+        };
+        return Ok(serde_json::to_vec(
+            &scan.clone().into_upload_request(&initial)?,
+        )?);
+    }
     let contains_legacy_oversized_record = scan.observations.iter().any(|observation| {
         observation.payload_encoding == collector_archive::PayloadEncoding::Utf8
             && observation.payload.len() > LEGACY_ARCHIVE_CHUNK_LIMIT_BYTES
@@ -415,13 +438,15 @@ mod tests {
         bytes.extend_from_slice(suffix.as_bytes());
         bytes.push(b'\n');
 
-        let pending = build_bounded_pending_for_part(
+        let pending = build_bounded_pending_for_part_with_limits(
             ArchiveSource::Claude,
             "bound-session",
             &default_transcript_part_id(ArchiveSource::Claude),
             &bytes,
             10,
             Some(&prior),
+            MAX_ARCHIVE_UPLOAD_BYTES,
+            MAX_UPLOAD_OBSERVATIONS,
         )
         .unwrap()
         .expect("large append pending");
@@ -443,17 +468,29 @@ mod tests {
     }
 
     #[test]
-    fn unsplittable_record_is_too_large() {
+    fn oversized_records_are_preserved_as_bounded_byte_segments() {
         let bytes = records(1, MAX_ARCHIVE_UPLOAD_BYTES + 1);
-        let error = build_bounded_pending_for_part(
+        let mut reader = collector_archive::SourceByteReader::new(
+            std::io::Cursor::new(&bytes),
             ArchiveSource::Claude,
             "bound-session",
-            &default_transcript_part_id(ArchiveSource::Claude),
-            &bytes,
+            "claude:part:parent",
             10,
             None,
         )
-        .unwrap_err();
-        assert_eq!(error.class(), "archive_record_too_large");
+        .unwrap();
+        let mut restored = Vec::new();
+        let mut count = 0;
+        while let Some(scan) = reader.next_segment().unwrap() {
+            restored.extend(scan.observations[0].payload_bytes().unwrap());
+            let pending = pending_from_byte_scan(scan).unwrap();
+            assert!(pending.body.len() <= MAX_ARCHIVE_UPLOAD_BYTES);
+            count += 1;
+        }
+        assert!(count > 1);
+        assert_eq!(
+            collector_archive::sha256(&restored),
+            collector_archive::sha256(&bytes)
+        );
     }
 }

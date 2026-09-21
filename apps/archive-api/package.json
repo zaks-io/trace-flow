@@ -18,7 +18,8 @@
     "@trace-flow/logging": "workspace:*",
     "@trace-flow/types": "workspace:*",
     "@trace-flow/utils": "workspace:*",
-    "hono": "^4.13.5"
+    "hono": "^4.13.5",
+    "jose": "^6.2.10"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",

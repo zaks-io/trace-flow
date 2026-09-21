@@ -1,4 +1,9 @@
 import {
+  assertByteSegments,
+  BYTE_ARCHIVE_FORMAT_VERSION,
+  byteSegmentRange,
+} from './archive-byte-segments';
+import {
   ArchiveContractError,
   GENESIS_CHAIN_HASH,
   type ArchiveObservation,
@@ -123,7 +128,11 @@ export async function assertPrefixHash(
   if ((await prefixChainHash(undefined, prefix)) !== checkpoint.prefix_chain_sha256) {
     throw new ArchiveContractError('checkpoint_prefix_unverifiable');
   }
-  assertPrefixMatchesObservations(prefix, observations, verifiedLines);
+  if (checkpoint.archive_format_version === BYTE_ARCHIVE_FORMAT_VERSION) {
+    assertByteSegments(observations, prefix, 0);
+  } else {
+    assertPrefixMatchesObservations(prefix, observations, verifiedLines);
+  }
   if (priorCheckpoint) {
     if (priorCheckpoint.last_complete_byte_offset > prefix.byteLength) {
       throw new ArchiveContractError('checkpoint_prefix_unverifiable');
@@ -167,5 +176,22 @@ export async function assertDeltaPrefixHash(
   if (expectedPrefixChain !== checkpoint.prefix_chain_sha256) {
     throw new ArchiveContractError('checkpoint_prefix_unverifiable');
   }
-  assertPrefixMatchesObservations(appendedPrefix, observations, verifiedLines);
+  if (checkpoint.archive_format_version === BYTE_ARCHIVE_FORMAT_VERSION) {
+    assertByteSegments(observations, appendedPrefix, priorCheckpoint.last_complete_byte_offset);
+    const predecessor =
+      priorCheckpoint.last_source_record_identity === null
+        ? undefined
+        : byteSegmentRange(priorCheckpoint.last_source_record_identity).predecessorPartId;
+    if (
+      priorCheckpoint.record_count > 0 &&
+      observations.some(
+        (observation) =>
+          byteSegmentRange(observation.source_record_identity).predecessorPartId !== predecessor,
+      )
+    ) {
+      throw new ArchiveContractError('generation_predecessor_changed');
+    }
+  } else {
+    assertPrefixMatchesObservations(appendedPrefix, observations, verifiedLines);
+  }
 }

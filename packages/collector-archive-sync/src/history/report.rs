@@ -32,7 +32,8 @@ pub(crate) fn history_reports(
             }
             let mut completed = 0u32;
             for target in state.targets() {
-                if target.registered_complete_byte_offset == 0 {
+                if target.registered_complete_byte_offset == 0 && target.registered_size_bytes == 0
+                {
                     completed += 1;
                     continue;
                 }
@@ -48,19 +49,54 @@ pub(crate) fn history_reports(
                         continue;
                     }
                 };
-                let (part, required_offset) = match generation {
-                    Some(generation) => (
-                        generation.current_part_id,
-                        plan.complete_extent(
-                            state.generation.source,
-                            &target.source_session_id,
-                            &target.source_transcript_part_id,
-                        ),
-                    ),
+                let (part, required_offset) = match &generation {
+                    Some(generation) => {
+                        let rewritten = generation
+                            .history
+                            .iter()
+                            .any(|entry| entry.reason != "byte_capture");
+                        let required = if rewritten {
+                            plan.complete_extent(
+                                state.generation.source,
+                                &target.source_session_id,
+                                &target.source_transcript_part_id,
+                            )
+                        } else {
+                            Some(target.registered_size_bytes)
+                        };
+                        (generation.current_part_id.clone(), required)
+                    }
                     None => (
                         target.source_transcript_part_id.clone(),
                         Some(target.registered_complete_byte_offset),
                     ),
+                };
+                let captured = match spool.latest_captured_checkpoint(
+                    state.generation.source,
+                    &target.source_session_id,
+                    &part,
+                ) {
+                    Ok(captured) => captured,
+                    Err(error) => {
+                        report.failed += 1;
+                        record_error(report, error.class());
+                        continue;
+                    }
+                };
+                let required_offset =
+                    required_offset.or_else(|| captured.as_ref().map(|p| p.observed_file_size));
+                let predecessors_complete = match predecessors_acknowledged(
+                    spool,
+                    state.generation.source,
+                    &target.source_session_id,
+                    generation.as_ref(),
+                ) {
+                    Ok(complete) => complete,
+                    Err(error) => {
+                        report.failed += 1;
+                        record_error(report, error.class());
+                        continue;
+                    }
                 };
                 let progress = match spool.progress_part(
                     state.generation.source,
@@ -74,11 +110,13 @@ pub(crate) fn history_reports(
                         continue;
                     }
                 };
-                if required_offset.is_some_and(|required_offset| {
-                    progress.is_some_and(|progress| {
-                        progress.last_complete_byte_offset >= required_offset
+                if predecessors_complete
+                    && required_offset.is_some_and(|required_offset| {
+                        progress.is_some_and(|progress| {
+                            progress.last_complete_byte_offset >= required_offset
+                        })
                     })
-                }) {
+                {
                     completed += 1;
                     continue;
                 }
@@ -124,4 +162,34 @@ pub(crate) fn history_reports(
         }
     }));
     reports
+}
+
+fn predecessors_acknowledged(
+    spool: &ArchiveSpool,
+    source: collector_archive::ArchiveSource,
+    session: &str,
+    generation: Option<&crate::ArchiveGenerationRecord>,
+) -> crate::ArchiveSyncResult<bool> {
+    let Some(generation) = generation else {
+        return Ok(true);
+    };
+    for entry in &generation.history {
+        let captured = spool.latest_captured_checkpoint(source, session, &entry.part_id)?;
+        let progress = spool.progress_part(source, session, &entry.part_id)?;
+        match (captured, progress) {
+            (Some(captured), Some(progress)) => {
+                let required = if captured.archive_format_version() == 2 {
+                    captured.observed_file_size
+                } else {
+                    captured.last_complete_byte_offset
+                };
+                if progress.last_complete_byte_offset < required {
+                    return Ok(false);
+                }
+            }
+            (None, None) => {}
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
 }

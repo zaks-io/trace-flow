@@ -24,6 +24,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use collector_embedder::connection::{Connection, Paths};
 use collector_embedder::keychain;
+use collector_embedder::sources::SourceHomes;
 use collector_embedder::sync::{self, ArchiveKeyStore, Window};
 use collector_embedder::{
     archive_policy, defaults, ArchiveEnrollmentRequest, ArchiveHistoryChoice, ArchiveSource,
@@ -31,6 +32,7 @@ use collector_embedder::{
 };
 use tokio::sync::mpsc;
 
+use crate::archive_scheduler::{self, ArchiveSchedulerHandle};
 use crate::settings::{ArchivePolicyDenial, ArchiveRequest, Settings, SettingsFile};
 use crate::state::{
     AppStateBus, ArchiveConnectionIdentity, ArchiveMenuState, ConnectionState, SourceCounts,
@@ -144,17 +146,32 @@ pub enum EngineCommand {
         source: ArchiveSource,
         history_choice: ArchiveHistoryChoice,
     },
+    /// Reconcile archive sources after an OS resume without changing authorization.
+    WakeCapture,
 }
 
 #[derive(Clone)]
 pub struct EngineHandle {
     tx: mpsc::UnboundedSender<EngineCommand>,
+    archive: ArchiveSchedulerHandle,
 }
 
 impl EngineHandle {
     /// Send a command; returns false if the engine task has gone away.
     pub fn send(&self, cmd: EngineCommand) -> bool {
-        self.tx.send(cmd).is_ok()
+        let wakes_archive = matches!(
+            cmd,
+            EngineCommand::StartSyncing
+                | EngineCommand::SyncNow
+                | EngineCommand::Resume
+                | EngineCommand::EnrollArchiveSource { .. }
+                | EngineCommand::WakeCapture
+        );
+        let sent = self.tx.send(cmd).is_ok();
+        if sent && wakes_archive {
+            self.archive.wake();
+        }
+        sent
     }
 }
 
@@ -167,16 +184,22 @@ impl EngineHandle {
 /// inside it on the tokio reactor.
 pub fn spawn(bus: AppStateBus, settings_file: SettingsFile) -> EngineHandle {
     let (tx, rx) = mpsc::unbounded_channel();
-    tauri::async_runtime::spawn(run_loop(rx, bus, settings_file));
-    EngineHandle { tx }
+    let archive = archive_scheduler::spawn(settings_file.clone(), bus.clone());
+    tauri::async_runtime::spawn(run_loop(rx, bus, settings_file, archive.clone()));
+    EngineHandle { tx, archive }
 }
 
 async fn run_loop(
     mut rx: mpsc::UnboundedReceiver<EngineCommand>,
     bus: AppStateBus,
     settings_file: SettingsFile,
+    archive_scheduler: ArchiveSchedulerHandle,
 ) {
     let mut settings = load_settings(&settings_file);
+    if let Some(home) = dirs_home() {
+        settings.source_homes.merge(&SourceHomes::resolve(&home));
+        persist(&settings_file, &settings);
+    }
     let mut archive_policy_memory = ArchivePolicyMemory::from_settings(&settings);
     let mut ticker = tokio::time::interval(TICK);
     // The first tick fires immediately; skip it so a paused engine does nothing on startup. A
@@ -189,7 +212,7 @@ async fn run_loop(
         }
     });
     refresh_connection(&bus);
-    refresh_sources(&bus);
+    refresh_sources(&bus, Some(&settings.source_homes));
     refresh_archive(&bus);
 
     if settings.syncing {
@@ -211,6 +234,7 @@ async fn run_loop(
                         settings.syncing = true;
                         set_idle(&bus);
                     }
+                    EngineCommand::WakeCapture => {}
                     EngineCommand::StartSyncing | EngineCommand::SyncNow => {
                         settings.syncing = true;
                         // Persist the authorization before the (possibly long) pass so a quit
@@ -235,6 +259,7 @@ async fn run_loop(
                     }
                 }
                 persist(&settings_file, &settings);
+                archive_scheduler.wake();
             }
             _ = ticker.tick() => {
                 if settings.syncing {
@@ -463,7 +488,14 @@ async fn run_authorized_cycle(
     archive_policy_memory: &mut ArchivePolicyMemory,
 ) {
     let window = window_for_authorized_cycle(settings);
-    if let Some(outcome) = run_cycle(bus, window, archive_policy_memory).await {
+    if let Some(outcome) = run_cycle(
+        bus,
+        window,
+        settings.source_homes.clone(),
+        archive_policy_memory,
+    )
+    .await
+    {
         apply_authorized_cycle(settings, &outcome);
         update_archive_error_after_cycle(bus, &outcome);
     }
@@ -560,6 +592,7 @@ struct CycleOutcome {
 async fn run_cycle(
     bus: &AppStateBus,
     window: Window,
+    source_homes: SourceHomes,
     archive_policy_memory: &mut ArchivePolicyMemory,
 ) -> Option<CycleOutcome> {
     let conn = match Paths::resolve().and_then(|p| p.load_connection()) {
@@ -632,12 +665,14 @@ async fn run_cycle(
     bus.update(|s| s.sync = SyncStatus::Syncing);
 
     let now_ms = now_ms();
+    let cycle_source_homes = source_homes.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         run_cycle_blocking_with_policy_memory(
             archive_connection,
             credential,
             ingest_url,
             home,
+            cycle_source_homes,
             window,
             now_ms,
             CycleIsolation::production(remembered_denial),
@@ -687,7 +722,7 @@ async fn run_cycle(
         }
     };
 
-    refresh_sources(bus);
+    refresh_sources(bus, Some(&source_homes));
     refresh_archive(bus);
     outcome
 }
@@ -775,16 +810,25 @@ fn run_cycle_blocking(
     isolation: CycleIsolation,
 ) -> CycleOutcome {
     run_cycle_blocking_with_policy_memory(
-        connection, credential, ingest_url, home, window, now_ms, isolation,
+        connection,
+        credential,
+        ingest_url,
+        home.clone(),
+        SourceHomes::standard(&home),
+        window,
+        now_ms,
+        isolation,
     )
     .0
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_cycle_blocking_with_policy_memory(
     connection: ArchiveConnectionIdentity,
     credential: String,
     ingest_url: String,
     home: std::path::PathBuf,
+    source_homes: SourceHomes,
     window: Window,
     now_ms: i64,
     isolation: CycleIsolation,
@@ -872,24 +916,27 @@ fn run_cycle_blocking_with_policy_memory(
         }
     }
 
-    let (archive, enrollment_error) = match &paths {
-        Ok(paths) => cycle_archive_config(
+    let (archive, enrollment_error) = match (&paths, state_dir.is_some()) {
+        (Ok(paths), true) => cycle_archive_config(
             paths,
             &org_id,
             &collector_id,
             archive_input,
             confirmed_archive_policy,
         ),
-        Err(_) => (None, None),
+        _ => (None, None),
     };
     if archive_setup_error.is_none() {
         archive_setup_error = enrollment_error;
     }
+    // Production archive capture, migration, cleanup, and upload run through the dedicated spool
+    // owner. Tests that inject an isolated state directory keep the composed path as coverage.
     let result = runtime.block_on(sync::run_detailed(sync::RunConfig {
         ingest_url,
         credential,
         org_id: &org_id,
         home: &home,
+        source_homes: Some(&source_homes),
         window,
         replay: false,
         now_ms,
@@ -1039,9 +1086,17 @@ fn archive_menu_state_for_connection(
 }
 
 /// Recount local `.jsonl` files per source (read-only; no egress).
-pub fn refresh_sources(bus: &AppStateBus) {
+pub fn refresh_sources(bus: &AppStateBus, configured: Option<&SourceHomes>) {
     let Some(home) = dirs_home() else { return };
-    let detected = collector_embedder::sources::detect(&home);
+    let resolved;
+    let homes = match configured {
+        Some(homes) => homes,
+        None => {
+            resolved = SourceHomes::resolve(&home);
+            &resolved
+        }
+    };
+    let detected = collector_embedder::sources::detect_configured(homes, &home);
     let mut counts = SourceCounts::default();
     for d in detected {
         match d.source {
@@ -1451,7 +1506,7 @@ mod archive_engine_tests {
         .unwrap()
         .unwrap();
         assert_eq!(cfg.policy, ArchivePolicy::Grace);
-        assert!(!cfg.spool_dir.exists());
+        assert!(cfg.spool_dir.exists());
     }
 
     #[test]
@@ -1479,8 +1534,17 @@ mod archive_engine_tests {
         paths.ensure().unwrap();
         let enroll = paths.archive_enrollment_file("org_1");
         let spool = paths.archive_spool_dir("org_1");
+        let legacy = paths.legacy_archive_spool_dir("org_1");
         let keys = Arc::new(MemoryKeyStore::new());
-        let _ = ArchiveSpool::open(&spool, "org_1", keys.as_ref()).unwrap();
+        let _ = ArchiveSpool::open(&legacy, "org_1", keys.as_ref()).unwrap();
+        assert!(sync::load_archive_run_config(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            keys.clone(),
+        )
+        .unwrap()
+        .is_none());
         std::fs::write(&enroll, b"{not-json").unwrap();
         std::fs::write(ArchiveSpool::durable_cleanup_marker_path(&spool), b"").unwrap();
         let cfg = sync::load_archive_run_config(
@@ -1493,7 +1557,10 @@ mod archive_engine_tests {
         .expect("Desktop must keep Archive work when cleanup-required remains");
         assert_eq!(cfg.policy, ArchivePolicy::Revoked);
         assert!(cleanup_obligation_exists(&spool));
+        assert!(keys.load("org_1:archive-v2").unwrap().is_none());
         assert!(keys.load("org_1").unwrap().is_some());
+        assert!(legacy.exists());
+        assert!(!spool.exists());
     }
 
     #[test]
@@ -1685,6 +1752,7 @@ mod archive_engine_tests {
         let mut settings = Settings {
             syncing: true,
             backfilled: false,
+            source_homes: Default::default(),
             archive_request: None,
             archive_policy_denial: None,
         };
@@ -1757,7 +1825,7 @@ mod archive_engine_tests {
             1_770_000_000_001_i64
         );
         assert!(!marker.contains("tfc_secret"));
-        assert!(keys.load("org_1").unwrap().is_some());
+        assert!(keys.load("org_1:archive-v2").unwrap().is_some());
     }
 
     #[test]
@@ -1921,6 +1989,7 @@ mod archive_engine_tests {
         let mut settings = Settings {
             syncing: true,
             backfilled: false,
+            source_homes: Default::default(),
             archive_request: None,
             archive_policy_denial: None,
         };
@@ -2014,6 +2083,7 @@ mod archive_engine_tests {
         let mut settings = Settings {
             syncing: true,
             backfilled: false,
+            source_homes: Default::default(),
             archive_request: None,
             archive_policy_denial: None,
         };
@@ -2076,6 +2146,7 @@ mod archive_engine_tests {
         let mut blocked = Settings {
             syncing: true,
             backfilled: false,
+            source_homes: Default::default(),
             archive_request: None,
             archive_policy_denial: None,
         };
@@ -2146,6 +2217,7 @@ mod archive_request_tests {
         let mut settings = Settings {
             syncing: true,
             backfilled: true,
+            source_homes: Default::default(),
             archive_request: Some(pending_request()),
             archive_policy_denial: None,
         };
@@ -2221,6 +2293,7 @@ mod archive_request_tests {
             let mut settings = Settings {
                 syncing,
                 backfilled: true,
+                source_homes: Default::default(),
                 archive_request: Some(pending_request()),
                 archive_policy_denial: None,
             };
@@ -2234,6 +2307,7 @@ mod archive_request_tests {
         let mut settings = Settings {
             syncing: true,
             backfilled: false,
+            source_homes: Default::default(),
             archive_request: Some(pending_request()),
             archive_policy_denial: None,
         };

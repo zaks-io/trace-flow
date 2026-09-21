@@ -2,6 +2,7 @@ import { parseArchiveWrappedKeyVersion } from '@trace-flow/utils';
 import {
   ArchiveContractError,
   assertIdentifier,
+  assertDigest,
   type ArchiveScope,
   type ArchiveUploadRequest,
 } from './archive-contract';
@@ -44,7 +45,10 @@ export function parseCommitEnvelope(value: unknown): CommitEnvelope {
     source: scope.source,
     sourceSessionId: scope.sourceSessionId as string,
   };
+  if (record.requestSha256 !== undefined)
+    assertDigest(record.requestSha256, 'invalid_request_digest');
   return {
+    requestSha256: record.requestSha256,
     scope: parsedScope,
     upload: record.upload as ArchiveUploadRequest,
     keyVersion: record.keyVersion as number,

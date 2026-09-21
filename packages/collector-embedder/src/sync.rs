@@ -9,10 +9,9 @@
 //! the CLI/desktop embedder that wires those together against a real [`CollectorApiClient`] and a
 //! per-org SQLite [`CursorStore`].
 //!
-//! One pass per Source: walk the root once, narrow to in-window files, read each needed transcript
-//! once, then feed the same bytes to Archive capture (Claude/Codex only) and parsed-fact assembly.
-//! Cursor stays facts-only. Archive work is serialized in this same cycle — no second watcher,
-//! timer, scheduler, or spawned archive task.
+//! Fact sync walks each Source once, narrows to in-window files, and reads each needed transcript
+//! once for parsed-fact assembly. Cursor stays facts-only. Desktop Archive capture has a separate
+//! filesystem watcher and local spool owner so a slow Archive upload cannot block durable capture.
 //!
 //! The window is the 24h active-session grace for `sync`, measured back from the last complete pass
 //! recorded in the cursor store (or from now on the very first pass), or a `HistoryPreset` for
@@ -22,15 +21,19 @@
 //! Batch ids are minted per POST from a process counter seeded by the wall clock so they are unique
 //! within a run without needing `Date.now()` at the cursor seam.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use collector_api_client::{CollectorApiClient, CollectorApiClientConfig};
 use collector_archive_sync::{
-    finish_terminal_cleanup, run_archive_cycle, ArchiveAuthorizedSource, ArchiveClient,
-    ArchiveClientConfig, ArchiveCycleReport, ArchiveEnrollmentRecord, ArchiveHistoryPlan,
-    ArchiveSnapshot, OsKeyStore,
+    apply_archive_upload_response, capture_archive_snapshots, finish_terminal_cleanup,
+    prepare_archive_spool, prepare_next_archive_upload_excluding, run_archive_cycle,
+    send_prepared_archive_upload, ArchiveAuthorizedSource, ArchiveClient, ArchiveClientConfig,
+    ArchiveClientError, ArchiveCycleReport, ArchiveEnrollmentRecord, ArchiveHistoryGeneration,
+    ArchiveHistoryPlan, ArchiveSnapshot, ArchiveSyncError, ArchiveUploadResponse, OsKeyStore,
+    PreparedArchiveUpload, UploadOutcome, ARCHIVE_HISTORY_STATE_VERSION,
 };
 
 pub use collector_archive_sync::{
@@ -43,10 +46,13 @@ use collector_sync::{
     ImportWindow, Orchestrator, SyncUnit, Trigger,
 };
 
-use crate::archive_history::prepare as prepare_archive_history;
+use crate::archive_history::{
+    prepare_configured as prepare_archive_history,
+    prepare_configured_incremental as prepare_archive_history_incremental,
+};
 use crate::connection::Paths;
 use crate::fact_sources::FactSources;
-use crate::sources::{cursor_db_path, ingestable_sources, source_roots};
+use crate::sources::{cursor_db_path, ingestable_sources, SourceHomes};
 
 /// The version strings the ingest worker's compatibility policy gates on. The CLI is the collector
 /// "desktop" embedder; the parser version tracks the `collector-parser` crate.
@@ -99,6 +105,7 @@ impl SourceReport {
 }
 
 /// Archive inputs that stay off the fact `IngestClient` path.
+#[derive(Clone)]
 pub struct ArchiveRunConfig {
     pub archive_url: String,
     pub spool_dir: PathBuf,
@@ -115,6 +122,9 @@ pub struct RunConfig<'a> {
     pub credential: String,
     pub org_id: &'a str,
     pub home: &'a Path,
+    /// Resolved transcript homes. Desktop persists this list because GUI launches may not inherit
+    /// the shell environment that selected a non-default agent home.
+    pub source_homes: Option<&'a SourceHomes>,
     pub window: Window,
     /// Explicitly resend facts in the selected history window without deleting local cursors.
     pub replay: bool,
@@ -146,8 +156,7 @@ pub fn load_archive_run_config(
     key_store: Arc<dyn ArchiveKeyStore>,
 ) -> Result<Option<ArchiveRunConfig>> {
     let enrollment_path = paths.archive_enrollment_file(org_id);
-    let spool_dir = paths.archive_spool_dir(org_id);
-    let cleanup_required = cleanup_obligation_exists(&spool_dir);
+    let cleanup_required = archive_cleanup_required(paths, org_id);
     let enrollment = match ArchiveEnrollmentRecord::load_record(&enrollment_path) {
         Ok(enrollment) => enrollment,
         Err(_) if cleanup_required => ArchiveEnrollmentRecord::from_policy(ArchivePolicy::Revoked),
@@ -155,46 +164,56 @@ pub fn load_archive_run_config(
             return Err(err).context("load archive enrollment");
         }
     };
-    archive_run_config_from_enrollment(
-        enrollment_path,
-        spool_dir,
-        archive_url,
-        key_store,
-        enrollment,
-        cleanup_required,
-    )
+    archive_run_config_from_enrollment(paths, org_id, archive_url, key_store, enrollment)
 }
 
 fn archive_run_config_from_enrollment(
-    enrollment_path: PathBuf,
-    spool_dir: PathBuf,
+    paths: &Paths,
+    org_id: &str,
     archive_url: String,
     key_store: Arc<dyn ArchiveKeyStore>,
     enrollment: ArchiveEnrollmentRecord,
-    cleanup_required: bool,
 ) -> Result<Option<ArchiveRunConfig>> {
-    let policy = enrollment.policy().context("load archive enrollment")?;
+    let spool_dir = paths.archive_spool_dir(org_id);
+    let cleanup_required = archive_cleanup_required(paths, org_id);
     if cleanup_required {
         return Ok(Some(ArchiveRunConfig {
             archive_url,
             spool_dir,
-            enrollment_path,
+            enrollment_path: paths.archive_enrollment_file(org_id),
             key_store,
             policy: ArchivePolicy::Revoked,
             authorized_sources: Vec::new(),
         }));
     }
+    let policy = enrollment.policy().context("load archive enrollment")?;
     if policy == ArchivePolicy::Inactive {
         return Ok(None);
+    }
+    if !policy.purges() {
+        prepare_archive_spool(
+            &paths.legacy_archive_spool_dir(org_id),
+            &spool_dir,
+            org_id,
+            key_store.as_ref(),
+        )
+        .context("prepare archive spool migration")?;
     }
     Ok(Some(ArchiveRunConfig {
         archive_url,
         spool_dir,
-        enrollment_path,
+        enrollment_path: paths.archive_enrollment_file(org_id),
         key_store,
         policy,
         authorized_sources: enrollment.authorized_sources,
     }))
+}
+
+fn archive_cleanup_required(paths: &Paths, org_id: &str) -> bool {
+    let active = paths.archive_spool_dir(org_id);
+    cleanup_obligation_exists(&active)
+        || cleanup_obligation_exists(&paths.legacy_archive_spool_dir(org_id))
+        || migration_staging_dir(&active).is_some_and(|root| cleanup_obligation_exists(&root))
 }
 
 pub fn prepare_confirmed_archive(
@@ -204,15 +223,8 @@ pub fn prepare_confirmed_archive(
     key_store: Arc<dyn ArchiveKeyStore>,
     enrollment: ArchiveEnrollmentRecord,
 ) -> (Option<ArchiveRunConfig>, Option<String>) {
-    let spool_dir = paths.archive_spool_dir(org_id);
-    let result = archive_run_config_from_enrollment(
-        paths.archive_enrollment_file(org_id),
-        spool_dir.clone(),
-        archive_url,
-        key_store,
-        enrollment,
-        cleanup_obligation_exists(&spool_dir),
-    );
+    let result =
+        archive_run_config_from_enrollment(paths, org_id, archive_url, key_store, enrollment);
     match result {
         Ok(config) => (config, None),
         Err(err) => (None, Some(err.to_string())),
@@ -285,6 +297,14 @@ pub async fn run(cfg: RunConfig<'_>) -> Result<Vec<(AgentSource, SourceReport)>>
 
 /// Same cycle as [`run`], with fact discovery/read counters and archive progress.
 pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
+    let resolved_source_homes;
+    let source_homes = match cfg.source_homes {
+        Some(homes) => homes,
+        None => {
+            resolved_source_homes = SourceHomes::standard(cfg.home);
+            &resolved_source_homes
+        }
+    };
     let client = CollectorApiClient::new(CollectorApiClientConfig::new(
         cfg.ingest_url.clone(),
         cfg.credential.clone(),
@@ -324,7 +344,7 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
         if archive_cfg.policy.captures() {
             match open_spool_for_policy(archive_cfg, cfg.org_id) {
                 Ok(Some(spool)) => prepare_archive_history(
-                    cfg.home,
+                    source_homes,
                     &spool,
                     &archive_cfg.authorized_sources,
                     cfg.now_ms,
@@ -375,7 +395,7 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
     let mut reports = Vec::new();
     for source in ingestable_sources() {
         let mut report = SourceReport::default();
-        let roots = source_roots(cfg.home, source);
+        let roots = source_homes.roots(source);
         store.set_replay_facts(cfg.replay);
         if roots.is_empty() {
             let units = assemble_cursor_source_units(&store, &cfg, window, &mut report)?;
@@ -503,12 +523,7 @@ fn apply_archive_policy_after_cycle(
     });
     let archive_halted = archive.as_ref().is_some_and(|report| report.halted);
     if archive_purged || fact_revoked || archive_halted {
-        match finish_terminal_cleanup(
-            &archive_cfg.spool_dir,
-            org_id,
-            archive_cfg.key_store.as_ref(),
-            Some(&archive_cfg.enrollment_path),
-        ) {
+        match finish_all_terminal_cleanup(archive_cfg, org_id) {
             Ok(()) => {
                 if let Some(report) = archive {
                     report.purged = true;
@@ -549,12 +564,7 @@ async fn run_archive_work(
 ) -> ArchiveCycleReport {
     if archive.policy.purges() || cleanup_obligation_exists(&archive.spool_dir) {
         let mut report = ArchiveCycleReport::default();
-        match finish_terminal_cleanup(
-            &archive.spool_dir,
-            org_id,
-            archive.key_store.as_ref(),
-            Some(&archive.enrollment_path),
-        ) {
+        match finish_all_terminal_cleanup(archive, org_id) {
             Ok(()) => report.purged = true,
             Err(err) => {
                 report.failed = 1;
@@ -618,6 +628,216 @@ fn open_spool_for_policy(
     }
 }
 
+/// Capture source bytes into the durable spool without constructing a client or waiting on HTTP.
+pub fn capture_archive_local(
+    archive: &ArchiveRunConfig,
+    org_id: &str,
+    source_homes: &SourceHomes,
+    now_ms: i64,
+) -> ArchiveCycleReport {
+    capture_archive_local_inner(archive, org_id, source_homes, now_ms, None)
+}
+
+/// Capture file growth without rehashing every completed source. Startup, resume, and periodic
+/// reconciliation use [`capture_archive_local`] to verify equal-length source contents.
+pub fn capture_archive_local_incremental(
+    archive: &ArchiveRunConfig,
+    org_id: &str,
+    source_homes: &SourceHomes,
+    now_ms: i64,
+    changed_paths: &HashSet<PathBuf>,
+) -> ArchiveCycleReport {
+    capture_archive_local_inner(archive, org_id, source_homes, now_ms, Some(changed_paths))
+}
+
+fn capture_archive_local_inner(
+    archive: &ArchiveRunConfig,
+    org_id: &str,
+    source_homes: &SourceHomes,
+    now_ms: i64,
+    changed_paths: Option<&HashSet<PathBuf>>,
+) -> ArchiveCycleReport {
+    if archive.policy.purges()
+        || cleanup_obligation_exists(&archive.spool_dir)
+        || legacy_spool_dir(&archive.spool_dir)
+            .as_ref()
+            .is_some_and(|root| cleanup_obligation_exists(root))
+    {
+        return match finish_all_terminal_cleanup(archive, org_id) {
+            Ok(()) => ArchiveCycleReport {
+                purged: true,
+                ..ArchiveCycleReport::default()
+            },
+            Err(error) => archive_error_report(error.class()),
+        };
+    }
+    let mut spool = match open_spool_for_policy(archive, org_id) {
+        Ok(Some(spool)) => spool,
+        Ok(None) => return ArchiveCycleReport::default(),
+        Err(class) => return archive_error_report(class),
+    };
+    spool.set_enrollment_path(archive.enrollment_path.clone());
+    let history = match changed_paths {
+        Some(paths) => prepare_archive_history_incremental(
+            source_homes,
+            &spool,
+            &archive.authorized_sources,
+            now_ms,
+            paths,
+        ),
+        None => prepare_archive_history(source_homes, &spool, &archive.authorized_sources, now_ms),
+    };
+    let mut report = capture_archive_snapshots(
+        &mut spool,
+        archive.key_store.as_ref(),
+        &history.snapshots,
+        archive.policy,
+        &history.plan,
+        now_ms,
+        None,
+    );
+    append_history_errors(&mut report, history.errors);
+    report
+}
+
+/// Select one immutable persisted upload. Network code can own this value without holding the spool.
+pub fn prepare_archive_upload(
+    archive: &ArchiveRunConfig,
+    org_id: &str,
+    excluded: &HashSet<String>,
+) -> Result<Option<PreparedArchiveUpload>, &'static str> {
+    let Some(spool) = open_spool_for_policy(archive, org_id)? else {
+        return Ok(None);
+    };
+    let plan = persisted_archive_plan(&spool, &archive.authorized_sources)?;
+    prepare_next_archive_upload_excluding(&spool, &plan, archive.policy, excluded)
+}
+
+fn persisted_archive_plan(
+    spool: &ArchiveSpool,
+    authorizations: &[ArchiveAuthorizedSource],
+) -> Result<ArchiveHistoryPlan, &'static str> {
+    let mut states = Vec::with_capacity(authorizations.len());
+    for authorization in authorizations {
+        let state = spool
+            .history_state(authorization.source)
+            .map_err(|error| error.class())?
+            .ok_or("archive_history_missing")?;
+        let expected = ArchiveHistoryGeneration {
+            source: authorization.source,
+            history_choice: authorization.history_choice,
+            authorized_at: authorization.authorized_at,
+        };
+        if state.version != ARCHIVE_HISTORY_STATE_VERSION || state.generation != expected {
+            return Err("archive_history_generation_mismatch");
+        }
+        states.push(state);
+    }
+    Ok(ArchiveHistoryPlan::new(states))
+}
+
+/// Apply a completed request on the spool owner after rechecking its persisted identity.
+pub fn apply_archive_upload(
+    archive: &ArchiveRunConfig,
+    org_id: &str,
+    prepared: &PreparedArchiveUpload,
+    response: ArchiveUploadResponse,
+) -> Result<UploadOutcome, &'static str> {
+    let Some(mut spool) = open_spool_for_policy(archive, org_id)? else {
+        return Err("archive_state");
+    };
+    spool.set_enrollment_path(archive.enrollment_path.clone());
+    let outcome =
+        apply_archive_upload_response(&mut spool, archive.key_store.as_ref(), prepared, response)?;
+    if outcome == UploadOutcome::Purged {
+        finish_all_terminal_cleanup(archive, org_id).map_err(|error| error.class())?;
+    }
+    Ok(outcome)
+}
+
+pub async fn send_archive_upload(
+    archive_url: String,
+    credential: String,
+    prepared: &PreparedArchiveUpload,
+) -> ArchiveUploadResponse {
+    let client = match ArchiveClient::new(ArchiveClientConfig::new(archive_url, credential)) {
+        Ok(client) => client,
+        Err(error) => return Err(ArchiveClientError::Transport(error)),
+    };
+    send_prepared_archive_upload(&client, prepared, None).await
+}
+
+fn append_history_errors(report: &mut ArchiveCycleReport, errors: Vec<String>) {
+    for error in errors {
+        report.failed += 1;
+        if report.first_error.is_none() {
+            report.first_error = Some(error);
+        }
+    }
+}
+
+fn archive_error_report(class: &'static str) -> ArchiveCycleReport {
+    ArchiveCycleReport {
+        failed: 1,
+        first_error: Some(class.to_string()),
+        ..ArchiveCycleReport::default()
+    }
+}
+
+fn finish_all_terminal_cleanup(
+    archive: &ArchiveRunConfig,
+    org_id: &str,
+) -> collector_archive_sync::ArchiveSyncResult<()> {
+    let mut first_error = None;
+    let mut roots = vec![archive.spool_dir.clone()];
+    if let Some(legacy) = legacy_spool_dir(&archive.spool_dir) {
+        roots.push(legacy);
+    }
+    if let Some(staging) = migration_staging_dir(&archive.spool_dir) {
+        roots.push(staging);
+    }
+    for root in roots {
+        if let Err(error) = finish_terminal_cleanup(
+            &root,
+            org_id,
+            archive.key_store.as_ref(),
+            Some(&archive.enrollment_path),
+        ) {
+            first_error.get_or_insert(error);
+        }
+    }
+    for key_reference in [org_id.to_string(), format!("{org_id}:archive-v2")] {
+        let removed = archive
+            .key_store
+            .delete(&key_reference)
+            .and_then(|()| archive.key_store.load(&key_reference));
+        match removed {
+            Ok(None) => {}
+            Ok(Some(_)) => {
+                first_error.get_or_insert(ArchiveSyncError::KeyUnavailable);
+            }
+            Err(error) => {
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+fn migration_staging_dir(active: &Path) -> Option<PathBuf> {
+    let name = active.file_name()?.to_string_lossy();
+    Some(active.parent()?.join(format!(".{name}.migration")))
+}
+
+fn legacy_spool_dir(active: &Path) -> Option<PathBuf> {
+    let file_name = active.file_name()?.to_str()?;
+    let suffix = file_name.strip_prefix("archive-spool-v2-")?;
+    Some(active.with_file_name(format!("archive-spool-{suffix}")))
+}
+
 /// Discover + assemble units for the Cursor source: snapshot `state.vscdb` read-only and assemble each
 /// changed composer. A missing DB (Cursor not installed, or a non-macOS host) is a clean no-op.
 fn assemble_cursor_source_units(
@@ -657,13 +877,15 @@ mod tests {
     use super::*;
     use collector_archive::{default_transcript_part_id, ArchiveSource};
     use collector_archive_sync::{
-        cleanup_obligation_exists, ArchiveEnrollmentRecord, ArchiveHistoryChoice, ArchiveKeyStore,
-        ArchiveSpool, ArchiveSpoolKey, ArchiveSyncError, ArchiveSyncResult, PendingArchiveRequest,
+        cleanup_obligation_exists, ArchiveAcknowledgement, ArchiveEnrollmentRecord,
+        ArchiveHistoryChoice, ArchiveKeyStore, ArchiveSpool, ArchiveSpoolKey, ArchiveSyncError,
+        ArchiveSyncResult, ArchiveUploader, PendingArchiveRequest,
     };
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Mutex;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+    use tokio::sync::Notify;
 
     const CLAUDE: &[u8] = include_bytes!("../../collector-archive/tests/fixtures/claude.jsonl");
     const CODEX: &[u8] = include_bytes!("../../collector-archive/tests/fixtures/codex.jsonl");
@@ -683,7 +905,39 @@ mod tests {
             source_transcript_part_id: default_transcript_part_id(ArchiveSource::Claude),
             expected_record_count: 1,
             expected_appended_records: 1,
+            capture_authorization: None,
+            predecessor_part_id: None,
             body: body.to_vec(),
+        }
+    }
+
+    #[derive(Default)]
+    struct NoAccessKeyStore {
+        accesses: AtomicUsize,
+    }
+
+    impl NoAccessKeyStore {
+        fn accesses(&self) -> usize {
+            self.accesses.load(Ordering::SeqCst)
+        }
+
+        fn reject<T>(&self) -> ArchiveSyncResult<T> {
+            self.accesses.fetch_add(1, Ordering::SeqCst);
+            Err(ArchiveSyncError::KeyUnavailable)
+        }
+    }
+
+    impl ArchiveKeyStore for NoAccessKeyStore {
+        fn load(&self, _org_id: &str) -> ArchiveSyncResult<Option<ArchiveSpoolKey>> {
+            self.reject()
+        }
+
+        fn store(&self, _org_id: &str, _key: &ArchiveSpoolKey) -> ArchiveSyncResult<()> {
+            self.reject()
+        }
+
+        fn delete(&self, _org_id: &str) -> ArchiveSyncResult<()> {
+            self.reject()
         }
     }
 
@@ -750,6 +1004,96 @@ mod tests {
         .is_none());
     }
 
+    #[test]
+    fn inactive_and_invalid_enrollment_never_access_keys_or_prepare_a_spool() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        let keys = Arc::new(NoAccessKeyStore::default());
+
+        assert!(load_archive_run_config(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            keys.clone(),
+        )
+        .unwrap()
+        .is_none());
+        assert_eq!(keys.accesses(), 0);
+        assert!(!paths.archive_spool_dir("org_1").exists());
+
+        std::fs::write(paths.archive_enrollment_file("org_1"), b"{not-json").unwrap();
+        let error = match load_archive_run_config(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            keys.clone(),
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("invalid enrollment must fail"),
+        };
+        assert!(error.to_string().contains("load archive enrollment"));
+        assert_eq!(keys.accesses(), 0);
+        assert!(!paths.archive_spool_dir("org_1").exists());
+
+        let (config, error) = prepare_confirmed_archive(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            keys.clone(),
+            ArchiveEnrollmentRecord::from_policy(ArchivePolicy::Inactive),
+        );
+        assert!(config.is_none());
+        assert!(error.is_none());
+        let (config, error) = prepare_confirmed_archive(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            keys.clone(),
+            ArchiveEnrollmentRecord {
+                status: "enrolle".to_string(),
+                collector_id: None,
+                authorized_sources: Vec::new(),
+                reason: None,
+            },
+        );
+        assert!(config.is_none());
+        assert!(error
+            .as_deref()
+            .is_some_and(|error| error.contains("load archive enrollment")));
+        assert_eq!(keys.accesses(), 0);
+        assert!(!paths.archive_spool_dir("org_1").exists());
+    }
+
+    #[test]
+    fn legacy_cleanup_obligation_bypasses_invalid_enrollment_without_migration() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        let keys = Arc::new(NoAccessKeyStore::default());
+        let legacy = paths.legacy_archive_spool_dir("org_1");
+        std::fs::write(
+            ArchiveSpool::durable_cleanup_marker_path(&legacy),
+            b"cleanup required",
+        )
+        .unwrap();
+        std::fs::write(paths.archive_enrollment_file("org_1"), b"{not-json").unwrap();
+
+        let config = load_archive_run_config(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            keys.clone(),
+        )
+        .unwrap()
+        .expect("legacy cleanup must stay scheduled");
+
+        assert_eq!(config.policy, ArchivePolicy::Revoked);
+        assert_eq!(keys.accesses(), 0);
+        assert!(!paths.archive_spool_dir("org_1").exists());
+        assert!(cleanup_obligation_exists(&legacy));
+    }
+
     fn write_home_transcripts(home: &Path) {
         let claude_dir = home.join(".claude").join("projects").join("p1");
         std::fs::create_dir_all(&claude_dir).unwrap();
@@ -771,7 +1115,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let handler = Arc::new(handler);
         tokio::spawn(async move {
-            for _ in 0..16usize {
+            loop {
                 let Ok((mut stream, _)) = listener.accept().await else {
                     break;
                 };
@@ -807,18 +1151,48 @@ mod tests {
             .and_then(|c| c.get("record_count"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
-        let source = if session.starts_with("codex") {
-            "codex"
-        } else {
-            "claude"
-        };
-        raw_response(
-            200,
-            "OK",
-            &format!(
-                r#"{{"status":"acknowledged","source":"{source}","source_session_id":"{session}","record_count":{count}}}"#
-            ),
-        )
+        let source = value
+            .get("source")
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| {
+                if session.starts_with("codex") {
+                    "codex"
+                } else {
+                    "claude"
+                }
+            });
+        let part = value
+            .get("checkpoint")
+            .and_then(|checkpoint| checkpoint.get("source_transcript_part_id"))
+            .and_then(|v| v.as_str());
+        let captured_byte_offset = value
+            .get("checkpoint")
+            .and_then(|checkpoint| checkpoint.get("last_complete_byte_offset"))
+            .and_then(|v| v.as_u64());
+        let captured_prefix_sha256 = value
+            .get("checkpoint")
+            .and_then(|checkpoint| checkpoint.get("complete_prefix_sha256"))
+            .and_then(|v| v.as_str());
+        let appended_records = value
+            .get("observations")
+            .and_then(|v| v.as_array())
+            .map_or(0, |observations| observations.len() as u64);
+        let response = serde_json::json!({
+            "status": "acknowledged",
+            "source": source,
+            "source_session_id": session,
+            "source_transcript_part_id": part,
+            "record_count": count,
+            "appended_records": appended_records,
+            "appended_checkpoint": true,
+            "request_sha256": collector_archive::sha256(body).to_string(),
+            "captured_byte_offset": captured_byte_offset,
+            "captured_prefix_sha256": captured_prefix_sha256,
+            "generation": 1,
+            "chain_head": collector_archive::sha256(b"test archive chain").to_string(),
+            "manifest_key": "test-manifest",
+        });
+        raw_response(200, "OK", &serde_json::to_string(&response).unwrap())
     }
 
     fn request_complete(buf: &[u8]) -> bool {
@@ -858,6 +1232,7 @@ mod tests {
             credential: "tfc_secret".to_string(),
             org_id: "org_1",
             home,
+            source_homes: None,
             window: Window::Incremental,
             replay: false,
             now_ms: 1_779_840_000_000,
@@ -893,6 +1268,7 @@ mod tests {
             credential: "tfc_secret".to_string(),
             org_id: "org_1",
             home,
+            source_homes: None,
             window: Window::Incremental,
             replay,
             now_ms,
@@ -2004,6 +2380,7 @@ mod tests {
         paths.ensure().unwrap();
         let enroll = paths.archive_enrollment_file("org_1");
         let spool_dir = paths.archive_spool_dir("org_1");
+        let legacy_spool_dir = paths.legacy_archive_spool_dir("org_1");
         ArchiveEnrollmentRecord {
             status: ArchivePolicy::Enrolled.as_str().to_string(),
             collector_id: None,
@@ -2020,9 +2397,10 @@ mod tests {
             b"{\"source_session_id\":\"claude-session-001\"}",
         );
         {
-            let spool = ArchiveSpool::open(&spool_dir, "org_1", keys.as_ref()).unwrap();
+            let spool = ArchiveSpool::open(&legacy_spool_dir, "org_1", keys.as_ref()).unwrap();
             spool.persist_pending(&pending).unwrap();
         }
+        prepare_archive_spool(&legacy_spool_dir, &spool_dir, "org_1", keys.as_ref()).unwrap();
 
         let archive_url =
             spawn_http(|_raw| raw_response(403, "Forbidden", r#"{"reason":"enrollment_invalid"}"#))
@@ -2114,8 +2492,10 @@ mod tests {
         paths.ensure().unwrap();
         let enroll = paths.archive_enrollment_file("org_1");
         let spool_dir = paths.archive_spool_dir("org_1");
+        let legacy_spool_dir = paths.legacy_archive_spool_dir("org_1");
         let keys = Arc::new(MemoryKeyStore::new());
-        let _ = ArchiveSpool::open(&spool_dir, "org_1", keys.as_ref()).unwrap();
+        let _ = ArchiveSpool::open(&legacy_spool_dir, "org_1", keys.as_ref()).unwrap();
+        prepare_archive_spool(&legacy_spool_dir, &spool_dir, "org_1", keys.as_ref()).unwrap();
         std::fs::write(&enroll, b"{not-json").unwrap();
         std::fs::write(ArchiveSpool::durable_cleanup_marker_path(&spool_dir), b"").unwrap();
         let cfg = load_archive_run_config(
@@ -2255,5 +2635,141 @@ mod tests {
         );
         assert!(*fact_posts.lock().unwrap() >= 1);
         assert!(outcome.archive.is_none());
+    }
+
+    #[test]
+    fn explicit_revocation_removes_active_and_preserved_legacy_spools() {
+        let state = tempfile::TempDir::new().unwrap();
+        let paths = Paths::at(state.path().to_path_buf());
+        paths.ensure().unwrap();
+        let keys = Arc::new(MemoryKeyStore::new());
+        let org_id = "org_legacy_cleanup";
+        let legacy = paths.legacy_archive_spool_dir(org_id);
+        let active = paths.archive_spool_dir(org_id);
+        ArchiveSpool::open(&legacy, org_id, keys.as_ref()).unwrap();
+        prepare_archive_spool(&legacy, &active, org_id, keys.as_ref()).unwrap();
+        let staging = migration_staging_dir(&active).unwrap();
+        std::fs::create_dir(&staging).unwrap();
+        std::fs::copy(
+            active.join("archive-format.json"),
+            staging.join("archive-format.json"),
+        )
+        .unwrap();
+        let config = ArchiveRunConfig {
+            archive_url: "https://archive.example".to_string(),
+            spool_dir: active.clone(),
+            enrollment_path: paths.archive_enrollment_file(org_id),
+            key_store: keys.clone(),
+            policy: ArchivePolicy::Revoked,
+            authorized_sources: Vec::new(),
+        };
+
+        let report =
+            capture_archive_local(&config, org_id, &SourceHomes::standard(state.path()), 1);
+
+        assert!(report.purged);
+        assert!(!legacy.exists());
+        assert!(!active.exists());
+        assert!(!staging.exists());
+        assert!(keys.load(org_id).unwrap().is_none());
+        assert!(keys
+            .load(&format!("{org_id}:archive-v2"))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn upload_preparation_fails_closed_without_persisted_history_state() {
+        let state = tempfile::TempDir::new().unwrap();
+        let keys = Arc::new(MemoryKeyStore::new());
+        let spool_dir = state.path().join("archive-spool-org_1");
+        ArchiveSpool::open(&spool_dir, "org_1", keys.as_ref()).unwrap();
+        let config = ArchiveRunConfig {
+            archive_url: "https://archive.example".to_string(),
+            spool_dir,
+            enrollment_path: state.path().join("archive-enrollment-org_1.json"),
+            key_store: keys,
+            policy: ArchivePolicy::Enrolled,
+            authorized_sources: vec![authorization(ArchiveSource::Codex)],
+        };
+
+        assert!(matches!(
+            prepare_archive_upload(&config, "org_1", &HashSet::new()),
+            Err("archive_history_missing")
+        ));
+    }
+
+    struct StalledUploader {
+        started: Notify,
+        release: Notify,
+    }
+
+    impl ArchiveUploader for StalledUploader {
+        async fn upload(
+            &self,
+            _source: ArchiveSource,
+            _body: &[u8],
+            _cancel: Option<&tokio_util::sync::CancellationToken>,
+        ) -> Result<ArchiveAcknowledgement, ArchiveClientError> {
+            self.started.notify_one();
+            self.release.notified().await;
+            Err(ArchiveClientError::Unavailable {
+                reason: "test_stall_released".to_string(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn local_capture_continues_while_an_upload_is_stalled() {
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        let path = home.path().join(".codex/sessions/session.jsonl");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"stalled\",\"timestamp\":\"2026-01-01T00:00:00Z\"}}\n",
+        )
+        .unwrap();
+        let keys = Arc::new(MemoryKeyStore::new());
+        let config = ArchiveRunConfig {
+            archive_url: "https://archive.example".to_string(),
+            spool_dir: state.path().join("archive-spool-v2-org_1"),
+            enrollment_path: state.path().join("archive-enrollment-org_1.json"),
+            key_store: keys,
+            policy: ArchivePolicy::Enrolled,
+            authorized_sources: vec![authorization(ArchiveSource::Codex)],
+        };
+        let homes = SourceHomes::standard(home.path());
+        let first = capture_archive_local(&config, "org_1", &homes, 10);
+        assert!(first.captured > 0);
+        let prepared = prepare_archive_upload(&config, "org_1", &HashSet::new())
+            .unwrap()
+            .unwrap();
+        let uploader = Arc::new(StalledUploader {
+            started: Notify::new(),
+            release: Notify::new(),
+        });
+        let upload = {
+            let uploader = uploader.clone();
+            tokio::spawn(async move {
+                send_prepared_archive_upload(uploader.as_ref(), &prepared, None).await
+            })
+        };
+        uploader.started.notified().await;
+
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        use std::io::Write;
+        file.write_all(b"{\"type\":\"event_msg\",\"payload\":{\"id\":\"while-stalled\"}}\n")
+            .unwrap();
+        file.sync_all().unwrap();
+        let second = capture_archive_local(&config, "org_1", &homes, 12);
+
+        assert!(second.captured > 0);
+        assert!(!upload.is_finished());
+        uploader.release.notify_one();
+        assert!(upload.await.unwrap().is_err());
     }
 }

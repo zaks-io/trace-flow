@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{ArchiveSyncError, ArchiveSyncResult};
 use crate::policy::{ArchiveAuthorizedSource, ArchivePolicy, ConfirmedArchivePolicy};
-use crate::spool::atomic_write;
+use crate::spool::{atomic_write_strict, create_dir_all_strict};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -89,10 +89,10 @@ impl ArchiveEnrollmentRecord {
 
     pub fn save_record(&self, path: &Path) -> ArchiveSyncResult<()> {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+            create_dir_all_strict(parent)?;
         }
         let json = serde_json::to_vec_pretty(self)?;
-        atomic_write(path, &json)
+        atomic_write_strict(path, &json)
     }
 }
 

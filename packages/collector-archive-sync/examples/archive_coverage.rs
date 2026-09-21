@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use collector_archive::{complete_record_end_offsets, CompletedScanCheckpoint};
+use collector_archive::{complete_record_end_offsets, sha256, CompletedScanCheckpoint};
 use collector_archive_sync::{
     archive_source_session_id_from_records, parse_jsonl_records, transcript_part_for_records,
     ArchiveSource, ArchiveSpool, OsKeyStore,
@@ -29,10 +29,16 @@ fn main() -> anyhow::Result<()> {
 
     let mut seen: BTreeSet<(&'static str, String, String)> = BTreeSet::new();
     let mut generations: BTreeSet<(&'static str, String)> = BTreeSet::new();
+    let claude_home = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".claude"));
+    let codex_home = std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".codex"));
     let roots = [
-        (ArchiveSource::Claude, home.join(".claude/projects")),
-        (ArchiveSource::Codex, home.join(".codex/sessions")),
-        (ArchiveSource::Codex, home.join(".codex/archived_sessions")),
+        (ArchiveSource::Claude, claude_home.join("projects")),
+        (ArchiveSource::Codex, codex_home.join("sessions")),
+        (ArchiveSource::Codex, codex_home.join("archived_sessions")),
     ];
     for (source, root) in roots {
         let mut files = Vec::new();
@@ -140,6 +146,35 @@ fn local_row(
     }
     seen.insert((source.as_str(), session_id.clone(), part_id.clone()));
     let progress = spool.progress_part(source, &session_id, &part_id);
+    let acknowledged_prefix_matches_source =
+        progress.as_ref().ok().and_then(|p| p.as_ref()).map(|p| {
+            bytes
+                .get(..p.last_complete_byte_offset as usize)
+                .is_some_and(|prefix| sha256(prefix) == p.complete_prefix_sha256)
+        });
+    let pending = spool.slices_for_part(source, &session_id, &part_id);
+    let pending_bytes = pending.as_ref().ok().map(|slices| {
+        slices
+            .iter()
+            .map(|slice| slice.body.len() as u64)
+            .sum::<u64>()
+    });
+    let captured_offset = pending
+        .as_ref()
+        .ok()
+        .and_then(|slices| slices.last())
+        .and_then(|slice| {
+            serde_json::from_slice::<Value>(&slice.body)
+                .ok()
+                .and_then(|v| v["checkpoint"]["last_complete_byte_offset"].as_u64())
+        })
+        .or_else(|| {
+            progress
+                .as_ref()
+                .ok()
+                .and_then(|p| p.as_ref())
+                .map(|p| p.last_complete_byte_offset)
+        });
     json!({
         "kind": "local",
         "source": source.as_str(),
@@ -150,6 +185,11 @@ fn local_row(
         "size": bytes.len(),
         "complete_end": complete_end,
         "records": record_count,
+        "captured_offset": captured_offset,
+        "pending_request_bytes": pending_bytes,
+        "pending_error": pending.err().map(|e| e.class()),
+        "acknowledged_prefix_matches_source": acknowledged_prefix_matches_source,
+        "remote_restore_verified": false,
         "progress": progress_json(progress),
     })
 }
@@ -159,7 +199,10 @@ fn progress_json(
 ) -> Value {
     match progress {
         Ok(Some(checkpoint)) => json!({
-            "records": checkpoint.record_count,
+            "archive_format_version": checkpoint.archive_format_version(),
+            "observation_count": checkpoint.record_count,
+            "observation_kind": if checkpoint.archive_format_version() == 2 { "byte_segments" } else { "jsonl_records" },
+            "prefix_sha256": checkpoint.complete_prefix_sha256,
             "offset": checkpoint.last_complete_byte_offset,
             "observed_size": checkpoint.observed_file_size,
             "first_observed_at": checkpoint.first_observed_at,

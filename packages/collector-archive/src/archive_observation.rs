@@ -21,6 +21,10 @@ pub struct ArchiveObservation {
 }
 
 impl ArchiveObservation {
+    pub fn archive_format_version(&self) -> u16 {
+        self.archive_format_version
+    }
+
     pub fn source_transcript_part_id(&self) -> &str {
         &self.source_transcript_part_id
     }
@@ -82,6 +86,26 @@ impl ArchiveObservation {
             value: self.payload.clone(),
         };
         let bytes = encoded.decode()?;
+        if self.archive_format_version == crate::BYTE_ARCHIVE_FORMAT_VERSION {
+            let (start, end) = crate::byte_segment_range(&self.source_record_identity).ok_or(
+                ArchiveError::InvalidIdentifier {
+                    field: "source_record_identity",
+                },
+            )?;
+            if let Some((_, predecessor)) = self.source_record_identity.split_once(":from:") {
+                validate_transcript_part_id(self.source, predecessor)?;
+                if predecessor == self.source_transcript_part_id {
+                    return Err(ArchiveError::InvalidIdentifier {
+                        field: "predecessor_part_id",
+                    });
+                }
+            }
+            if end - start != bytes.len() as u64 {
+                return Err(ArchiveError::InvalidIdentifier {
+                    field: "source_record_identity",
+                });
+            }
+        }
         if sha256(&bytes) != self.content_sha256 {
             return Err(ArchiveError::ContentHashMismatch);
         }

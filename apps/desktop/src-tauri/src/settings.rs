@@ -15,6 +15,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use collector_embedder::sources::SourceHomes;
 use collector_embedder::{ArchiveEnrollmentRecord, ArchiveHistoryChoice, ArchiveSource};
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +30,8 @@ pub struct Settings {
     pub syncing: bool,
     /// Whether the one-time first-run history backfill has reached ingest.
     pub backfilled: bool,
+    /// Agent homes observed from explicit configuration. GUI launches may not inherit these values.
+    pub source_homes: SourceHomes,
     /// Durable enrollment intent. The credential stays in the keychain.
     pub archive_request: Option<ArchiveRequest>,
     /// Server-confirmed denial kept when the collector enrollment marker could not be replaced.
@@ -104,6 +107,10 @@ mod tests {
         let settings = Settings {
             syncing: true,
             backfilled: true,
+            source_homes: SourceHomes {
+                claude_config_dirs: vec![PathBuf::from("/agents/claude")],
+                codex_homes: vec![PathBuf::from("/agents/codex")],
+            },
             archive_request: Some(ArchiveRequest {
                 org_id: "org_1".to_string(),
                 collector_id: "collector_1".to_string(),
@@ -135,6 +142,7 @@ mod tests {
         let settings = file.load().unwrap();
         assert!(settings.syncing);
         assert!(!settings.backfilled);
+        assert_eq!(settings.source_homes, SourceHomes::default());
         assert!(settings.archive_request.is_none());
         assert!(settings.archive_policy_denial.is_none());
     }

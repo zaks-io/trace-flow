@@ -75,6 +75,15 @@ export default tseslint.config(
     },
   },
   {
+    files: ['scripts/dev/archive-export*.ts'],
+    languageOptions: {
+      parserOptions: {
+        project: ['./scripts/dev/tsconfig.archive-export.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
+  {
     files: ['**/*.test.{ts,tsx}', '**/__tests__/**/*.{ts,tsx}'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',

@@ -152,7 +152,10 @@ pub fn validate_versions(
     archive_format_version: u16,
     chain_hash_version: u16,
 ) -> Result<(), ArchiveError> {
-    if archive_format_version != ARCHIVE_FORMAT_VERSION {
+    if !matches!(
+        archive_format_version,
+        ARCHIVE_FORMAT_VERSION | crate::bytes::BYTE_ARCHIVE_FORMAT_VERSION
+    ) {
         return Err(ArchiveError::UnsupportedArchiveFormatVersion(
             archive_format_version,
         ));

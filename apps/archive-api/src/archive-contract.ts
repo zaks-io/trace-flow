@@ -124,6 +124,9 @@ export interface ChunkByteRange {
 }
 
 export interface ManifestRecord {
+  predecessor_part_id?: string;
+  source_byte_start?: number;
+  source_byte_end?: number;
   element_type: 'record';
   chain_sequence: number;
   source_transcript_part_id: string;
@@ -144,6 +147,7 @@ export interface ManifestCheckpoint {
 export type ManifestElement = ManifestRecord | ManifestCheckpoint;
 
 export interface ArchiveSessionManifest {
+  archive_scope?: ArchiveScope;
   archive_format_version: number;
   chain_hash_version: number;
   source: ArchiveSource;
@@ -163,6 +167,7 @@ export interface ManifestPageReference {
 }
 
 export interface ArchiveSessionManifestPage {
+  archive_scope?: ArchiveScope;
   archive_format_version: number;
   chain_hash_version: number;
   source: ArchiveSource;
@@ -253,8 +258,10 @@ export function payloadBytes(observation: ArchiveObservation): Uint8Array {
   if (observation.payload_encoding === 'utf8') {
     const bytes = new TextEncoder().encode(observation.payload);
     if (
-      new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes) !==
-      observation.payload
+      new TextDecoder('utf-8', {
+        fatal: true,
+        ignoreBOM: observation.archive_format_version === 2,
+      }).decode(bytes) !== observation.payload
     ) {
       throw new ArchiveContractError('invalid_payload_encoding');
     }

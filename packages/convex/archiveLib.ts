@@ -9,7 +9,6 @@ export const ARCHIVE_HISTORY_CHOICES = ['new_only', 'all_history'] as const;
 export type ArchiveHistoryChoice = (typeof ARCHIVE_HISTORY_CHOICES)[number];
 
 export const ARCHIVE_CAP_BYTES = 100 * 1024 * 1024 * 1024;
-export const ARCHIVE_GRACE_MS = 90 * 24 * 60 * 60 * 1000;
 export const ARCHIVE_ENABLED_ENV = 'CONVERSATION_ARCHIVE_ENABLED';
 export const ARCHIVE_HEARTBEAT_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
@@ -51,10 +50,6 @@ export function isActiveProSubscription(
   subscription: { tier: string; status: string } | null,
 ): boolean {
   return subscription?.tier === 'pro' && subscription.status === 'active';
-}
-
-export function archiveGraceDeadlineAt(now: number): number {
-  return now + ARCHIVE_GRACE_MS;
 }
 
 export function validateEnrollmentIdempotencyKey(key: string): string {
@@ -692,16 +687,15 @@ export async function syncArchiveLifecycleForEntitlement(
     return;
   }
 
-  const graceDeadlineAt = activation.graceDeadlineAt ?? archiveGraceDeadlineAt(now);
   await ctx.db.patch(activation._id, {
     status: 'frozen',
-    graceDeadlineAt,
+    graceDeadlineAt: undefined,
   });
   await applyEntitlementLifecycle(ctx, {
     orgId,
     lifecycle: 'frozen',
     capBytes: activation.capBytes,
-    graceDeadlineAt,
+    graceDeadlineAt: null,
     now,
   });
 }

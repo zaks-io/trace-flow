@@ -118,6 +118,16 @@ async function commitArchiveSessionEnvelope(
   let state = readLedgerSnapshot(storage);
   state = assertScope(state, envelope.scope);
   const upload = await parseAndValidateUpload(envelope.upload, envelope.scope);
+  const receipt = (ack: ArchiveAcknowledgement): ArchiveAcknowledgement =>
+    !envelope.requestSha256
+      ? ack
+      : {
+          ...ack,
+          ...(envelope.requestSha256 ? { request_sha256: envelope.requestSha256 } : {}),
+          source_transcript_part_id: upload.checkpoint.source_transcript_part_id,
+          captured_byte_offset: upload.checkpoint.last_complete_byte_offset,
+          captured_prefix_sha256: upload.checkpoint.complete_prefix_sha256,
+        };
   const uploadDigest = await intentDigest(archiveUploadIntentIdentity(upload));
   let scan = readLedgerScan(storage, upload.checkpoint.source_transcript_part_id);
   if (state.keyVersion !== undefined && envelope.keyVersion < state.keyVersion) {
@@ -164,7 +174,7 @@ async function commitArchiveSessionEnvelope(
       orgId: envelope.scope.orgId,
       acknowledgedAt: Date.now(),
     });
-    return priorIntent.acknowledgement;
+    return receipt(priorIntent.acknowledgement);
   }
   const existingPending = readPendingIntent(storage);
   if (existingPending && existingPending.intentHash !== intentHash) {
@@ -203,7 +213,7 @@ async function commitArchiveSessionEnvelope(
   );
   if (newElements.length === 0) {
     if (repair) throw new ArchiveContractError('archive_repair_precondition_failed');
-    return buildAcknowledgement(state, true, 0, false, []);
+    return receipt(buildAcknowledgement(state, true, 0, false, []));
   }
   await assertPlannedChain(state.chainHead, state.elementCount, newElements);
 
@@ -279,12 +289,14 @@ async function commitArchiveSessionEnvelope(
       manifestObject.plaintext,
     );
   }
-  const acknowledgement = buildAcknowledgement(
-    nextState,
-    false,
-    newElements.filter((element) => element.kind === 'record').length,
-    appendCheckpoint,
-    plan.chunks.map((chunk) => chunk.objectKey),
+  const acknowledgement = receipt(
+    buildAcknowledgement(
+      nextState,
+      false,
+      newElements.filter((element) => element.kind === 'record').length,
+      appendCheckpoint,
+      plan.chunks.map((chunk) => chunk.objectKey),
+    ),
   );
   const commit: LedgerCommit = {
     scope: envelope.scope,
@@ -403,7 +415,7 @@ async function commitArchiveSessionEnvelope(
     );
     commitIntentAndEnqueueBudgetCommit(storage, priorIntent);
     await drainPendingBudgetCommits(storage, env);
-    return priorIntent.acknowledgement;
+    return receipt(priorIntent.acknowledgement);
   }
   const intent: PendingIntent = {
     intentHash,

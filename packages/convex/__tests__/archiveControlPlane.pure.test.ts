@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   ARCHIVE_CAP_BYTES,
   ARCHIVE_ENABLED_ENV,
-  ARCHIVE_GRACE_MS,
   ARCHIVE_HEARTBEAT_FUTURE_SKEW_MS,
   assertArchiveAuthorityReductionAllowed,
   assertHeartbeatObservedAt,
@@ -148,7 +147,6 @@ describe('archive control-plane pure functions', () => {
       }),
     ).toBe('blocked');
     expect(ARCHIVE_CAP_BYTES).toBe(100 * 1024 * 1024 * 1024);
-    expect(ARCHIVE_GRACE_MS).toBe(90 * 24 * 60 * 60 * 1000);
     expect(resolveServerLifecycle('frozen', 'active')).toBe('frozen');
     expect(resolveServerLifecycle('frozen', 'deleting')).toBe('deleting');
     expect(resolveServerLifecycle('deleting', 'active')).toBe('deleting');

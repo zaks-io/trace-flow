@@ -1,6 +1,7 @@
 use collector_archive::ArchiveSource;
 
 use super::ArchiveHistoryState;
+use crate::spool::{PendingCaptureAuthorization, PendingSelection};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArchiveWorkClass {
@@ -16,7 +17,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_only_pending_requires_current_positive_session_proof() {
+    fn new_only_pending_requires_capture_authorization_from_current_enrollment() {
         let state = ArchiveHistoryState::new(
             ArchiveHistoryGeneration {
                 source: ArchiveSource::Codex,
@@ -27,7 +28,17 @@ mod tests {
             Vec::new(),
         );
         let pending_only = ArchiveHistoryPlan::new(vec![state.clone()]);
-        assert!(!pending_only.permits(ArchiveSource::Codex, "new-session"));
+        assert_eq!(
+            pending_only.pending_selection(ArchiveSource::Codex, "new-session"),
+            PendingSelection::Captured(PendingCaptureAuthorization {
+                history_choice: ArchiveHistoryChoice::NewOnly,
+                authorized_at: 10,
+            })
+        );
+        assert_eq!(
+            pending_only.capture_authorization(ArchiveSource::Codex, "new-session"),
+            None
+        );
 
         let proven = ArchiveHistoryPlan::new(vec![state]).with_live_sessions(vec![(
             ArchiveSource::Codex,
@@ -35,6 +46,13 @@ mod tests {
             20,
         )]);
         assert!(proven.permits(ArchiveSource::Codex, "new-session"));
+        assert_eq!(
+            proven.capture_authorization(ArchiveSource::Codex, "new-session"),
+            Some(PendingCaptureAuthorization {
+                history_choice: ArchiveHistoryChoice::NewOnly,
+                authorized_at: 10,
+            })
+        );
     }
 }
 
@@ -168,6 +186,50 @@ impl ArchiveHistoryPlan {
 
     pub fn authorizes(&self, source: ArchiveSource) -> bool {
         self.state(source).is_some()
+    }
+
+    pub(crate) fn capture_authorization(
+        &self,
+        source: ArchiveSource,
+        source_session_id: &str,
+    ) -> Option<PendingCaptureAuthorization> {
+        let state = self.state(source)?;
+        if state.excludes_session(source_session_id) {
+            return None;
+        }
+        if state.generation.history_choice == crate::policy::ArchiveHistoryChoice::NewOnly
+            && !self.live_sessions.iter().any(|(live_source, session, _)| {
+                *live_source == source && session == source_session_id
+            })
+        {
+            return None;
+        }
+        Some(PendingCaptureAuthorization {
+            history_choice: state.generation.history_choice,
+            authorized_at: state.generation.authorized_at,
+        })
+    }
+
+    pub(crate) fn pending_selection(
+        &self,
+        source: ArchiveSource,
+        source_session_id: &str,
+    ) -> PendingSelection {
+        let Some(state) = self.state(source) else {
+            return PendingSelection::Excluded;
+        };
+        if state.excludes_session(source_session_id) {
+            return PendingSelection::Excluded;
+        }
+        match state.generation.history_choice {
+            crate::policy::ArchiveHistoryChoice::AllHistory => PendingSelection::Any,
+            crate::policy::ArchiveHistoryChoice::NewOnly => {
+                PendingSelection::Captured(PendingCaptureAuthorization {
+                    history_choice: state.generation.history_choice,
+                    authorized_at: state.generation.authorized_at,
+                })
+            }
+        }
     }
 
     pub fn permits(&self, source: ArchiveSource, source_session_id: &str) -> bool {

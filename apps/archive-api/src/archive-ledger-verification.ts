@@ -379,7 +379,11 @@ function verifyManifestShape(
   expectedObject: ManifestObjectExpectation,
 ): void {
   if (
-    value.archive_format_version !== 1 ||
+    (value.archive_format_version !== 1 && value.archive_format_version !== 2) ||
+    (value.archive_scope !== undefined &&
+      (['orgId', 'userId', 'contributionId', 'source', 'sourceSessionId'] as const).some(
+        (field) => value.archive_scope?.[field] !== scope[field],
+      )) ||
     value.chain_hash_version !== 1 ||
     value.source !== scope.source ||
     value.source_session_id !== scope.sourceSessionId ||

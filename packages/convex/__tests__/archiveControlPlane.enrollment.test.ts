@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { api, internal } from '../_generated/api';
-import { ARCHIVE_CAP_BYTES, ARCHIVE_GRACE_MS } from '../archiveLib';
+import { ARCHIVE_CAP_BYTES } from '../archiveLib';
 import {
   asUser,
   disableArchive,
@@ -66,7 +66,7 @@ describe('archive control plane enrollment', () => {
     );
   });
 
-  it('records the 100 GB cap and freezes with a 90-day grace deadline when Pro lapses', async () => {
+  it('records the 100 GB cap and freezes without deleting acknowledged data when Pro lapses', async () => {
     enableArchive();
     const world = await seedWorld();
     const owner = asUser(world, world.owner);
@@ -86,14 +86,12 @@ describe('archive control plane enrollment', () => {
       )[0]!;
       await ctx.db.patch(subscription._id, { status: 'canceled' });
     });
-    const before = Date.now();
     await world.t.mutation(internal.archiveInternal.syncLifecycleForOrg, {
       orgId: world.owner.orgId,
     });
     const frozen = await world.t.run(async (ctx) => ctx.db.get(activation._id));
     expect(frozen?.status).toBe('frozen');
-    expect(frozen?.graceDeadlineAt).toBeGreaterThanOrEqual(before + ARCHIVE_GRACE_MS);
-    expect(frozen?.graceDeadlineAt).toBeLessThanOrEqual(Date.now() + ARCHIVE_GRACE_MS);
+    expect(frozen?.graceDeadlineAt).toBeUndefined();
   });
 
   it('enrolls only a Collector Credential bound to the same Organization and User', async () => {

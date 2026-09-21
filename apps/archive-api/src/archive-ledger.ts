@@ -156,6 +156,24 @@ export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
     await scheduleLedgerRecovery(this.ctx.storage);
   }
 
+  async exportSnapshot(input: { scope: ArchiveScope }) {
+    return this.runExclusive(() => {
+      const state = readLedgerSnapshot(this.ctx.storage);
+      if (!state.scope || !state.manifestKey || !state.keyVersion) return null;
+      for (const field of [
+        'orgId',
+        'userId',
+        'contributionId',
+        'source',
+        'sourceSessionId',
+      ] as const) {
+        if (input.scope[field] !== state.scope[field])
+          throw new ArchiveContractError('scope_mismatch');
+      }
+      return state;
+    });
+  }
+
   async fetch(request: Request): Promise<Response> {
     if (request.method !== 'POST' || new URL(request.url).pathname !== '/commit') {
       return Response.json({ error: 'not_found' }, { status: 404 });

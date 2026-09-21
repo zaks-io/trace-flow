@@ -8,7 +8,7 @@ use collector_archive_sync::{
 use collector_sync::{claude_session_fields, codex_session_fields};
 use serde_json::Value;
 
-use super::window::{complete_extent, read_identity_window};
+use super::window::read_identity_window;
 
 #[derive(Debug, Clone)]
 pub(super) struct Candidate {
@@ -20,7 +20,10 @@ pub(super) struct Candidate {
     pub activity_rank_ms: i64,
     pub size: u64,
     pub complete_extent: u64,
+    pub provenance: String,
     pub copies: Vec<PathBuf>,
+    pub file_identity: Option<String>,
+    pub identity_prefix: Option<(u64, collector_archive::Sha256Digest)>,
 }
 
 pub(super) fn identify(
@@ -28,6 +31,7 @@ pub(super) fn identify(
     path: &str,
     mtime_ms: i64,
     size: u64,
+    provenance: String,
 ) -> Result<Candidate, &'static str> {
     let path_buf = PathBuf::from(path);
     let bytes = read_identity_window(&path_buf).map_err(|_| "archive_io")?;
@@ -40,7 +44,6 @@ pub(super) fn identify(
     let started_at = source_started_at(source, &records);
     let session = session.map_err(|_| "invalid_archive_session")?;
     let part = part.ok_or("invalid_archive_session")?;
-    let complete_extent = complete_extent(&path_buf).map_err(|_| "archive_io")?;
     Ok(Candidate {
         path: path_buf,
         source,
@@ -49,8 +52,11 @@ pub(super) fn identify(
         started_at,
         activity_rank_ms: mtime_ms,
         size,
-        complete_extent,
+        complete_extent: size,
+        provenance,
         copies: Vec::new(),
+        file_identity: None,
+        identity_prefix: Some((bytes.len() as u64, collector_archive::sha256(&bytes))),
     })
 }
 

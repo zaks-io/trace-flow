@@ -1,5 +1,4 @@
 import {
-  ARCHIVE_FORMAT_VERSION,
   ArchiveContractError,
   CHAIN_HASH_VERSION,
   type ArchiveObservation,
@@ -92,7 +91,7 @@ export async function checkpointChainHash(
 ): Promise<string> {
   return hashFramed(CHECKPOINT_DOMAIN, [
     digestBytes(previous),
-    versionBytes(ARCHIVE_FORMAT_VERSION),
+    versionBytes(checkpoint.archive_format_version),
     versionBytes(CHAIN_HASH_VERSION),
     utf8(checkpoint.source),
     utf8(checkpoint.source_session_id),

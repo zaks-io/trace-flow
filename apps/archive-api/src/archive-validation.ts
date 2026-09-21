@@ -1,3 +1,4 @@
+import { BYTE_ARCHIVE_FORMAT_VERSION } from './archive-byte-segments';
 import {
   ARCHIVE_UPLOAD_WIRE_VERSION,
   ArchiveContractError,
@@ -110,7 +111,13 @@ export async function parseAndValidateUpload(
         ? decodeBase64Bytes(completePrefixBase64)
         : undefined;
   const proofBytes = completePrefix ?? appendProof?.appendedPrefix;
-  const proofLines = proofBytes === undefined ? undefined : prefixRecordLines(proofBytes);
+  const byteFormat =
+    isRecord(value.checkpoint) &&
+    value.checkpoint.archive_format_version === BYTE_ARCHIVE_FORMAT_VERSION;
+  if (byteFormat && compact)
+    throw new ArchiveContractError('unsupported_byte_segment_wire_encoding');
+  const proofLines =
+    proofBytes === undefined || byteFormat ? undefined : prefixRecordLines(proofBytes);
   const compactPayloads = compact ? (proofLines ?? []) : undefined;
   if (compactPayloads && compactPayloads.length !== value.observations.length) {
     throw new ArchiveContractError('checkpoint_prefix_unverifiable');
@@ -144,7 +151,8 @@ export async function parseAndValidateUpload(
   if (
     observations.some(
       (observation) =>
-        observation.source_transcript_part_id !== checkpoint.source_transcript_part_id,
+        observation.source_transcript_part_id !== checkpoint.source_transcript_part_id ||
+        observation.archive_format_version !== checkpoint.archive_format_version,
     )
   ) {
     throw new ArchiveContractError('checkpoint_part_mismatch');
@@ -164,6 +172,7 @@ export async function parseAndValidateUpload(
   }
   if (priorCheckpoint) {
     if (
+      checkpoint.archive_format_version !== priorCheckpoint.archive_format_version ||
       checkpoint.source_transcript_part_id !== priorCheckpoint.source_transcript_part_id ||
       checkpoint.first_observed_at !== priorCheckpoint.first_observed_at ||
       checkpoint.last_complete_byte_offset < priorCheckpoint.last_complete_byte_offset ||

@@ -15,6 +15,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::connector::Connector;
 use crate::engine::{self, EngineCommand, EngineHandle};
 use crate::logging::ErrorRing;
+use crate::settings::SettingsFile;
 use crate::state::{AppStateBus, UpdateStatus};
 
 /// How many recent warn/error lines the diagnostics view shows.
@@ -66,9 +67,16 @@ pub fn is_connected() -> bool {
 }
 
 #[tauri::command]
-pub fn detect_sources() -> Result<Vec<DetectedSourceDto>, String> {
+pub fn detect_sources(
+    settings_file: State<'_, SettingsFile>,
+) -> Result<Vec<DetectedSourceDto>, String> {
     let home = home()?;
-    let detected = sources::detect(&home);
+    let mut homes = settings_file
+        .load()
+        .map_err(|error| error.to_string())?
+        .source_homes;
+    homes.merge(&sources::SourceHomes::resolve(&home));
+    let detected = sources::detect_configured(&homes, &home);
     Ok(detected
         .into_iter()
         .map(|d| DetectedSourceDto {

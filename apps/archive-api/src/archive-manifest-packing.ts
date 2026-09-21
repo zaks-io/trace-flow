@@ -1,3 +1,4 @@
+import { BYTE_ARCHIVE_FORMAT_VERSION, byteSegmentRange } from './archive-byte-segments';
 import { encryptArchiveObject } from '@trace-flow/utils';
 import {
   ArchiveContractError,
@@ -24,6 +25,13 @@ function manifestElement(element: LedgerElement, range: ChunkByteRange): Manifes
   if (element.kind === 'record') {
     return {
       element_type: 'record',
+      ...(element.archive_format_version === BYTE_ARCHIVE_FORMAT_VERSION
+        ? {
+            source_byte_start: byteSegmentRange(element.source_record_identity).start,
+            source_byte_end: byteSegmentRange(element.source_record_identity).end,
+            predecessor_part_id: byteSegmentRange(element.source_record_identity).predecessorPartId,
+          }
+        : {}),
       chain_sequence: element.chain_sequence,
       source_transcript_part_id: element.source_transcript_part_id,
       source_record_identity: element.source_record_identity,
@@ -73,7 +81,8 @@ function pageBody(
   elements: ManifestElement[],
 ): string {
   const page: ArchiveSessionManifestPage = {
-    archive_format_version: 1,
+    archive_scope: scope,
+    archive_format_version: BYTE_ARCHIVE_FORMAT_VERSION,
     chain_hash_version: 1,
     source: scope.source,
     source_session_id: scope.sourceSessionId,
@@ -94,7 +103,8 @@ function indexBody(
   previousPageKey: string | undefined,
 ): string {
   const page: ArchiveSessionManifestPage = {
-    archive_format_version: 1,
+    archive_scope: scope,
+    archive_format_version: BYTE_ARCHIVE_FORMAT_VERSION,
     chain_hash_version: 1,
     source: scope.source,
     source_session_id: scope.sourceSessionId,
@@ -175,7 +185,8 @@ export async function buildIncrementalManifest(
       return manifestElement(element, range);
     });
     const manifest: ArchiveSessionManifest = {
-      archive_format_version: 1,
+      archive_scope: scope,
+      archive_format_version: BYTE_ARCHIVE_FORMAT_VERSION,
       chain_hash_version: 1,
       source: scope.source,
       source_session_id: scope.sourceSessionId,
@@ -228,7 +239,8 @@ export async function buildIncrementalManifest(
   if (!headPageKey) throw new Error('archive_manifest_head_missing');
 
   const manifest: ArchiveSessionManifest = {
-    archive_format_version: 1,
+    archive_scope: scope,
+    archive_format_version: BYTE_ARCHIVE_FORMAT_VERSION,
     chain_hash_version: 1,
     source: scope.source,
     source_session_id: scope.sourceSessionId,
@@ -260,7 +272,8 @@ export function buildArchiveSessionManifest(
     return manifestElement(element, range);
   });
   return {
-    archive_format_version: 1,
+    archive_scope: scope,
+    archive_format_version: BYTE_ARCHIVE_FORMAT_VERSION,
     chain_hash_version: 1,
     source: scope.source,
     source_session_id: scope.sourceSessionId,

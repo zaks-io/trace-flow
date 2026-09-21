@@ -1,14 +1,10 @@
-use std::fs;
-use std::io;
 use std::path::PathBuf;
 
 use collector_archive::ArchiveSource;
 
 use crate::crypto::encrypt;
 use crate::error::{ArchiveSyncError, ArchiveSyncResult};
-use crate::spool::{
-    atomic_write_strict, part_file_name, part_id_from_file_stem, session_dir_name, ArchiveSpool,
-};
+use crate::spool::{atomic_write_strict, part_file_name, session_dir_name, ArchiveSpool};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ArchiveGenerationHistoryEntry {
@@ -24,6 +20,63 @@ pub struct ArchiveGenerationRecord {
 }
 
 impl ArchiveSpool {
+    /// Each local capture stream owns its segmentation, even when collectors share an account.
+    pub(crate) fn byte_capture_part(
+        &self,
+        source: ArchiveSource,
+        session: &str,
+        base_part: &str,
+        now_ms: i64,
+    ) -> ArchiveSyncResult<String> {
+        let generation = self.generation_record(source, session, base_part)?;
+        if let Some(record) = &generation {
+            if record
+                .history
+                .iter()
+                .any(|entry| entry.reason == "byte_capture")
+            {
+                return Ok(record.current_part_id.clone());
+            }
+        }
+        let previous = generation
+            .as_ref()
+            .map_or(base_part, |g| g.current_part_id.as_str());
+        let path = self.root.join("capture-instance.bin");
+        let aad = self.aad(
+            "capture-instance",
+            ArchiveSource::Claude,
+            "collector",
+            "instance",
+        );
+        let instance = match self.read_encrypted(&path, &aad, |bytes| {
+            <[u8; 32]>::try_from(bytes).map_err(|_| ArchiveSyncError::Corrupt)
+        })? {
+            Some(instance) => instance,
+            None => {
+                let mut instance = [0; 32];
+                getrandom::getrandom(&mut instance).map_err(|_| ArchiveSyncError::Crypto)?;
+                let encrypted = encrypt(&self.key, &aad, &instance)?;
+                self.write_capped_reserving(&path, &encrypted, 0, atomic_write_strict)?;
+                instance
+            }
+        };
+        let digest = collector_archive::hash_framed(
+            b"trace-flow/archive/collector-byte-part/v2",
+            &[&instance, previous.as_bytes()],
+        );
+        let part = format!("{}:part:{digest}", source.as_str());
+        self.fork_part(
+            source,
+            session,
+            base_part,
+            previous,
+            &part,
+            "byte_capture",
+            now_ms,
+        )?;
+        Ok(part)
+    }
+
     pub fn current_part(
         &self,
         source: ArchiveSource,
@@ -54,41 +107,20 @@ impl ArchiveSpool {
         Ok(record)
     }
 
-    pub(crate) fn part_is_superseded(
+    pub(crate) fn predecessor_part(
         &self,
         source: ArchiveSource,
         source_session_id: &str,
-        part_id: &str,
-    ) -> ArchiveSyncResult<bool> {
-        let directory = self
-            .root
-            .join("generations")
-            .join(source.as_str())
-            .join(session_dir_name(source_session_id)?);
-        let entries = match fs::read_dir(directory) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-            Err(error) => return Err(error.into()),
+        base_part: &str,
+        current_part: &str,
+    ) -> ArchiveSyncResult<Option<String>> {
+        let Some(record) = self.generation_record(source, source_session_id, base_part)? else {
+            return Ok(None);
         };
-        for entry in entries {
-            let path = entry?.path();
-            if path.extension().and_then(|extension| extension.to_str()) != Some("bin") {
-                continue;
-            }
-            let base_part = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .and_then(part_id_from_file_stem)
-                .ok_or(ArchiveSyncError::Corrupt)?;
-            let Some(record) = self.generation_record(source, source_session_id, &base_part)?
-            else {
-                continue;
-            };
-            if record.history.iter().any(|entry| entry.part_id == part_id) {
-                return Ok(true);
-            }
+        if record.current_part_id != current_part {
+            return Err(ArchiveSyncError::Corrupt);
         }
-        Ok(false)
+        Ok(record.history.last().map(|entry| entry.part_id.clone()))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -108,7 +140,10 @@ impl ArchiveSpool {
         if !part_belongs_to_source(source, base_part)
             || !part_belongs_to_source(source, previous_part)
             || !part_belongs_to_source(source, new_part)
-            || !matches!(reason, "prefix_changed" | "prefix_shortened")
+            || !matches!(
+                reason,
+                "prefix_changed" | "prefix_shortened" | "byte_capture"
+            )
         {
             return Err(ArchiveSyncError::Corrupt);
         }
@@ -122,8 +157,6 @@ impl ArchiveSpool {
             return Err(ArchiveSyncError::Corrupt);
         }
 
-        // The new generation must be durable before the superseded part's queued data goes,
-        // or a failed write leaves the old part current with its spool already emptied.
         if generation.current_part_id != new_part {
             generation.history.push(ArchiveGenerationHistoryEntry {
                 part_id: previous_part.to_string(),
@@ -141,8 +174,7 @@ impl ArchiveSpool {
                 atomic_write_strict,
             )?;
         }
-        self.clear_slices_for_part(source, source_session_id, previous_part)?;
-        self.clear_blocked_part(source, source_session_id, previous_part)
+        Ok(())
     }
 
     fn generation_path(
@@ -170,7 +202,10 @@ fn validate_generation_record(
             entry.part_id == record.current_part_id
                 || !part_belongs_to_source(source, &entry.part_id)
                 || part_file_name(&entry.part_id).is_err()
-                || !matches!(entry.reason.as_str(), "prefix_changed" | "prefix_shortened")
+                || !matches!(
+                    entry.reason.as_str(),
+                    "prefix_changed" | "prefix_shortened" | "byte_capture"
+                )
         })
     {
         return Err(ArchiveSyncError::Corrupt);
