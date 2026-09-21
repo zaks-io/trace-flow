@@ -9,6 +9,7 @@
 //! window hosts source detection and the explicit "Start syncing" egress gate; the tray menu
 //! mirrors status and drives the engine thereafter.
 
+mod archive_scheduler;
 mod autostart;
 mod commands;
 mod connector;
@@ -89,6 +90,7 @@ pub fn run() {
             // persisted, so a relaunch resumes syncing without another click.
             let settings_file =
                 crate::settings::SettingsFile::at(&paths::app_config_dir(app.handle())?);
+            app.manage(settings_file.clone());
             let engine_handle: EngineHandle = engine::spawn(bus.clone(), settings_file);
             app.manage(engine_handle);
 
@@ -119,7 +121,11 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building Trace Flow Desktop")
-        .run(|_app, event| {
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Resumed) {
+                app.state::<EngineHandle>()
+                    .send(engine::EngineCommand::WakeCapture);
+            }
             // Keep running when the *window* is closed — it is a tray app, not a windowed one.
             // `code: None` is a user/window-close request (the case we want to swallow); `code: Some(_)`
             // is a programmatic `app.exit()` (the tray "Quit" item). Preventing the latter too would

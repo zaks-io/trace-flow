@@ -3,7 +3,12 @@ use std::path::PathBuf;
 use collector_archive::ArchiveSource;
 use tokio_util::sync::CancellationToken;
 
-use crate::capture::{persist_snapshot, snapshot_bytes, upload_pending, UploadOutcome};
+use std::collections::HashSet;
+
+use crate::capture::{
+    apply_archive_upload_response, persist_snapshot, prepare_next_archive_upload_excluding,
+    send_prepared_archive_upload, UploadOutcome,
+};
 use crate::client::ArchiveUploader;
 use crate::history::{history_reports, ordered_part_work, ArchiveHistoryPlan, ArchiveWorkClass};
 use crate::key_store::ArchiveKeyStore;
@@ -25,6 +30,8 @@ pub struct ArchiveSnapshot {
 
 #[derive(Debug, Clone)]
 pub struct DeferredArchiveSnapshot {
+    pub expected_file_identity: Option<String>,
+    pub expected_identity_prefix: Option<(u64, collector_archive::Sha256Digest)>,
     pub path: PathBuf,
     pub prior_offset: u64,
     pub minimum_observed_size: u64,
@@ -74,8 +81,7 @@ pub struct ArchiveCycleReport {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn run_archive_cycle<U: ArchiveUploader>(
-    uploader: &U,
+fn capture_archive_snapshots_inner(
     spool: &mut ArchiveSpool,
     key_store: &dyn ArchiveKeyStore,
     snapshots: &[ArchiveSnapshot],
@@ -95,173 +101,142 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
         }
         return report;
     }
-    if !policy.uploads() && !policy.captures() {
+    if !policy.captures() {
         return report;
     }
 
-    let pending = match spool.all_pending_permitted(|source, session| plan.permits(source, session))
-    {
-        Ok(pending) => pending,
-        Err(err) => {
-            report.failed += 1;
-            record_error(&mut report, err.class());
-            crate::spool::PendingLoads {
-                loads: Vec::new(),
-                retained_excluded: Vec::new(),
-                metadata_errors: Vec::new(),
-            }
-        }
-    };
-    for class in &pending.metadata_errors {
-        report.failed += 1;
-        record_error(&mut report, class);
-    }
-    let work = ordered_part_work(pending.loads, snapshots, plan, &mut report);
+    let work = ordered_part_work(Vec::new(), snapshots, plan, &mut report);
     for part in work {
         if cancel.is_some_and(CancellationToken::is_cancelled) {
             break;
         }
-        if spool.cleanup_required() {
-            match spool.finish_cleanup(key_store) {
-                Ok(()) => {
-                    report.purged = true;
-                    break;
-                }
-                Err(err) => {
-                    report.failed += 1;
-                    record_error(&mut report, err.class());
-                    report.halted = true;
-                    break;
-                }
-            }
-        }
-        let mut snapshot_read_failed = false;
-        let source_bytes = if part.snapshot.is_some()
-            && (policy.captures() || policy.uploads() && !part.pending.is_empty())
-        {
-            part.snapshot
-                .and_then(|snapshot| match snapshot_bytes(snapshot) {
-                    Ok(bytes) => Some(bytes),
-                    Err(_) => {
-                        snapshot_read_failed = true;
-                        if policy.captures() {
-                            report.failed += 1;
-                            record_error(&mut report, "archive_io");
-                        }
-                        None
-                    }
-                })
-        } else {
-            None
+        let Some(snapshot) = part.snapshot else {
+            continue;
         };
-        let mut persist_blocked = false;
-        if policy.captures() {
-            if let (Some(snapshot), Some(source_bytes)) = (part.snapshot, source_bytes.as_deref()) {
-                let blocked_before = report.blocked;
-                let _ = persist_snapshot(
-                    spool,
-                    snapshot,
-                    &mut report,
-                    now_ms,
-                    cancel,
-                    Some(source_bytes),
-                );
-                persist_blocked = report.blocked > blocked_before;
-            }
-        }
-        if report.purged || report.frozen || report.halted {
-            break;
-        }
+        let Some(capture_authorization) = plan.capture_authorization(part.source, &part.session)
+        else {
+            continue;
+        };
+        let _ = persist_snapshot(
+            spool,
+            snapshot,
+            &mut report,
+            now_ms,
+            cancel,
+            None,
+            capture_authorization,
+        );
+    }
+    report
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn capture_archive_snapshots(
+    spool: &mut ArchiveSpool,
+    key_store: &dyn ArchiveKeyStore,
+    snapshots: &[ArchiveSnapshot],
+    policy: ArchivePolicy,
+    plan: &ArchiveHistoryPlan,
+    now_ms: i64,
+    cancel: Option<&CancellationToken>,
+) -> ArchiveCycleReport {
+    let mut report =
+        capture_archive_snapshots_inner(spool, key_store, snapshots, policy, plan, now_ms, cancel);
+    populate_history_report(spool, snapshots, plan, &mut report);
+    report
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_archive_cycle<U: ArchiveUploader>(
+    uploader: &U,
+    spool: &mut ArchiveSpool,
+    key_store: &dyn ArchiveKeyStore,
+    snapshots: &[ArchiveSnapshot],
+    policy: ArchivePolicy,
+    plan: &ArchiveHistoryPlan,
+    now_ms: i64,
+    cancel: Option<&CancellationToken>,
+) -> ArchiveCycleReport {
+    let mut report =
+        capture_archive_snapshots_inner(spool, key_store, snapshots, policy, plan, now_ms, cancel);
+    if report.purged || report.halted || !policy.uploads() {
+        populate_history_report(spool, snapshots, plan, &mut report);
+        return report;
+    }
+
+    let mut attempted = HashSet::new();
+    loop {
         if cancel.is_some_and(CancellationToken::is_cancelled) {
             break;
         }
-        if policy.uploads() {
-            let upload_part = match part.snapshot {
-                Some(snapshot) => match spool.current_part(
-                    snapshot.source,
-                    &snapshot.source_session_id,
-                    &snapshot.base_transcript_part_id,
-                ) {
-                    Ok(current_part) => current_part,
-                    Err(err) => {
-                        report.failed += 1;
-                        record_error(&mut report, err.class());
-                        continue;
-                    }
-                },
-                None => part.part.clone(),
-            };
-            let slices = match spool.slices_for_part(part.source, &part.session, &upload_part) {
-                Ok(slices) => slices,
-                Err(err) => {
-                    report.failed += 1;
-                    record_error(&mut report, err.class());
-                    continue;
-                }
-            };
-            let mut part_blocked = false;
-            for pending in &slices {
-                if cancel.is_some_and(CancellationToken::is_cancelled) {
-                    break;
-                }
-                match upload_pending(
-                    uploader,
-                    spool,
-                    key_store,
-                    pending,
-                    source_bytes.as_deref(),
-                    cancel,
-                )
-                .await
-                {
-                    Ok(UploadOutcome::Advanced) => report.uploaded += 1,
-                    Ok(UploadOutcome::Blocked) => {
-                        part_blocked = true;
-                        break;
-                    }
-                    Ok(UploadOutcome::Frozen) => report.frozen = true,
-                    Ok(UploadOutcome::Purged) => report.purged = true,
-                    Ok(UploadOutcome::Halt(class)) => {
-                        report.failed += 1;
-                        record_error(&mut report, class);
-                        report.halted = true;
-                    }
-                    Err(class) => {
-                        report.failed += 1;
-                        if class == "archive_record_too_large" {
-                            report.blocked += 1;
-                        }
-                        record_error(&mut report, class);
-                        break;
-                    }
-                }
-                if report.purged || report.frozen || report.halted {
-                    break;
-                }
+        let prepared = match prepare_next_archive_upload_excluding(spool, plan, policy, &attempted)
+        {
+            Ok(Some(prepared)) => prepared,
+            Ok(None) => break,
+            Err(class) => {
+                report.failed += 1;
+                record_error(&mut report, class);
+                break;
             }
-            if part_blocked {
-                if !persist_blocked {
+        };
+        let prepared_id = prepared.id();
+        let response = send_prepared_archive_upload(uploader, &prepared, cancel).await;
+        match apply_archive_upload_response(spool, key_store, &prepared, response) {
+            Ok(UploadOutcome::Advanced) => report.uploaded += 1,
+            Ok(UploadOutcome::Blocked) => {
+                report.blocked += 1;
+                attempted.insert(prepared_id);
+            }
+            Ok(UploadOutcome::Frozen) => {
+                report.frozen = true;
+                break;
+            }
+            Ok(UploadOutcome::Purged) => {
+                report.purged = true;
+                break;
+            }
+            Ok(UploadOutcome::Halt(class)) => {
+                report.failed += 1;
+                record_error(&mut report, class);
+                report.halted = true;
+                break;
+            }
+            Err(class) => {
+                report.failed += 1;
+                if class == "archive_record_too_large" {
                     report.blocked += 1;
                 }
-                if snapshot_read_failed && !policy.captures() {
-                    report.failed += 1;
-                    record_error(&mut report, "archive_io");
-                }
-                continue;
+                record_error(&mut report, class);
+                attempted.insert(prepared_id);
             }
         }
-        if report.purged || report.frozen || report.halted {
-            break;
+    }
+    populate_history_report(spool, snapshots, plan, &mut report);
+    report
+}
+
+fn populate_history_report(
+    spool: &ArchiveSpool,
+    snapshots: &[ArchiveSnapshot],
+    plan: &ArchiveHistoryPlan,
+    report: &mut ArchiveCycleReport,
+) {
+    let inventory =
+        match spool.pending_inventory(|source, session| plan.pending_selection(source, session)) {
+            Ok(inventory) => inventory,
+            Err(error) => {
+                report.failed += 1;
+                record_error(report, error.class());
+                return;
+            }
+        };
+    for class in inventory.metadata_errors {
+        if report.first_error.as_deref() != Some(class) {
+            report.failed += 1;
+            record_error(report, class);
         }
     }
-    report.history = history_reports(
-        spool,
-        snapshots,
-        plan,
-        &pending.retained_excluded,
-        &mut report,
-    );
-    report
+    report.history = history_reports(spool, snapshots, plan, &inventory.retained_excluded, report);
 }
 
 pub(crate) fn record_error(report: &mut ArchiveCycleReport, class: &str) {

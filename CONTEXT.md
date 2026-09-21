@@ -178,8 +178,8 @@ How long data is physically stored before deletion. Proxy Spans: Tier-based (hob
 _Avoid_: "TTL" as the user-facing name; conflating with **Visibility Window**.
 
 **Paid Archive Retention**:
-A retention policy with no age-based expiry while an **Organization** has an active Pro entitlement. Losing Pro stops archive collection and freezes the archive for a 90-day grace period in which the **Archive Steward** may export or restore Pro. When grace ends, Trace Flow destroys every **Archive Encryption Key** version before deleting the R2 objects.
-_Avoid_: "permanent retention", "account-lifetime retention", retaining an archive indefinitely after Pro ends.
+A retention policy with no age-based expiry. Losing Pro stops archive collection and freezes the archive, but acknowledged archive content and its wrapped encryption keys remain available to the **Archive Steward** until explicit contribution deletion, whole-archive deletion, or Organization deletion.
+_Avoid_: implying that subscription cancellation authorizes deletion of acknowledged archive content.
 
 **Visibility Window**:
 How far back a Subscription Tier may query, enforced at read-time. Can be shorter than what is retained, so upgrading a Tier reveals already-stored history without re-ingesting. For proxy Spans it equals the Retention Window; for agent facts a hobby org sees only the last week of a longer-retained store.
@@ -434,7 +434,7 @@ _Avoid_: flattening pre-compaction records and post-compaction responses into on
 
 **Conversation Archive**:
 An **Organization**-owned Pro capability and opt-in corpus of lossless **Raw Transcripts** kept under **Paid Archive Retention** for that Organization's future reuse, including possible personal model improvement. Pro includes 100 GB of fixed archive capacity; v1 has no separate archive purchase or capacity upgrade. The first release stores and processes archive content through the Cloudflare R2 `us` jurisdiction and offers no region selector.
-_Avoid_: "training corpus" (archive enrollment does not authorize training; a later Organization-specific training feature requires separate authorization), "permanent storage".
+_Avoid_: "training corpus" (archive enrollment does not authorize training; a later Organization-specific training feature requires separate authorization).
 
 **Archive Encryption Key**:
 A versioned, server-managed encryption key owned by one **Organization** and used only for that Organization's **Conversation Archive**.
@@ -548,8 +548,8 @@ _Avoid_: "hung" or "crashed" (the Supervisor observes silence, not process death
 - Each enrolled **Collector** has a fixed 2 GB **Archive Spool**; reaching it pauses archive collection with an action-required error while parsed fact sync continues.
 - When an **Organization** exhausts its archive capacity, its **Collectors** retain pending **Archive Observation JSONL** in their **Archive Spools** until capacity returns; neither the Collector nor archive silently drops or automatically evicts conversations.
 - Pro includes one **Conversation Archive** with its own fixed 100 GB capacity; proxy Body Object usage cannot consume that capacity, and v1 has no separate archive purchase or additional archive capacity.
-- Losing Pro stops new archive collection and starts a 90-day frozen grace period for owner export or restoring Pro; grace expiry destroys its **Archive Encryption Keys** before R2 object deletion.
-- During the Pro grace period, enrolled **Collectors** stop new archive scans but keep pending encrypted **Archive Spool** data; restoring Pro resumes upload, while terminal grace expiry causes the next connected Collector to purge its spool and enrollment state.
+- Losing Pro stops new archive collection and freezes pending uploads. Acknowledged archive content remains available for owner export until explicit deletion.
+- While frozen, enrolled **Collectors** stop new archive scans and keep pending encrypted **Archive Spool** data. Restoring Pro resumes upload.
 - A **Conversation Archive** preserves **Raw Transcripts** losslessly and v1 exports that same lossless representation; sanitization and normalization belong only to future derived exporters.
 - An **Archive Steward** runs an **Archive Export** through Trace Flow Desktop; the export resumes at archive-chunk boundaries and writes directly to a chosen local directory without creating a server-side export copy.
 - An **Archive Export** requires a fresh **Archive Export Grant**; **Collector Credentials** remain upload-only and never authorize archive reads.

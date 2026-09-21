@@ -275,6 +275,8 @@ fn codex_identity(
 
 #[derive(Debug, thiserror::Error)]
 pub enum JsonlError {
+    #[error("failed to read source transcript")]
+    SourceIo(#[source] std::io::Error),
     #[error(transparent)]
     Archive(#[from] ArchiveError),
     #[error("the JSONL checkpoint belongs to another source session")]

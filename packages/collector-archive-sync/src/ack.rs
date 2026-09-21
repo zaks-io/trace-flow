@@ -1,10 +1,16 @@
 use collector_archive::ArchiveSource;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::spool::PendingArchiveRequest;
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ArchiveAcknowledgement {
+    #[serde(default)]
+    pub request_sha256: Option<String>,
+    #[serde(default)]
+    pub captured_byte_offset: Option<u64>,
+    #[serde(default)]
+    pub captured_prefix_sha256: Option<String>,
     pub status: String,
     #[serde(default)]
     pub duplicate: bool,
@@ -29,11 +35,8 @@ pub struct ArchiveAcknowledgement {
     pub chunk_keys: Vec<String>,
 }
 
-/// Advance when the acknowledgement names this pending session/part and either the
-/// part checkpoint count or the appended-record count matches.
-///
-/// Archive API `record_count` is session-wide, so a later part's ack may not equal
-/// this part's checkpoint. Progress is always taken from the pending body, not the ack.
+/// Byte captures require an exact request digest and captured-prefix receipt.
+/// Legacy requests retain their original aggregate-count acknowledgement contract.
 pub fn acknowledgement_matches(
     pending: &PendingArchiveRequest,
     ack: &ArchiveAcknowledgement,
@@ -52,6 +55,30 @@ pub fn acknowledgement_matches(
         if part != pending.source_transcript_part_id {
             return false;
         }
+    }
+    let body: serde_json::Value = match serde_json::from_slice(&pending.body) {
+        Ok(value) => value,
+        Err(_) => return counts_match(pending, ack),
+    };
+    if body["checkpoint"]["archive_format_version"].as_u64() == Some(2) {
+        return ack.request_sha256.as_deref()
+            == Some(
+                collector_archive::sha256(&pending.body)
+                    .to_string()
+                    .as_str(),
+            )
+            && ack.source_transcript_part_id.as_deref()
+                == Some(pending.source_transcript_part_id.as_str())
+            && ack.captured_byte_offset
+                == body["checkpoint"]["last_complete_byte_offset"].as_u64()
+            && ack.captured_prefix_sha256.as_deref()
+                == body["checkpoint"]["complete_prefix_sha256"].as_str()
+            && ack.generation > 0
+            && !ack.manifest_key.is_empty()
+            && serde_json::from_value::<collector_archive::Sha256Digest>(
+                serde_json::Value::String(ack.chain_head.clone()),
+            )
+            .is_ok();
     }
     counts_match(pending, ack)
 }
@@ -77,6 +104,8 @@ mod tests {
 
     fn pending() -> PendingArchiveRequest {
         PendingArchiveRequest {
+            capture_authorization: None,
+            predecessor_part_id: None,
             source: ArchiveSource::Claude,
             source_session_id: "session-1".to_string(),
             source_transcript_part_id: default_transcript_part_id(ArchiveSource::Claude),
@@ -88,6 +117,9 @@ mod tests {
 
     fn ack() -> ArchiveAcknowledgement {
         ArchiveAcknowledgement {
+            request_sha256: None,
+            captured_byte_offset: None,
+            captured_prefix_sha256: None,
             status: "acknowledged".to_string(),
             duplicate: false,
             source: ArchiveSource::Claude,
@@ -107,6 +139,42 @@ mod tests {
     #[test]
     fn matching_ack_advances() {
         assert!(acknowledgement_matches(&pending(), &ack()));
+    }
+
+    #[test]
+    fn byte_capture_requires_the_exact_request_and_checkpoint_receipt() {
+        let pending = crate::build_bounded_pending_for_part(
+            ArchiveSource::Claude,
+            "session-1",
+            "claude:part:parent",
+            b"{partial\xff",
+            10,
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&pending.body).unwrap();
+        let mut receipt = ack();
+        receipt.source_transcript_part_id = Some(pending.source_transcript_part_id.clone());
+        receipt.request_sha256 = Some(collector_archive::sha256(&pending.body).to_string());
+        receipt.captured_byte_offset = body["checkpoint"]["last_complete_byte_offset"].as_u64();
+        receipt.captured_prefix_sha256 = body["checkpoint"]["complete_prefix_sha256"]
+            .as_str()
+            .map(str::to_owned);
+        receipt.chain_head = collector_archive::sha256(b"chain").to_string();
+        assert!(acknowledgement_matches(&pending, &receipt));
+        let mut wrong = receipt.clone();
+        wrong.request_sha256 = Some(collector_archive::sha256(b"different request").to_string());
+        assert!(!acknowledgement_matches(&pending, &wrong));
+        wrong = receipt.clone();
+        wrong.captured_byte_offset = Some(0);
+        assert!(!acknowledgement_matches(&pending, &wrong));
+        wrong = receipt.clone();
+        wrong.captured_prefix_sha256 = None;
+        assert!(!acknowledgement_matches(&pending, &wrong));
+        wrong = receipt;
+        wrong.source_transcript_part_id = None;
+        assert!(!acknowledgement_matches(&pending, &wrong));
     }
 
     #[test]
@@ -130,6 +198,8 @@ mod tests {
     #[test]
     fn session_aggregate_duplicate_parent_rescan_matches() {
         let pending = PendingArchiveRequest {
+            capture_authorization: None,
+            predecessor_part_id: None,
             source: ArchiveSource::Claude,
             source_session_id: "session-1".to_string(),
             source_transcript_part_id: default_transcript_part_id(ArchiveSource::Claude),
@@ -138,6 +208,9 @@ mod tests {
             body: b"{}".to_vec(),
         };
         let ack = ArchiveAcknowledgement {
+            request_sha256: None,
+            captured_byte_offset: None,
+            captured_prefix_sha256: None,
             status: "acknowledged".to_string(),
             duplicate: false,
             source: ArchiveSource::Claude,

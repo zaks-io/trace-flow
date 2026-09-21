@@ -7,7 +7,8 @@ use collector_archive_sync::{
 };
 use tempfile::TempDir;
 
-use super::prepare;
+use super::{prepare, prepare_configured, prepare_configured_incremental};
+use crate::sources::SourceHomes;
 
 fn authorization(source: ArchiveSource, choice: ArchiveHistoryChoice) -> ArchiveAuthorizedSource {
     ArchiveAuthorizedSource {
@@ -124,7 +125,7 @@ fn all_history_keeps_new_session_priority_after_restart() {
 }
 
 #[test]
-fn codex_roots_dedupe_prefixes_and_reject_divergence() {
+fn codex_roots_dedupe_prefixes_and_preserve_divergence() {
     let home = TempDir::new().unwrap();
     let spool_dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();
@@ -152,7 +153,11 @@ fn codex_roots_dedupe_prefixes_and_reject_divergence() {
         &codex("shared", "2020-01-01T00:00:00Z", "different"),
     );
     let divergent = prepare(home.path(), &spool, &[auth], 11);
-    assert!(divergent.snapshots.is_empty());
+    assert_eq!(divergent.snapshots.len(), 2);
+    assert_ne!(
+        divergent.snapshots[0].source_transcript_part_id,
+        divergent.snapshots[1].source_transcript_part_id
+    );
     assert!(divergent
         .errors
         .iter()
@@ -165,7 +170,51 @@ fn codex_roots_dedupe_prefixes_and_reject_divergence() {
 }
 
 #[test]
-fn registered_complete_extent_survives_a_shorter_partial_tail() {
+fn divergent_copies_in_three_agent_homes_get_distinct_lineages() {
+    let home = TempDir::new().unwrap();
+    let spool_dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let codex_homes = (0..3)
+        .map(|index| {
+            let root = home.path().join(format!("codex-{index}"));
+            let sessions = root.join("sessions");
+            fs::create_dir_all(&sessions).unwrap();
+            fs::write(
+                sessions.join("shared.jsonl"),
+                codex(
+                    "shared-three-homes",
+                    "2020-01-01T00:00:00Z",
+                    &format!("different-{index}"),
+                ),
+            )
+            .unwrap();
+            root
+        })
+        .collect::<Vec<_>>();
+    let homes = SourceHomes {
+        claude_config_dirs: Vec::new(),
+        codex_homes,
+    };
+    let spool = open_spool(&spool_dir, &keys);
+    let auth = authorization(ArchiveSource::Codex, ArchiveHistoryChoice::AllHistory);
+
+    let prepared = prepare_configured(&homes, &spool, &[auth], 10);
+    let parts = prepared
+        .snapshots
+        .iter()
+        .map(|snapshot| snapshot.source_transcript_part_id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+
+    assert_eq!(prepared.snapshots.len(), 3);
+    assert_eq!(parts.len(), 3);
+    assert!(prepared
+        .errors
+        .iter()
+        .any(|error| error == "archive_history_divergent_copy"));
+}
+
+#[test]
+fn registered_extent_includes_an_unfinished_tail() {
     let home = TempDir::new().unwrap();
     let spool_dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();
@@ -181,12 +230,104 @@ fn registered_complete_extent_survives_a_shorter_partial_tail() {
     prepare(home.path(), &spool, std::slice::from_ref(&auth), 10);
     let first = spool.history_state(ArchiveSource::Codex).unwrap().unwrap();
     let target = first.targets()[0].clone();
-    assert!(target.registered_complete_byte_offset < target.registered_size_bytes);
+    assert_eq!(
+        target.registered_complete_byte_offset,
+        target.registered_size_bytes
+    );
 
     fs::write(home.path().join(".codex/sessions/partial.jsonl"), complete).unwrap();
     prepare(home.path(), &spool, &[auth], 11);
     let second = spool.history_state(ArchiveSource::Codex).unwrap().unwrap();
     assert_eq!(second.targets()[0], target);
+}
+
+#[test]
+fn same_length_rewrite_is_scheduled_after_hash_verification() {
+    let home = TempDir::new().unwrap();
+    let spool_dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let original = codex("same-size", "2020-01-01T00:00:00Z", "aaa");
+    let rewritten = codex("same-size", "2020-01-01T00:00:00Z", "bbb");
+    assert_eq!(original.len(), rewritten.len());
+    write_codex(&home, "sessions", "same.jsonl", &original);
+    let spool = open_spool(&spool_dir, &keys);
+    let base_part = default_transcript_part_id(ArchiveSource::Codex);
+    let checkpoint = collector_archive_sync::scan_snapshot_part(
+        ArchiveSource::Codex,
+        "same-size",
+        &base_part,
+        original.as_bytes(),
+        10,
+        None,
+    )
+    .unwrap()
+    .checkpoint;
+    spool
+        .persist_progress(ArchiveSource::Codex, "same-size", &checkpoint)
+        .unwrap();
+    write_codex(&home, "sessions", "same.jsonl", &rewritten);
+
+    let prepared = prepare(
+        home.path(),
+        &spool,
+        &[authorization(
+            ArchiveSource::Codex,
+            ArchiveHistoryChoice::AllHistory,
+        )],
+        11,
+    );
+
+    assert_eq!(prepared.snapshots.len(), 1);
+    assert_eq!(prepared.snapshots[0].class, ArchiveWorkClass::Live);
+}
+
+#[test]
+fn incremental_capture_verifies_the_changed_same_length_path_only() {
+    let home = TempDir::new().unwrap();
+    let spool_dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let original = codex("same-size-incremental", "2020-01-01T00:00:00Z", "aaa");
+    let rewritten = codex("same-size-incremental", "2020-01-01T00:00:00Z", "bbb");
+    assert_eq!(original.len(), rewritten.len());
+    write_codex(&home, "sessions", "same.jsonl", &original);
+    let path = home.path().join(".codex/sessions/same.jsonl");
+    let spool = open_spool(&spool_dir, &keys);
+    let part = default_transcript_part_id(ArchiveSource::Codex);
+    let checkpoint = collector_archive_sync::scan_snapshot_part(
+        ArchiveSource::Codex,
+        "same-size-incremental",
+        &part,
+        original.as_bytes(),
+        10,
+        None,
+    )
+    .unwrap()
+    .checkpoint;
+    spool
+        .persist_progress(ArchiveSource::Codex, "same-size-incremental", &checkpoint)
+        .unwrap();
+    fs::write(&path, rewritten).unwrap();
+    let homes = SourceHomes::standard(home.path());
+    let auth = authorization(ArchiveSource::Codex, ArchiveHistoryChoice::AllHistory);
+
+    let unchanged_hint = prepare_configured_incremental(
+        &homes,
+        &spool,
+        std::slice::from_ref(&auth),
+        11,
+        &std::collections::HashSet::new(),
+    );
+    let changed = prepare_configured_incremental(
+        &homes,
+        &spool,
+        &[auth],
+        11,
+        &std::collections::HashSet::from([path]),
+    );
+
+    assert!(unchanged_hint.snapshots.is_empty());
+    assert_eq!(changed.snapshots.len(), 1);
+    assert_eq!(changed.snapshots[0].class, ArchiveWorkClass::Live);
 }
 
 #[test]
@@ -295,7 +436,8 @@ fn failed_source_baseline_commit_does_not_disable_another_source() {
         "codex.jsonl",
         &codex("codex-valid", "2020-01-01T00:00:00Z", "one"),
     );
-    let spool = ArchiveSpool::open_with_cap(spool_dir.path(), "org_1", &keys, 2_048).unwrap();
+    // Source identity records fit; the larger Claude history baseline does not.
+    let spool = ArchiveSpool::open_with_cap(spool_dir.path(), "org_1", &keys, 25_000).unwrap();
     let prepared = prepare(
         home.path(),
         &spool,

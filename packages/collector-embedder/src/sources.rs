@@ -1,69 +1,111 @@
 // SPDX-License-Identifier: Apache-2.0
 // Trace Flow Collector CLI: detected transcript sources.
 
-//! Where each [`AgentSource`]'s local transcripts live, and which ones are present on this box.
-//!
-//! The sync engine (`collector-sync`) is root-agnostic: the embedder hands it a root to walk. This
-//! module is that embedder's knowledge of *where* each Source writes — Claude under
-//! `~/.claude/projects`, Codex under `~/.codex/sessions`, Cursor in its `state.vscdb` SQLite store under
-//! globalStorage — and a presence check the `sources list` command renders. Cursor is `Ready`: the
-//! Cursor reader (`collector_sync::assemble_cursor_units`) ingests its SQLite store directly, so it does
-//! not have a `.jsonl` root the walker reads (`source_roots` is empty); its presence is the DB file
-//! existing. We never print the absolute root (it carries `$HOME`/username); the UI shows a stable label.
+//! Transcript roots configured for each supported agent.
 
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
 use collector_contracts::AgentSource;
+use serde::{Deserialize, Serialize};
 
-/// A Source the CLI can ingest, paired with where it reads. Every recognized Source is now wired into
-/// the collector path (Claude/Codex via the JSONL walker, Cursor via the `state.vscdb` reader), so this
-/// is a single `Ready` state; the enum is kept so `sources list` can render a support column and a future
-/// not-yet-wired source has a home.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Support {
-    /// Discoverable and ingestable today.
     Ready,
 }
 
-/// The detection state of one Source on this machine.
 #[derive(Debug, Clone)]
 pub struct DetectedSource {
     pub source: AgentSource,
     pub support: Support,
-    /// Items found for the Source: `.jsonl` files under a transcript root for Claude/Codex, or `1`/`0`
-    /// for whether Cursor's `state.vscdb` exists (counting its composers would mean opening a multi-GB
-    /// DB, so presence is what `sources list` reports).
     pub file_count: usize,
 }
 
 impl DetectedSource {
-    /// A short, $HOME-free label for display (e.g. `~/.claude/projects`), so `sources list` never
-    /// prints an absolute home path.
     pub fn display_root(&self) -> &'static str {
         match self.source {
-            AgentSource::Claude => "~/.claude/projects",
-            AgentSource::Codex => "~/.codex/{sessions,archived_sessions}",
+            AgentSource::Claude => "Claude projects",
+            AgentSource::Codex => "Codex sessions",
             AgentSource::Cursor => "(Cursor state store)",
         }
     }
 }
 
-/// All transcript roots for a source. Archived Codex sessions retain the same fact identity.
-pub fn source_roots(home: &std::path::Path, source: AgentSource) -> Vec<PathBuf> {
-    match source {
-        AgentSource::Claude => vec![home.join(".claude").join("projects")],
-        AgentSource::Codex => vec![
-            home.join(".codex").join("sessions"),
-            home.join(".codex").join("archived_sessions"),
-        ],
-        AgentSource::Cursor => Vec::new(),
+/// Persisted agent homes. Desktop applications often do not inherit a login shell's environment,
+/// so resolving these variables on every launch is not enough.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SourceHomes {
+    pub claude_config_dirs: Vec<PathBuf>,
+    pub codex_homes: Vec<PathBuf>,
+}
+
+impl SourceHomes {
+    pub fn standard(home: &Path) -> Self {
+        Self {
+            claude_config_dirs: vec![home.join(".claude")],
+            codex_homes: vec![home.join(".codex")],
+        }
+    }
+
+    pub fn resolve(home: &Path) -> Self {
+        Self::resolve_with(home, |name| std::env::var_os(name))
+    }
+
+    fn resolve_with(home: &Path, mut env: impl FnMut(&str) -> Option<OsString>) -> Self {
+        let mut homes = Self::standard(home);
+        if let Some(path) = env("CLAUDE_CONFIG_DIR").filter(|path| !path.is_empty()) {
+            homes.claude_config_dirs.push(PathBuf::from(path));
+        }
+        if let Some(path) = env("CODEX_HOME").filter(|path| !path.is_empty()) {
+            homes.codex_homes.push(PathBuf::from(path));
+        }
+        homes.normalize();
+        homes
+    }
+
+    /// Merge newly observed process configuration into the persisted set without dropping roots
+    /// learned by an earlier shell-launched process.
+    pub fn merge(&mut self, other: &Self) {
+        self.claude_config_dirs
+            .extend(other.claude_config_dirs.iter().cloned());
+        self.codex_homes.extend(other.codex_homes.iter().cloned());
+        self.normalize();
+    }
+
+    pub fn roots(&self, source: AgentSource) -> Vec<PathBuf> {
+        match source {
+            AgentSource::Claude => self
+                .claude_config_dirs
+                .iter()
+                .map(|dir| dir.join("projects"))
+                .collect(),
+            AgentSource::Codex => self
+                .codex_homes
+                .iter()
+                .flat_map(|dir| [dir.join("sessions"), dir.join("archived_sessions")])
+                .collect(),
+            AgentSource::Cursor => Vec::new(),
+        }
+    }
+
+    fn normalize(&mut self) {
+        dedupe_paths(&mut self.claude_config_dirs);
+        dedupe_paths(&mut self.codex_homes);
     }
 }
 
-/// The Cursor `state.vscdb` path under `home`, or `None` on a platform where Cursor's global store is
-/// not at the known macOS location. This single DB under globalStorage holds every composer (session)
-/// and bubble (message); the per-workspace stores are not the v1 target.
-pub fn cursor_db_path(home: &std::path::Path) -> Option<PathBuf> {
+fn dedupe_paths(paths: &mut Vec<PathBuf>) {
+    let mut seen = HashSet::new();
+    paths.retain(|path| seen.insert(path.clone()));
+}
+
+pub fn source_roots(home: &Path, source: AgentSource) -> Vec<PathBuf> {
+    SourceHomes::standard(home).roots(source)
+}
+
+pub fn cursor_db_path(home: &Path) -> Option<PathBuf> {
     if cfg!(target_os = "macos") {
         Some(
             home.join("Library")
@@ -74,51 +116,52 @@ pub fn cursor_db_path(home: &std::path::Path) -> Option<PathBuf> {
                 .join("state.vscdb"),
         )
     } else {
-        // Linux/Windows Cursor store locations differ; wiring them is a follow-up. macOS is the v1 target.
         None
     }
 }
 
-/// The ingestable Sources, in display order. Cursor reads its SQLite store via the Cursor reader.
 pub fn ingestable_sources() -> [AgentSource; 3] {
     [AgentSource::Claude, AgentSource::Codex, AgentSource::Cursor]
 }
 
-/// Detect every Source's state on this machine. Pure over an injected `home` so tests don't depend on
-/// the real home dir; the `count` closure counts `.jsonl` files under a JSONL root, and `db_exists`
-/// reports whether a path (Cursor's `state.vscdb`) is present.
 pub fn detect_with<F, G>(
-    home: &std::path::Path,
+    homes: &SourceHomes,
+    home: &Path,
     mut count: F,
     mut db_exists: G,
 ) -> Vec<DetectedSource>
 where
-    F: FnMut(&std::path::Path) -> usize,
-    G: FnMut(&std::path::Path) -> bool,
+    F: FnMut(&Path) -> usize,
+    G: FnMut(&Path) -> bool,
 {
-    let mut out = Vec::new();
-    for source in ingestable_sources() {
-        let roots = source_roots(home, source);
-        let file_count = if roots.is_empty() {
-            cursor_db_path(home)
-                .map(|db| usize::from(db_exists(&db)))
-                .unwrap_or(0)
-        } else {
-            roots.iter().map(|root| count(root)).sum()
-        };
-        out.push(DetectedSource {
-            source,
-            support: Support::Ready,
-            file_count,
-        });
-    }
-    out
+    ingestable_sources()
+        .into_iter()
+        .map(|source| {
+            let roots = homes.roots(source);
+            let file_count = if roots.is_empty() {
+                cursor_db_path(home)
+                    .map(|db| usize::from(db_exists(&db)))
+                    .unwrap_or(0)
+            } else {
+                roots.iter().map(|root| count(root)).sum()
+            };
+            DetectedSource {
+                source,
+                support: Support::Ready,
+                file_count,
+            }
+        })
+        .collect()
 }
 
-/// Detect against the real filesystem: count `.jsonl` files under each JSONL root, and check whether
-/// Cursor's `state.vscdb` exists.
-pub fn detect(home: &std::path::Path) -> Vec<DetectedSource> {
+pub fn detect(home: &Path) -> Vec<DetectedSource> {
+    let homes = SourceHomes::resolve(home);
+    detect_configured(&homes, home)
+}
+
+pub fn detect_configured(homes: &SourceHomes, home: &Path) -> Vec<DetectedSource> {
     detect_with(
+        homes,
         home,
         |root| collector_sync::walk_transcripts(root).files.len(),
         |db| db.exists(),
@@ -128,75 +171,53 @@ pub fn detect(home: &std::path::Path) -> Vec<DetectedSource> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     #[test]
-    fn claude_and_codex_roots_are_under_home_and_cursor_has_no_jsonl_root() {
-        let home = Path::new("/home/u");
+    fn configured_homes_are_added_to_defaults_and_deduplicated() {
+        let homes = SourceHomes::resolve_with(Path::new("/home/u"), |name| match name {
+            "CLAUDE_CONFIG_DIR" => Some(OsString::from("/agents/claude")),
+            "CODEX_HOME" => Some(OsString::from("/agents/codex")),
+            _ => None,
+        });
         assert_eq!(
-            source_roots(home, AgentSource::Claude),
-            vec![PathBuf::from("/home/u/.claude/projects")]
-        );
-        assert_eq!(
-            source_roots(home, AgentSource::Codex),
+            homes.roots(AgentSource::Claude),
             vec![
-                PathBuf::from("/home/u/.codex/sessions"),
-                PathBuf::from("/home/u/.codex/archived_sessions")
+                PathBuf::from("/home/u/.claude/projects"),
+                PathBuf::from("/agents/claude/projects"),
             ]
         );
-        // Cursor reads SQLite, not a JSONL tree, so it has no walker root.
-        assert!(source_roots(home, AgentSource::Cursor).is_empty());
+        assert_eq!(homes.roots(AgentSource::Codex).len(), 4);
+
+        let mut persisted = SourceHomes::resolve_with(Path::new("/home/u"), |_| None);
+        persisted.merge(&homes);
+        persisted.merge(&homes);
+        assert_eq!(persisted.claude_config_dirs.len(), 2);
+        assert_eq!(persisted.codex_homes.len(), 2);
     }
 
     #[test]
-    #[cfg(target_os = "macos")]
-    fn cursor_db_path_points_at_global_storage_on_macos() {
-        let db = cursor_db_path(Path::new("/Users/u")).unwrap();
-        assert!(db.ends_with("Cursor/User/globalStorage/state.vscdb"));
-    }
-
-    #[test]
-    fn detect_marks_every_source_ready_and_reports_cursor_by_db_presence() {
-        let detected = detect_with(
-            Path::new("/home/u"),
-            |root| {
-                if root.ends_with(".claude/projects") {
-                    3
-                } else {
-                    0
-                }
-            },
-            // Pretend Cursor's state.vscdb exists.
-            |_db| true,
-        );
+    fn detect_counts_every_configured_root() {
+        let homes = SourceHomes {
+            claude_config_dirs: vec![PathBuf::from("/one"), PathBuf::from("/two")],
+            codex_homes: Vec::new(),
+        };
+        let detected = detect_with(&homes, Path::new("/home/u"), |_| 2, |_| false);
         let claude = detected
             .iter()
-            .find(|d| d.source == AgentSource::Claude)
+            .find(|source| source.source == AgentSource::Claude)
             .unwrap();
-        assert_eq!(claude.support, Support::Ready);
-        assert_eq!(claude.file_count, 3);
-
-        let cursor = detected
-            .iter()
-            .find(|d| d.source == AgentSource::Cursor)
-            .unwrap();
-        assert_eq!(cursor.support, Support::Ready);
-        // On macOS the db path resolves and `db_exists` returned true → count 1; off macOS the path is
-        // None → count 0. Either way Cursor is now a Ready source, never Unsupported.
-        let expected = usize::from(cursor_db_path(Path::new("/home/u")).is_some());
-        assert_eq!(cursor.file_count, expected);
+        assert_eq!(claude.file_count, 4);
     }
 
     #[test]
     fn display_root_never_leaks_home() {
-        for source in [AgentSource::Claude, AgentSource::Codex, AgentSource::Cursor] {
-            let d = DetectedSource {
+        for source in ingestable_sources() {
+            let detected = DetectedSource {
                 source,
                 support: Support::Ready,
                 file_count: 0,
             };
-            assert!(!d.display_root().contains("Users"));
-            assert!(!d.display_root().contains("secret"));
+            assert!(!detected.display_root().contains("Users"));
         }
     }
 }

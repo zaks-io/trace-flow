@@ -1,10 +1,15 @@
 mod copies;
 mod identity;
+mod identity_cache;
+#[cfg(test)]
+mod identity_cache_tests;
 #[cfg(test)]
 mod tests;
 mod window;
 
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::Read;
 use std::path::Path;
 
 use collector_archive::ArchiveSource;
@@ -15,11 +20,13 @@ use collector_archive_sync::{
 };
 use collector_contracts::AgentSource;
 use collector_sync::{walk_transcripts, DISCOVERY_INCOMPLETE};
+use sha2::{Digest, Sha256};
 
-use crate::sources::source_roots;
+use crate::sources::SourceHomes;
 
 use self::copies::prefix_compatible;
-use self::identity::{identify, target_from, Candidate};
+use self::identity::{target_from, Candidate};
+use self::identity_cache::identify_remembered;
 use self::window::{ARCHIVE_BASELINE_PARTS_PER_CYCLE, ARCHIVE_BASELINE_READ_BUDGET_BYTES};
 
 #[derive(Debug, Default)]
@@ -29,11 +36,68 @@ pub struct PreparedArchiveHistory {
     pub errors: Vec<String>,
 }
 
+#[cfg(test)]
 pub fn prepare(
     home: &Path,
     spool: &ArchiveSpool,
     authorizations: &[ArchiveAuthorizedSource],
     now_ms: i64,
+) -> PreparedArchiveHistory {
+    prepare_configured(&SourceHomes::standard(home), spool, authorizations, now_ms)
+}
+
+pub fn prepare_configured(
+    source_homes: &SourceHomes,
+    spool: &ArchiveSpool,
+    authorizations: &[ArchiveAuthorizedSource],
+    now_ms: i64,
+) -> PreparedArchiveHistory {
+    prepare_configured_with_verification(
+        source_homes,
+        spool,
+        authorizations,
+        now_ms,
+        EqualLengthVerification::Verify,
+    )
+}
+
+pub fn prepare_configured_incremental(
+    source_homes: &SourceHomes,
+    spool: &ArchiveSpool,
+    authorizations: &[ArchiveAuthorizedSource],
+    now_ms: i64,
+    changed_paths: &HashSet<std::path::PathBuf>,
+) -> PreparedArchiveHistory {
+    prepare_configured_with_verification(
+        source_homes,
+        spool,
+        authorizations,
+        now_ms,
+        EqualLengthVerification::ChangedPaths(changed_paths),
+    )
+}
+
+#[derive(Clone, Copy)]
+enum EqualLengthVerification<'a> {
+    Verify,
+    ChangedPaths(&'a HashSet<std::path::PathBuf>),
+}
+
+impl EqualLengthVerification<'_> {
+    fn includes(self, path: &Path) -> bool {
+        match self {
+            Self::Verify => true,
+            Self::ChangedPaths(paths) => paths.iter().any(|changed| path.starts_with(changed)),
+        }
+    }
+}
+
+fn prepare_configured_with_verification(
+    source_homes: &SourceHomes,
+    spool: &ArchiveSpool,
+    authorizations: &[ArchiveAuthorizedSource],
+    now_ms: i64,
+    verification: EqualLengthVerification<'_>,
 ) -> PreparedArchiveHistory {
     let mut prepared = PreparedArchiveHistory::default();
     let mut states = Vec::new();
@@ -42,7 +106,13 @@ pub fn prepare(
     let mut failed_sources = Vec::new();
     let mut ambiguous_excluded = Vec::new();
     for authorization in authorizations {
-        let candidates = discover(home, authorization.source, &mut prepared.errors);
+        let candidates = discover(
+            source_homes,
+            spool,
+            authorization.source,
+            &mut prepared.errors,
+            verification,
+        );
         if authorization.history_choice == ArchiveHistoryChoice::NewOnly {
             let ambiguous_sessions: HashSet<_> = candidates
                 .iter()
@@ -147,7 +217,14 @@ pub fn prepare(
             }
             scheduled.push(candidate);
         }
-        append_snapshots(spool, &state, scheduled, &mut prepared, &live_sessions);
+        append_snapshots(
+            spool,
+            &state,
+            scheduled,
+            &mut prepared,
+            &live_sessions,
+            verification,
+        );
         states.push(state);
     }
     prepared.plan = ArchiveHistoryPlan::new(states)
@@ -158,18 +235,39 @@ pub fn prepare(
     prepared
 }
 
-fn discover(home: &Path, source: ArchiveSource, errors: &mut Vec<String>) -> Vec<Candidate> {
+fn discover(
+    source_homes: &SourceHomes,
+    spool: &ArchiveSpool,
+    source: ArchiveSource,
+    errors: &mut Vec<String>,
+    verification: EqualLengthVerification<'_>,
+) -> Vec<Candidate> {
     let agent_source = match source {
         ArchiveSource::Claude => AgentSource::Claude,
         ArchiveSource::Codex => AgentSource::Codex,
     };
     let mut groups: HashMap<(String, String), Vec<Candidate>> = HashMap::new();
     let mut skipped_errors = 0usize;
-    for root in source_roots(home, agent_source) {
+    for root in source_homes.roots(agent_source) {
         let walk = walk_transcripts(&root);
         skipped_errors += walk.skipped_errors;
+        let namespace = source_home_namespace(&root);
         for file in walk.files {
-            match identify(source, &file.path, file.mtime_ms as i64, file.size_bytes) {
+            let relative = Path::new(&file.path)
+                .strip_prefix(&root)
+                .unwrap_or_else(|_| Path::new(&file.path))
+                .to_string_lossy()
+                .into_owned();
+            let provenance = format!("{namespace}/{relative}");
+            match identify_remembered(
+                spool,
+                source,
+                &file.path,
+                file.mtime_ms as i64,
+                file.size_bytes,
+                provenance,
+                verification.includes(Path::new(&file.path)),
+            ) {
                 Ok(candidate) => groups
                     .entry((candidate.session.clone(), candidate.part.clone()))
                     .or_default()
@@ -183,17 +281,64 @@ fn discover(home: &Path, source: ArchiveSource, errors: &mut Vec<String>) -> Vec
     }
     let mut candidates = Vec::new();
     for mut copies in groups.into_values() {
-        copies.sort_by(|left, right| {
-            right
-                .size
-                .cmp(&left.size)
-                .then_with(|| left.path.cmp(&right.path))
-        });
-        let mut representative = copies.remove(0);
-        representative.copies = copies.into_iter().map(|copy| copy.path).collect();
-        candidates.push(representative);
+        copies.sort_by(|left, right| left.path.cmp(&right.path));
+        let mut lineages: Vec<Candidate> = Vec::new();
+        for candidate in copies {
+            let compatible = lineages.iter().position(|lineage| {
+                let (shorter, longer) = if candidate.size <= lineage.size {
+                    (&candidate.path, &lineage.path)
+                } else {
+                    (&lineage.path, &candidate.path)
+                };
+                match prefix_compatible(shorter, longer) {
+                    Ok(matches) => matches,
+                    Err(_) => {
+                        errors.push("archive_io".to_string());
+                        false
+                    }
+                }
+            });
+            match compatible {
+                Some(index) if candidate.size > lineages[index].size => {
+                    let mut longer = candidate;
+                    longer.provenance = lineages[index].provenance.clone();
+                    longer.copies = std::mem::take(&mut lineages[index].copies);
+                    longer.copies.push(lineages[index].path.clone());
+                    lineages[index] = longer;
+                }
+                Some(index) => lineages[index].copies.push(candidate.path),
+                None => lineages.push(candidate),
+            }
+        }
+        if lineages.len() > 1 {
+            errors.push("archive_history_divergent_copy".to_string());
+            lineages.sort_by(|left, right| left.provenance.cmp(&right.provenance));
+            let original_part = lineages[0].part.clone();
+            for lineage in lineages.iter_mut().skip(1) {
+                lineage.part = copy_part_id(source, &original_part, &lineage.provenance);
+            }
+        }
+        candidates.extend(lineages);
     }
     candidates
+}
+
+fn source_home_namespace(root: &Path) -> String {
+    let home = root.parent().unwrap_or(root);
+    let canonical = std::fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+    collector_archive::hash_framed(
+        b"trace-flow/archive/source-home/v1",
+        &[canonical.to_string_lossy().as_bytes()],
+    )
+    .to_string()
+}
+
+fn copy_part_id(source: ArchiveSource, original_part: &str, provenance: &str) -> String {
+    let digest = collector_archive::hash_framed(
+        b"trace-flow/archive/source-copy/v1",
+        &[original_part.as_bytes(), provenance.as_bytes()],
+    );
+    format!("{}:part:{digest}", source.as_str())
 }
 
 fn append_snapshots(
@@ -202,6 +347,7 @@ fn append_snapshots(
     mut candidates: Vec<Candidate>,
     prepared: &mut PreparedArchiveHistory,
     live_sessions: &[(ArchiveSource, String, i64)],
+    verification: EqualLengthVerification<'_>,
 ) {
     candidates.sort_by(|left, right| {
         let left_live = live_sessions
@@ -235,19 +381,40 @@ fn append_snapshots(
         } else {
             ArchiveWorkClass::Baseline
         };
-        let progress = spool
-            .progress_part(candidate.source, &candidate.session, &candidate.part)
-            .ok()
-            .flatten();
-        let rewrite_candidate = progress.as_ref().is_some_and(|checkpoint| {
+        let captured = match spool.latest_captured_checkpoint(
+            candidate.source,
+            &candidate.session,
+            &candidate.part,
+        ) {
+            Ok(checkpoint) => checkpoint,
+            Err(_) => {
+                prepared.errors.push("archive_spool_corrupt".to_string());
+                continue;
+            }
+        };
+        let rewrite_candidate = captured.as_ref().is_some_and(|checkpoint| {
             candidate.complete_extent < checkpoint.last_complete_byte_offset
                 || candidate.size < checkpoint.observed_file_size
         });
-        if progress.as_ref().is_some_and(|checkpoint| {
+        if let Some(checkpoint) = captured.as_ref().filter(|checkpoint| {
             candidate.complete_extent == checkpoint.last_complete_byte_offset
-                && candidate.size >= checkpoint.observed_file_size
+                && candidate.size == checkpoint.observed_file_size
         }) {
-            continue;
+            if !verification.includes(&candidate.path) {
+                continue;
+            }
+            match prefix_matches_checkpoint(
+                &candidate.path,
+                checkpoint.last_complete_byte_offset,
+                checkpoint.complete_prefix_sha256.as_bytes(),
+            ) {
+                Ok(true) => continue,
+                Ok(false) => class = ArchiveWorkClass::Live,
+                Err(_) => {
+                    prepared.errors.push("archive_io".to_string());
+                    continue;
+                }
+            }
         }
         if rewrite_candidate {
             class = ArchiveWorkClass::Live;
@@ -261,21 +428,11 @@ fn append_snapshots(
                 continue;
             }
         }
-        let copies_match = candidate
-            .copies
-            .iter()
-            .all(|copy| prefix_compatible(copy, &candidate.path).unwrap_or(false));
-        if !copies_match {
-            prepared
-                .errors
-                .push("archive_history_divergent_copy".to_string());
-            continue;
-        }
-        let prior = progress
+        let prior = captured
             .as_ref()
             .map(|checkpoint| checkpoint.last_complete_byte_offset)
             .unwrap_or(0);
-        let minimum_observed_size = progress
+        let minimum_observed_size = captured
             .as_ref()
             .map(|checkpoint| checkpoint.observed_file_size)
             .unwrap_or(0);
@@ -295,6 +452,8 @@ fn append_snapshots(
             source_transcript_part_id: candidate.part,
             bytes: Vec::new(),
             deferred_file: Some(DeferredArchiveSnapshot {
+                expected_file_identity: candidate.file_identity,
+                expected_identity_prefix: candidate.identity_prefix,
                 path: candidate.path,
                 prior_offset: prior,
                 minimum_observed_size,
@@ -304,4 +463,25 @@ fn append_snapshots(
             activity_rank_ms,
         });
     }
+}
+
+fn prefix_matches_checkpoint(
+    path: &Path,
+    extent: u64,
+    expected: &[u8; 32],
+) -> std::io::Result<bool> {
+    let file = File::open(path)?;
+    let mut reader = file.take(extent);
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0; 1024 * 1024];
+    let mut read_total = 0u64;
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        read_total += read as u64;
+        hasher.update(&buffer[..read]);
+    }
+    Ok(read_total == extent && hasher.finalize().as_slice() == expected)
 }

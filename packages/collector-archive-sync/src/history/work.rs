@@ -30,20 +30,17 @@ pub(crate) fn ordered_part_work<'a>(
         match record {
             PendingLoad::Corrupt {
                 source,
-                source_session_id,
+                source_session_id: _,
                 source_transcript_part_id: _,
                 class,
             } => {
-                if !plan.authorizes(source) || !plan.permits(source, &source_session_id) {
+                if !plan.authorizes(source) {
                     continue;
                 }
                 report.failed += 1;
                 record_error(report, class);
             }
             PendingLoad::Ready(record) => {
-                if !plan.permits(record.source, &record.source_session_id) {
-                    continue;
-                }
                 let key = (
                     record.source,
                     record.source_session_id.clone(),

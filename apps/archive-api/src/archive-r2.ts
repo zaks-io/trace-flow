@@ -229,7 +229,11 @@ export async function verifyCommittedManifestObject(
       new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(plaintext),
     ) as ArchiveSessionManifest;
     if (
-      manifest.archive_format_version !== 1 ||
+      (manifest.archive_format_version !== 1 && manifest.archive_format_version !== 2) ||
+      (manifest.archive_scope !== undefined &&
+        (['orgId', 'userId', 'contributionId', 'source', 'sourceSessionId'] as const).some(
+          (field) => manifest.archive_scope?.[field] !== scope[field],
+        )) ||
       manifest.chain_hash_version !== 1 ||
       manifest.source !== scope.source ||
       manifest.source_session_id !== scope.sourceSessionId ||

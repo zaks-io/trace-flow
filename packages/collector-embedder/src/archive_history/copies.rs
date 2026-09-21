@@ -4,12 +4,13 @@ use std::path::Path;
 
 pub const ARCHIVE_COPY_COMPARE_CHUNK_BYTES: usize = 1024 * 1024;
 
-use super::window::complete_extent;
-
 pub fn prefix_compatible(shorter: &Path, longer: &Path) -> std::io::Result<bool> {
-    let extent = complete_extent(shorter)?;
     let mut left = File::open(shorter)?;
     let mut right = File::open(longer)?;
+    let extent = left.metadata()?.len();
+    if extent > right.metadata()?.len() {
+        return Ok(false);
+    }
     let mut compared = 0u64;
     let mut left_buf = vec![0u8; ARCHIVE_COPY_COMPARE_CHUNK_BYTES];
     let mut right_buf = vec![0u8; ARCHIVE_COPY_COMPARE_CHUNK_BYTES];

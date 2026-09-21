@@ -99,6 +99,11 @@ impl Paths {
     /// Per-org encrypted Archive Spool. Isolated by org id; never shared across organizations.
     pub fn archive_spool_dir(&self, org_id: &str) -> PathBuf {
         self.root
+            .join(format!("archive-spool-v2-{}", sanitize(org_id)))
+    }
+
+    pub fn legacy_archive_spool_dir(&self, org_id: &str) -> PathBuf {
+        self.root
             .join(format!("archive-spool-{}", sanitize(org_id)))
     }
 
@@ -269,6 +274,15 @@ mod tests {
         let enrollment = paths.archive_enrollment_file("org/../etc");
         assert_eq!(
             spool.file_name().unwrap().to_str().unwrap(),
+            "archive-spool-v2-org____etc"
+        );
+        assert_eq!(
+            paths
+                .legacy_archive_spool_dir("org/../etc")
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap(),
             "archive-spool-org____etc"
         );
         assert_eq!(

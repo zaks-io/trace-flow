@@ -168,6 +168,7 @@ async fn cmd_sync(since: &str, replay: bool) -> Result<()> {
     let ingest_url = conn.sync_ingest_url()?;
 
     let home = home_dir()?;
+    let source_homes = sources::SourceHomes::resolve(&home);
     println!("Syncing (since {since}) to {ingest_url} ...");
 
     let reports = sync::run(sync::RunConfig {
@@ -175,6 +176,7 @@ async fn cmd_sync(since: &str, replay: bool) -> Result<()> {
         credential,
         org_id: &conn.org_id,
         home: &home,
+        source_homes: Some(&source_homes),
         window,
         replay,
         now_ms: now_ms(),

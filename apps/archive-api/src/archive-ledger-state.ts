@@ -71,6 +71,7 @@ export interface ArchiveRepairCommit {
 }
 
 export interface CommitEnvelope {
+  requestSha256?: string;
   scope: ArchiveScope;
   upload: ArchiveUploadRequest;
   keyVersion: number;
@@ -78,6 +79,10 @@ export interface CommitEnvelope {
 }
 
 export interface ArchiveAcknowledgement {
+  request_sha256?: string;
+  source_transcript_part_id?: string;
+  captured_byte_offset?: number;
+  captured_prefix_sha256?: string;
   status: 'acknowledged';
   duplicate: boolean;
   source: ArchiveScope['source'];

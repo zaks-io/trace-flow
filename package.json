@@ -23,6 +23,7 @@
     "dev:web": "bun run --filter @trace-flow/web dev",
     "dev:verify": "bash scripts/dev/verify.sh",
     "dev:smoke:archive": "bun scripts/dev/archive-api-smoke.ts",
+    "dev:export:archive": "bun scripts/dev/archive-export.ts",
     "deploy:dev": "turbo run deploy:dev --filter='./apps/*'",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\"",

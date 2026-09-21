@@ -137,7 +137,8 @@ function assertManifestContent(plaintext: Uint8Array, objectKey: string): void {
   const source = /\/sessions\/(claude|codex)\//u.exec(objectKey)?.[1];
   if (
     !source ||
-    manifest.archive_format_version !== ARCHIVE_FORMAT_VERSION ||
+    (manifest.archive_format_version !== ARCHIVE_FORMAT_VERSION &&
+      manifest.archive_format_version !== 2) ||
     manifest.chain_hash_version !== CHAIN_HASH_VERSION ||
     manifest.source !== source ||
     !Number.isSafeInteger(manifest.generation) ||

@@ -65,6 +65,9 @@ export declare const api: {
         Array<{
           _creationTime: number;
           _id: Id<"organizations">;
+          agentIngestionMigrationId?: string;
+          agentSnapshotCleanupAt?: number;
+          agentSnapshotCleanupFingerprint?: string;
           deletedAt?: number;
           deletionStartedAt?: number;
           name: string;
@@ -837,6 +840,21 @@ export declare const api: {
       }>
     >;
   };
+  archiveExport: {
+    issueGrant: FunctionReference<
+      "action",
+      "public",
+      {
+        exportId: string;
+        targets: Array<{
+          contributionId: Id<"archiveContributions">;
+          source: "claude" | "codex";
+          sourceSessionId: string;
+        }>;
+      },
+      { archiveUrl: string; expiresAt: number; exportId: string; grant: string }
+    >;
+  };
   auth: {
     auth: {
       isAuthenticatedQuery: FunctionReference<"query", "public", {}, boolean>;
@@ -898,6 +916,9 @@ export declare const api: {
         null | {
           _creationTime: number;
           _id: Id<"organizations">;
+          agentIngestionMigrationId?: string;
+          agentSnapshotCleanupAt?: number;
+          agentSnapshotCleanupFingerprint?: string;
           deletedAt?: number;
           deletionStartedAt?: number;
           name: string;
@@ -1715,6 +1736,14 @@ export declare const internal: {
       { collectorId: string; orgId: Id<"organizations">; userId: Id<"users"> }
     >;
   };
+  agentIngestionErasure: {
+    eraseOrganization: FunctionReference<
+      "action",
+      "internal",
+      { orgId: Id<"organizations"> },
+      null
+    >;
+  };
   agentIngestionMigration: {
     begin: FunctionReference<
       "mutation",
@@ -2304,6 +2333,40 @@ export declare const internal: {
       null
     >;
   };
+  archiveExport: {
+    authorize: FunctionReference<
+      "query",
+      "internal",
+      {
+        targets: Array<{
+          contributionId: Id<"archiveContributions">;
+          source: "claude" | "codex";
+          sourceSessionId: string;
+        }>;
+      },
+      {
+        actorUserId: Id<"users">;
+        orgId: Id<"organizations">;
+        targets: Array<{
+          contributionId: Id<"archiveContributions">;
+          source: "claude" | "codex";
+          sourceSessionId: string;
+          userId: Id<"users">;
+        }>;
+      }
+    >;
+    recordIssuance: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        actorUserId: Id<"users">;
+        exportId: string;
+        orgId: Id<"organizations">;
+        targetCount: number;
+      },
+      null
+    >;
+  };
   archiveIntegrationSeed: {
     cleanupConcurrentEnrollment: FunctionReference<
       "mutation",
@@ -2664,6 +2727,9 @@ export declare const internal: {
         null | {
           _creationTime: number;
           _id: Id<"organizations">;
+          agentIngestionMigrationId?: string;
+          agentSnapshotCleanupAt?: number;
+          agentSnapshotCleanupFingerprint?: string;
           deletedAt?: number;
           deletionStartedAt?: number;
           name: string;
@@ -2679,6 +2745,9 @@ export declare const internal: {
         null | {
           _creationTime: number;
           _id: Id<"organizations">;
+          agentIngestionMigrationId?: string;
+          agentSnapshotCleanupAt?: number;
+          agentSnapshotCleanupFingerprint?: string;
           deletedAt?: number;
           deletionStartedAt?: number;
           name: string;
@@ -3312,6 +3381,9 @@ export declare const internal: {
         org: {
           _creationTime: number;
           _id: Id<"organizations">;
+          agentIngestionMigrationId?: string;
+          agentSnapshotCleanupAt?: number;
+          agentSnapshotCleanupFingerprint?: string;
           deletedAt?: number;
           deletionStartedAt?: number;
           name: string;

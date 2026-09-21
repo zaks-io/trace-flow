@@ -1,284 +1,42 @@
-use std::borrow::Cow;
+use std::collections::HashSet;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::ack::acknowledgement_matches;
-use crate::bound::build_bounded_pending_for_part;
+use crate::ack::{acknowledgement_matches, ArchiveAcknowledgement};
 use crate::client::ArchiveUploader;
-use crate::cycle::{record_error, ArchiveCycleReport, ArchiveForkEvent, ArchiveSnapshot};
 use crate::error::ArchiveSyncError;
-use crate::history::read_capture_window;
 use crate::key_store::ArchiveKeyStore;
 use crate::policy::{policy_from_denial_reason, ArchivePolicy};
 use crate::spool::{
     ArchiveSpool, BlockedArchiveRecord, PendingArchiveRequest, ARCHIVE_RECORD_POLICY_VERSION,
 };
+use crate::{ArchiveClientError, ArchiveHistoryPlan};
 
-fn persist_observed_slices(
-    spool: &ArchiveSpool,
-    snapshot: &ArchiveSnapshot,
-    bytes: &[u8],
-    report: &mut ArchiveCycleReport,
-    now_ms: i64,
-    cancel: Option<&CancellationToken>,
-) -> Result<u32, &'static str> {
-    let mut current_part = match spool.current_part(
-        snapshot.source,
-        &snapshot.source_session_id,
-        &snapshot.base_transcript_part_id,
-    ) {
-        Ok(part) => part,
-        Err(err) => {
-            report.failed += 1;
-            record_error(report, err.class());
-            return Err(err.class());
-        }
-    };
-    match spool.blocked_part(snapshot.source, &snapshot.source_session_id, &current_part) {
-        Ok(Some(blocked)) if blocked.matches_source(bytes) => {
-            report.blocked += 1;
-            return Ok(0);
-        }
-        Ok(Some(_)) => {
-            if let Err(err) = spool.clear_blocked_part(
-                snapshot.source,
-                &snapshot.source_session_id,
-                &current_part,
-            ) {
-                report.failed += 1;
-                record_error(report, err.class());
-                return Err(err.class());
-            }
-        }
-        Ok(None) => {}
-        Err(err) => {
-            report.failed += 1;
-            record_error(report, err.class());
-            return Err(err.class());
-        }
+pub(crate) use crate::source_capture::persist_snapshot;
+
+#[derive(Debug, Clone)]
+pub struct PreparedArchiveUpload {
+    pending: PendingArchiveRequest,
+}
+
+impl PreparedArchiveUpload {
+    pub fn source(&self) -> collector_archive::ArchiveSource {
+        self.pending.source
     }
-    let mut progress =
-        match spool.progress_part(snapshot.source, &snapshot.source_session_id, &current_part) {
-            Ok(progress) => progress,
-            Err(err) => {
-                report.failed += 1;
-                record_error(report, err.class());
-                return Err(err.class());
-            }
-        };
-    let mut existing =
-        match spool.slices_for_part(snapshot.source, &snapshot.source_session_id, &current_part) {
-            Ok(existing) => existing,
-            Err(err) => {
-                report.failed += 1;
-                record_error(report, err.class());
-                return Err(err.class());
-            }
-        };
-    let mut prior_from_pending = !existing.is_empty();
-    let mut prior = match existing
-        .iter()
-        .max_by_key(|record| record.expected_record_count)
-    {
-        Some(last) => Some(pending_checkpoint(last)?),
-        None => progress.clone(),
-    };
-    let mut persisted = 0u32;
-    loop {
-        if cancel.is_some_and(CancellationToken::is_cancelled) {
-            break;
-        }
-        let pending = match build_bounded_pending_for_part(
-            snapshot.source,
-            &snapshot.source_session_id,
-            &current_part,
-            bytes,
-            snapshot.observed_at,
-            prior.as_ref(),
-        ) {
-            Ok(Some(pending)) => pending,
-            Ok(None) => break,
-            Err(ArchiveSyncError::RecordTooLarge {
-                source_record_identity,
-                record_size_bytes,
-                limit_bytes,
-            }) => {
-                let blocked = BlockedArchiveRecord {
-                    source: snapshot.source,
-                    source_session_id: snapshot.source_session_id.clone(),
-                    source_transcript_part_id: current_part.clone(),
-                    source_record_identity: Some(source_record_identity),
-                    record_size_bytes: Some(record_size_bytes),
-                    limit_bytes,
-                    policy_version: ARCHIVE_RECORD_POLICY_VERSION.to_string(),
-                    observed_file_size: bytes.len() as u64,
-                    source_fingerprint_bytes: bytes.len() as u64,
-                    observed_file_sha256: collector_archive::sha256(bytes).to_string(),
-                    pending_body_sha256: None,
-                };
-                if let Err(err) = spool.persist_blocked_record(&blocked) {
-                    report.failed += 1;
-                    record_error(report, err.class());
-                    return Err(err.class());
-                }
-                report.blocked += 1;
-                report.failed += 1;
-                record_error(report, "archive_record_too_large");
-                return Ok(persisted);
-            }
-            Err(
-                err @ ArchiveSyncError::Scan(
-                    collector_archive::JsonlError::HistoricalPrefixChanged
-                    | collector_archive::JsonlError::HistoricalPrefixShortened,
-                ),
-            ) => {
-                if prior_from_pending {
-                    if let Err(clear_error) = spool.clear_slices_for_part(
-                        snapshot.source,
-                        &snapshot.source_session_id,
-                        &current_part,
-                    ) {
-                        report.failed += 1;
-                        record_error(report, clear_error.class());
-                        return Err(clear_error.class());
-                    }
-                    existing.clear();
-                    prior = progress.clone();
-                    prior_from_pending = false;
-                    continue;
-                }
-                let Some(previous) = progress.as_ref() else {
-                    report.failed += 1;
-                    record_error(report, err.class());
-                    return Err(err.class());
-                };
-                let reason = match err {
-                    ArchiveSyncError::Scan(
-                        collector_archive::JsonlError::HistoricalPrefixChanged,
-                    ) => "prefix_changed",
-                    ArchiveSyncError::Scan(
-                        collector_archive::JsonlError::HistoricalPrefixShortened,
-                    ) => "prefix_shortened",
-                    _ => unreachable!("matched historical prefix error"),
-                };
-                let previous_offset = previous.last_complete_byte_offset;
-                let new_part = match collector_archive::rewrite_transcript_part_id(
-                    snapshot.source,
-                    &current_part,
-                    bytes,
-                ) {
-                    Ok(part) => part,
-                    Err(error) => {
-                        let error = ArchiveSyncError::Scan(error);
-                        report.failed += 1;
-                        record_error(report, error.class());
-                        return Err(error.class());
-                    }
-                };
-                if let Err(error) = spool.fork_part(
-                    snapshot.source,
-                    &snapshot.source_session_id,
-                    &snapshot.base_transcript_part_id,
-                    &current_part,
-                    &new_part,
-                    reason,
-                    now_ms,
-                ) {
-                    report.failed += 1;
-                    record_error(report, error.class());
-                    return Err(error.class());
-                }
-                report.fork_events.push(ArchiveForkEvent {
-                    source: snapshot.source,
-                    source_session_id: snapshot.source_session_id.clone(),
-                    previous_part_id: current_part.clone(),
-                    new_part_id: new_part.clone(),
-                    reason: reason.to_string(),
-                    previous_offset,
-                    new_size: bytes.len() as u64,
-                });
-                report.forked += 1;
-                current_part = new_part;
-                progress = None;
-                existing.clear();
-                prior = None;
-                prior_from_pending = false;
-                continue;
-            }
-            Err(err) => {
-                report.failed += 1;
-                record_error(report, err.class());
-                return Err(err.class());
-            }
-        };
-        if existing
-            .iter()
-            .any(|record| record.expected_record_count == pending.expected_record_count)
-        {
-            prior = Some(pending_checkpoint(&pending)?);
-            continue;
-        }
-        if let Err(err) = spool.persist_slice(&pending) {
-            report.failed += 1;
-            record_error(report, err.class());
-            return Err(err.class());
-        }
-        persisted += 1;
-        prior = Some(pending_checkpoint(&pending)?);
-        prior_from_pending = true;
+
+    pub fn body(&self) -> &[u8] {
+        &self.pending.body
     }
-    Ok(persisted)
-}
 
-pub(crate) fn persist_snapshot(
-    spool: &ArchiveSpool,
-    snapshot: &ArchiveSnapshot,
-    report: &mut ArchiveCycleReport,
-    now_ms: i64,
-    cancel: Option<&CancellationToken>,
-    prefetched_source_bytes: Option<&[u8]>,
-) -> Result<(), &'static str> {
-    let loaded_source_bytes;
-    let source_bytes = match prefetched_source_bytes {
-        Some(bytes) => bytes,
-        None => {
-            loaded_source_bytes = snapshot_bytes(snapshot).map_err(|_| {
-                report.failed += 1;
-                record_error(report, "archive_io");
-                "archive_io"
-            })?;
-            loaded_source_bytes.as_ref()
-        }
-    };
-    persist_snapshot_bytes(spool, snapshot, source_bytes, report, now_ms, cancel)
-}
-
-fn persist_snapshot_bytes(
-    spool: &ArchiveSpool,
-    snapshot: &ArchiveSnapshot,
-    bytes: &[u8],
-    report: &mut ArchiveCycleReport,
-    now_ms: i64,
-    cancel: Option<&CancellationToken>,
-) -> Result<(), &'static str> {
-    let persisted = persist_observed_slices(spool, snapshot, bytes, report, now_ms, cancel)?;
-    report.captured += persisted;
-    Ok(())
-}
-
-pub(crate) fn snapshot_bytes(snapshot: &ArchiveSnapshot) -> std::io::Result<Cow<'_, [u8]>> {
-    match &snapshot.deferred_file {
-        Some(deferred) => read_capture_window(
-            &deferred.path,
-            deferred.prior_offset,
-            deferred.minimum_observed_size,
-        )
-        .map(Cow::Owned),
-        None => Ok(Cow::Borrowed(&snapshot.bytes)),
+    pub fn id(&self) -> String {
+        collector_archive::sha256(&self.pending.body).to_string()
     }
 }
 
-pub(crate) enum UploadOutcome {
+pub type ArchiveUploadResponse = Result<ArchiveAcknowledgement, ArchiveClientError>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UploadOutcome {
     Advanced,
     Blocked,
     Frozen,
@@ -286,48 +44,89 @@ pub(crate) enum UploadOutcome {
     Halt(&'static str),
 }
 
-pub(crate) async fn upload_pending<U: ArchiveUploader>(
-    uploader: &U,
-    spool: &mut ArchiveSpool,
-    key_store: &dyn ArchiveKeyStore,
-    pending: &PendingArchiveRequest,
-    source_bytes: Option<&[u8]>,
-    cancel: Option<&CancellationToken>,
-) -> Result<UploadOutcome, &'static str> {
-    if let Some(blocked) = spool
-        .blocked_part(
+pub fn prepare_next_archive_upload(
+    spool: &ArchiveSpool,
+    plan: &ArchiveHistoryPlan,
+    policy: ArchivePolicy,
+) -> Result<Option<PreparedArchiveUpload>, &'static str> {
+    prepare_next_archive_upload_excluding(spool, plan, policy, &HashSet::new())
+}
+
+pub fn prepare_next_archive_upload_excluding(
+    spool: &ArchiveSpool,
+    plan: &ArchiveHistoryPlan,
+    policy: ArchivePolicy,
+    excluded: &HashSet<String>,
+) -> Result<Option<PreparedArchiveUpload>, &'static str> {
+    if !policy.uploads() || spool.cleanup_required() {
+        return Ok(None);
+    }
+    let mut skipped = excluded.clone();
+    let mut first_error = None;
+    loop {
+        let selected = spool
+            .next_pending_candidate(
+                |source, session| plan.pending_selection(source, session),
+                |id| skipped.contains(id),
+            )
+            .map_err(|err| err.class())?;
+        first_error = first_error.or(selected.first_error);
+        let Some(pending) = selected.pending else {
+            return match first_error {
+                Some(class) => Err(class),
+                None => Ok(None),
+            };
+        };
+        match spool.blocked_part(
             pending.source,
             &pending.source_session_id,
             &pending.source_transcript_part_id,
-        )
-        .map_err(|err| err.class())?
-    {
-        if blocked.matches_pending(pending) {
-            if source_bytes.is_none_or(|bytes| blocked.matches_source(bytes)) {
-                return Ok(UploadOutcome::Blocked);
+        ) {
+            Ok(Some(blocked)) if blocked.matches_pending(&pending) => {
+                skipped.insert(collector_archive::sha256(&pending.body).to_string());
             }
-            spool
-                .clear_blocked_part(
-                    pending.source,
-                    &pending.source_session_id,
-                    &pending.source_transcript_part_id,
-                )
-                .map_err(|err| err.class())?;
+            Ok(_) => return Ok(Some(PreparedArchiveUpload { pending })),
+            Err(err) => return Err(err.class()),
         }
     }
-    match uploader.upload(pending.source, &pending.body, cancel).await {
+}
+
+pub async fn send_prepared_archive_upload<U: ArchiveUploader>(
+    uploader: &U,
+    prepared: &PreparedArchiveUpload,
+    cancel: Option<&CancellationToken>,
+) -> ArchiveUploadResponse {
+    uploader
+        .upload(prepared.pending.source, &prepared.pending.body, cancel)
+        .await
+}
+
+pub fn apply_archive_upload_response(
+    spool: &mut ArchiveSpool,
+    key_store: &dyn ArchiveKeyStore,
+    prepared: &PreparedArchiveUpload,
+    response: ArchiveUploadResponse,
+) -> Result<UploadOutcome, &'static str> {
+    let pending = &prepared.pending;
+    let remains_pending = spool
+        .pending_slice_exists_exact(pending)
+        .map_err(|err| err.class())?;
+    if !remains_pending {
+        return Err(ArchiveSyncError::AcknowledgementMismatch.class());
+    }
+    match response {
         Ok(ack) => {
             if !acknowledgement_matches(pending, &ack) {
                 return Err(ArchiveSyncError::AcknowledgementMismatch.class());
             }
             let checkpoint = pending_checkpoint(pending)?;
             spool
-                .commit_acknowledgement(pending, &checkpoint)
+                .commit_verified_acknowledgement(pending, &checkpoint, &ack)
                 .map_err(|err| err.class())?;
             Ok(UploadOutcome::Advanced)
         }
         Err(err) if err.class() == "archive_record_too_large" => {
-            let blocked = blocked_from_rejected_pending(pending, source_bytes)?;
+            let blocked = blocked_from_rejected_pending(pending, None)?;
             spool
                 .persist_blocked_record(&blocked)
                 .map_err(|error| error.class())?;

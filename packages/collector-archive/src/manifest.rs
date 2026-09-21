@@ -36,6 +36,12 @@ impl ChunkByteRange {
 #[serde(tag = "element_type", rename_all = "snake_case")]
 pub enum ManifestElement {
     Record {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        predecessor_part_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_byte_start: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_byte_end: Option<u64>,
         chain_sequence: u64,
         source_transcript_part_id: String,
         source_record_identity: String,
@@ -117,6 +123,24 @@ impl ArchiveSessionManifest {
                 byte_range.validate()?;
                 Ok(match element {
                     ChainElement::Record(record) => ManifestElement::Record {
+                        predecessor_part_id: record
+                            .source_record_identity
+                            .split_once(":from:")
+                            .map(|(_, part)| part.to_string()),
+                        source_byte_start: (record.archive_format_version
+                            == crate::BYTE_ARCHIVE_FORMAT_VERSION)
+                            .then(|| {
+                                crate::byte_segment_range(&record.source_record_identity)
+                                    .map(|r| r.0)
+                            })
+                            .flatten(),
+                        source_byte_end: (record.archive_format_version
+                            == crate::BYTE_ARCHIVE_FORMAT_VERSION)
+                            .then(|| {
+                                crate::byte_segment_range(&record.source_record_identity)
+                                    .map(|r| r.1)
+                            })
+                            .flatten(),
                         chain_sequence: sequence,
                         source_transcript_part_id: record.source_transcript_part_id.clone(),
                         source_record_identity: record.source_record_identity.clone(),
@@ -134,7 +158,7 @@ impl ArchiveSessionManifest {
             })
             .collect::<Result<Vec<_>, ManifestError>>()?;
         let manifest = Self {
-            archive_format_version: ARCHIVE_FORMAT_VERSION,
+            archive_format_version: if chain.elements.iter().any(|element| matches!(element, ChainElement::Record(record) if record.archive_format_version == crate::BYTE_ARCHIVE_FORMAT_VERSION)) { crate::BYTE_ARCHIVE_FORMAT_VERSION } else { ARCHIVE_FORMAT_VERSION },
             chain_hash_version: CHAIN_HASH_VERSION,
             source: chain.source,
             source_session_id: chain.source_session_id.clone(),
@@ -150,8 +174,7 @@ impl ArchiveSessionManifest {
     pub fn verify_against_chain(&self, chain: &ArchiveChain) -> Result<(), ManifestError> {
         self.validate_wire()?;
         chain.verify()?;
-        if self.archive_format_version != ARCHIVE_FORMAT_VERSION
-            || self.chain_hash_version != CHAIN_HASH_VERSION
+        if self.chain_hash_version != CHAIN_HASH_VERSION
             || self.source != chain.source
             || self.source_session_id != chain.source_session_id
             || self.element_count != chain.elements.len() as u64
@@ -167,6 +190,9 @@ impl ArchiveSessionManifest {
             match (manifest, chain_element) {
                 (
                     ManifestElement::Record {
+                        predecessor_part_id,
+                        source_byte_start,
+                        source_byte_end,
                         chain_sequence,
                         source_transcript_part_id,
                         source_record_identity,
@@ -182,6 +208,19 @@ impl ArchiveSessionManifest {
                     && *content_sha256 == record.content_sha256
                     && *chain_hash == record.chain_hash =>
                 {
+                    let expected_range = (record.archive_format_version
+                        == crate::BYTE_ARCHIVE_FORMAT_VERSION)
+                        .then(|| crate::byte_segment_range(&record.source_record_identity))
+                        .flatten();
+                    if predecessor_part_id.as_deref()
+                        != record
+                            .source_record_identity
+                            .split_once(":from:")
+                            .map(|(_, part)| part)
+                        || source_byte_start.zip(*source_byte_end) != expected_range
+                    {
+                        return Err(ManifestError::Mismatch);
+                    }
                     byte_range.validate()?;
                 }
                 (
@@ -255,9 +294,28 @@ impl ArchiveSessionManifest {
                 ManifestElement::Record {
                     source_transcript_part_id,
                     source_record_identity,
+                    source_byte_start,
+                    source_byte_end,
+                    predecessor_part_id,
                     byte_range,
                     ..
                 } => {
+                    if source_record_identity.starts_with("bytes:")
+                        || source_byte_start.is_some()
+                        || source_byte_end.is_some()
+                        || predecessor_part_id.is_some()
+                    {
+                        let range = crate::byte_segment_range(source_record_identity)
+                            .ok_or(ManifestError::InvalidByteRange)?;
+                        if source_byte_start.zip(*source_byte_end) != Some(range)
+                            || predecessor_part_id.as_deref()
+                                != source_record_identity
+                                    .split_once(":from:")
+                                    .map(|(_, part)| part)
+                        {
+                            return Err(ManifestError::InvalidByteRange);
+                        }
+                    }
                     crate::types::validate_transcript_part_id(
                         self.source,
                         source_transcript_part_id,
@@ -285,7 +343,7 @@ impl ArchiveSessionManifest {
                         return Err(ManifestError::CheckpointScopeMismatch);
                     }
                     let committed = CommittedScanCheckpoint {
-                        archive_format_version: self.archive_format_version,
+                        archive_format_version: checkpoint.archive_format_version,
                         chain_hash_version: self.chain_hash_version,
                         source: self.source,
                         source_session_id: self.source_session_id.clone(),

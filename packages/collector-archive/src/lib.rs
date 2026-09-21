@@ -8,6 +8,8 @@
 mod archive_checkpoint;
 mod archive_observation;
 mod archive_wire;
+mod byte_reader;
+mod bytes;
 mod chain;
 mod chain_validation;
 mod chain_verification;
@@ -23,6 +25,11 @@ mod types;
 
 pub use archive_checkpoint::default_transcript_part_id;
 pub use archive_wire::{ArchiveUploadRequest, JsonlScan, ARCHIVE_UPLOAD_WIRE_VERSION};
+pub use byte_reader::SourceByteReader;
+pub use bytes::{
+    byte_segment_range, rewrite_byte_part_id, rewrite_byte_part_id_from_digest, scan_source_bytes,
+    sha256_reader, BYTE_ARCHIVE_FORMAT_VERSION, MAX_BYTE_SEGMENT_BYTES,
+};
 pub use chain::{ArchiveChain, ChainError, CommitReport};
 pub use elements::{ArchiveRecord, ChainElement, CommittedScanCheckpoint};
 pub use encoding::{EncodedPayload, PayloadEncoding};

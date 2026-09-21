@@ -58,6 +58,7 @@ impl ArchiveSyncError {
             Self::Scan(collector_archive::JsonlError::HistoricalPrefixShortened) => {
                 "archive_historical_prefix_shortened"
             }
+            Self::Scan(collector_archive::JsonlError::SourceIo(_)) => "archive_io",
             Self::Scan(_) => "archive_scan",
             Self::Archive(_) => "archive_contract",
             Self::Json(_) => "archive_state",

@@ -517,7 +517,7 @@ describe('Archive API authorization', () => {
       headers: { ...collectorHeaders, 'X-Trace-Flow-Archive-Export-Grant': 'not-a-grant' },
     });
     expect(exported.status).toBe(403);
-    expect(await exported.json()).toMatchObject({ reason: 'grant_unavailable' });
+    expect(await exported.json()).toMatchObject({ reason: 'invalid' });
 
     const deleted = await fetchRoute(env, '/v1/archive/contributions/con_other', {
       method: 'DELETE',

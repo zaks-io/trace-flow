@@ -1,4 +1,6 @@
 import { strict as assert } from 'node:assert';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import {
   captureCommand,
@@ -16,6 +18,7 @@ import {
 } from '../../apps/archive-api/src/archive-contract';
 import { checkpointChainHash, recordChainHash } from '../../apps/archive-api/src/archive-chain';
 import { prefixChainHash } from '../../apps/archive-api/src/archive-prefix-validation';
+import { exportSessionDirectoryId } from './archive-export-verification';
 
 const repoRoot = resolve(import.meta.dirname, '../..');
 const archiveApiRoot = resolve(repoRoot, 'apps/archive-api');
@@ -54,6 +57,10 @@ interface ArchiveAcknowledgement {
   chain_head: string;
   manifest_key: string;
   chunk_keys: string[];
+  request_sha256?: string;
+  source_transcript_part_id?: string;
+  captured_byte_offset?: number;
+  captured_prefix_sha256?: string;
 }
 
 interface ArchiveStatus {
@@ -62,6 +69,57 @@ interface ArchiveStatus {
   storedBytes: number | null;
   lastDurableAcknowledgedAt: number | null;
   integritySessions: { source: ArchiveSource; sourceSessionId: string }[];
+}
+
+interface ExportGrantResult {
+  grant: string;
+  exportId: string;
+  archiveUrl: string;
+  expiresAt: number;
+}
+
+interface ExportSelection {
+  version: 1;
+  exportId: string;
+  orgId: string;
+  selectionSha256: string;
+  selectionToken: string;
+  sessions: { manifestKey: string; elementCount: number; chainHead: string }[];
+}
+
+interface CaptureFixture {
+  uploads: ArchiveUploadRequest[];
+  request_bodies: string[];
+  expected_parts: {
+    part_id: string;
+    payload_encoding: 'utf8' | 'base64';
+    payload: string;
+    sha256: string;
+  }[];
+  source_and_spool_removed: true;
+}
+
+interface LocalExportManifest {
+  selection: ExportSelection & {
+    sessions: (ExportSelection['sessions'][number] & {
+      contributionId: string;
+      source: ArchiveSource;
+      sourceSessionId: string;
+    })[];
+  };
+  sessions: { session_index: number; status: 'pending' | 'verified' | 'failed' }[];
+}
+
+interface LocalSessionManifest {
+  parts: {
+    source_transcript_part_id: string;
+    file: string;
+    byte_exact: boolean;
+    sha256: string;
+    byte_length: number;
+    observed_source_size?: number;
+    source_capture_complete?: boolean;
+  }[];
 }
 
 class ConvexCommandError extends Error {
@@ -280,6 +338,23 @@ async function sendUpload(
   });
 }
 
+async function sendUploadBody(
+  archiveUrl: string,
+  credential: string,
+  source: ArchiveSource,
+  body: string,
+): Promise<Response> {
+  return fetch(`${archiveUrl}/v1/archive/uploads`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Trace-Flow-Collector-Secret': credential,
+      'X-Trace-Flow-Archive-Source': source,
+    },
+    body,
+  });
+}
+
 async function waitForCredentialPolicy(archiveUrl: string, credential: string): Promise<void> {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
@@ -321,6 +396,93 @@ async function sleep(milliseconds: number): Promise<void> {
 
 async function responseJson(response: Response): Promise<unknown> {
   return response.json();
+}
+
+async function archiveExportRequest(
+  archiveUrl: string,
+  grant: string,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const response = await fetch(`${archiveUrl}/v1/archive/exports`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Trace-Flow-Archive-Export-Grant': grant,
+    },
+    body: JSON.stringify(body),
+  });
+  assert.equal(response.status, 200);
+  return (await responseJson(response)) as Record<string, unknown>;
+}
+
+async function addSelectionManifestKeys(
+  archiveUrl: string,
+  grant: string,
+  selection: ExportSelection,
+  archiveObjectKeys: Set<string>,
+): Promise<void> {
+  for (const [sessionIndex, session] of selection.sessions.entries()) {
+    const pending = [session.manifestKey];
+    const seen = new Set<string>();
+    while (pending.length > 0) {
+      const objectKey = pending.pop()!;
+      if (seen.has(objectKey)) continue;
+      seen.add(objectKey);
+      archiveObjectKeys.add(objectKey);
+      const response = await archiveExportRequest(archiveUrl, grant, {
+        operation: 'manifest',
+        selection,
+        sessionIndex,
+        objectKey,
+      });
+      const manifest = response.manifest as {
+        pages?: { page_key: string }[];
+        previous_page_key?: string;
+      };
+      for (const page of manifest.pages ?? []) pending.push(page.page_key);
+      if (manifest.previous_page_key) pending.push(manifest.previous_page_key);
+    }
+  }
+}
+
+function decodeExportBase64(value: unknown): Uint8Array {
+  assert.equal(typeof value, 'string');
+  return Uint8Array.from(Buffer.from(value, 'base64'));
+}
+
+async function captureFixture(
+  source: ArchiveSource,
+  sourceSessionId: string,
+): Promise<CaptureFixture> {
+  const result = await captureCommand(
+    'cargo',
+    [
+      'run',
+      '--quiet',
+      '-p',
+      'collector-archive-sync',
+      '--example',
+      'archive_capture_fixture',
+      '--',
+      source,
+      sourceSessionId,
+    ],
+    { cwd: repoRoot },
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(formatProcessFailure('Archive capture fixture', result));
+  }
+  const fixture = JSON.parse(result.stdout) as CaptureFixture;
+  assert.equal(fixture.source_and_spool_removed, true);
+  assert.ok(fixture.uploads.length > 0 && fixture.expected_parts.length > 0);
+  assert.equal(fixture.request_bodies.length, fixture.uploads.length);
+  return fixture;
+}
+
+function fixturePayload(part: CaptureFixture['expected_parts'][number]): Uint8Array {
+  return part.payload_encoding === 'utf8'
+    ? new TextEncoder().encode(part.payload)
+    : decodeExportBase64(part.payload);
 }
 
 function assertDurableAcknowledgement(
@@ -391,6 +553,7 @@ async function main(): Promise<void> {
   let smokeFailed = false;
   let smokeFailure: unknown;
   const cleanupFailures: string[] = [];
+  let rawExportDirectory: string | undefined;
 
   try {
     primary = await runConvex<SeedResult>(
@@ -521,6 +684,68 @@ async function main(): Promise<void> {
     assert.equal(retryResponse.status, 200);
     assert.deepEqual(await responseJson(retryResponse), claudeAck);
 
+    const exportId = `smoke-${crypto.randomUUID()}`;
+    const exportGrant = await runConvex<ExportGrantResult>(
+      deployment,
+      'archiveExport:issueGrant',
+      {
+        exportId,
+        targets: [
+          {
+            contributionId: enrollment.contributionId,
+            source: 'claude',
+            sourceSessionId: claudeSession,
+          },
+        ],
+      },
+      primary.tokenIdentifier,
+    );
+    assert.equal(exportGrant.archiveUrl, archiveUrl);
+    assert.equal(exportGrant.exportId, exportId);
+    assert.ok(exportGrant.expiresAt > Math.floor(Date.now() / 1000));
+    const selected = await archiveExportRequest(archiveUrl, exportGrant.grant, {
+      operation: 'select',
+    });
+    const selection = selected.selection as ExportSelection;
+    assert.equal(selection.exportId, exportId);
+    await addSelectionManifestKeys(archiveUrl, exportGrant.grant, selection, archiveObjectKeys);
+    const manifestResponse = await archiveExportRequest(archiveUrl, exportGrant.grant, {
+      operation: 'manifest',
+      selection,
+      sessionIndex: 0,
+      objectKey: selection.sessions[0]!.manifestKey,
+    });
+    const manifest = manifestResponse.manifest as {
+      elements: {
+        element_type: string;
+        content_sha256?: string;
+        byte_range: { chunk_id: string; start: number; end: number };
+      }[];
+    };
+    const record = manifest.elements.find((element) => element.element_type === 'record');
+    assert.ok(record?.content_sha256);
+    const chunkResponse = await archiveExportRequest(archiveUrl, exportGrant.grant, {
+      operation: 'chunk',
+      selection,
+      sessionIndex: 0,
+      chunkId: record.byte_range.chunk_id,
+    });
+    const chunk = decodeExportBase64(chunkResponse.payload_base64);
+    const storedRecord = JSON.parse(
+      new TextDecoder()
+        .decode(chunk.subarray(record.byte_range.start, record.byte_range.end))
+        .trim(),
+    ) as ArchiveObservation;
+    const expectedObservation = claudeFixture.upload.observations[0]!;
+    assert.equal(storedRecord.content_sha256, expectedObservation.content_sha256);
+    assert.equal(storedRecord.payload, expectedObservation.payload);
+
+    const resumed = await archiveExportRequest(archiveUrl, exportGrant.grant, {
+      operation: 'select',
+      selection,
+    });
+    assert.deepEqual(resumed, selected);
+
     const codexSession = `codex-smoke-${crypto.randomUUID()}`;
     const codexFixture = await uploadFixture('codex', codexSession);
     const denied = await sendUpload(archiveUrl, minted.secret, 'codex', codexFixture.upload);
@@ -542,6 +767,130 @@ async function main(): Promise<void> {
     assertDurableAcknowledgement(codexAck, 'codex', codexSession, codexFixture.expectedChainHead);
     archiveObjectKeys.add(codexAck.manifest_key);
     codexAck.chunk_keys.forEach((key) => archiveObjectKeys.add(key));
+
+    const rawFixtures = await Promise.all(
+      (['claude', 'codex'] as const).map(async (source) => {
+        const session = `${source}-raw-smoke-${crypto.randomUUID()}`;
+        return { source, session, fixture: await captureFixture(source, session) };
+      }),
+    );
+    for (const { source, fixture } of rawFixtures) {
+      for (const [index, body] of fixture.request_bodies.entries()) {
+        const upload = fixture.uploads[index]!;
+        const response = await sendUploadBody(archiveUrl, minted.secret, source, body);
+        assert.equal(response.status, 200);
+        const acknowledgement = (await responseJson(response)) as ArchiveAcknowledgement;
+        const bodyDigest = new Uint8Array(
+          await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body)),
+        );
+        assert.equal(
+          acknowledgement.request_sha256,
+          `sha256:${Array.from(bodyDigest, (byte) => byte.toString(16).padStart(2, '0')).join('')}`,
+        );
+        assert.equal(
+          acknowledgement.source_transcript_part_id,
+          upload.checkpoint.source_transcript_part_id,
+        );
+        assert.equal(
+          acknowledgement.captured_byte_offset,
+          upload.checkpoint.last_complete_byte_offset,
+        );
+        assert.equal(
+          acknowledgement.captured_prefix_sha256,
+          upload.checkpoint.complete_prefix_sha256,
+        );
+        archiveObjectKeys.add(acknowledgement.manifest_key);
+        acknowledgement.chunk_keys.forEach((key) => archiveObjectKeys.add(key));
+        const replay = await sendUploadBody(archiveUrl, minted.secret, source, body);
+        assert.equal(replay.status, 200);
+        assert.deepEqual(await responseJson(replay), acknowledgement);
+      }
+    }
+    const rawExportId = `raw-smoke-${crypto.randomUUID()}`;
+    const rawGrant = await runConvex<ExportGrantResult>(
+      deployment,
+      'archiveExport:issueGrant',
+      {
+        exportId: rawExportId,
+        targets: rawFixtures
+          .map(({ source, session }) => ({
+            contributionId: enrollment!.contributionId,
+            source,
+            sourceSessionId: session,
+          }))
+          .concat({
+            contributionId: enrollment.contributionId,
+            source: 'codex',
+            sourceSessionId: codexSession,
+          }),
+      },
+      primary.tokenIdentifier,
+    );
+    rawExportDirectory = await mkdtemp(resolve(tmpdir(), 'trace-flow-archive-export-smoke-'));
+    const exportEnvironment = {
+      ...process.env,
+      TRACE_FLOW_ARCHIVE_EXPORT_GRANT: rawGrant.grant,
+    };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await captureCommand(
+        process.execPath,
+        ['scripts/dev/archive-export.ts', archiveUrl, rawExportDirectory],
+        { cwd: repoRoot, env: exportEnvironment },
+      );
+      if (result.exitCode !== 0) {
+        throw new Error(formatProcessFailure('Archive export client', result, [rawGrant.grant]));
+      }
+      assert.equal(result.stdout.trim(), rawExportDirectory);
+    }
+
+    const localExport = JSON.parse(
+      await readFile(resolve(rawExportDirectory, 'archive-manifest.json'), 'utf8'),
+    ) as LocalExportManifest;
+    assert.ok(localExport.sessions.every(({ status }) => status === 'verified'));
+    assert.equal(localExport.selection.sessions.length, rawFixtures.length + 1);
+    await addSelectionManifestKeys(
+      archiveUrl,
+      rawGrant.grant,
+      localExport.selection,
+      archiveObjectKeys,
+    );
+    for (const { source, session, fixture } of rawFixtures) {
+      const selectedSession = localExport.selection.sessions.find(
+        (candidate) => candidate.source === source && candidate.sourceSessionId === session,
+      );
+      assert.ok(selectedSession);
+      assert.equal(selectedSession.contributionId, enrollment.contributionId);
+      const sessionDirectory = resolve(
+        rawExportDirectory,
+        'sessions',
+        source,
+        await exportSessionDirectoryId(selectedSession.contributionId, session),
+      );
+      const localSession = JSON.parse(
+        await readFile(resolve(sessionDirectory, 'manifest.json'), 'utf8'),
+      ) as LocalSessionManifest;
+      assert.equal(localSession.parts.length, fixture.expected_parts.length);
+      for (const expected of fixture.expected_parts) {
+        const restored = localSession.parts.find(
+          (part) => part.source_transcript_part_id === expected.part_id,
+        );
+        assert.ok(restored);
+        assert.equal(restored.byte_exact, true);
+        assert.equal(restored.sha256, expected.sha256);
+        assert.equal(restored.source_capture_complete, true);
+        const bytes = new Uint8Array(await readFile(resolve(sessionDirectory, restored.file)));
+        assert.deepEqual(bytes, fixturePayload(expected));
+        assert.equal(restored.byte_length, bytes.byteLength);
+        assert.equal(restored.observed_source_size, bytes.byteLength);
+        assert.equal(
+          `sha256:${Array.from(
+            new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
+            (byte) => byte.toString(16).padStart(2, '0'),
+          ).join('')}`,
+          expected.sha256,
+        );
+      }
+    }
 
     const durableStatus = await waitForDurableStatus(
       deployment,
@@ -576,6 +925,9 @@ async function main(): Promise<void> {
       crossOrganizationFailure: true,
       firstKeyBootstrap: true,
       auditEventsVerified: true,
+      exportVerified: true,
+      exportResumeVerified: true,
+      rawCaptureRestoreVerified: true,
     };
   } catch (error) {
     smokeFailed = true;
@@ -612,6 +964,11 @@ async function main(): Promise<void> {
           primary!.tokenIdentifier,
           true,
         ),
+      );
+    }
+    if (rawExportDirectory) {
+      await cleanup('local archive export deletion', () =>
+        rm(rawExportDirectory!, { recursive: true, force: true }),
       );
     }
     await cleanup('R2 object deletion', () => deleteArchiveObjects(archiveObjectKeys));

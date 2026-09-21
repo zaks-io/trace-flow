@@ -22,6 +22,10 @@ pub struct CompletedScanCheckpoint {
 }
 
 impl CompletedScanCheckpoint {
+    pub fn archive_format_version(&self) -> u16 {
+        self.archive_format_version
+    }
+
     pub fn source_transcript_part_id(&self) -> &str {
         &self.source_transcript_part_id
     }
@@ -43,6 +47,21 @@ impl CompletedScanCheckpoint {
             return Err(ArchiveError::InvalidIdentifier {
                 field: "last_source_record_identity",
             });
+        }
+        if self.archive_format_version == crate::BYTE_ARCHIVE_FORMAT_VERSION {
+            if let Some(identity) = &self.last_source_record_identity {
+                if crate::byte_segment_range(identity).map(|range| range.1)
+                    != Some(self.last_complete_byte_offset)
+                {
+                    return Err(ArchiveError::InvalidIdentifier {
+                        field: "last_source_record_identity",
+                    });
+                }
+            } else if self.last_complete_byte_offset != 0 {
+                return Err(ArchiveError::InvalidIdentifier {
+                    field: "last_complete_byte_offset",
+                });
+            }
         }
         Ok(())
     }

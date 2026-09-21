@@ -1,3 +1,4 @@
+import { digestString } from './archive-contract';
 import type { Context } from 'hono';
 import { axiomConfigFromEnv, createWorkerLogger } from '@trace-flow/logging';
 import { isArchiveIntegrityErrorClass, type ArchiveIntegrityErrorClass } from '@trace-flow/types';
@@ -28,6 +29,7 @@ import { appendArchiveAuditEvent } from './audit';
 import { publishArchiveIntegrityStatus } from './archive-integrity-status';
 import { isRetryableDurableObjectError } from './durable-object-errors';
 import { hasInternalArchiveAuthority } from './internal-authority';
+import { executeArchiveExport, MAX_ARCHIVE_EXPORT_REQUEST_BYTES } from './archive-export';
 
 const COLLECTOR_SECRET_HEADER = 'X-Trace-Flow-Collector-Secret';
 const ARCHIVE_SOURCE_HEADER = 'X-Trace-Flow-Archive-Source';
@@ -158,8 +160,18 @@ export async function handleUpload(c: Context<{ Bindings: ArchiveApiEnv }>): Pro
     }
 
     let upload: unknown;
+    let requestSha256: string | undefined;
     try {
-      upload = await readBoundedJson(c.req.raw, MAX_ARCHIVE_UPLOAD_BYTES, 'upload_too_large');
+      upload = await readBoundedJson(
+        c.req.raw,
+        MAX_ARCHIVE_UPLOAD_BYTES,
+        'upload_too_large',
+        async (bytes) => {
+          requestSha256 = digestString(
+            new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
+          );
+        },
+      );
     } catch (error) {
       const tooLarge =
         error instanceof ArchiveContractError && error.errorClass === 'upload_too_large';
@@ -315,6 +327,7 @@ export async function handleUpload(c: Context<{ Bindings: ArchiveApiEnv }>): Pro
       return c.json({ error: 'upload_rejected', reason }, 503);
     }
     const ledgerRequestBody = JSON.stringify({
+      requestSha256,
       scope: {
         orgId: currentDecision.orgId,
         userId: currentDecision.userId,
@@ -461,20 +474,57 @@ function rejectWithoutExportGrant(
   operation: string,
 ): Response {
   const logger = requestLogger(c, operation);
-  const grant = authenticateArchiveExportGrant(
-    c.req.header(ARCHIVE_EXPORT_GRANT_HEADER),
-    c.req.header('Authorization'),
-    c.req.header('Cookie'),
-  );
-  logger.warn('archive_api.export_grant_rejected', { reason: grant.reason });
+  const reason = hasForeignCredentialClass(c.req.header('Authorization'), c.req.header('Cookie'))
+    ? 'invalid_credential_class'
+    : c.req.header(ARCHIVE_EXPORT_GRANT_HEADER)
+      ? 'grant_unavailable'
+      : 'missing';
+  logger.warn('archive_api.export_grant_rejected', { reason });
   c.executionCtx.waitUntil(logger.flush());
-  const status =
-    grant.reason === 'missing' || grant.reason === 'invalid_credential_class' ? 401 : 403;
-  return c.json({ error: 'unauthorized', reason: grant.reason }, status);
+  const status = reason === 'missing' || reason === 'invalid_credential_class' ? 401 : 403;
+  return c.json({ error: 'unauthorized', reason }, status);
 }
 
-export function handleExport(c: Context<{ Bindings: ArchiveApiEnv }>): Response {
-  return rejectWithoutExportGrant(c, 'archive_export');
+export async function handleExport(c: Context<{ Bindings: ArchiveApiEnv }>): Promise<Response> {
+  const logger = requestLogger(c, 'archive_export');
+  try {
+    const auth = await authenticateArchiveExportGrant(
+      c.req.header(ARCHIVE_EXPORT_GRANT_HEADER),
+      c.req.header('Authorization'),
+      c.req.header('Cookie'),
+      c.env.ARCHIVE_API_SHARED_SECRET,
+    );
+    if (!auth.ok) {
+      logger.warn('archive_api.export_grant_rejected', { reason: auth.reason });
+      const status =
+        auth.reason === 'missing' || auth.reason === 'invalid_credential_class' ? 401 : 403;
+      return c.json({ error: 'unauthorized', reason: auth.reason }, status);
+    }
+    if (c.req.method !== 'POST') return c.json({ error: 'method_not_allowed' }, 405);
+    let request: unknown;
+    try {
+      request = await readBoundedJson(
+        c.req.raw,
+        MAX_ARCHIVE_EXPORT_REQUEST_BYTES,
+        'archive_export_request_too_large',
+      );
+    } catch (error) {
+      const reason = error instanceof ArchiveContractError ? error.errorClass : 'invalid_json';
+      return c.json({ error: 'invalid_export', reason }, 400);
+    }
+    try {
+      const response = await executeArchiveExport(c.env, auth.grant, request, logger);
+      return c.json(response);
+    } catch (error) {
+      const reason =
+        error instanceof ArchiveContractError ? error.errorClass : 'archive_unavailable';
+      logger.error('archive_api.export_failed', error, { reason, exportId: auth.grant.exportId });
+      const status = reason.endsWith('_invalid') ? 400 : 503;
+      return c.json({ error: 'archive_export_failed', reason }, status);
+    }
+  } finally {
+    c.executionCtx.waitUntil(logger.flush());
+  }
 }
 
 export function handleDeleteContribution(c: Context<{ Bindings: ArchiveApiEnv }>): Response {
