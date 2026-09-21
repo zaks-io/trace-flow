@@ -6,7 +6,7 @@ import {
 } from './archive-contract';
 
 export const BYTE_ARCHIVE_FORMAT_VERSION = 2;
-export const MAX_BYTE_SEGMENT_BYTES = 512 * 1024;
+const MAX_BYTE_SEGMENT_BYTES = 512 * 1024;
 
 export function byteSegmentRange(identity: string): {
   start: number;
