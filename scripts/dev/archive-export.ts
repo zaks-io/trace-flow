@@ -14,24 +14,25 @@ import { checkpointChainHash, recordChainHash } from '../../apps/archive-api/src
 import { collectExportManifestGraph } from './archive-export-traversal';
 import { exportSessionDirectoryId, RawPartVerifier } from './archive-export-verification';
 
-const grant = process.env.TRACE_FLOW_ARCHIVE_EXPORT_GRANT;
+const grantArg = process.env.TRACE_FLOW_ARCHIVE_EXPORT_GRANT;
 const [archiveUrlArg, outputArg] = process.argv.slice(2);
-if (!grant || !archiveUrlArg || !outputArg) {
+if (!grantArg || !archiveUrlArg || !outputArg) {
   throw new Error(
     'Usage: TRACE_FLOW_ARCHIVE_EXPORT_GRANT=<grant> bun scripts/dev/archive-export.ts <archive-url> <output-directory>',
   );
 }
+const grant = grantArg;
 const archiveUrl = archiveUrlArg.replace(/\/$/u, '');
 const outputDirectory = resolve(outputArg);
 const selectionPath = resolve(outputDirectory, 'archive-manifest.json');
 const progressPath = resolve(outputDirectory, '.archive-export-progress.sqlite');
 
 type Json = Record<string, unknown>;
-type Selection = {
+interface Selection {
   version: 1;
   exportId: string;
   orgId: string;
-  sessions: Array<{
+  sessions: {
     userId: string;
     contributionId: string;
     source: 'claude' | 'codex';
@@ -42,14 +43,14 @@ type Selection = {
     elementCount: number;
     recordCount: number;
     chainHead: string;
-  }>;
+  }[];
   selectionSha256: string;
   selectionToken: string;
-};
-type LocalManifest = {
+}
+interface LocalManifest {
   selection: Selection;
   sessions: { session_index: number; status: 'pending' | 'verified' | 'failed' }[];
-};
+}
 
 async function sha256(bytes: Uint8Array): Promise<string> {
   return digestString(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)));
@@ -99,7 +100,7 @@ async function validateSelection(selection: Selection): Promise<void> {
 }
 
 function decodeBase64(value: unknown): Uint8Array {
-  assert.equal(typeof value, 'string');
+  assert.ok(typeof value === 'string');
   return Uint8Array.from(Buffer.from(value, 'base64'));
 }
 
@@ -142,9 +143,11 @@ async function collectManifestElements(
     },
     (elements) => {
       for (const element of elements) {
-        const row = element as Json;
-        assert.ok(Number.isSafeInteger(row.chain_sequence));
-        insertElement.run(sessionIndex, row.chain_sequence as number, JSON.stringify(row));
+        const row = element;
+        assert.ok(
+          typeof row.chain_sequence === 'number' && Number.isSafeInteger(row.chain_sequence),
+        );
+        insertElement.run(sessionIndex, row.chain_sequence, JSON.stringify(row));
       }
     },
   );
@@ -185,12 +188,15 @@ async function writeSession(
   await mkdir(sessionDirectory, { recursive: true });
   await mkdir(resolve(sessionDirectory, 'parts'), { recursive: true });
   const rows = database
-    .query('SELECT element FROM elements WHERE session_index = ? ORDER BY sequence')
-    .iterate(sessionIndex) as Iterable<{ element: string }>;
+    .query<
+      { element: string },
+      [number]
+    >('SELECT element FROM elements WHERE session_index = ? ORDER BY sequence')
+    .iterate(sessionIndex);
   let previous = GENESIS_CHAIN_HASH;
   let count = 0;
   let cachedChunkId = '';
-  let cachedChunk = new Uint8Array();
+  let cachedChunk: Uint8Array = new Uint8Array();
   const legacyParts = new Map<
     string,
     { file: string; hash: Hash; byteLength: number; initialized: boolean }
@@ -219,7 +225,7 @@ async function writeSession(
       assert.equal(await sha256(cachedChunk), `sha256:${range.chunk_id}`);
       cachedChunkId = range.chunk_id;
     }
-    const element = parseStoredElement(cachedChunk, manifest as unknown as Json);
+    const element = parseStoredElement(cachedChunk, manifest);
     assert.equal(element.chain_sequence, count, 'Archive chain sequence is not contiguous');
     assert.equal(element.previous_chain_hash, previous);
     const expectedChain =

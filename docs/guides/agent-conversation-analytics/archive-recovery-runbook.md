@@ -111,12 +111,17 @@ an incomplete prefix; the exporter cannot reconstruct bytes that were never capt
 - Raw capture regressions passed for rewrites, deletion/restart, independent
   collectors, oversized malformed bytes, and receipt rejection. The capacity
   regression proves other metadata cannot consume reserved receipt space.
-- Embedder tests passed 100/100; desktop tests passed 43/43. These include
+- Embedder tests passed 104/104; desktop tests passed 44/44. These include
   changed-path capture, same-size rewrites, three divergent homes, capture during
   a stalled upload, remembered malformed-file identity, and rejection of a file
   replaced between discovery and capture. Workspace check and Clippy passed
   with warnings denied.
-- The final `cargo test --workspace --locked` passed 717 tests with one ignored.
+- PR review regressions cover pausing before upload, unexpected pending-directory
+  entries without under-reserving receipt space, fresh source metadata, short
+  identity reads, and stable lineage IDs when divergent homes appear or disappear.
+  Archive export lint, isolated Bun type checking, and tests now run in the
+  Archive API CI job. The development restore smoke passed again after these fixes.
+- The final `cargo test --workspace --locked` passed 723 tests with one ignored.
   `cargo fmt --all -- --check`, workspace check, and workspace Clippy with
   `--all-targets --locked -- -D warnings` passed on the same implementation.
 - These results describe the working tree on 2026-09-21. A production release

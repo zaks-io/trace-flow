@@ -148,7 +148,7 @@ async fn run(
                     }
                 }
                 if !upload_in_flight && tokio::time::Instant::now() >= retry_at {
-                    match start_upload(local, &failed_uploads, upload_tx.clone(), &bus).await {
+                    match start_upload(&settings_file, &failed_uploads, upload_tx.clone(), &bus).await {
                         UploadStart::Started => upload_in_flight = true,
                         UploadStart::Empty if !failed_uploads.is_empty() => {
                             failed_uploads.clear();
@@ -156,7 +156,7 @@ async fn run(
                             retry_scheduled = true;
                             retry_delay = (retry_delay * 2).min(RETRY_MAX);
                         }
-                        UploadStart::Empty => {}
+                        UploadStart::Empty | UploadStart::Suspended => {}
                         UploadStart::Failed => {
                             retry_at = tokio::time::Instant::now() + jittered(retry_delay);
                             retry_scheduled = true;
@@ -303,11 +303,14 @@ async fn capture(
 }
 
 async fn start_upload(
-    local: LocalArchive,
+    settings_file: &SettingsFile,
     excluded: &HashSet<String>,
     upload_tx: mpsc::Sender<UploadResult>,
     bus: &AppStateBus,
 ) -> UploadStart {
+    let Some(local) = load_local_archive(settings_file, bus) else {
+        return UploadStart::Suspended;
+    };
     let org_id = local.org_id.clone();
     let config = local.config.clone();
     let excluded = excluded.clone();
@@ -327,7 +330,14 @@ async fn start_upload(
             return UploadStart::Failed;
         }
     };
-    let Some(credential) = local.credential else {
+    // Capture and upload preparation can yield while Pause or Disconnect is persisted.
+    let Some(current) = load_local_archive(settings_file, bus) else {
+        return UploadStart::Suspended;
+    };
+    if current.org_id != local.org_id {
+        return UploadStart::Suspended;
+    }
+    let Some(credential) = current.credential else {
         publish_error(bus, "no credential - sign in again".to_string());
         return UploadStart::Failed;
     };
@@ -349,6 +359,7 @@ enum UploadStart {
     Started,
     Empty,
     Failed,
+    Suspended,
 }
 
 async fn apply_upload_result(
@@ -464,6 +475,27 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn upload_start_observes_pause_saved_after_capture_began() {
+        let directory = tempfile::tempdir().unwrap();
+        let settings_file = SettingsFile::at(directory.path());
+        let mut settings = crate::settings::Settings {
+            syncing: true,
+            ..Default::default()
+        };
+        settings_file.save(&settings).unwrap();
+        let capture_settings = settings_file.load().unwrap();
+        settings.syncing = false;
+        settings_file.save(&settings).unwrap();
+        assert!(capture_settings.syncing);
+
+        let (tx, mut rx) = mpsc::channel(1);
+        let result = start_upload(&settings_file, &HashSet::new(), tx, &AppStateBus::new()).await;
+
+        assert!(matches!(result, UploadStart::Suspended));
+        assert!(rx.try_recv().is_err());
+    }
 
     #[test]
     fn capture_intent_survives_a_full_wake_channel() {

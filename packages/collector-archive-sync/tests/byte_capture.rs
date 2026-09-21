@@ -367,3 +367,70 @@ fn metadata_cannot_consume_space_reserved_for_a_large_verified_receipt() {
     assert!(spool.on_disk_bytes().unwrap() <= cap);
     assert!(spool.all_pending().unwrap().is_empty());
 }
+
+#[test]
+fn unexpected_pending_entry_does_not_block_capture_or_ack_reserve() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org", &keys).unwrap();
+    capture(&mut spool, &keys, &snapshot(b"{first unfinished"));
+    let prepared = prepare_next_archive_upload(&spool, &plan(), ArchivePolicy::Enrolled)
+        .unwrap()
+        .unwrap();
+
+    let unexpected = dir.path().join("pending/claude/.DS_Store");
+    std::fs::create_dir_all(unexpected.parent().unwrap()).unwrap();
+    std::fs::write(&unexpected, b"finder metadata").unwrap();
+    let mut unrelated = snapshot(b"{second unfinished");
+    unrelated.source_session_id = "unrelated-session".into();
+    let capture_report = capture_archive_snapshots(
+        &mut spool,
+        &keys,
+        &[unrelated],
+        ArchivePolicy::Enrolled,
+        &plan(),
+        10,
+        None,
+    );
+    assert_eq!(capture_report.captured, 1);
+    assert_eq!(
+        capture_report.first_error.as_deref(),
+        Some("archive_spool_corrupt")
+    );
+
+    let used = spool.on_disk_bytes().unwrap();
+    drop(spool);
+    let cap = used + 3 * 96 * 1024;
+    let mut spool = ArchiveSpool::open_with_cap(dir.path(), "org", &keys, cap).unwrap();
+    let upload: serde_json::Value = serde_json::from_slice(prepared.body()).unwrap();
+    let checkpoint: collector_archive::CompletedScanCheckpoint =
+        serde_json::from_value(upload["checkpoint"].clone()).unwrap();
+    assert!(matches!(
+        spool.persist_progress(ArchiveSource::Codex, "metadata-session", &checkpoint),
+        Err(collector_archive_sync::ArchiveSyncError::CapacityExceeded)
+    ));
+
+    assert_eq!(
+        apply_archive_upload_response(
+            &mut spool,
+            &keys,
+            &prepared,
+            Ok(receipt(prepared.body(), &upload)),
+        ),
+        Ok(UploadOutcome::Advanced)
+    );
+    assert!(spool.on_disk_bytes().unwrap() <= cap);
+    let pending = spool.all_pending().unwrap();
+    assert!(pending.iter().any(|load| matches!(
+        load,
+        PendingLoad::Corrupt {
+            source: ArchiveSource::Claude,
+            class: "archive_spool_corrupt",
+            ..
+        }
+    )));
+    assert!(pending.iter().any(|load| matches!(
+        load,
+        PendingLoad::Ready(request) if request.source_session_id == "unrelated-session"
+    )));
+}

@@ -84,7 +84,14 @@ interface ExportSelection {
   orgId: string;
   selectionSha256: string;
   selectionToken: string;
-  sessions: { manifestKey: string; elementCount: number; chainHead: string }[];
+  sessions: {
+    manifestKey: string;
+    elementCount: number;
+    chainHead: string;
+    contributionId: string;
+    source: ArchiveSource;
+    sourceSessionId: string;
+  }[];
 }
 
 interface CaptureFixture {
@@ -100,13 +107,7 @@ interface CaptureFixture {
 }
 
 interface LocalExportManifest {
-  selection: ExportSelection & {
-    sessions: (ExportSelection['sessions'][number] & {
-      contributionId: string;
-      source: ArchiveSource;
-      sourceSessionId: string;
-    })[];
-  };
+  selection: ExportSelection;
   sessions: { session_index: number; status: 'pending' | 'verified' | 'failed' }[];
 }
 

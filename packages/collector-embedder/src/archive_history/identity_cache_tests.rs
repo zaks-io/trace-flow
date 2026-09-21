@@ -1,4 +1,5 @@
 use std::fs;
+use std::time::{Duration, UNIX_EPOCH};
 
 use collector_archive::ArchiveSource;
 use collector_archive_sync::{
@@ -25,8 +26,6 @@ fn full_reconciliation_rechecks_content_when_metadata_hints_are_unchanged() {
             &spool,
             ArchiveSource::Claude,
             path.to_str().unwrap(),
-            0,
-            original.len() as u64,
             "same-path".to_string(),
             verify,
         )
@@ -47,6 +46,66 @@ fn full_reconciliation_rechecks_content_when_metadata_hints_are_unchanged() {
         if stable_identity { "first" } else { "other" }
     );
     assert_eq!(resolve(true).session, "other");
+}
+
+#[test]
+fn remembered_candidate_uses_metadata_refreshed_after_discovery() {
+    use super::identity_cache::identify_remembered;
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let spool = ArchiveSpool::open(dir.path().join("spool"), "org", &keys).unwrap();
+    let path = dir.path().join("session.jsonl");
+    let original = b"{\"sessionId\":\"first\"}\n";
+    fs::write(&path, original).unwrap();
+
+    let resolve = || {
+        identify_remembered(
+            &spool,
+            ArchiveSource::Claude,
+            path.to_str().unwrap(),
+            "same-path".to_string(),
+            false,
+        )
+        .unwrap()
+    };
+
+    let appended = [original.as_slice(), b"{}\n"].concat();
+    fs::write(&path, &appended).unwrap();
+    let appended_mtime_ms = 1_800_000_000_123_i64;
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_times(
+            fs::FileTimes::new()
+                .set_modified(UNIX_EPOCH + Duration::from_millis(appended_mtime_ms as u64)),
+        )
+        .unwrap();
+    let appended_candidate = resolve();
+    assert_eq!(appended_candidate.size, appended.len() as u64);
+    assert_eq!(appended_candidate.complete_extent, appended.len() as u64);
+    assert_eq!(appended_candidate.activity_rank_ms, appended_mtime_ms);
+
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(original.len() as u64)
+        .unwrap();
+    let truncated_mtime_ms = appended_mtime_ms + 1_000;
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_times(
+            fs::FileTimes::new()
+                .set_modified(UNIX_EPOCH + Duration::from_millis(truncated_mtime_ms as u64)),
+        )
+        .unwrap();
+    let truncated_candidate = resolve();
+    assert_eq!(truncated_candidate.size, original.len() as u64);
+    assert_eq!(truncated_candidate.complete_extent, original.len() as u64);
+    assert_eq!(truncated_candidate.activity_rank_ms, truncated_mtime_ms);
 }
 
 #[test]

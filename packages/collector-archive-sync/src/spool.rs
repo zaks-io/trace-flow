@@ -1164,7 +1164,7 @@ impl ArchiveSpool {
             }
             reserve
         } else {
-            let pending_count = self.pending_blob_paths(|_, _| PendingSelection::Any)?.len() as u64;
+            let pending_count = self.pending_blob_count_for_reserve()?;
             let future_pending_count = pending_count.saturating_add(u64::from(reserve > 0));
             if future_pending_count == 0 {
                 reserve
@@ -1188,6 +1188,102 @@ impl ArchiveSpool {
             create_dir_all_strict(parent)?;
         }
         write(path, blob)
+    }
+
+    fn pending_blob_count_for_reserve(&self) -> ArchiveSyncResult<u64> {
+        let mut count = 0u64;
+        for source in [ArchiveSource::Claude, ArchiveSource::Codex] {
+            count = count.saturating_add(Self::count_pending_heads_for_reserve(
+                &self.root.join("pending").join(source.as_str()),
+            )?);
+            count = count.saturating_add(Self::count_remainders_for_reserve(
+                &self.root.join("remainder").join(source.as_str()),
+            )?);
+        }
+        Ok(count)
+    }
+
+    fn count_pending_heads_for_reserve(root: &Path) -> ArchiveSyncResult<u64> {
+        let entries = match fs::read_dir(root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(error.into()),
+        };
+        let mut count = 0u64;
+        for entry in entries {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let Some(session) = entry.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            if validate_spool_session_id(&session).is_err() {
+                continue;
+            }
+            for part_entry in fs::read_dir(entry.path())? {
+                let part_entry = part_entry?;
+                let path = part_entry.path();
+                if part_entry.file_type()?.is_file()
+                    && path.extension().and_then(|ext| ext.to_str()) == Some("bin")
+                    && path
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .and_then(part_id_from_file_stem)
+                        .is_some()
+                {
+                    count = count.saturating_add(1);
+                }
+            }
+        }
+        Ok(count)
+    }
+
+    fn count_remainders_for_reserve(root: &Path) -> ArchiveSyncResult<u64> {
+        let entries = match fs::read_dir(root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(error.into()),
+        };
+        let mut count = 0u64;
+        for entry in entries {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let Some(session) = entry.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            if validate_spool_session_id(&session).is_err() {
+                continue;
+            }
+            for part_entry in fs::read_dir(entry.path())? {
+                let part_entry = part_entry?;
+                if !part_entry.file_type()?.is_dir() {
+                    continue;
+                }
+                let Some(part) = part_entry.file_name().to_str().map(str::to_string) else {
+                    continue;
+                };
+                if part_id_from_file_stem(&part).is_none() {
+                    continue;
+                }
+                for remainder_entry in fs::read_dir(part_entry.path())? {
+                    let remainder_entry = remainder_entry?;
+                    let path = remainder_entry.path();
+                    if remainder_entry.file_type()?.is_file()
+                        && path.extension().and_then(|ext| ext.to_str()) == Some("bin")
+                        && path
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .is_some_and(|stem| stem.parse::<u64>().is_ok())
+                    {
+                        count = count.saturating_add(1);
+                    }
+                }
+            }
+        }
+        Ok(count)
     }
 
     fn encrypted_progress_len(

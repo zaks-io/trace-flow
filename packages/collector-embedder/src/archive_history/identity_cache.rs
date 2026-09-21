@@ -9,18 +9,18 @@ pub(super) fn identify_remembered(
     spool: &ArchiveSpool,
     source: ArchiveSource,
     path: &str,
-    mtime_ms: i64,
-    size: u64,
     provenance: String,
     verify_contents: bool,
 ) -> Result<Candidate, &'static str> {
     let metadata = std::fs::metadata(path).map_err(|_| "archive_io")?;
+    let modified = metadata.modified().map_err(|_| "archive_io")?;
+    let modified_since_epoch = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "archive_io")?;
+    let mtime_ms = i64::try_from(modified_since_epoch.as_millis()).map_err(|_| "archive_io")?;
+    let size = metadata.len();
     let file_identity = collector_archive_sync::source_file_identity(&metadata);
-    let metadata_hint = metadata
-        .modified()
-        .ok()
-        .and_then(epoch_nanos)
-        .map(|modified| format!("{}:{modified}", metadata.len()));
+    let metadata_hint = Some(format!("{size}:{}", modified_since_epoch.as_nanos()));
     let remembered = spool
         .source_identity(source, &provenance)
         .map_err(|e| e.class())?;
@@ -101,10 +101,4 @@ fn candidate_from_identity(
         file_identity: identity.file_identity,
         identity_prefix: identity.identity_prefix,
     }
-}
-
-fn epoch_nanos(time: std::time::SystemTime) -> Option<u128> {
-    time.duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .map(|duration| duration.as_nanos())
 }

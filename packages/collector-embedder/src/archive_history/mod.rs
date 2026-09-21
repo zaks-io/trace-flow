@@ -246,7 +246,24 @@ fn discover(
         ArchiveSource::Claude => AgentSource::Claude,
         ArchiveSource::Codex => AgentSource::Codex,
     };
+    let known_targets = match spool.history_state(source) {
+        Ok(state) => state.into_iter().flat_map(|state| state.entries).fold(
+            HashMap::<String, HashSet<String>>::new(),
+            |mut targets, target| {
+                targets
+                    .entry(target.source_session_id)
+                    .or_default()
+                    .insert(target.source_transcript_part_id);
+                targets
+            },
+        ),
+        Err(_) => {
+            errors.push("archive_history_corrupt".to_string());
+            return Vec::new();
+        }
+    };
     let mut groups: HashMap<(String, String), Vec<Candidate>> = HashMap::new();
+    let mut remembered_provenances = HashSet::new();
     let mut skipped_errors = 0usize;
     for root in source_homes.roots(agent_source) {
         let walk = walk_transcripts(&root);
@@ -259,19 +276,25 @@ fn discover(
                 .to_string_lossy()
                 .into_owned();
             let provenance = format!("{namespace}/{relative}");
+            let was_remembered = spool
+                .source_identity(source, &provenance)
+                .is_ok_and(|identity| identity.is_some());
             match identify_remembered(
                 spool,
                 source,
                 &file.path,
-                file.mtime_ms as i64,
-                file.size_bytes,
                 provenance,
                 verification.includes(Path::new(&file.path)),
             ) {
-                Ok(candidate) => groups
-                    .entry((candidate.session.clone(), candidate.part.clone()))
-                    .or_default()
-                    .push(candidate),
+                Ok(candidate) => {
+                    if was_remembered {
+                        remembered_provenances.insert(candidate.provenance.clone());
+                    }
+                    groups
+                        .entry((candidate.session.clone(), candidate.part.clone()))
+                        .or_default()
+                        .push(candidate);
+                }
                 Err(class) => errors.push(class.to_string()),
             }
         }
@@ -312,15 +335,134 @@ fn discover(
         }
         if lineages.len() > 1 {
             errors.push("archive_history_divergent_copy".to_string());
-            lineages.sort_by(|left, right| left.provenance.cmp(&right.provenance));
-            let original_part = lineages[0].part.clone();
-            for lineage in lineages.iter_mut().skip(1) {
-                lineage.part = copy_part_id(source, &original_part, &lineage.provenance);
-            }
+        }
+        if !assign_lineage_parts(
+            spool,
+            source,
+            &mut lineages,
+            &remembered_provenances,
+            &known_targets,
+            errors,
+        ) {
+            continue;
         }
         candidates.extend(lineages);
     }
     candidates
+}
+
+fn assign_lineage_parts(
+    spool: &ArchiveSpool,
+    source: ArchiveSource,
+    lineages: &mut [Candidate],
+    remembered_provenances: &HashSet<String>,
+    known_targets: &HashMap<String, HashSet<String>>,
+    errors: &mut Vec<String>,
+) -> bool {
+    lineages.sort_by(|left, right| left.provenance.cmp(&right.provenance));
+    let original_part = lineages[0].part.clone();
+    let session = lineages[0].session.as_str();
+    let copy_parts = lineages
+        .iter()
+        .map(|lineage| copy_part_id(source, &original_part, &lineage.provenance))
+        .collect::<Vec<_>>();
+    let mut known_copies = Vec::with_capacity(copy_parts.len());
+    for part in &copy_parts {
+        if known_targets
+            .get(session)
+            .is_some_and(|parts| parts.contains(part))
+        {
+            known_copies.push(true);
+            continue;
+        }
+        let current = match spool.current_part(source, session, part) {
+            Ok(part) => part,
+            Err(_) => {
+                errors.push("archive_spool_corrupt".to_string());
+                return false;
+            }
+        };
+        match spool.latest_captured_checkpoint(source, session, &current) {
+            Ok(checkpoint) => known_copies.push(checkpoint.is_some()),
+            Err(_) => {
+                errors.push("archive_spool_corrupt".to_string());
+                return false;
+            }
+        }
+    }
+    if lineages.len() == 1 {
+        if known_copies[0] {
+            lineages[0].part = copy_parts[0].clone();
+        }
+        return true;
+    }
+
+    let current_part = match spool.current_part(source, session, &original_part) {
+        Ok(part) => part,
+        Err(_) => {
+            errors.push("archive_spool_corrupt".to_string());
+            return false;
+        }
+    };
+    let checkpoint = match spool.latest_captured_checkpoint(source, session, &current_part) {
+        Ok(checkpoint) => checkpoint,
+        Err(_) => {
+            errors.push("archive_spool_corrupt".to_string());
+            return false;
+        }
+    };
+    let mut matching_lineages = Vec::new();
+    if let Some(checkpoint) = checkpoint.as_ref() {
+        for (index, lineage) in lineages.iter().enumerate() {
+            match prefix_matches_checkpoint(
+                &lineage.path,
+                checkpoint.last_complete_byte_offset,
+                checkpoint.complete_prefix_sha256.as_bytes(),
+            ) {
+                Ok(true) if !known_copies[index] => matching_lineages.push(index),
+                Ok(true) => {}
+                Ok(false) => {}
+                Err(_) => {
+                    errors.push("archive_io".to_string());
+                    return false;
+                }
+            }
+        }
+    }
+
+    let remembered_originals = lineages
+        .iter()
+        .enumerate()
+        .filter(|(index, lineage)| {
+            checkpoint.is_some()
+                && !known_copies[*index]
+                && remembered_provenances.contains(&lineage.provenance)
+        })
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let original_lineage = match remembered_originals.as_slice() {
+        [index] => Some(*index),
+        [_, _, ..] => {
+            errors.push("archive_history_ambiguous_copy".to_string());
+            None
+        }
+        [] => match matching_lineages.as_slice() {
+            [index] => Some(*index),
+            [] if checkpoint.is_none() => known_copies.iter().position(|known| !known),
+            [] => None,
+            _ => {
+                errors.push("archive_history_ambiguous_copy".to_string());
+                None
+            }
+        },
+    };
+
+    for (index, lineage) in lineages.iter_mut().enumerate() {
+        if Some(index) != original_lineage {
+            lineage.part = copy_parts[index].clone();
+        }
+    }
+    true
 }
 
 fn source_home_namespace(root: &Path) -> String {

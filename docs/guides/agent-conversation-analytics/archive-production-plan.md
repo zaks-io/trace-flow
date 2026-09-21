@@ -2,7 +2,7 @@
 
 Review date: 2026-09-21. Reviewed commit: `4dbb153ba23fbec127de0ec6bf0ef5447927c616`, matching fetched `origin/main`.
 
-Status: implemented and verified locally and in Cloud-Dev, authorized after the review. The findings below describe the reviewed base commit. Byte capture, retained generations, verified receipts, separate capture/upload scheduling, authenticated export, and permanent retention are implemented. Cloud-Dev capture and R2 restore passed for both sources, including empty truncation generations. The final Rust workspace passed 717 tests with one ignored; all 68 repository CI tasks passed. Production deployment, independent key-backup recovery, the 24-hour workload, and the production installation walkthrough remain release gates. See [release and recovery evidence](archive-recovery-runbook.md).
+Status: implemented and verified locally and in Cloud-Dev, authorized after the review. The findings below describe the reviewed base commit. Byte capture, retained generations, verified receipts, separate capture/upload scheduling, authenticated export, and permanent retention are implemented. Cloud-Dev capture and R2 restore passed for both sources, including empty truncation generations. The final Rust workspace passed 723 tests with one ignored; all 68 repository CI tasks passed. Production deployment, independent key-backup recovery, the 24-hour workload, and the production installation walkthrough remain release gates. See [release and recovery evidence](archive-recovery-runbook.md).
 
 ## Recommendation
 

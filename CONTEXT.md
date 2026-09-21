@@ -469,7 +469,7 @@ A short-lived, single-export authorization minted only after an interactive **Ar
 _Avoid_: reusing a long-lived **Collector Credential**, a reusable archive API key, granting ordinary Organization members export access.
 
 **Archive Status**:
-The server-backed Conversation Archive state projected into Convex and shown persistently on `/app/agents`: `not_enabled`, `active`, `blocked`, `frozen`, or `deleting`. It includes stored bytes against 100 GB, the last durable Archive API acknowledgement, enrolled contributor and Collector counts, the latest Collector-reported pending spool bytes or error, and the Pro grace deadline when frozen.
+The server-backed Conversation Archive state projected into Convex and shown persistently on `/app/agents`: `not_enabled`, `active`, `blocked`, `frozen`, or `deleting`. It includes stored bytes against 100 GB, the last durable Archive API acknowledgement, enrolled contributor and Collector counts, and the latest Collector-reported pending spool bytes or error. Frozen archives retain their stored data without an automatic expiry deadline.
 _Avoid_: showing "enabled" without proof of a successful durable write, treating stale Collector-reported spool state as current server truth.
 
 **StartedAt**:
