@@ -1,10 +1,79 @@
 import { describe, expect, it } from 'bun:test';
+import { rejects } from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
+import { GENESIS_CHAIN_HASH } from '../../apps/archive-api/src/archive-contract';
 import { collectExportManifestGraph } from './archive-export-traversal';
 import { exportSessionDirectoryId, RawPartVerifier } from './archive-export-verification';
 
 const digest = (hex: string) => `sha256:${hex.repeat(64)}`;
 
 describe('archive export client verification', () => {
+  it('does not mark a session verified when its declared record count is wrong', async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), 'archive-record-count-'));
+    const unsigned = {
+      version: 1,
+      exportId: 'record-count-test',
+      orgId: 'org-test',
+      sessions: [
+        {
+          userId: 'user-test',
+          contributionId: 'contribution-test',
+          source: 'codex',
+          sourceSessionId: 'session-test',
+          manifestKey: 'manifest-test',
+          manifestHeadPageKey: 'page-test',
+          generation: 1,
+          elementCount: 0,
+          recordCount: 1,
+          chainHead: GENESIS_CHAIN_HASH,
+        },
+      ],
+    };
+    const selection = {
+      ...unsigned,
+      selectionSha256: `sha256:${createHash('sha256').update(JSON.stringify(unsigned)).digest('hex')}`,
+      selectionToken: 'a'.repeat(43),
+    };
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      async fetch(request) {
+        const body = (await request.json()) as { operation: string };
+        return Response.json(
+          body.operation === 'select' ? { selection } : { manifest: { elements: [] } },
+        );
+      },
+    });
+    try {
+      const child = Bun.spawn(
+        [
+          process.execPath,
+          resolve(import.meta.dir, 'archive-export.ts'),
+          server.url.href,
+          directory,
+        ],
+        { env: { TRACE_FLOW_ARCHIVE_EXPORT_GRANT: 'test-grant' }, stdout: 'pipe', stderr: 'pipe' },
+      );
+      const [exit, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stderr).text(),
+        new Response(child.stdout).text(),
+      ]);
+      expect(exit).not.toBe(0);
+      expect(stderr).toContain('Manifest record count mismatch');
+      const manifest = JSON.parse(
+        await readFile(resolve(directory, 'archive-manifest.json'), 'utf8'),
+      ) as { sessions: { status: string }[] };
+      expect(manifest.sessions[0]?.status).toBe('failed');
+    } finally {
+      await server.stop(true);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('refetches the manifest graph after an interrupted traversal', async () => {
     const graph = new Map([
       ['root', { pages: [{ page_key: 'first' }, { page_key: 'second' }] }],
@@ -19,8 +88,9 @@ describe('archive export client verification', () => {
       }
       return graph.get(key)!;
     };
-    await expect(collectExportManifestGraph('root', load, () => undefined)).rejects.toThrow(
-      'interrupted',
+    await rejects(
+      collectExportManifestGraph('root', load, () => undefined),
+      /interrupted/,
     );
     const restored: string[] = [];
     await collectExportManifestGraph('root', load, (elements) => restored.push(...elements));

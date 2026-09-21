@@ -156,15 +156,7 @@ pub fn load_archive_run_config(
     key_store: Arc<dyn ArchiveKeyStore>,
 ) -> Result<Option<ArchiveRunConfig>> {
     let enrollment_path = paths.archive_enrollment_file(org_id);
-    let spool_dir = paths.archive_spool_dir(org_id);
-    prepare_archive_spool(
-        &paths.legacy_archive_spool_dir(org_id),
-        &spool_dir,
-        org_id,
-        key_store.as_ref(),
-    )
-    .context("prepare archive spool migration")?;
-    let cleanup_required = cleanup_obligation_exists(&spool_dir);
+    let cleanup_required = archive_cleanup_required(paths, org_id);
     let enrollment = match ArchiveEnrollmentRecord::load_record(&enrollment_path) {
         Ok(enrollment) => enrollment,
         Err(_) if cleanup_required => ArchiveEnrollmentRecord::from_policy(ArchivePolicy::Revoked),
@@ -172,46 +164,56 @@ pub fn load_archive_run_config(
             return Err(err).context("load archive enrollment");
         }
     };
-    archive_run_config_from_enrollment(
-        enrollment_path,
-        spool_dir,
-        archive_url,
-        key_store,
-        enrollment,
-        cleanup_required,
-    )
+    archive_run_config_from_enrollment(paths, org_id, archive_url, key_store, enrollment)
 }
 
 fn archive_run_config_from_enrollment(
-    enrollment_path: PathBuf,
-    spool_dir: PathBuf,
+    paths: &Paths,
+    org_id: &str,
     archive_url: String,
     key_store: Arc<dyn ArchiveKeyStore>,
     enrollment: ArchiveEnrollmentRecord,
-    cleanup_required: bool,
 ) -> Result<Option<ArchiveRunConfig>> {
-    let policy = enrollment.policy().context("load archive enrollment")?;
+    let spool_dir = paths.archive_spool_dir(org_id);
+    let cleanup_required = archive_cleanup_required(paths, org_id);
     if cleanup_required {
         return Ok(Some(ArchiveRunConfig {
             archive_url,
             spool_dir,
-            enrollment_path,
+            enrollment_path: paths.archive_enrollment_file(org_id),
             key_store,
             policy: ArchivePolicy::Revoked,
             authorized_sources: Vec::new(),
         }));
     }
+    let policy = enrollment.policy().context("load archive enrollment")?;
     if policy == ArchivePolicy::Inactive {
         return Ok(None);
+    }
+    if !policy.purges() {
+        prepare_archive_spool(
+            &paths.legacy_archive_spool_dir(org_id),
+            &spool_dir,
+            org_id,
+            key_store.as_ref(),
+        )
+        .context("prepare archive spool migration")?;
     }
     Ok(Some(ArchiveRunConfig {
         archive_url,
         spool_dir,
-        enrollment_path,
+        enrollment_path: paths.archive_enrollment_file(org_id),
         key_store,
         policy,
         authorized_sources: enrollment.authorized_sources,
     }))
+}
+
+fn archive_cleanup_required(paths: &Paths, org_id: &str) -> bool {
+    let active = paths.archive_spool_dir(org_id);
+    cleanup_obligation_exists(&active)
+        || cleanup_obligation_exists(&paths.legacy_archive_spool_dir(org_id))
+        || migration_staging_dir(&active).is_some_and(|root| cleanup_obligation_exists(&root))
 }
 
 pub fn prepare_confirmed_archive(
@@ -221,26 +223,8 @@ pub fn prepare_confirmed_archive(
     key_store: Arc<dyn ArchiveKeyStore>,
     enrollment: ArchiveEnrollmentRecord,
 ) -> (Option<ArchiveRunConfig>, Option<String>) {
-    let spool_dir = paths.archive_spool_dir(org_id);
-    if let Err(error) = prepare_archive_spool(
-        &paths.legacy_archive_spool_dir(org_id),
-        &spool_dir,
-        org_id,
-        key_store.as_ref(),
-    ) {
-        return (
-            None,
-            Some(format!("prepare archive spool migration: {error}")),
-        );
-    }
-    let result = archive_run_config_from_enrollment(
-        paths.archive_enrollment_file(org_id),
-        spool_dir.clone(),
-        archive_url,
-        key_store,
-        enrollment,
-        cleanup_obligation_exists(&spool_dir),
-    );
+    let result =
+        archive_run_config_from_enrollment(paths, org_id, archive_url, key_store, enrollment);
     match result {
         Ok(config) => (config, None),
         Err(err) => (None, Some(err.to_string())),
@@ -897,7 +881,7 @@ mod tests {
         ArchiveHistoryChoice, ArchiveKeyStore, ArchiveSpool, ArchiveSpoolKey, ArchiveSyncError,
         ArchiveSyncResult, ArchiveUploader, PendingArchiveRequest,
     };
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Mutex;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -924,6 +908,36 @@ mod tests {
             capture_authorization: None,
             predecessor_part_id: None,
             body: body.to_vec(),
+        }
+    }
+
+    #[derive(Default)]
+    struct NoAccessKeyStore {
+        accesses: AtomicUsize,
+    }
+
+    impl NoAccessKeyStore {
+        fn accesses(&self) -> usize {
+            self.accesses.load(Ordering::SeqCst)
+        }
+
+        fn reject<T>(&self) -> ArchiveSyncResult<T> {
+            self.accesses.fetch_add(1, Ordering::SeqCst);
+            Err(ArchiveSyncError::KeyUnavailable)
+        }
+    }
+
+    impl ArchiveKeyStore for NoAccessKeyStore {
+        fn load(&self, _org_id: &str) -> ArchiveSyncResult<Option<ArchiveSpoolKey>> {
+            self.reject()
+        }
+
+        fn store(&self, _org_id: &str, _key: &ArchiveSpoolKey) -> ArchiveSyncResult<()> {
+            self.reject()
+        }
+
+        fn delete(&self, _org_id: &str) -> ArchiveSyncResult<()> {
+            self.reject()
         }
     }
 
@@ -988,6 +1002,96 @@ mod tests {
         )
         .unwrap()
         .is_none());
+    }
+
+    #[test]
+    fn inactive_and_invalid_enrollment_never_access_keys_or_prepare_a_spool() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        let keys = Arc::new(NoAccessKeyStore::default());
+
+        assert!(load_archive_run_config(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            keys.clone(),
+        )
+        .unwrap()
+        .is_none());
+        assert_eq!(keys.accesses(), 0);
+        assert!(!paths.archive_spool_dir("org_1").exists());
+
+        std::fs::write(paths.archive_enrollment_file("org_1"), b"{not-json").unwrap();
+        let error = match load_archive_run_config(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            keys.clone(),
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("invalid enrollment must fail"),
+        };
+        assert!(error.to_string().contains("load archive enrollment"));
+        assert_eq!(keys.accesses(), 0);
+        assert!(!paths.archive_spool_dir("org_1").exists());
+
+        let (config, error) = prepare_confirmed_archive(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            keys.clone(),
+            ArchiveEnrollmentRecord::from_policy(ArchivePolicy::Inactive),
+        );
+        assert!(config.is_none());
+        assert!(error.is_none());
+        let (config, error) = prepare_confirmed_archive(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            keys.clone(),
+            ArchiveEnrollmentRecord {
+                status: "enrolle".to_string(),
+                collector_id: None,
+                authorized_sources: Vec::new(),
+                reason: None,
+            },
+        );
+        assert!(config.is_none());
+        assert!(error
+            .as_deref()
+            .is_some_and(|error| error.contains("load archive enrollment")));
+        assert_eq!(keys.accesses(), 0);
+        assert!(!paths.archive_spool_dir("org_1").exists());
+    }
+
+    #[test]
+    fn legacy_cleanup_obligation_bypasses_invalid_enrollment_without_migration() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        let keys = Arc::new(NoAccessKeyStore::default());
+        let legacy = paths.legacy_archive_spool_dir("org_1");
+        std::fs::write(
+            ArchiveSpool::durable_cleanup_marker_path(&legacy),
+            b"cleanup required",
+        )
+        .unwrap();
+        std::fs::write(paths.archive_enrollment_file("org_1"), b"{not-json").unwrap();
+
+        let config = load_archive_run_config(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            keys.clone(),
+        )
+        .unwrap()
+        .expect("legacy cleanup must stay scheduled");
+
+        assert_eq!(config.policy, ArchivePolicy::Revoked);
+        assert_eq!(keys.accesses(), 0);
+        assert!(!paths.archive_spool_dir("org_1").exists());
+        assert!(cleanup_obligation_exists(&legacy));
     }
 
     fn write_home_transcripts(home: &Path) {

@@ -195,6 +195,7 @@ async function writeSession(
     .iterate(sessionIndex);
   let previous = GENESIS_CHAIN_HASH;
   let count = 0;
+  let recordCount = 0;
   let cachedChunkId = '';
   let cachedChunk: Uint8Array = new Uint8Array();
   const legacyParts = new Map<
@@ -256,6 +257,7 @@ async function writeSession(
       }
       continue;
     }
+    recordCount += 1;
     const bytes = payloadBytes(element);
     assert.equal(await sha256(bytes), element.content_sha256, 'Record content hash mismatch');
     const hasRawOffsets =
@@ -322,6 +324,7 @@ async function writeSession(
     }
   }
   assert.equal(count, session.elementCount, 'Manifest element count mismatch');
+  assert.equal(recordCount, session.recordCount, 'Manifest record count mismatch');
   assert.equal(previous, session.chainHead, 'Manifest chain head mismatch');
 
   for (const [partId, raw] of rawParts) {

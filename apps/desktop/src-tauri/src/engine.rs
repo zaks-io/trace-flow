@@ -1557,7 +1557,10 @@ mod archive_engine_tests {
         .expect("Desktop must keep Archive work when cleanup-required remains");
         assert_eq!(cfg.policy, ArchivePolicy::Revoked);
         assert!(cleanup_obligation_exists(&spool));
-        assert!(keys.load("org_1:archive-v2").unwrap().is_some());
+        assert!(keys.load("org_1:archive-v2").unwrap().is_none());
+        assert!(keys.load("org_1").unwrap().is_some());
+        assert!(legacy.exists());
+        assert!(!spool.exists());
     }
 
     #[test]

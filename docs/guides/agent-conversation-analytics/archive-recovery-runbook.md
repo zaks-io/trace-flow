@@ -124,7 +124,13 @@ an incomplete prefix; the exporter cannot reconstruct bytes that were never capt
 - The final `cargo test --workspace --locked` passed 723 tests with one ignored.
   `cargo fmt --all -- --check`, workspace check, and workspace Clippy with
   `--all-targets --locked -- -D warnings` passed on the same implementation.
-- These results describe the working tree on 2026-09-21. A production release
+- The 723-test Rust workspace result, 68-task local CI, and post-review
+  regressions above apply to commit `d800c9594219d6b31421e78e990b865044fa0a55`.
+  The repeated Cloud-Dev smoke used that commit's exporter against Worker version
+  `dda8f64d-06d1-41b6-aaea-bf97f9dacaa7`; its synthetic collector fixture does not
+  exercise Desktop discovery. The base SHA in Author QA below identifies the
+  comparison baseline, not the tested implementation.
+- These results were recorded on 2026-09-21. A production release
   must record its final commit and repeat the applicable checks after changes.
 
 An earlier synthetic smoke run tracked chunks and roots but omitted immutable

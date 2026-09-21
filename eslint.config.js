@@ -75,7 +75,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['scripts/dev/archive-export.ts'],
+    files: ['scripts/dev/archive-export*.ts'],
     languageOptions: {
       parserOptions: {
         project: ['./scripts/dev/tsconfig.archive-export.json'],
