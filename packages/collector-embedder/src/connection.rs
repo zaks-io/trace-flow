@@ -35,8 +35,8 @@ pub struct Connection {
     /// The ingest Worker base URL that matches the credential's control-plane environment.
     #[serde(default)]
     pub ingest_url: String,
-    /// Epoch-ms expiry of the Collector Credential, surfaced by `status`.
-    pub expires_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
 }
 
 impl Connection {
@@ -172,7 +172,7 @@ mod tests {
             collector_id: "col_abc".to_string(),
             convex_url: "https://example.convex.cloud".to_string(),
             ingest_url: "https://collector.example.test".to_string(),
-            expires_at: 1_900_000_000_000,
+            expires_at: None,
         }
     }
 
@@ -184,6 +184,25 @@ mod tests {
         assert_eq!(paths.load_connection().unwrap(), None);
         paths.save_connection(&conn()).unwrap();
         assert_eq!(paths.load_connection().unwrap(), Some(conn()));
+    }
+
+    #[test]
+    fn legacy_connection_expiry_remains_readable() {
+        let value = r#"{
+            "org_id":"org_123",
+            "collector_id":"col_abc",
+            "convex_url":"https://example.convex.site",
+            "ingest_url":"https://collector.example.test",
+            "expires_at":1
+        }"#;
+        let connection: Connection = serde_json::from_str(value).unwrap();
+        assert_eq!(connection.expires_at, Some(1));
+    }
+
+    #[test]
+    fn current_connection_omits_expiry() {
+        let value = serde_json::to_value(conn()).unwrap();
+        assert_eq!(value.get("expires_at"), None);
     }
 
     #[test]
@@ -221,7 +240,7 @@ mod tests {
             collector_id: "col_abc".to_string(),
             convex_url: defaults::DEV_CONVEX_SITE_URL.to_string(),
             ingest_url: String::new(),
-            expires_at: 1_900_000_000_000,
+            expires_at: None,
         };
         assert_eq!(conn.sync_ingest_url().unwrap(), defaults::DEV_INGEST_URL);
     }
@@ -233,7 +252,7 @@ mod tests {
             collector_id: "col_abc".to_string(),
             convex_url: "https://custom.example.convex.site".to_string(),
             ingest_url: String::new(),
-            expires_at: 1_900_000_000_000,
+            expires_at: None,
         };
 
         let err = conn.sync_ingest_url().unwrap_err().to_string();
