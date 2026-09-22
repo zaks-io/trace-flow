@@ -19,21 +19,19 @@
 //! syncing when it quit (or was restarted by login autostart) comes back syncing and runs a cycle at
 //! once. Before this, every relaunch silently reset to paused and weeks of transcripts went unsynced.
 
-use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use collector_embedder::connection::{Connection, Paths};
 use collector_embedder::keychain;
 use collector_embedder::sources::SourceHomes;
-use collector_embedder::sync::{self, ArchiveKeyStore, Window};
+use collector_embedder::sync::{self, Window};
 use collector_embedder::{
-    archive_policy, defaults, ArchiveEnrollmentRequest, ArchiveHistoryChoice, ArchiveSource,
-    ArchiveSourceChoice,
+    ArchiveEnrollmentRequest, ArchiveHistoryChoice, ArchiveSource, ArchiveSourceChoice,
 };
 use tokio::sync::mpsc;
 
 use crate::archive_scheduler::{self, ArchiveSchedulerHandle};
-use crate::settings::{ArchivePolicyDenial, ArchiveRequest, Settings, SettingsFile};
+use crate::settings::{ArchiveRequest, Settings, SettingsFile};
 use crate::state::{
     AppStateBus, ArchiveConnectionIdentity, ArchiveMenuState, ConnectionState, SourceCounts,
     SyncStatus,
@@ -44,85 +42,6 @@ const TICK: Duration = Duration::from_secs(5 * 60);
 
 /// The default backfill window the first "Start syncing" click triggers.
 const FIRST_BACKFILL: &str = "7d";
-
-#[derive(Default)]
-struct ArchivePolicyMemory {
-    unpersisted_denial: Option<(
-        ArchiveConnectionIdentity,
-        collector_embedder::ArchiveEnrollmentRecord,
-    )>,
-}
-
-impl ArchivePolicyMemory {
-    fn from_settings(settings: &Settings) -> Self {
-        Self {
-            unpersisted_denial: settings.archive_policy_denial.as_ref().map(|denial| {
-                (
-                    ArchiveConnectionIdentity {
-                        org_id: denial.org_id.clone(),
-                        collector_id: denial.collector_id.clone(),
-                    },
-                    denial.enrollment.clone(),
-                )
-            }),
-        }
-    }
-
-    fn denial_for(
-        &self,
-        connection: &ArchiveConnectionIdentity,
-    ) -> Option<collector_embedder::ArchiveEnrollmentRecord> {
-        self.unpersisted_denial
-            .as_ref()
-            .filter(|(remembered, _)| remembered == connection)
-            .map(|(_, record)| record.clone())
-    }
-
-    fn observe_refresh(
-        &mut self,
-        connection: &ArchiveConnectionIdentity,
-        observation: Option<&ArchivePolicyObservation>,
-    ) {
-        let Some(observation) = observation else {
-            return;
-        };
-        let is_denial = observation
-            .confirmed
-            .policy()
-            .is_ok_and(|policy| !policy.captures());
-        if is_denial && !observation.persisted {
-            self.unpersisted_denial = Some((connection.clone(), observation.confirmed.clone()));
-        } else if observation.persisted {
-            self.clear(connection);
-        }
-    }
-
-    fn update_settings(&self, settings: &mut Settings) {
-        settings.archive_policy_denial =
-            self.unpersisted_denial
-                .as_ref()
-                .map(|(connection, enrollment)| ArchivePolicyDenial {
-                    org_id: connection.org_id.clone(),
-                    collector_id: connection.collector_id.clone(),
-                    enrollment: enrollment.clone(),
-                });
-    }
-
-    fn clear(&mut self, connection: &ArchiveConnectionIdentity) {
-        if self
-            .unpersisted_denial
-            .as_ref()
-            .is_some_and(|(remembered, _)| remembered == connection)
-        {
-            self.unpersisted_denial = None;
-        }
-    }
-}
-
-struct ArchivePolicyObservation {
-    confirmed: collector_embedder::ArchiveEnrollmentRecord,
-    persisted: bool,
-}
 
 /// Commands the UI (tray menu or window) sends the engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,7 +119,6 @@ async fn run_loop(
         settings.source_homes.merge(&SourceHomes::resolve(&home));
         persist(&settings_file, &settings);
     }
-    let mut archive_policy_memory = ArchivePolicyMemory::from_settings(&settings);
     let mut ticker = tokio::time::interval(TICK);
     // The first tick fires immediately; skip it so a paused engine does nothing on startup. A
     // resumed engine runs its own catch-up cycle below instead of waiting a full tick.
@@ -217,7 +135,7 @@ async fn run_loop(
 
     if settings.syncing {
         tracing::info!("sync authorized before relaunch; resuming");
-        run_authorized_cycle(&bus, &mut settings, &mut archive_policy_memory).await;
+        run_authorized_cycle(&bus, &mut settings).await;
         persist(&settings_file, &settings);
     }
 
@@ -240,7 +158,7 @@ async fn run_loop(
                         // Persist the authorization before the (possibly long) pass so a quit
                         // mid-backfill still comes back syncing.
                         persist(&settings_file, &settings);
-                        run_authorized_cycle(&bus, &mut settings, &mut archive_policy_memory).await;
+                        run_authorized_cycle(&bus, &mut settings).await;
                     }
                     EngineCommand::EnrollArchiveSource {
                         connection,
@@ -251,7 +169,6 @@ async fn run_loop(
                             &bus,
                             &settings_file,
                             &mut settings,
-                            &mut archive_policy_memory,
                             connection,
                             source,
                             history_choice,
@@ -264,7 +181,7 @@ async fn run_loop(
             _ = ticker.tick() => {
                 if settings.syncing {
                     let before = settings.clone();
-                    run_authorized_cycle(&bus, &mut settings, &mut archive_policy_memory).await;
+                    run_authorized_cycle(&bus, &mut settings).await;
                     if settings != before {
                         persist(&settings_file, &settings);
                     }
@@ -278,7 +195,6 @@ async fn enroll_archive_source(
     bus: &AppStateBus,
     settings_file: &SettingsFile,
     settings: &mut Settings,
-    archive_policy_memory: &mut ArchivePolicyMemory,
     expected_connection: Option<ArchiveConnectionIdentity>,
     source: ArchiveSource,
     history_choice: ArchiveHistoryChoice,
@@ -339,7 +255,7 @@ async fn enroll_archive_source(
         }
     };
     settings.archive_request = Some(request.clone());
-    if let Err(err) = settings_file.save(settings) {
+    if let Err(err) = archive_scheduler::save_settings(settings_file, settings) {
         set_archive_error(bus, format!("save archive request: {err}"));
         return;
     }
@@ -374,31 +290,25 @@ async fn enroll_archive_source(
             .enable_all()
             .build()
             .map_err(|err| anyhow::anyhow!("build runtime: {err}"))?;
-        runtime.block_on(archive_policy::enroll_archive_source(
-            &paths,
-            &org_id,
-            &collector_id,
-            defaults::archive_url(),
-            &credential,
-            &enrollment_request,
+        runtime.block_on(archive_scheduler::enroll_source(
+            paths,
+            org_id,
+            collector_id,
+            credential,
+            enrollment_request,
         ))
     })
     .await;
 
     match result {
         Ok(Ok(enrolled)) => {
-            archive_policy_memory.clear(&ArchiveConnectionIdentity {
-                org_id: connection.org_id.clone(),
-                collector_id: connection.collector_id.clone(),
-            });
-            archive_policy_memory.update_settings(settings);
             let run_immediately = apply_enrollment_success(settings, enrolled);
             persist(settings_file, settings);
             refresh_archive(bus);
             clear_archive_error(bus);
             bus.update(|state| state.archive.pending = None);
             if run_immediately {
-                run_authorized_cycle(bus, settings, archive_policy_memory).await;
+                run_authorized_cycle(bus, settings).await;
             }
         }
         Ok(Err(err)) => {
@@ -482,24 +392,11 @@ fn clear_archive_error(bus: &AppStateBus) {
 /// (a click, a tick, a relaunch catch-up) uses the wider `FIRST_BACKFILL` window, so a first backfill
 /// that failed (network down, then a relaunch) is retried rather than quietly replaced by an
 /// incremental pass that would leave the older sessions unsynced.
-async fn run_authorized_cycle(
-    bus: &AppStateBus,
-    settings: &mut Settings,
-    archive_policy_memory: &mut ArchivePolicyMemory,
-) {
+async fn run_authorized_cycle(bus: &AppStateBus, settings: &mut Settings) {
     let window = window_for_authorized_cycle(settings);
-    if let Some(outcome) = run_cycle(
-        bus,
-        window,
-        settings.source_homes.clone(),
-        archive_policy_memory,
-    )
-    .await
-    {
+    if let Some(outcome) = run_cycle(bus, window, settings.source_homes.clone()).await {
         apply_authorized_cycle(settings, &outcome);
-        update_archive_error_after_cycle(bus, &outcome);
     }
-    archive_policy_memory.update_settings(settings);
 }
 
 fn window_for_authorized_cycle(settings: &Settings) -> Window {
@@ -525,18 +422,11 @@ fn apply_authorized_cycle(settings: &mut Settings, outcome: &CycleOutcome) -> Wi
 }
 
 fn sync_status_from_outcome(outcome: &CycleOutcome) -> SyncStatus {
-    match (
-        &outcome.setup_error,
-        &outcome.archive_setup_error,
-        &outcome.first_error,
-    ) {
-        (Some(err), _, _) => SyncStatus::Error {
+    match (&outcome.setup_error, &outcome.first_error) {
+        (Some(err), _) => SyncStatus::Error {
             message: err.clone(),
         },
-        (None, Some(err), _) => SyncStatus::Error {
-            message: err.clone(),
-        },
-        (None, None, Some(err)) if outcome.advanced == 0 => SyncStatus::Error {
+        (None, Some(err)) if outcome.advanced == 0 => SyncStatus::Error {
             message: err.clone(),
         },
         _ => SyncStatus::Idle,
@@ -559,8 +449,8 @@ fn load_settings(file: &SettingsFile) -> Settings {
 /// A failed write must not stop the current process from syncing; it only means the next relaunch may
 /// start paused, so log it where the tray's error list will surface it.
 fn persist(file: &SettingsFile, settings: &Settings) {
-    if let Err(err) = file.save(settings) {
-        tracing::error!(error = %err, "failed to save settings");
+    if let Err(error) = archive_scheduler::save_settings(file, settings) {
+        tracing::error!(error = %error, "failed to save settings");
     }
 }
 
@@ -572,10 +462,6 @@ struct CycleOutcome {
     first_error: Option<String>,
     /// A setup failure (bad client config, broken cursor DB) — distinct from per-session ingest errors.
     setup_error: Option<String>,
-    /// Optional Archive enrollment/load or upload failure. Visible in status and retried next cycle,
-    /// but must not block fact backfill.
-    archive_setup_error: Option<String>,
-    archive_recovered: bool,
 }
 
 /// Run one sync pass over all sources, mirroring the result into the state bus. A failed cycle records
@@ -593,7 +479,6 @@ async fn run_cycle(
     bus: &AppStateBus,
     window: Window,
     source_homes: SourceHomes,
-    archive_policy_memory: &mut ArchivePolicyMemory,
 ) -> Option<CycleOutcome> {
     let conn = match Paths::resolve().and_then(|p| p.load_connection()) {
         Ok(Some(conn)) => conn,
@@ -627,15 +512,9 @@ async fn run_cycle(
         }
     };
 
-    let archive_connection = ArchiveConnectionIdentity {
-        org_id: conn.org_id.clone(),
-        collector_id: conn.collector_id.clone(),
-    };
-    let remembered_denial = archive_policy_memory.denial_for(&archive_connection);
-    let memory_connection = archive_connection.clone();
     publish_connection(bus, &conn);
 
-    let credential = match keychain::load(&archive_connection.org_id) {
+    let credential = match keychain::load(&conn.org_id) {
         Ok(Some(secret)) => secret,
         Ok(None) => {
             tracing::warn!("sync skipped: no Collector Credential in keychain");
@@ -667,35 +546,31 @@ async fn run_cycle(
     let now_ms = now_ms();
     let cycle_source_homes = source_homes.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        run_cycle_blocking_with_policy_memory(
-            archive_connection,
+        run_cycle_blocking(
+            ArchiveConnectionIdentity {
+                org_id: conn.org_id,
+                collector_id: conn.collector_id,
+            },
             credential,
             ingest_url,
             home,
             cycle_source_homes,
             window,
             now_ms,
-            CycleIsolation::production(remembered_denial),
         )
     })
     .await;
 
     let outcome = match result {
-        Ok((outcome, observation)) => {
-            archive_policy_memory.observe_refresh(&memory_connection, observation.as_ref());
+        Ok(outcome) => {
             let first_error = outcome.first_error.as_deref().unwrap_or("");
             let setup_error = outcome.setup_error.as_deref().unwrap_or("");
-            let archive_setup_error = outcome.archive_setup_error.as_deref().unwrap_or("");
-            if outcome.first_error.is_some()
-                || outcome.setup_error.is_some()
-                || outcome.archive_setup_error.is_some()
-            {
+            if outcome.first_error.is_some() || outcome.setup_error.is_some() {
                 tracing::warn!(
                     advanced = outcome.advanced,
                     failed = outcome.failed,
                     first_error = %first_error,
                     setup_error = %setup_error,
-                    archive_setup_error = %archive_setup_error,
                     "sync cycle failed"
                 );
             } else {
@@ -723,107 +598,11 @@ async fn run_cycle(
     };
 
     refresh_sources(bus, Some(&source_homes));
-    refresh_archive(bus);
     outcome
 }
 
-fn update_archive_error_after_cycle(bus: &AppStateBus, outcome: &CycleOutcome) {
-    if outcome.archive_recovered {
-        clear_archive_error(bus);
-    }
-}
-
-/// Test isolation for collector state and Archive inputs. Production resolves both paths itself and
-/// may carry a denial restored from desktop settings.
-struct CycleIsolation {
-    state_dir: Option<std::path::PathBuf>,
-    archive: Option<(String, Arc<dyn ArchiveKeyStore>)>,
-    remembered_denial: Option<collector_embedder::ArchiveEnrollmentRecord>,
-}
-
-impl CycleIsolation {
-    fn production(remembered_denial: Option<collector_embedder::ArchiveEnrollmentRecord>) -> Self {
-        Self {
-            state_dir: None,
-            archive: None,
-            remembered_denial,
-        }
-    }
-}
-
-/// Load Archive inputs for this serialized cycle. Inactive enrollment stays `None` so no spool or
-/// key is created. Frozen/grace/revoked keep the existing local archive state without a second task.
-/// Cleanup markers keep Archive on the cycle even when enrollment is unreadable. Parse failures
-/// without a marker stay fail-loud in the error string but do not abort parsed-fact sync.
-fn cycle_archive_config(
-    paths: &Paths,
-    org_id: &str,
-    collector_id: &str,
-    archive: Option<(String, Arc<dyn ArchiveKeyStore>)>,
-    confirmed: Option<collector_embedder::ArchiveEnrollmentRecord>,
-) -> (Option<sync::ArchiveRunConfig>, Option<String>) {
-    if !sync::cleanup_obligation_exists(&paths.archive_spool_dir(org_id)) {
-        let loaded = confirmed
-            .is_none()
-            .then(|| archive_policy::load_archive_policy(paths, org_id).ok())
-            .flatten();
-        if let Some(record) = confirmed.as_ref().or(loaded.as_ref()) {
-            if record.policy().is_ok_and(|policy| policy.captures())
-                && record.collector_id.as_deref() != Some(collector_id)
-            {
-                return (None, None);
-            }
-        }
-    }
-    match (archive, confirmed) {
-        (Some((url, keys)), Some(record)) => {
-            sync::prepare_confirmed_archive(paths, org_id, url, keys, record)
-        }
-        (None, Some(record)) => sync::prepare_desktop_confirmed_archive(paths, org_id, record),
-        (Some((url, keys)), None) => sync::prepare_serialized_archive(paths, org_id, url, keys),
-        (None, None) => sync::prepare_desktop_serialized_archive(paths, org_id),
-    }
-}
-
-fn log_archive_fork(fork: &sync::ArchiveForkEvent) {
-    tracing::info!(
-        source = fork.source.as_str(),
-        session = %fork.source_session_id,
-        previous_part = %fork.previous_part_id,
-        new_part = %fork.new_part_id,
-        reason = %fork.reason,
-        previous_offset = fork.previous_offset,
-        new_size = fork.new_size,
-        "forked archive transcript part after source rewrite"
-    );
-}
-
 /// The non-`Send` half: build a local current-thread runtime and drive one [`sync::run`] on it.
-#[cfg(test)]
 fn run_cycle_blocking(
-    connection: ArchiveConnectionIdentity,
-    credential: String,
-    ingest_url: String,
-    home: std::path::PathBuf,
-    window: Window,
-    now_ms: i64,
-    isolation: CycleIsolation,
-) -> CycleOutcome {
-    run_cycle_blocking_with_policy_memory(
-        connection,
-        credential,
-        ingest_url,
-        home.clone(),
-        SourceHomes::standard(&home),
-        window,
-        now_ms,
-        isolation,
-    )
-    .0
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_cycle_blocking_with_policy_memory(
     connection: ArchiveConnectionIdentity,
     credential: String,
     ingest_url: String,
@@ -831,106 +610,22 @@ fn run_cycle_blocking_with_policy_memory(
     source_homes: SourceHomes,
     window: Window,
     now_ms: i64,
-    isolation: CycleIsolation,
-) -> (CycleOutcome, Option<ArchivePolicyObservation>) {
-    let ArchiveConnectionIdentity {
-        org_id,
-        collector_id,
-    } = connection;
+) -> CycleOutcome {
+    let org_id = connection.org_id;
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
     {
         Ok(rt) => rt,
         Err(err) => {
-            return (
-                CycleOutcome {
-                    advanced: 0,
-                    failed: 0,
-                    first_error: None,
-                    setup_error: Some(format!("build runtime: {err}")),
-                    archive_setup_error: None,
-                    archive_recovered: false,
-                },
-                None,
-            );
+            return CycleOutcome {
+                advanced: 0,
+                failed: 0,
+                first_error: None,
+                setup_error: Some(format!("build runtime: {err}")),
+            };
         }
     };
-
-    let CycleIsolation {
-        state_dir,
-        archive: archive_input,
-        remembered_denial,
-    } = isolation;
-    let paths = match state_dir.as_deref() {
-        Some(dir) => Ok(Paths::at(dir.to_path_buf())),
-        None => Paths::resolve().map_err(|err| format!("resolve collector paths: {err}")),
-    };
-    let mut archive_setup_error = match &paths {
-        Ok(paths) => paths
-            .ensure()
-            .err()
-            .map(|err| format!("prepare collector paths: {err}")),
-        Err(err) => Some(err.clone()),
-    };
-
-    let should_refresh_policy = state_dir.is_none() || archive_input.is_some();
-    let mut archive_recovered = false;
-    let mut confirmed_archive_policy = remembered_denial;
-    let mut archive_policy_observation = None;
-    if archive_setup_error.is_none() && should_refresh_policy {
-        let archive_url = archive_input
-            .as_ref()
-            .map(|(url, _)| url.clone())
-            .unwrap_or_else(defaults::archive_url);
-        if let Ok(paths) = &paths {
-            match runtime.block_on(archive_policy::refresh_archive_policy(
-                paths,
-                &org_id,
-                &collector_id,
-                archive_url,
-                &credential,
-            )) {
-                Ok(refreshed) => {
-                    archive_recovered = refreshed.persisted;
-                    if let Some(confirmed) = refreshed.confirmed {
-                        archive_policy_observation = Some(ArchivePolicyObservation {
-                            confirmed: confirmed.clone(),
-                            persisted: refreshed.persisted,
-                        });
-                        // An allowed response cannot lift a restart-safe denial until its normal
-                        // enrollment marker is durable.
-                        if refreshed.persisted
-                            || confirmed_archive_policy.is_none()
-                            || !confirmed.policy().is_ok_and(|policy| policy.captures())
-                        {
-                            confirmed_archive_policy = Some(confirmed);
-                        }
-                    }
-                    if let Some(error) = refreshed.persistence_error {
-                        archive_setup_error = Some(error);
-                    }
-                }
-                Err(err) => archive_setup_error = Some(err.to_string()),
-            }
-        }
-    }
-
-    let (archive, enrollment_error) = match (&paths, state_dir.is_some()) {
-        (Ok(paths), true) => cycle_archive_config(
-            paths,
-            &org_id,
-            &collector_id,
-            archive_input,
-            confirmed_archive_policy,
-        ),
-        _ => (None, None),
-    };
-    if archive_setup_error.is_none() {
-        archive_setup_error = enrollment_error;
-    }
-    // Production archive capture, migration, cleanup, and upload run through the dedicated spool
-    // owner. Tests that inject an isolated state directory keep the composed path as coverage.
     let result = runtime.block_on(sync::run_detailed(sync::RunConfig {
         ingest_url,
         credential,
@@ -941,8 +636,7 @@ fn run_cycle_blocking_with_policy_memory(
         replay: false,
         now_ms,
         batch_id_prefix: "desktop",
-        archive,
-        state_dir: state_dir.as_deref(),
+        state_dir: None,
     }));
 
     let outcome = match result {
@@ -957,25 +651,11 @@ fn run_cycle_blocking_with_policy_memory(
                     first_error = r.first_error.clone();
                 }
             }
-            if let Some(archive) = &outcome.archive {
-                tracing::info!(history = ?archive.history, "archive history progress");
-                for fork in &archive.fork_events {
-                    log_archive_fork(fork);
-                }
-                failed += archive.failed;
-                archive_recovered |= archive.first_error.is_none()
-                    && (archive.uploaded > 0 || archive.captured > 0 || archive.purged);
-                if archive_setup_error.is_none() {
-                    archive_setup_error = archive.first_error.clone();
-                }
-            }
             CycleOutcome {
                 advanced,
                 failed,
                 first_error,
                 setup_error: None,
-                archive_setup_error,
-                archive_recovered,
             }
         }
         // Setup failure (bad client config, broken cursor DB). The Display is a class, not a secret.
@@ -984,11 +664,9 @@ fn run_cycle_blocking_with_policy_memory(
             failed: 0,
             first_error: None,
             setup_error: Some(err.to_string()),
-            archive_setup_error: None,
-            archive_recovered,
         },
     };
-    (outcome, archive_policy_observation)
+    outcome
 }
 
 fn set_idle(bus: &AppStateBus) {
@@ -1043,8 +721,7 @@ pub fn refresh_archive(bus: &AppStateBus) {
         let Some(connection) = paths.load_connection()? else {
             return Ok(ArchiveMenuState::default());
         };
-        let record =
-            collector_embedder::archive_policy::load_archive_policy(&paths, &connection.org_id)?;
+        let record = archive_scheduler::load_policy(&paths, &connection.org_id)?;
         archive_menu_state_for_connection(record, &connection.collector_id)
     });
     match result {
@@ -1063,6 +740,17 @@ fn publish_archive_refresh(bus: &AppStateBus, archive: ArchiveMenuState) {
             ..archive
         };
     });
+}
+
+pub(crate) fn publish_archive_record(
+    bus: &AppStateBus,
+    record: collector_embedder::ArchiveEnrollmentRecord,
+    collector_id: &str,
+) {
+    match archive_menu_state_for_connection(record, collector_id) {
+        Ok(archive) => publish_archive_refresh(bus, archive),
+        Err(error) => set_archive_error(bus, format!("load archive enrollment: {error}")),
+    }
 }
 
 fn archive_menu_state_for_connection(
@@ -1122,1057 +810,9 @@ fn now_ms() -> i64 {
 }
 
 #[cfg(test)]
-mod archive_engine_tests {
-    use super::*;
-    use collector_embedder::sync::{
-        self, cleanup_obligation_exists, ArchiveKeyStore, ArchivePolicy, ArchiveSpool,
-        MemoryKeyStore,
-    };
-    use std::sync::Arc;
-    use tempfile::TempDir;
-
-    fn enrollment(paths: &Paths, org_id: &str, status: &str) {
-        let authorized_sources = if status == "enrolled" {
-            r#"[{"source":"claude","historyChoice":"all_history","authorizedAt":1770000000001}]"#
-        } else {
-            "[]"
-        };
-        std::fs::write(
-            paths.archive_enrollment_file(org_id),
-            format!(
-                r#"{{"status":"{status}","collectorId":"collector_1","authorizedSources":{authorized_sources}}}"#
-            ),
-        )
-        .unwrap();
-    }
-
-    fn saved_connection(org_id: &str, collector_id: &str) -> Connection {
-        Connection {
-            org_id: org_id.to_string(),
-            collector_id: collector_id.to_string(),
-            convex_url: "https://example.convex.cloud".to_string(),
-            ingest_url: "https://ingest.example".to_string(),
-            expires_at: None,
-        }
-    }
-
-    fn archive_identity(org_id: &str, collector_id: &str) -> ArchiveConnectionIdentity {
-        ArchiveConnectionIdentity {
-            org_id: org_id.to_string(),
-            collector_id: collector_id.to_string(),
-        }
-    }
-
-    #[test]
-    fn collector_change_resets_menu_and_rejects_prior_collector_consent() {
-        let bus = AppStateBus::new();
-        let old = saved_connection("org_1", "collector_old");
-        let replacement = saved_connection("org_1", "collector_new");
-        publish_connection(&bus, &old);
-        bus.update(|state| {
-            state.archive.enrolled = true;
-            state.archive.sources = vec![(ArchiveSource::Claude, ArchiveHistoryChoice::AllHistory)];
-            state.archive.pending = Some(ArchiveSource::Codex);
-            state.archive.last_error = Some("old error".to_string());
-        });
-
-        assert!(publish_connection(&bus, &replacement));
-        assert_eq!(bus.snapshot().archive, ArchiveMenuState::default());
-
-        let old_policy = collector_embedder::ArchiveEnrollmentRecord {
-            status: ArchivePolicy::Enrolled.as_str().to_string(),
-            collector_id: Some("collector_old".to_string()),
-            authorized_sources: vec![collector_embedder::ArchiveAuthorizedSource {
-                source: ArchiveSource::Claude,
-                history_choice: ArchiveHistoryChoice::AllHistory,
-                authorized_at: 1_770_000_000_001,
-            }],
-            reason: None,
-        };
-        assert_eq!(
-            archive_menu_state_for_connection(old_policy, "collector_new").unwrap(),
-            ArchiveMenuState::default()
-        );
-    }
-
-    #[test]
-    fn collector_change_does_not_run_archive_with_prior_collector_consent() {
-        let dir = TempDir::new().unwrap();
-        let paths = Paths::at(dir.path().to_path_buf());
-        paths.ensure().unwrap();
-        let policy_path = paths.archive_enrollment_file("org_1");
-        let policy = collector_embedder::ArchiveEnrollmentRecord {
-            status: ArchivePolicy::Enrolled.as_str().to_string(),
-            collector_id: Some("collector_old".to_string()),
-            authorized_sources: vec![collector_embedder::ArchiveAuthorizedSource {
-                source: ArchiveSource::Claude,
-                history_choice: ArchiveHistoryChoice::AllHistory,
-                authorized_at: 1_770_000_000_001,
-            }],
-            reason: None,
-        };
-        policy.save_record(&policy_path).unwrap();
-        let before = std::fs::read(&policy_path).unwrap();
-
-        let (config, error) = cycle_archive_config(
-            &paths,
-            "org_1",
-            "collector_new",
-            Some((
-                "https://archive.example".to_string(),
-                Arc::new(MemoryKeyStore::new()),
-            )),
-            None,
-        );
-
-        assert!(config.is_none());
-        assert_eq!(error, None);
-        assert_eq!(std::fs::read(policy_path).unwrap(), before);
-        assert!(!paths.archive_spool_dir("org_1").exists());
-    }
-
-    #[test]
-    fn confirmed_denial_overrides_stale_enrolled_marker_for_the_current_cycle() {
-        let dir = TempDir::new().unwrap();
-        let paths = Paths::at(dir.path().to_path_buf());
-        paths.ensure().unwrap();
-        enrollment(&paths, "org_1", "enrolled");
-        let inactive = collector_embedder::ArchiveEnrollmentRecord {
-            status: ArchivePolicy::Inactive.as_str().to_string(),
-            collector_id: Some("collector_1".to_string()),
-            authorized_sources: Vec::new(),
-            reason: Some("not_activated".to_string()),
-        };
-
-        let (config, error) = cycle_archive_config(
-            &paths,
-            "org_1",
-            "collector_1",
-            Some((
-                "https://archive.example".to_string(),
-                Arc::new(MemoryKeyStore::new()),
-            )),
-            Some(inactive),
-        );
-
-        assert!(config.is_none());
-        assert_eq!(error, None);
-        assert_eq!(
-            collector_embedder::ArchiveEnrollmentRecord::load(
-                &paths.archive_enrollment_file("org_1")
-            )
-            .unwrap(),
-            ArchivePolicy::Enrolled
-        );
-    }
-
-    #[test]
-    fn unpersisted_denial_survives_restart_and_a_later_refresh_failure() {
-        let state = TempDir::new().unwrap();
-        let paths = Paths::at(state.path().to_path_buf());
-        paths.ensure().unwrap();
-        enrollment(&paths, "org_1", "enrolled");
-        let settings_file = SettingsFile::at(state.path());
-        let mut settings = Settings::default();
-        let connection = archive_identity("org_1", "collector_1");
-        let inactive = collector_embedder::ArchiveEnrollmentRecord {
-            status: ArchivePolicy::Inactive.as_str().to_string(),
-            collector_id: Some("collector_1".to_string()),
-            authorized_sources: Vec::new(),
-            reason: Some("not_activated".to_string()),
-        };
-        let mut memory = ArchivePolicyMemory::default();
-        let failed_persistence = ArchivePolicyObservation {
-            confirmed: inactive.clone(),
-            persisted: false,
-        };
-
-        memory.observe_refresh(&connection, Some(&failed_persistence));
-        assert_eq!(
-            memory.denial_for(&connection).unwrap().policy().unwrap(),
-            ArchivePolicy::Inactive
-        );
-        memory.update_settings(&mut settings);
-        settings_file.save(&settings).unwrap();
-        let (first_config, first_error) = cycle_archive_config(
-            &paths,
-            "org_1",
-            "collector_1",
-            Some((
-                "https://archive.example".to_string(),
-                Arc::new(MemoryKeyStore::new()),
-            )),
-            Some(inactive),
-        );
-        assert!(first_config.is_none());
-        assert_eq!(first_error, None);
-
-        drop(memory);
-        drop(settings);
-        let mut restarted_settings = settings_file.load().unwrap();
-        let mut restarted_memory = ArchivePolicyMemory::from_settings(&restarted_settings);
-        restarted_memory.observe_refresh(&connection, None);
-        let (second_config, second_error) = cycle_archive_config(
-            &paths,
-            "org_1",
-            "collector_1",
-            Some((
-                "https://archive.example".to_string(),
-                Arc::new(MemoryKeyStore::new()),
-            )),
-            restarted_memory.denial_for(&connection),
-        );
-        assert!(second_config.is_none());
-        assert_eq!(second_error, None);
-        assert_eq!(
-            collector_embedder::ArchiveEnrollmentRecord::load(
-                &paths.archive_enrollment_file("org_1")
-            )
-            .unwrap(),
-            ArchivePolicy::Enrolled
-        );
-
-        let allowed = ArchivePolicyObservation {
-            confirmed: collector_embedder::ArchiveEnrollmentRecord {
-                status: ArchivePolicy::Enrolled.as_str().to_string(),
-                collector_id: Some("collector_1".to_string()),
-                authorized_sources: vec![collector_embedder::ArchiveAuthorizedSource {
-                    source: ArchiveSource::Claude,
-                    history_choice: ArchiveHistoryChoice::AllHistory,
-                    authorized_at: 1_770_000_000_001,
-                }],
-                reason: None,
-            },
-            persisted: true,
-        };
-        restarted_memory.observe_refresh(&connection, Some(&allowed));
-        restarted_memory.update_settings(&mut restarted_settings);
-        settings_file.save(&restarted_settings).unwrap();
-
-        let recovered_settings = settings_file.load().unwrap();
-        assert!(recovered_settings.archive_policy_denial.is_none());
-        let recovered_memory = ArchivePolicyMemory::from_settings(&recovered_settings);
-        let (recovered_config, recovered_error) = cycle_archive_config(
-            &paths,
-            "org_1",
-            "collector_1",
-            Some((
-                "https://archive.example".to_string(),
-                Arc::new(MemoryKeyStore::new()),
-            )),
-            recovered_memory.denial_for(&connection),
-        );
-        assert_eq!(recovered_config.unwrap().policy, ArchivePolicy::Enrolled);
-        assert_eq!(recovered_error, None);
-    }
-
-    #[test]
-    fn durably_persisted_enrollment_clears_remembered_denial() {
-        let state = TempDir::new().unwrap();
-        let paths = Paths::at(state.path().to_path_buf());
-        paths.ensure().unwrap();
-        enrollment(&paths, "org_1", "enrolled");
-        let connection = archive_identity("org_1", "collector_1");
-        let mut memory = ArchivePolicyMemory {
-            unpersisted_denial: Some((
-                connection.clone(),
-                collector_embedder::ArchiveEnrollmentRecord {
-                    status: ArchivePolicy::Inactive.as_str().to_string(),
-                    collector_id: Some("collector_1".to_string()),
-                    authorized_sources: Vec::new(),
-                    reason: Some("not_activated".to_string()),
-                },
-            )),
-        };
-        let enrolled = collector_embedder::ArchiveEnrollmentRecord {
-            status: ArchivePolicy::Enrolled.as_str().to_string(),
-            collector_id: Some("collector_1".to_string()),
-            authorized_sources: vec![collector_embedder::ArchiveAuthorizedSource {
-                source: ArchiveSource::Claude,
-                history_choice: ArchiveHistoryChoice::AllHistory,
-                authorized_at: 1_770_000_000_001,
-            }],
-            reason: None,
-        };
-        let mut recovered = ArchivePolicyObservation {
-            confirmed: enrolled,
-            persisted: false,
-        };
-
-        memory.observe_refresh(&connection, Some(&recovered));
-        assert!(memory.denial_for(&connection).is_some());
-        recovered.persisted = true;
-        memory.observe_refresh(&connection, Some(&recovered));
-        assert!(memory.denial_for(&connection).is_none());
-        let (config, error) = cycle_archive_config(
-            &paths,
-            "org_1",
-            "collector_1",
-            Some((
-                "https://archive.example".to_string(),
-                Arc::new(MemoryKeyStore::new()),
-            )),
-            memory.denial_for(&connection),
-        );
-        assert_eq!(config.unwrap().policy, ArchivePolicy::Enrolled);
-        assert_eq!(error, None);
-    }
-
-    #[test]
-    fn confirmed_revocation_drives_cleanup_when_the_enrollment_marker_is_stale() {
-        let dir = TempDir::new().unwrap();
-        let paths = Paths::at(dir.path().to_path_buf());
-        paths.ensure().unwrap();
-        enrollment(&paths, "org_1", "enrolled");
-        let revoked = collector_embedder::ArchiveEnrollmentRecord {
-            status: ArchivePolicy::Revoked.as_str().to_string(),
-            collector_id: Some("collector_1".to_string()),
-            authorized_sources: Vec::new(),
-            reason: Some("credential_revoked".to_string()),
-        };
-
-        let (config, error) = cycle_archive_config(
-            &paths,
-            "org_1",
-            "collector_1",
-            Some((
-                "https://archive.example".to_string(),
-                Arc::new(MemoryKeyStore::new()),
-            )),
-            Some(revoked),
-        );
-
-        assert_eq!(config.unwrap().policy, ArchivePolicy::Revoked);
-        assert_eq!(error, None);
-    }
-
-    #[test]
-    fn terminal_policy_refreshes_sources_before_reporting_enrollment_failure() {
-        let bus = AppStateBus::new();
-        bus.update(|state| {
-            state.archive.enrolled = true;
-            state.archive.sources = vec![(ArchiveSource::Claude, ArchiveHistoryChoice::AllHistory)];
-            state.archive.pending = Some(ArchiveSource::Codex);
-        });
-
-        publish_archive_refresh(
-            &bus,
-            ArchiveMenuState {
-                enrolled: false,
-                reason: Some("revoked".to_string()),
-                ..ArchiveMenuState::default()
-            },
-        );
-        publish_archive_error(&bus, "collector credential was revoked".to_string());
-
-        let archive = bus.snapshot().archive;
-        assert!(!archive.enrolled);
-        assert_eq!(archive.reason.as_deref(), Some("revoked"));
-        assert!(archive.sources.is_empty());
-        assert_eq!(archive.pending, None);
-        assert_eq!(
-            archive.last_error.as_deref(),
-            Some("collector credential was revoked")
-        );
-    }
-
-    #[test]
-    fn missing_enrollment_keeps_archive_out_of_the_serialized_cycle() {
-        let dir = TempDir::new().unwrap();
-        let paths = Paths::at(dir.path().to_path_buf());
-        paths.ensure().unwrap();
-        let cfg = sync::load_archive_run_config(
-            &paths,
-            "org_1",
-            "https://archive.example".to_string(),
-            Arc::new(MemoryKeyStore::new()),
-        )
-        .unwrap();
-        assert!(cfg.is_none());
-    }
-
-    #[test]
-    fn grace_enrollment_stays_on_the_same_cycle_without_a_second_task() {
-        let dir = TempDir::new().unwrap();
-        let paths = Paths::at(dir.path().to_path_buf());
-        paths.ensure().unwrap();
-        enrollment(&paths, "org_1", "grace");
-        let cfg = sync::load_archive_run_config(
-            &paths,
-            "org_1",
-            "https://archive.example".to_string(),
-            Arc::new(MemoryKeyStore::new()),
-        )
-        .unwrap()
-        .unwrap();
-        assert_eq!(cfg.policy, ArchivePolicy::Grace);
-        assert!(cfg.spool_dir.exists());
-    }
-
-    #[test]
-    fn revoked_enrollment_is_wired_into_the_same_cycle() {
-        let dir = TempDir::new().unwrap();
-        let paths = Paths::at(dir.path().to_path_buf());
-        paths.ensure().unwrap();
-        enrollment(&paths, "org_1", "revoked");
-        let cfg = sync::load_archive_run_config(
-            &paths,
-            "org_1",
-            "https://archive.example".to_string(),
-            Arc::new(MemoryKeyStore::new()),
-        )
-        .unwrap()
-        .unwrap();
-        assert_eq!(cfg.policy, ArchivePolicy::Revoked);
-        assert_eq!(cfg.spool_dir, paths.archive_spool_dir("org_1"));
-    }
-
-    #[test]
-    fn unreadable_policy_with_cleanup_marker_stays_on_the_serialized_cycle() {
-        let dir = TempDir::new().unwrap();
-        let paths = Paths::at(dir.path().to_path_buf());
-        paths.ensure().unwrap();
-        let enroll = paths.archive_enrollment_file("org_1");
-        let spool = paths.archive_spool_dir("org_1");
-        let legacy = paths.legacy_archive_spool_dir("org_1");
-        let keys = Arc::new(MemoryKeyStore::new());
-        let _ = ArchiveSpool::open(&legacy, "org_1", keys.as_ref()).unwrap();
-        assert!(sync::load_archive_run_config(
-            &paths,
-            "org_1",
-            "https://archive.example".to_string(),
-            keys.clone(),
-        )
-        .unwrap()
-        .is_none());
-        std::fs::write(&enroll, b"{not-json").unwrap();
-        std::fs::write(ArchiveSpool::durable_cleanup_marker_path(&spool), b"").unwrap();
-        let cfg = sync::load_archive_run_config(
-            &paths,
-            "org_1",
-            "https://archive.example".to_string(),
-            keys.clone(),
-        )
-        .unwrap()
-        .expect("Desktop must keep Archive work when cleanup-required remains");
-        assert_eq!(cfg.policy, ArchivePolicy::Revoked);
-        assert!(cleanup_obligation_exists(&spool));
-        assert!(keys.load("org_1:archive-v2").unwrap().is_none());
-        assert!(keys.load("org_1").unwrap().is_some());
-        assert!(legacy.exists());
-        assert!(!spool.exists());
-    }
-
-    #[test]
-    fn unreadable_policy_without_marker_fails_loud() {
-        let dir = TempDir::new().unwrap();
-        let paths = Paths::at(dir.path().to_path_buf());
-        paths.ensure().unwrap();
-        std::fs::write(paths.archive_enrollment_file("org_1"), b"{not-json").unwrap();
-        let err = sync::load_archive_run_config(
-            &paths,
-            "org_1",
-            "https://archive.example".to_string(),
-            Arc::new(MemoryKeyStore::new()),
-        )
-        .err()
-        .expect("Desktop must not drop an unreadable enrollment as inactive");
-        assert!(err.to_string().contains("load archive enrollment"));
-    }
-
-    #[test]
-    fn truncated_policy_status_fails_loud_and_explicit_inactive_stays_inactive() {
-        let dir = TempDir::new().unwrap();
-        let paths = Paths::at(dir.path().to_path_buf());
-        paths.ensure().unwrap();
-        enrollment(&paths, "org_1", "enrolle");
-        let err = match sync::load_archive_run_config(
-            &paths,
-            "org_1",
-            "https://archive.example".to_string(),
-            Arc::new(MemoryKeyStore::new()),
-        ) {
-            Err(err) => err,
-            Ok(_) => panic!("truncated status must not look inactive"),
-        };
-        assert!(err.to_string().contains("load archive enrollment"));
-        let (config, load_error) = sync::prepare_serialized_archive(
-            &paths,
-            "org_1",
-            "https://archive.example".to_string(),
-            Arc::new(MemoryKeyStore::new()),
-        );
-        assert!(config.is_none());
-        assert!(
-            load_error
-                .as_deref()
-                .is_some_and(|err| err.contains("load archive enrollment")),
-            "truncated policy must stay fail-loud: {load_error:?}"
-        );
-        enrollment(&paths, "org_1", "inactive");
-        assert!(sync::load_archive_run_config(
-            &paths,
-            "org_1",
-            "https://archive.example".to_string(),
-            Arc::new(MemoryKeyStore::new()),
-        )
-        .unwrap()
-        .is_none());
-    }
-
-    #[test]
-    fn unreadable_policy_without_marker_still_runs_fact_sync() {
-        const CLAUDE: &[u8] =
-            include_bytes!("../../../../packages/collector-archive/tests/fixtures/claude.jsonl");
-        let home = TempDir::new().unwrap();
-        let state = TempDir::new().unwrap();
-        let claude_dir = home.path().join(".claude").join("projects").join("p1");
-        std::fs::create_dir_all(&claude_dir).unwrap();
-        std::fs::write(claude_dir.join("claude-session-001.jsonl"), CLAUDE).unwrap();
-
-        let paths = Paths::at(state.path().to_path_buf());
-        paths.ensure().unwrap();
-        std::fs::write(paths.archive_enrollment_file("org_1"), b"{not-json").unwrap();
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let fact_posts = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let posts = fact_posts.clone();
-        std::thread::spawn(move || {
-            for stream in listener.incoming().take(8) {
-                let Ok(mut stream) = stream else {
-                    continue;
-                };
-                let mut buf = [0u8; 4096];
-                let _ = std::io::Read::read(&mut stream, &mut buf);
-                posts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                let body = r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#;
-                let response = format!(
-                    "HTTP/1.1 202 Accepted\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
-            }
-        });
-
-        let outcome = run_cycle_blocking(
-            archive_identity("org_1", "collector_1"),
-            "tfc_secret".to_string(),
-            format!("http://{addr}"),
-            home.path().to_path_buf(),
-            Window::Incremental,
-            1_779_840_000_000,
-            CycleIsolation {
-                state_dir: Some(state.path().to_path_buf()),
-                archive: None,
-                remembered_denial: None,
-            },
-        );
-
-        assert!(
-            outcome
-                .archive_setup_error
-                .as_deref()
-                .is_some_and(|err| err.contains("load archive enrollment")),
-            "Archive diagnostics must stay fail-loud: {:?}",
-            outcome.archive_setup_error
-        );
-        assert!(outcome.setup_error.is_none());
-        assert!(
-            outcome.advanced >= 1,
-            "corrupt Archive policy must not abort fact sync: advanced={}",
-            outcome.advanced
-        );
-        assert!(fact_posts.load(std::sync::atomic::Ordering::SeqCst) >= 1);
-        assert!(fact_cycle_reached_ingest(&outcome));
-    }
-
-    #[test]
-    fn truncated_policy_without_marker_still_runs_fact_sync_and_backfill() {
-        const CLAUDE: &[u8] =
-            include_bytes!("../../../../packages/collector-archive/tests/fixtures/claude.jsonl");
-        let home = TempDir::new().unwrap();
-        let state = TempDir::new().unwrap();
-        let claude_dir = home.path().join(".claude").join("projects").join("p1");
-        std::fs::create_dir_all(&claude_dir).unwrap();
-        std::fs::write(claude_dir.join("claude-session-001.jsonl"), CLAUDE).unwrap();
-
-        let paths = Paths::at(state.path().to_path_buf());
-        paths.ensure().unwrap();
-        enrollment(&paths, "org_1", "enrolle");
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let fact_posts = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let posts = fact_posts.clone();
-        std::thread::spawn(move || {
-            for stream in listener.incoming().take(8) {
-                let Ok(mut stream) = stream else {
-                    continue;
-                };
-                let mut buf = [0u8; 4096];
-                let _ = std::io::Read::read(&mut stream, &mut buf);
-                posts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                let body = r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#;
-                let response = format!(
-                    "HTTP/1.1 202 Accepted\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
-            }
-        });
-
-        let outcome = run_cycle_blocking(
-            archive_identity("org_1", "collector_1"),
-            "tfc_secret".to_string(),
-            format!("http://{addr}"),
-            home.path().to_path_buf(),
-            Window::Incremental,
-            1_779_840_000_000,
-            CycleIsolation {
-                state_dir: Some(state.path().to_path_buf()),
-                archive: None,
-                remembered_denial: None,
-            },
-        );
-
-        assert!(
-            outcome
-                .archive_setup_error
-                .as_deref()
-                .is_some_and(|err| err.contains("load archive enrollment")),
-            "truncated policy must stay fail-loud: {:?}",
-            outcome.archive_setup_error
-        );
-        assert!(outcome.setup_error.is_none());
-        assert!(outcome.advanced >= 1);
-        assert!(fact_posts.load(std::sync::atomic::Ordering::SeqCst) >= 1);
-        assert!(fact_cycle_reached_ingest(&outcome));
-
-        let mut settings = Settings {
-            syncing: true,
-            backfilled: false,
-            source_homes: Default::default(),
-            archive_request: None,
-            archive_policy_denial: None,
-        };
-        match (
-            apply_authorized_cycle(&mut settings, &outcome),
-            sync::window_from_since("7d").unwrap(),
-        ) {
-            (Window::History(actual), Window::History(expected)) => assert_eq!(actual, expected),
-            _ => panic!("first truncated-policy cycle must still use FIRST_BACKFILL"),
-        }
-        assert!(settings.backfilled);
-        assert!(matches!(
-            window_for_authorized_cycle(&settings),
-            Window::Incremental
-        ));
-    }
-
-    #[test]
-    fn policy_refresh_persists_consent_before_the_serialized_archive_cycle() {
-        let home = TempDir::new().unwrap();
-        let state = TempDir::new().unwrap();
-        let paths = Paths::at(state.path().to_path_buf());
-        paths.ensure().unwrap();
-        let keys: Arc<dyn ArchiveKeyStore> = Arc::new(MemoryKeyStore::new());
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0u8; 4096];
-            let read = std::io::Read::read(&mut stream, &mut request).unwrap();
-            let request = String::from_utf8_lossy(&request[..read]).to_ascii_lowercase();
-            assert!(request.starts_with("get /v1/archive/policy "));
-            assert!(request.contains("x-trace-flow-collector-secret: tfc_secret"));
-
-            let body = r#"{"enrolled":true,"authorizedSources":[{"source":"claude","historyChoice":"all_history","authorizedAt":1770000000001}],"reason":null}"#;
-            let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            std::io::Write::write_all(&mut stream, response.as_bytes()).unwrap();
-        });
-
-        let outcome = run_cycle_blocking(
-            archive_identity("org_1", "collector_1"),
-            "tfc_secret".to_string(),
-            "http://127.0.0.1:1".to_string(),
-            home.path().to_path_buf(),
-            Window::Incremental,
-            1_779_840_000_000,
-            CycleIsolation {
-                state_dir: Some(state.path().to_path_buf()),
-                archive: Some((format!("http://{addr}"), keys.clone())),
-                remembered_denial: None,
-            },
-        );
-        server.join().unwrap();
-
-        assert!(outcome.archive_setup_error.is_none());
-        let marker = std::fs::read_to_string(paths.archive_enrollment_file("org_1")).unwrap();
-        let marker_json: serde_json::Value = serde_json::from_str(&marker).unwrap();
-        assert_eq!(marker_json["status"], "enrolled");
-        assert_eq!(marker_json["authorizedSources"][0]["source"], "claude");
-        assert_eq!(
-            marker_json["authorizedSources"][0]["historyChoice"],
-            "all_history"
-        );
-        assert_eq!(
-            marker_json["authorizedSources"][0]["authorizedAt"],
-            1_770_000_000_001_i64
-        );
-        assert!(!marker.contains("tfc_secret"));
-        assert!(keys.load("org_1:archive-v2").unwrap().is_some());
-    }
-
-    #[test]
-    fn denial_only_marker_keeps_unavailability_nonfatal_while_facts_sync() {
-        const CLAUDE: &[u8] =
-            include_bytes!("../../../../packages/collector-archive/tests/fixtures/claude.jsonl");
-        let home = TempDir::new().unwrap();
-        let state = TempDir::new().unwrap();
-        let claude_dir = home.path().join(".claude").join("projects").join("p1");
-        std::fs::create_dir_all(&claude_dir).unwrap();
-        std::fs::write(claude_dir.join("claude-session-001.jsonl"), CLAUDE).unwrap();
-        let paths = Paths::at(state.path().to_path_buf());
-        paths.ensure().unwrap();
-        enrollment(&paths, "org_1", "grace");
-        let marker = std::fs::read(paths.archive_enrollment_file("org_1")).unwrap();
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let fact_posts = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let posts = fact_posts.clone();
-        std::thread::spawn(move || {
-            for stream in listener.incoming().take(8) {
-                let Ok(mut stream) = stream else {
-                    continue;
-                };
-                let mut buf = [0u8; 4096];
-                let _ = std::io::Read::read(&mut stream, &mut buf);
-                posts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                let body = r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#;
-                let response = format!(
-                    "HTTP/1.1 202 Accepted\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
-            }
-        });
-
-        let outcome = run_cycle_blocking(
-            archive_identity("org_1", "collector_1"),
-            "tfc_secret".to_string(),
-            format!("http://{addr}"),
-            home.path().to_path_buf(),
-            Window::Incremental,
-            1_779_840_000_000,
-            CycleIsolation {
-                state_dir: Some(state.path().to_path_buf()),
-                archive: Some((
-                    "http://127.0.0.1:1".to_string(),
-                    Arc::new(MemoryKeyStore::new()),
-                )),
-                remembered_denial: None,
-            },
-        );
-
-        assert!(outcome.archive_setup_error.is_none());
-        assert!(matches!(
-            sync_status_from_outcome(&outcome),
-            SyncStatus::Idle
-        ));
-        assert!(outcome.advanced >= 1);
-        assert!(fact_posts.load(std::sync::atomic::Ordering::SeqCst) >= 1);
-        assert!(fact_cycle_reached_ingest(&outcome));
-        assert_eq!(
-            std::fs::read(paths.archive_enrollment_file("org_1")).unwrap(),
-            marker
-        );
-    }
-
-    #[test]
-    fn deleting_marker_drives_cleanup_without_an_existing_spool() {
-        let home = TempDir::new().unwrap();
-        let state = TempDir::new().unwrap();
-        let paths = Paths::at(state.path().to_path_buf());
-        paths.ensure().unwrap();
-        let spool_dir = paths.archive_spool_dir("org_1");
-        let durable_marker = ArchiveSpool::durable_cleanup_marker_path(&spool_dir);
-        let keys: Arc<dyn ArchiveKeyStore> = Arc::new(MemoryKeyStore::new());
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0u8; 4096];
-            let _ = std::io::Read::read(&mut stream, &mut request).unwrap();
-            let body = r#"{"enrolled":false,"authorizedSources":[],"reason":"deleting"}"#;
-            let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            std::io::Write::write_all(&mut stream, response.as_bytes()).unwrap();
-        });
-
-        let outcome = run_cycle_blocking(
-            archive_identity("org_1", "collector_1"),
-            "tfc_secret".to_string(),
-            "http://127.0.0.1:1".to_string(),
-            home.path().to_path_buf(),
-            Window::Incremental,
-            1_779_840_000_000,
-            CycleIsolation {
-                state_dir: Some(state.path().to_path_buf()),
-                archive: Some((format!("http://{addr}"), keys.clone())),
-                remembered_denial: None,
-            },
-        );
-        server.join().unwrap();
-
-        assert!(outcome.archive_setup_error.is_none());
-        assert!(matches!(
-            sync_status_from_outcome(&outcome),
-            SyncStatus::Idle
-        ));
-        let enrollment: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(paths.archive_enrollment_file("org_1")).unwrap())
-                .unwrap();
-        assert_eq!(enrollment["status"], "revoked");
-        assert!(!spool_dir.exists());
-        assert!(!durable_marker.exists());
-        assert!(keys.load("org_1").unwrap().is_none());
-    }
-
-    #[test]
-    fn archive_offline_does_not_hold_fact_backfill_and_retries_archive() {
-        const CLAUDE: &[u8] =
-            include_bytes!("../../../../packages/collector-archive/tests/fixtures/claude.jsonl");
-        let home = TempDir::new().unwrap();
-        let state = TempDir::new().unwrap();
-        let settings_dir = TempDir::new().unwrap();
-        let claude_dir = home.path().join(".claude").join("projects").join("p1");
-        std::fs::create_dir_all(&claude_dir).unwrap();
-        std::fs::write(claude_dir.join("claude-session-001.jsonl"), CLAUDE).unwrap();
-
-        let paths = Paths::at(state.path().to_path_buf());
-        paths.ensure().unwrap();
-        enrollment(&paths, "org_1", "enrolled");
-        let keys: Arc<dyn ArchiveKeyStore> = Arc::new(MemoryKeyStore::new());
-        let archive_url = "http://127.0.0.1:1".to_string();
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let fact_posts = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let posts = fact_posts.clone();
-        std::thread::spawn(move || {
-            for stream in listener.incoming().take(8) {
-                let Ok(mut stream) = stream else {
-                    continue;
-                };
-                let mut buf = [0u8; 4096];
-                let _ = std::io::Read::read(&mut stream, &mut buf);
-                posts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                let body = r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#;
-                let response = format!(
-                    "HTTP/1.1 202 Accepted\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
-            }
-        });
-
-        let file = SettingsFile::at(settings_dir.path());
-        let mut settings = Settings {
-            syncing: true,
-            backfilled: false,
-            source_homes: Default::default(),
-            archive_request: None,
-            archive_policy_denial: None,
-        };
-        file.save(&settings).unwrap();
-
-        let mut windows = Vec::new();
-        for cycle in 1..=3 {
-            let window = window_for_authorized_cycle(&settings);
-            let outcome = run_cycle_blocking(
-                archive_identity("org_1", "collector_1"),
-                "tfc_secret".to_string(),
-                format!("http://{addr}"),
-                home.path().to_path_buf(),
-                window,
-                1_779_840_000_000,
-                CycleIsolation {
-                    state_dir: Some(state.path().to_path_buf()),
-                    archive: Some((archive_url.clone(), keys.clone())),
-                    remembered_denial: None,
-                },
-            );
-
-            assert!(
-                outcome.first_error.is_none(),
-                "cycle {cycle}: Archive transport must not fold into fact first_error: {:?}",
-                outcome.first_error
-            );
-            assert!(
-                outcome.setup_error.is_none(),
-                "cycle {cycle}: {:?}",
-                outcome.setup_error
-            );
-            assert!(
-                outcome
-                    .archive_setup_error
-                    .as_deref()
-                    .is_some_and(|err| err.contains("transport")),
-                "cycle {cycle}: Archive transport must stay visible: {:?}",
-                outcome.archive_setup_error
-            );
-            assert!(
-                outcome.failed >= 1,
-                "cycle {cycle}: Archive upload must keep retrying: failed={}",
-                outcome.failed
-            );
-            assert!(
-                matches!(
-                    sync_status_from_outcome(&outcome),
-                    SyncStatus::Error { message } if message.contains("transport")
-                ),
-                "cycle {cycle}: Archive diagnostic must stay visible in status"
-            );
-            assert!(
-                fact_cycle_reached_ingest(&outcome),
-                "cycle {cycle}: successful facts must complete despite Archive transport"
-            );
-            if cycle == 1 {
-                assert!(
-                    outcome.advanced >= 1,
-                    "first cycle must POST facts: advanced={}",
-                    outcome.advanced
-                );
-                assert!(fact_posts.load(std::sync::atomic::Ordering::SeqCst) >= 1);
-            }
-
-            let applied = apply_authorized_cycle(&mut settings, &outcome);
-            windows.push(applied);
-            persist(&file, &settings);
-        }
-
-        match (windows[0], sync::window_from_since("7d").unwrap()) {
-            (Window::History(actual), Window::History(expected)) => assert_eq!(actual, expected),
-            _ => panic!("cycle 1 must use FIRST_BACKFILL History(Last7Days)"),
-        }
-        assert!(matches!(windows[1], Window::Incremental));
-        assert!(matches!(windows[2], Window::Incremental));
-        assert_eq!(fact_posts.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert!(settings.backfilled);
-        assert!(file.load().unwrap().backfilled);
-        assert!(settings.syncing);
-        assert!(matches!(
-            window_for_authorized_cycle(&settings),
-            Window::Incremental
-        ));
-    }
-
-    #[test]
-    fn corrupt_archive_policy_completes_fact_backfill_and_next_window_is_incremental() {
-        let dir = TempDir::new().unwrap();
-        let file = SettingsFile::at(dir.path());
-        let mut settings = Settings {
-            syncing: true,
-            backfilled: false,
-            source_homes: Default::default(),
-            archive_request: None,
-            archive_policy_denial: None,
-        };
-        file.save(&settings).unwrap();
-
-        let archive_diag = Some("load archive enrollment".to_string());
-        let cycles = [
-            CycleOutcome {
-                advanced: 1,
-                failed: 0,
-                first_error: None,
-                setup_error: None,
-                archive_setup_error: archive_diag.clone(),
-                archive_recovered: false,
-            },
-            CycleOutcome {
-                advanced: 0,
-                failed: 0,
-                first_error: None,
-                setup_error: None,
-                archive_setup_error: archive_diag.clone(),
-                archive_recovered: false,
-            },
-            CycleOutcome {
-                advanced: 0,
-                failed: 0,
-                first_error: None,
-                setup_error: None,
-                archive_setup_error: archive_diag,
-                archive_recovered: false,
-            },
-        ];
-        let mut windows = Vec::new();
-        let mut fact_posts = 0u32;
-        for outcome in cycles {
-            let window = apply_authorized_cycle(&mut settings, &outcome);
-            fact_posts += outcome.advanced;
-            windows.push(window);
-            persist(&file, &settings);
-            assert!(
-                matches!(
-                    sync_status_from_outcome(&outcome),
-                    SyncStatus::Error { message } if message.contains("load archive enrollment")
-                ),
-                "Archive diagnostic must stay visible"
-            );
-        }
-
-        match (windows[0], sync::window_from_since("7d").unwrap()) {
-            (Window::History(actual), Window::History(expected)) => assert_eq!(actual, expected),
-            _ => panic!("cycle 1 must use FIRST_BACKFILL History(Last7Days)"),
-        }
-        assert!(matches!(windows[1], Window::Incremental));
-        assert!(matches!(windows[2], Window::Incremental));
-        assert_eq!(fact_posts, 1);
-        assert!(settings.backfilled);
-        assert!(file.load().unwrap().backfilled);
-        assert!(settings.syncing);
-
-        let mut blocked = Settings {
-            syncing: true,
-            backfilled: false,
-            source_homes: Default::default(),
-            archive_request: None,
-            archive_policy_denial: None,
-        };
-        let fatal = CycleOutcome {
-            advanced: 0,
-            failed: 0,
-            first_error: None,
-            setup_error: Some("open cursor store".to_string()),
-            archive_setup_error: None,
-            archive_recovered: false,
-        };
-        match (
-            apply_authorized_cycle(&mut blocked, &fatal),
-            sync::window_from_since("7d").unwrap(),
-        ) {
-            (Window::History(actual), Window::History(expected)) => assert_eq!(actual, expected),
-            _ => panic!("failed fact setup must keep FIRST_BACKFILL"),
-        }
-        assert!(!blocked.backfilled);
-        assert!(!fact_cycle_reached_ingest(&fatal));
-    }
-}
-
-#[cfg(test)]
 mod archive_request_tests {
     use super::*;
+    use collector_embedder::sync::ArchivePolicy;
     use tempfile::TempDir;
 
     fn pending_request() -> ArchiveRequest {
@@ -2202,6 +842,35 @@ mod archive_request_tests {
         assert!(archive_enrollment_is_blocked(&state, ArchiveSource::Claude));
     }
 
+    #[test]
+    fn terminal_record_replaces_sources_before_reporting_failure() {
+        let bus = AppStateBus::new();
+        bus.update(|state| {
+            state.archive.enrolled = true;
+            state.archive.sources = vec![(ArchiveSource::Claude, ArchiveHistoryChoice::AllHistory)];
+            state.archive.pending = Some(ArchiveSource::Codex);
+        });
+        let record = collector_embedder::ArchiveEnrollmentRecord {
+            status: ArchivePolicy::Revoked.as_str().to_string(),
+            collector_id: Some("collector_1".to_string()),
+            authorized_sources: Vec::new(),
+            reason: Some("revoked".to_string()),
+        };
+
+        publish_archive_record(&bus, record, "collector_1");
+        publish_archive_error(&bus, "collector credential was revoked".to_string());
+
+        let archive = bus.snapshot().archive;
+        assert!(!archive.enrolled);
+        assert_eq!(archive.reason.as_deref(), Some("revoked"));
+        assert!(archive.sources.is_empty());
+        assert_eq!(archive.pending, None);
+        assert_eq!(
+            archive.last_error.as_deref(),
+            Some("collector credential was revoked")
+        );
+    }
+
     async fn assert_discarded_authorized_command_pending(
         pending: ArchiveSource,
         expected_pending: Option<ArchiveSource>,
@@ -2217,18 +886,15 @@ mod archive_request_tests {
         let mut settings = Settings {
             syncing: true,
             backfilled: true,
-            source_homes: Default::default(),
             archive_request: Some(pending_request()),
-            archive_policy_denial: None,
+            ..Default::default()
         };
         let expected_settings = settings.clone();
-        let mut archive_policy_memory = ArchivePolicyMemory::default();
 
         enroll_archive_source(
             &bus,
             &settings_file,
             &mut settings,
-            &mut archive_policy_memory,
             None,
             ArchiveSource::Claude,
             ArchiveHistoryChoice::AllHistory,
@@ -2293,9 +959,8 @@ mod archive_request_tests {
             let mut settings = Settings {
                 syncing,
                 backfilled: true,
-                source_homes: Default::default(),
                 archive_request: Some(pending_request()),
-                archive_policy_denial: None,
+                ..Default::default()
             };
             let run_immediately = apply_enrollment_success(&mut settings, true);
             assert_eq!(run_immediately, syncing);
@@ -2307,9 +972,8 @@ mod archive_request_tests {
         let mut settings = Settings {
             syncing: true,
             backfilled: false,
-            source_homes: Default::default(),
             archive_request: Some(pending_request()),
-            archive_policy_denial: None,
+            ..Default::default()
         };
         assert!(!apply_enrollment_success(&mut settings, false));
         assert!(settings.syncing);

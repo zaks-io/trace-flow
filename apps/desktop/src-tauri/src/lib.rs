@@ -97,6 +97,7 @@ pub fn run() {
             // The single login seam, shared by every command and the tray (one in-flight guard).
             app.manage(crate::connector::Connector::default());
             app.manage(updater::UpdateState::default());
+            updater::spawn_automatic(app.handle().clone(), bus.clone());
 
             let (menu, handles) = build_menu(app.handle()).map_err(|err| {
                 Box::new(std::io::Error::other(err.to_string())) as Box<dyn std::error::Error>
