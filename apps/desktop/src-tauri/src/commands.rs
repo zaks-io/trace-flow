@@ -36,7 +36,6 @@ pub struct StatusDto {
     pub connected: bool,
     pub org_id: Option<String>,
     pub credential_present: bool,
-    pub expired: bool,
     pub sync: String,
     pub update: UpdateStatus,
 }
@@ -85,18 +84,17 @@ pub fn connection_status(bus: State<'_, AppStateBus>) -> StatusDto {
     let conn = Paths::resolve()
         .ok()
         .and_then(|p| p.load_connection().ok().flatten());
-    let (connected, org_id, credential_present, expired) = match conn {
+    let (connected, org_id, credential_present) = match conn {
         Some(c) => {
             let present = keychain::is_present(&c.org_id);
-            (true, Some(c.org_id), present, false)
+            (true, Some(c.org_id), present)
         }
-        None => (false, None, false, false),
+        None => (false, None, false),
     };
     StatusDto {
         connected,
         org_id,
         credential_present,
-        expired,
         sync: snapshot.sync.label().to_string(),
         update: snapshot.update,
     }

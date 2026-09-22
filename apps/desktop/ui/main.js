@@ -29,14 +29,14 @@ async function refreshStatus() {
   let label;
   if (!status.connected) {
     label = 'Not connected';
-  } else if (!status.credential_present || status.expired) {
+  } else if (!status.credential_present) {
     label = `Connected (${status.org_id}) — sign in again`;
   } else {
     label = `Connected — ${status.org_id} — ${status.sync}`;
   }
   el('status').textContent = label;
 
-  const ready = status.connected && status.credential_present && !status.expired;
+  const ready = status.connected && status.credential_present;
   el('connect').textContent = status.connected ? 'Reconnect…' : 'Connect…';
   el('start').disabled = !ready;
   el('sync-now').disabled = !ready;
