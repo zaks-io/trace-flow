@@ -29,8 +29,7 @@ select **Start syncing**.
 | Cursor      | macOS global `state.vscdb`, read through a temporary snapshot | macOS                       |
 
 The collector parses transcripts locally and uploads redacted typed facts. The normal analytics path
-does not upload raw transcripts. Conversation Archive is a separate, explicitly enrolled feature and
-is not currently available.
+does not upload raw transcripts.
 
 ## Use the CLI from source
 

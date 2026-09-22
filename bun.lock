@@ -101,26 +101,6 @@
         "wrangler": "^4.127.1",
       },
     },
-    "apps/archive-api": {
-      "name": "@trace-flow/archive-api",
-      "version": "0.0.1",
-      "dependencies": {
-        "@sentry/cloudflare": "^10.73.0",
-        "@trace-flow/logging": "workspace:*",
-        "@trace-flow/types": "workspace:*",
-        "@trace-flow/utils": "workspace:*",
-        "hono": "^4.13.5",
-        "jose": "^6.2.10",
-      },
-      "devDependencies": {
-        "@cloudflare/vitest-pool-workers": "^0.22.0",
-        "@cloudflare/workers-types": "^4.20260702.1",
-        "@vitest/coverage-istanbul": "^4.1.11",
-        "typescript": "^5.9.3",
-        "vitest": "^4.1.11",
-        "wrangler": "^4.127.1",
-      },
-    },
     "apps/desktop": {
       "name": "@trace-flow/desktop",
       "version": "0.1.1",
@@ -1443,8 +1423,6 @@
     "@trace-flow/analyst-sandbox": ["@trace-flow/analyst-sandbox@workspace:apps/analyst-sandbox"],
 
     "@trace-flow/api": ["@trace-flow/api@workspace:apps/api"],
-
-    "@trace-flow/archive-api": ["@trace-flow/archive-api@workspace:apps/archive-api"],
 
     "@trace-flow/convex": ["@trace-flow/convex@workspace:packages/convex"],
 

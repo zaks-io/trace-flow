@@ -56,19 +56,7 @@ function makeDeleteCtx(batchCounts: DeleteCounts[]) {
       throw new Error(`Unexpected query ${queryCount}`);
     }),
     runMutation: vi.fn().mockImplementation(() => {
-      if (mutationIndex === 0) {
-        mutationIndex++;
-        return Promise.resolve(null);
-      }
-      if (mutationIndex === 1) {
-        mutationIndex++;
-        return Promise.resolve({
-          keyVersionsDeleted: 0,
-          custodyDeleted: 0,
-          hasMore: false,
-        });
-      }
-      mutationIndex++;
+      if (mutationIndex++ === 0) return Promise.resolve(null);
       if (batchIndex < batchCounts.length) {
         const counts = batchCounts[batchIndex];
         batchIndex++;
@@ -118,7 +106,7 @@ describe('admin.deleteOrgData', () => {
     expect(result.convexDeleted.collectorCredentials).toBe(2);
   });
 
-  it('starts the archive deletion gate before the Tinybird deletion action', async () => {
+  it('starts organization deletion before the ingestion erasure action', async () => {
     const ctx = makeDeleteCtx([emptyCounts()]);
     const handler = (deleteOrgData as unknown as { _handler: DeleteHandler })._handler;
 
@@ -130,22 +118,17 @@ describe('admin.deleteOrgData', () => {
     );
   });
 
-  it('drains agent ingestion and destroys archive keys before deleting Tinybird data', async () => {
+  it('drains agent ingestion and erases sandbox backups before deleting Tinybird data', async () => {
     const ctx = makeDeleteCtx([emptyCounts()]);
     const handler = (deleteOrgData as unknown as { _handler: DeleteHandler })._handler;
     await handler(ctx, { orgId: 'org_1' });
     expect(ctx.runAction.mock.calls.map((call) => getFunctionName(call[0]))).toEqual([
       'agentIngestionErasure:eraseOrganization',
       'analystSandbox:eraseOrganizationSandboxBackups',
-      'archiveErasure:stageArchiveErasure',
-      'archiveErasure:eraseArchiveData',
       'integrations/tinybird:deleteOrgTraces',
     ]);
     expect(ctx.runMutation.mock.invocationCallOrder[1]).toBeGreaterThan(
       ctx.runAction.mock.invocationCallOrder[2]!,
-    );
-    expect(ctx.runMutation.mock.invocationCallOrder[1]).toBeLessThan(
-      ctx.runAction.mock.invocationCallOrder[3]!,
     );
   });
 

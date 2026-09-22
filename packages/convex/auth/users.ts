@@ -14,7 +14,6 @@ import {
 } from './userHelpers';
 import { userValidator } from '../validators';
 import { rateLimiter } from '../rateLimits';
-import { invalidateArchiveEnrollmentsForUser } from '../archiveLib';
 
 type AuthContext = QueryCtx | MutationCtx;
 
@@ -308,12 +307,6 @@ export const removeMember = mutation({
         await ctx.db.patch(acceptedInvite._id, { status: 'expired' });
       }
       await revokeCredentialsAfterMemberRemoval(ctx, membership.orgId, removedUser._id);
-      await invalidateArchiveEnrollmentsForUser(ctx, {
-        orgId: membership.orgId,
-        userId: removedUser._id,
-        reason: 'member_removed',
-        actorUserId: caller._id,
-      });
       const analystThreads = await ctx.db
         .query('analystThreads')
         .withIndex('by_creator_updated', (q) => q.eq('creatorUserId', removedUser._id))

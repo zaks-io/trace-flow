@@ -10,7 +10,7 @@ const modules = (
   }
 ).glob(['../**/*.*s', '!../__tests__/**']);
 
-export type ArchiveTestConvex = ReturnType<typeof initConvexTest>;
+export type ConvexTest = ReturnType<typeof initConvexTest>;
 
 export function initConvexTest() {
   const t = convexTest(schema, modules);

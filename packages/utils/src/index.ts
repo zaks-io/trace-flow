@@ -2,7 +2,6 @@ export * from './ids';
 export * from './trace-context';
 export * from './crypto';
 export * from './analytics-key';
-export * from './archive-crypto';
 export * from './providers';
 export * from './time';
 export * from './body-format';

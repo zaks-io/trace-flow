@@ -53,16 +53,13 @@ reviews:
           pipes/ and packages/convex/. apps/web/public/agents.md is the public
           integration guide. apps/web/AGENTS.md has scoped framework guidance.
         - packages/convex/: backend schema, auth, organizations, billing, collector
-          credentials, Analyst state, and archive control plane. For auth and billing,
+          credentials, and Analyst state. For auth and billing,
           consult specs/integrations/auth0.md, specs/features/stripe-billing.md,
           and docs/adr/0002-jwt-tinybird-auth.md.
         - apps/mcp/: MCP transport and auth. packages/mcp-core/: tools shared by MCP
           and Analyst. apps/analyst-sandbox/: Analyst execution and sandbox isolation.
-        - apps/archive-api/: permanent raw conversation storage, upload, ledger,
-          storage budget, audit, and integrity. Derived analytics live in
-          apps/agent-ingest/ and apps/agent-consumer/.
         - apps/cli/ and apps/desktop/: collector interfaces. packages/collector-*/:
-          shared parsing, contracts, API clients, sync, and archive code. Read
+          shared parsing, contracts, API clients, and sync. Read
           docs/guides/agent-conversation-analytics/README.md and the relevant
           roadmap sections, plus apps/cli/README.md or apps/desktop/README.md.
         - datasources/: Tinybird schemas. pipes/: SQL queries. Consult
@@ -95,7 +92,7 @@ knowledge_base:
       - files: 'docs/agents/review-invariants.md'
         applyTo: '**/*'
       - files: 'docs/guides/agent-conversation-analytics/README.md'
-        applyTo: 'apps/agent-ingest/**,apps/agent-consumer/**,apps/archive-api/**,apps/cli/**,apps/desktop/**,packages/collector-*/**'
+        applyTo: 'apps/agent-ingest/**,apps/agent-consumer/**,apps/cli/**,apps/desktop/**,packages/collector-*/**'
       - files: 'apps/desktop/README.md'
         applyTo: 'apps/desktop/**'
       - files: 'apps/cli/README.md'

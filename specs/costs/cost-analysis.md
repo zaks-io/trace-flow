@@ -519,7 +519,7 @@ Break-even doesn't change much (fixed costs dominate at small scale), but trace 
 
 ## Optimized Scenario: DO SQLite Bodies (7-Day Hot Storage)
 
-Store combined request+response bodies in Durable Object SQLite instead of R2. No external dependencies — uses the same DO infrastructure already in the stack. Bodies available instantly via native binding. Default retention: 7 days. Longer retention available as a paid add-on (archive to B2 before expiry).
+Store combined request+response bodies in Durable Object SQLite instead of R2. It has no external dependencies and uses the same DO infrastructure already in the stack. Bodies are available instantly through the native binding. Default retention is 7 days. Longer retention is available as a paid add-on that copies bodies to B2 before expiry.
 
 DO writes ($1.00/M) are 4.5x cheaper than R2 PUTs ($4.50/M). The tradeoff: DO storage ($0.20/GB) is 13x more expensive than R2 ($0.015/GB), but the 7-day retention window keeps total storage small enough that write savings dominate. Cleanup is simple — shard DOs by org+day, delete the whole DO after 7 days.
 

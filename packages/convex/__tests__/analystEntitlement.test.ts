@@ -8,10 +8,10 @@ import {
   SANDBOX_INFERENCE_MAX_OUTPUT_TOKENS_PER_REQUEST,
   SANDBOX_INFERENCE_MAX_REQUESTS,
 } from '../analystSandboxPolicy';
-import { initConvexTest, type ArchiveTestConvex } from './convexTest.setup';
+import { initConvexTest, type ConvexTest } from './convexTest.setup';
 
 interface AnalystWorld {
-  t: ArchiveTestConvex;
+  t: ConvexTest;
   userId: Id<'users'>;
   orgId: Id<'organizations'>;
   tokenIdentifier: string;

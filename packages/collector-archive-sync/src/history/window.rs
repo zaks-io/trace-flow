@@ -1,1 +1,0 @@
-pub const ARCHIVE_CAPTURE_WINDOW_BYTES: u64 = 4 * 1024 * 1024;

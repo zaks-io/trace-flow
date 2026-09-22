@@ -5,15 +5,8 @@
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use collector_embedder::{ArchiveHistoryChoice, ArchiveSource};
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ArchiveConnectionIdentity {
-    pub org_id: String,
-    pub collector_id: String,
-}
 
 /// Whether the app holds a usable Collector Credential yet.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -21,28 +14,12 @@ pub enum ConnectionState {
     /// No connection on disk — first run, or after disconnect.
     #[default]
     Disconnected,
-    /// A connection + credential is present. The collector id stays inside the native process and
-    /// lets Archive state distinguish two saved connections to the same organization.
+    /// A connection + credential is present. The collector id stays inside the native process.
     Connected {
         org_id: String,
         #[serde(skip)]
         collector_id: String,
     },
-}
-
-impl ConnectionState {
-    pub fn archive_identity(&self) -> Option<ArchiveConnectionIdentity> {
-        match self {
-            Self::Disconnected => None,
-            Self::Connected {
-                org_id,
-                collector_id,
-            } => Some(ArchiveConnectionIdentity {
-                org_id: org_id.clone(),
-                collector_id: collector_id.clone(),
-            }),
-        }
-    }
 }
 
 /// What the background sync engine is doing. Starts `Paused` so nothing leaves the machine until the
@@ -88,15 +65,6 @@ pub struct RecentError {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ArchiveMenuState {
-    pub enrolled: bool,
-    pub reason: Option<String>,
-    pub sources: Vec<(ArchiveSource, ArchiveHistoryChoice)>,
-    pub pending: Option<ArchiveSource>,
-    pub last_error: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum UpdateStatus {
     #[default]
@@ -116,7 +84,6 @@ pub struct AppState {
     pub connection: ConnectionState,
     pub sync: SyncStatus,
     pub sources: SourceCounts,
-    pub archive: ArchiveMenuState,
     pub autostart: bool,
     pub update: UpdateStatus,
     pub last_sync_at: Option<SystemTime>,
