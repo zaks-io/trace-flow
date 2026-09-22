@@ -4,6 +4,7 @@ import {
   internalAction,
   internalMutation,
   type ActionCtx,
+  type MutationCtx,
 } from '../_generated/server';
 import { v } from 'convex/values';
 import { requireAdmin, extractSub } from '../auth/users';
@@ -14,21 +15,9 @@ import { getStripeClient } from '../billing/stripe';
 import { scheduleKVSync } from '../billing/subscriptions';
 import { ensureOrgHasSubscription } from '../auth/organizations';
 import { TIER_CONFIG } from '@trace-flow/types';
-import { beginArchiveDeletion } from '../archiveLib';
 import type { Id, TableNames } from '../_generated/dataModel';
 import { makeFunctionReference } from 'convex/server';
 
-const stageArchiveErasure = makeFunctionReference<'action', { orgId: Id<'organizations'> }, null>(
-  'archiveErasure:stageArchiveErasure',
-);
-const destroyArchiveKeys = makeFunctionReference<
-  'mutation',
-  { orgId: Id<'organizations'> },
-  { keyVersionsDeleted: number; custodyDeleted: number; hasMore: boolean }
->('archiveErasure:destroyArchiveKeys');
-const eraseArchiveData = makeFunctionReference<'action', { orgId: Id<'organizations'> }, null>(
-  'archiveErasure:eraseArchiveData',
-);
 const eraseOrganizationSandboxBackups = makeFunctionReference<
   'action',
   { orgId: Id<'organizations'> },
@@ -351,26 +340,12 @@ export const deleteOrgDataScheduled = internalAction({
 });
 
 async function deleteOrgDataImpl(ctx: ActionCtx, orgId: Id<'organizations'>) {
-  // Establish the durable archive deletion gate before the external deletion begins.
   await ctx.runMutation(internal.admin.admin.beginOrgDeletion, { orgId });
   await ctx.runAction(makeFunctionReference<'action'>('agentIngestionErasure:eraseOrganization'), {
     orgId,
   });
 
-  // The deletion gate blocks new checkpoints before the Worker removes both referenced and
-  // orphaned org-scoped Analyst snapshots.
   await ctx.runAction(eraseOrganizationSandboxBackups, { orgId });
-
-  // Stop Archive API writes that already passed control-plane authorization before destroying keys.
-  await ctx.runAction(stageArchiveErasure, { orgId });
-
-  // Cryptographic erasure precedes every archive object and ledger deletion.
-  let archiveKeysRemain = true;
-  while (archiveKeysRemain) {
-    const result = await ctx.runMutation(destroyArchiveKeys, { orgId });
-    archiveKeysRemain = result.hasMore;
-  }
-  await ctx.runAction(eraseArchiveData, { orgId });
 
   // IMPORTANT: Tinybird deletion must run BEFORE Convex record deletion.
   // deleteOrgTraces queries API keys from Convex to build the SQL WHERE clause.
@@ -432,11 +407,22 @@ const deleteBatchCountsValidator = v.object({
 
 const PAGE_SIZE = 500;
 
+async function markOrgDeletionStarted(ctx: MutationCtx, orgId: Id<'organizations'>): Promise<void> {
+  const org = await ctx.db.get(orgId);
+  if (!org || org.deletedAt !== undefined) throw new Error('Organization not found');
+  if (org.agentIngestionMigrationId !== undefined) {
+    throw new Error('Organization analytics migration must finish before deletion');
+  }
+  if (org.deletionStartedAt === undefined) {
+    await ctx.db.patch(orgId, { deletionStartedAt: Date.now() });
+  }
+}
+
 export const beginOrgDeletion = internalMutation({
   args: { orgId: v.id('organizations') },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await beginArchiveDeletion(ctx, args.orgId, Date.now());
+    await markOrgDeletionStarted(ctx, args.orgId);
     return null;
   },
 });
@@ -466,7 +452,7 @@ export const deleteOrgRecordsBatch = internalMutation({
     };
     let ops = 0;
 
-    await beginArchiveDeletion(ctx, args.orgId, Date.now());
+    await markOrgDeletionStarted(ctx, args.orgId);
 
     // Stop cost-alert work first, then remove every org-scoped row. Channels contain webhook
     // secrets, so delete them before lower-sensitivity history if a large org needs many batches.
@@ -635,30 +621,6 @@ export const deleteOrgRecordsBatch = internalMutation({
         .withIndex('by_user_id', (q) => q.eq('userId', member.userId))
         .take(PAGE_SIZE - ops);
       if (await deleteBatch(tokens, 'mcpRefreshTokens')) return { counts, hasMore: true };
-    }
-
-    // Delete Conversation Archive control-plane rows. Counts stay on the existing
-    // public shape; these deletes only consume the page budget.
-    const archiveTables = [
-      'archiveAuditEvents',
-      'archiveSessionIntegrity',
-      'archiveEnrollments',
-      'archiveEnrollmentSlots',
-      'archiveContributions',
-      'archiveStatuses',
-      'archiveActivations',
-    ] as const;
-    for (const table of archiveTables) {
-      const rows = await ctx.db
-        .query(table)
-        .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-        .take(PAGE_SIZE - ops);
-      for (const row of rows) {
-        if (ops >= PAGE_SIZE) return { counts, hasMore: true };
-        await ctx.db.delete(row._id);
-        ops++;
-      }
-      if (ops >= PAGE_SIZE) return { counts, hasMore: true };
     }
 
     // Delete invites

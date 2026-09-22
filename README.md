@@ -18,13 +18,6 @@ It opens as a sidebar on every dashboard page, keeps threads private to their cr
 attach objects from the current page to a message. Data questions run in a sealed Cloudflare
 Sandbox where a Python analysis agent queries your Trace Flow data and reports back with its cost.
 
-We're building an opt-in archive of full agent conversations so the exchanges behind the metrics
-can become part of your own record. The upload path runs in production end to end, from the
-collector spool through the Archive API to encrypted R2 storage, and the archive is the permanent
-store that analytics facts derive from. Archive search is not available yet. The next
-step for Analyst is analyzing that archive to find where agents get stuck or waste time and tokens,
-with future uses in fine-tuning and alignment research.
-
 Trace Flow grew out of Zaks.io's own work and is available in private alpha. The source is published
 under [Apache-2.0](./LICENSE). Expect changing features and setup work; there is no support SLA.
 
@@ -90,7 +83,7 @@ holds the trace spans and agent facts the dashboard reads. R2 holds encrypted re
 bodies. Convex also hosts the Analyst Runtime on Convex Agents
 ([ADR 0022](./docs/adr/0022-trace-flow-analyst-convex-runtime.md)), which reaches Trace Flow data
 only through the Analyst Sandbox Worker. The Rust workspace contains the collector CLI, the desktop
-shell, parsers, the sync engine, and the Conversation Archive contracts, spool, and upload client.
+shell, parsers, and the sync engine.
 
 The runtime is split into more Cloudflare Workers than the feature list suggests. The count is
 structural, not a sign of separate products. Each input has an ingress Worker and a separate queue
@@ -100,8 +93,8 @@ uploads) so capture never waits on Tinybird writes
 [ADR 0020](./docs/adr/0020-read-side-secret-boundaries.md) keeps Body Object decryption keys and
 Tinybird forwarding in separate isolates (Raw API and Pipes API). Web and MCP read through those two.
 The Analyst Sandbox Worker (`apps/analyst-sandbox`) runs model-generated Python in a container with
-all egress denied except calls back to the Worker itself. `apps/archive-api` is implemented but not
-deployed. The per-app map is in [repo navigation](./docs/agents/repo-navigation.md).
+all egress denied except calls back to the Worker itself. The per-app map is in
+[repo navigation](./docs/agents/repo-navigation.md).
 
 ### Data flow
 
@@ -169,8 +162,8 @@ scripts/dev/web.sh
 ```
 
 `scripts/dev/workers.sh` starts the six core data-plane Workers together so local queues, KV, R2,
-and Durable Objects share one persisted state directory. Web, Convex, MCP, the Analyst Sandbox, and
-the undeployed Archive API are not part of that multi-Worker process.
+and Durable Objects share one persisted state directory. Web, Convex, MCP, and the Analyst Sandbox
+are not part of that multi-Worker process.
 
 The scripts default to **Self-Contained Local**: local Workers, Convex local, and Tinybird Local. For
 the normal **Cloud-Dev** workflow, point the local Web and collector at the deployed cloud-dev
@@ -207,14 +200,7 @@ promise availability. Use your own endpoints and credentials for an independent 
 - LLM documentation index: <https://trace-flow.dev/llms.txt>
 - Gateway: <https://gateway.trace-flow.dev>
 - MCP: <https://mcp.trace-flow.dev/mcp>
-- Conversation Archive: <https://archive.trace-flow.dev>
 - Desktop downloads: [macOS arm64](https://downloads.zaks.sh/trace-flow/desktop/latest/trace-flow-desktop.dmg) · [Windows x64](https://downloads.zaks.sh/trace-flow/desktop/latest/trace-flow-desktop-setup.exe)
-
-`apps/archive-api` implements the upload
-path: Collector Credential plus enrollment authorization, Archive Observation JSONL validation, the
-Archive Session Ledger and Storage Budget Durable Objects, encrypted chunk and manifest writes to R2,
-and integrity and audit reporting to Convex. Export and deletion routes fail closed because no Archive
-Export Grant issuer exists yet. The Worker is deployed to production on merge to `main`.
 
 ## Deployment
 
@@ -222,7 +208,7 @@ Production deploys run through `.github/workflows/deploy.yml` after changes land
 workflow validates TypeScript, Rust, and Tinybird; deploys Convex; deploys the Tinybird schema before
 both consumers; then deploys the remaining Workers in dependency order.
 
-`apps/archive-api` is excluded from production deployment. Do not manually deploy production.
+Do not manually deploy production.
 
 See [SETUP.md](./SETUP.md) for resource ownership, secrets, and environment-specific setup.
 

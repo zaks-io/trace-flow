@@ -2,9 +2,8 @@
 
 The core model and agent data planes are split into six Cloudflare Workers: Proxy, Proxy Consumer,
 Agent Ingest, Agent Consumer, Pipes API, and Raw API. Production also deploys Web, MCP, and Analyst
-Sandbox Workers. `apps/archive-api` is a disabled development persistence slice using Durable Objects
-and R2 with no production environment. This document explains why these responsibilities are
-separated and how the core Workers communicate.
+Sandbox Workers. This document explains why these responsibilities are separated and how the core
+Workers communicate.
 
 ## Why Separate Workers?
 
@@ -173,7 +172,6 @@ Agent analytics is still not production-ready until the gates in `docs/guides/ag
 - Tinybird writes
 - User-facing API key auth
 - LLM proxying
-- Conversation Archive R2 storage. Agent Ingest envelopes are fact-only; Archive JSONL uses the separately enrolled durable archive path defined by ADR 0012.
 
 ### Communication
 
@@ -197,50 +195,6 @@ Defined in `apps/agent-ingest/wrangler.jsonc`:
 ```
 
 Production uses `trace-flow-agent-ingest`, `collector.trace-flow.dev`, the production `COLLECTOR_CREDS` namespace, and `agent-ingest-prod`.
-
-## Archive API Worker (Development Slice)
-
-**Target location**: `apps/archive-api/`
-
-**Production origin**: `https://archive.trace-flow.dev`
-
-**Current implementation**: Uploads require an active Collector Credential plus a
-current Convex enrollment and Source decision. The Worker derives the Organization,
-contribution, Source, and Agent Session scope, retrieves the wrapped Organization
-Archive Encryption Key, and commits through the Archive Session Ledger Durable Object.
-The ledger validates source observations and completed-scan checkpoints, retains
-changed identity versions, writes verified encrypted losslessly compressed chunks and
-manifest generations to the dedicated development Agent Archive R2 bucket, and
-returns a durable acknowledgement. Collector and handler request JSON is bounded to
-16 MiB, and the internal ledger commit envelope is bounded to 17 MiB. These bounds
-fit a measured 6,467,360-byte raw record whose serialized append request is
-15,094,156 bytes. Ordinary Archive Chunks retain their 1.5 MiB packing target, while
-a single stored element may occupy its own chunk up to the 8 MiB hard limit. Ledger and
-manifest history is read and extended through bounded durable pages; there is no
-lifetime record or checkpoint cap. Export and deletion routes remain fail-closed Archive
-Export Grant placeholders. Storage-budget enforcement, repair, export, deletion,
-lifecycle, rotation, production resources, and production enablement remain out of
-scope for this slice.
-
-**Target responsibility**: Serve the complete Conversation Archive data plane without
-adding transcript content or archive key material to Agent Ingest or Raw API.
-
-### Planned ownership (not shipped)
-
-- Pro entitlement and 100 GB archive-cap enforcement
-- Archive Spool upload acknowledgement
-- Independent versioned Archive Encryption Keys and rotation
-- Short-lived owner Archive Export Grant validation and bounded decrypted export reads
-- Archive Contribution and whole-archive deletion
-- Authenticated internal publication of durable acknowledgements, Storage Budget values, and
-  lifecycle transitions to the Convex Archive Status projection
-
-### What It Does NOT Own
-
-- Parsed fact ingest or `AGENT_QUEUE`
-- Tinybird reads, writes, or credentials
-- Proxy Body Objects or `BODY_ENCRYPTION_ROOT_KEY`
-- Analyst Sandbox storage
 
 ## Agent Consumer Worker
 

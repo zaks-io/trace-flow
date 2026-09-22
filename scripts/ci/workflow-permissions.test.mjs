@@ -244,18 +244,11 @@ describe('preview credential boundary', () => {
     ).toBe(false);
   });
 
-  test('pins preview archive resources outside PR-controlled configuration', () => {
+  test('pins preview Agent Ingest resources outside PR-controlled configuration', () => {
     expect(preview.env.PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID).toBe(
       '422b54e456c7446ea5ba4f9ef9a8c84e',
     );
-    expect(preview.env.PREVIEW_ARCHIVE_BUCKET).toBe('trace-flow-agent-archive-preview');
     expect(preview.env.PREVIEW_AGENT_DELIVERY_BUCKET).toBe('trace-flow-agent-deliveries-dev');
-
-    const configure = preview.jobs['deploy-convex'].steps.find(
-      (step) => step.name === 'Configure Archive API authorization',
-    );
-    expect(configure.run).toContain('CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID');
-    expect(configure.run).toContain('$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID');
 
     for (const jobName of ['deploy-convex', 'preview']) {
       const steps = preview.jobs[jobName].steps;
@@ -263,7 +256,8 @@ describe('preview credential boundary', () => {
       const installIndex = steps.findIndex((step) => step.name === 'Install dependencies');
       expect(steps.indexOf(verify)).toBeLessThan(installIndex);
       expect(verify.run).toContain('import agentIngestConfig');
-      expect(verify.run).toContain('import archiveApiConfig');
+      expect(verify.run).toContain('Agent Ingest Preview namespace mismatch');
+      expect(verify.run).toContain('Agent delivery Preview bucket mismatch');
     }
   });
 
@@ -277,7 +271,6 @@ describe('preview credential boundary', () => {
       env: {
         ...process.env,
         PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: preview.env.PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID,
-        PREVIEW_ARCHIVE_BUCKET: preview.env.PREVIEW_ARCHIVE_BUCKET,
         PREVIEW_AGENT_DELIVERY_BUCKET: preview.env.PREVIEW_AGENT_DELIVERY_BUCKET,
       },
       stdout: 'pipe',
@@ -297,7 +290,6 @@ describe('preview credential boundary', () => {
       env: {
         ...process.env,
         PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: 'wrong-namespace',
-        PREVIEW_ARCHIVE_BUCKET: preview.env.PREVIEW_ARCHIVE_BUCKET,
         PREVIEW_AGENT_DELIVERY_BUCKET: preview.env.PREVIEW_AGENT_DELIVERY_BUCKET,
       },
       stdout: 'pipe',

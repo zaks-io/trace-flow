@@ -15,26 +15,6 @@ export function createMockCtx(): MockCtx {
   };
 }
 
-export function captureConsoleLogs(): { text: () => string; restore: () => void } {
-  const lines: string[] = [];
-  const collect = (...args: unknown[]) => {
-    lines.push(args.map(String).join(' '));
-  };
-  const spies = [
-    vi.spyOn(console, 'log').mockImplementation(collect),
-    vi.spyOn(console, 'info').mockImplementation(collect),
-    vi.spyOn(console, 'warn').mockImplementation(collect),
-    vi.spyOn(console, 'error').mockImplementation(collect),
-    vi.spyOn(console, 'debug').mockImplementation(collect),
-  ];
-  return {
-    text: () => lines.join('\n'),
-    restore: () => {
-      for (const spy of spies) spy.mockRestore();
-    },
-  };
-}
-
 export function createMockDeps(): HttpDeps {
   return {
     oauth: {

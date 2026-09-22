@@ -16,7 +16,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use collector_embedder::sources::SourceHomes;
-use collector_embedder::{ArchiveEnrollmentRecord, ArchiveHistoryChoice, ArchiveSource};
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
@@ -32,28 +31,6 @@ pub struct Settings {
     pub backfilled: bool,
     /// Agent homes observed from explicit configuration. GUI launches may not inherit these values.
     pub source_homes: SourceHomes,
-    /// Durable enrollment intent. The credential stays in the keychain.
-    pub archive_request: Option<ArchiveRequest>,
-    /// Server-confirmed denial kept when the collector enrollment marker could not be replaced.
-    pub archive_policy_denial: Option<ArchivePolicyDenial>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ArchiveRequest {
-    pub org_id: String,
-    pub collector_id: String,
-    pub source: ArchiveSource,
-    pub history_choice: ArchiveHistoryChoice,
-    pub idempotency_key: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ArchivePolicyDenial {
-    pub org_id: String,
-    pub collector_id: String,
-    pub enrollment: ArchiveEnrollmentRecord,
 }
 
 #[derive(Debug, Clone)]
@@ -111,23 +88,6 @@ mod tests {
                 claude_config_dirs: vec![PathBuf::from("/agents/claude")],
                 codex_homes: vec![PathBuf::from("/agents/codex")],
             },
-            archive_request: Some(ArchiveRequest {
-                org_id: "org_1".to_string(),
-                collector_id: "collector_1".to_string(),
-                source: ArchiveSource::Claude,
-                history_choice: ArchiveHistoryChoice::AllHistory,
-                idempotency_key: "archive-enroll:request-1".to_string(),
-            }),
-            archive_policy_denial: Some(ArchivePolicyDenial {
-                org_id: "org_1".to_string(),
-                collector_id: "collector_1".to_string(),
-                enrollment: ArchiveEnrollmentRecord {
-                    status: "inactive".to_string(),
-                    collector_id: Some("collector_1".to_string()),
-                    authorized_sources: Vec::new(),
-                    reason: Some("not_activated".to_string()),
-                },
-            }),
         };
         file.save(&settings).unwrap();
         assert_eq!(file.load().unwrap(), settings);
@@ -143,23 +103,6 @@ mod tests {
         assert!(settings.syncing);
         assert!(!settings.backfilled);
         assert_eq!(settings.source_homes, SourceHomes::default());
-        assert!(settings.archive_request.is_none());
-        assert!(settings.archive_policy_denial.is_none());
-    }
-
-    #[test]
-    fn legacy_archive_repairs_are_ignored() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = SettingsFile::at(dir.path());
-        fs::write(
-            dir.path().join(FILE_NAME),
-            br#"{"syncing":true,"archive_repairs":{"orgId":"org_1","collectorId":"collector_1","targets":[]}}"#,
-        )
-        .unwrap();
-
-        let settings = file.load().unwrap();
-
-        assert!(settings.syncing);
     }
 
     #[test]

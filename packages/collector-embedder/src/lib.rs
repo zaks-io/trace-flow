@@ -15,13 +15,10 @@
 //! - [`sources`] — where each agent Source writes its transcripts and which are ingestable today.
 //! - [`login`] — the browser device flow that mints a Collector Credential over a loopback redirect.
 //! - [`sync`] — the one-pass-per-source drive over `collector-sync` that POSTs and advances cursors
-//!   only on a `2xx`. When Archive enrollment is present, the same discovery/snapshot pass feeds
-//!   [`collector_archive_sync`] without a second watcher or scheduler.
-//! - [`defaults`] — the production ingest + Convex-site + Archive URLs, resolved as env override →
+//!   only on a `2xx`.
+//! - [`defaults`] — the production ingest + Convex-site URLs, resolved as env override →
 //!   baked default so a normal user never has to know or set a URL.
 
-mod archive_history;
-pub mod archive_policy;
 pub mod connection;
 pub mod defaults;
 mod fact_sources;
@@ -29,9 +26,3 @@ pub mod keychain;
 pub mod login;
 pub mod sources;
 pub mod sync;
-
-pub use collector_archive_sync::{
-    ArchiveAuthorizedSource, ArchiveEnrollmentRecord, ArchiveEnrollmentRequest,
-    ArchiveHistoryChoice, ArchiveSource, ArchiveSourceChoice, ArchiveUploadResponse,
-    PreparedArchiveUpload, UploadOutcome,
-};

@@ -109,14 +109,6 @@ function makeRemoveMemberCtx(acceptedInvite: Record<string, unknown> | null = nu
         if (table === 'collectorCredentials') return collectorCredentialsQuery;
         if (table === 'invites') return invitesQuery;
         if (table === 'analystThreads') return analystThreadsQuery;
-        if (
-          table === 'archiveEnrollments' ||
-          table === 'archiveContributions' ||
-          table === 'archiveStatuses' ||
-          table === 'analystThreads'
-        ) {
-          return queryResult(null, []);
-        }
         throw new Error(`Unexpected table: ${table}`);
       }),
     },

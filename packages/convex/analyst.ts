@@ -33,7 +33,7 @@ import {
 import { api, components, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { rateLimiter } from './rateLimits';
-import { isActiveProSubscription } from './archiveLib';
+import { isActiveProSubscription } from './billing/subscriptions';
 
 export const ANALYST_DEFAULT_MODEL = 'z-ai/glm-5.2';
 export const ANALYST_MAX_STEPS = 50;

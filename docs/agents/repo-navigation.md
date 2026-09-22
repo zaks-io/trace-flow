@@ -23,20 +23,19 @@ For agent workflow or Linear work, also read:
 
 ## Runtime Apps
 
-| Path                   | Purpose                                                                                   | Read when                                                                              |
-| ---------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `apps/proxy`           | Edge LLM gateway. Handles provider routing, stream capture, R2 writes, and queue enqueue. | Provider proxying, streaming, capture, billing enforcement, body omission.             |
-| `apps/proxy-consumer`  | Queue consumer and durable batching for trace ingestion into Tinybird.                    | Queue delivery, OpenTelemetry rows, Tinybird writes, batch retries, DLQ behavior.      |
-| `apps/api`             | Raw API Worker for authenticated Body Object retrieval.                                   | R2 body reads, Body Access Token auth, retention checks.                               |
-| `apps/pipes-api`       | Pipes API Worker for Tinybird Pipe passthrough.                                           | Tinybird Pipe forwarding, Pipe Token CORS/cache/rate-limit behavior.                   |
-| `apps/web`             | Next.js dashboard on OpenNext/Workers.                                                    | UI, routes, dashboard data views, auth UX, docs pages.                                 |
-| `apps/mcp`             | Cloudflare Worker MCP server for agent access to trace data.                              | MCP auth, tool calls, trace-read integration.                                          |
-| `apps/agent-ingest`    | Agent conversation ingest worker.                                                         | Parsed agent fact upload, ingest validation, queue enqueue.                            |
-| `apps/agent-consumer`  | Agent conversation queue consumer.                                                        | Agent analytics rows, pricing, transcript fact processing.                             |
-| `apps/analyst-sandbox` | Sealed Cloudflare Sandbox Worker that runs Analyst code execution and the Pi data agent.  | Analyst tool runs, sandbox egress seal, run events, snapshots, sandbox pricing.        |
-| `apps/archive-api`     | Conversation Archive data plane; live in production as the permanent raw store.           | Enrolled lossless upload, Session Ledger, Storage Budget, R2 chunks, audit, integrity. |
-| `apps/cli`             | User-facing collector CLI.                                                                | Login, source listing, sync, status, disconnect, release packaging.                    |
-| `apps/desktop`         | Tauri desktop collector.                                                                  | Tray UX, keychain storage, first-egress gate, desktop sync loop, autostart.            |
+| Path                   | Purpose                                                                                   | Read when                                                                         |
+| ---------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `apps/proxy`           | Edge LLM gateway. Handles provider routing, stream capture, R2 writes, and queue enqueue. | Provider proxying, streaming, capture, billing enforcement, body omission.        |
+| `apps/proxy-consumer`  | Queue consumer and durable batching for trace ingestion into Tinybird.                    | Queue delivery, OpenTelemetry rows, Tinybird writes, batch retries, DLQ behavior. |
+| `apps/api`             | Raw API Worker for authenticated Body Object retrieval.                                   | R2 body reads, Body Access Token auth, retention checks.                          |
+| `apps/pipes-api`       | Pipes API Worker for Tinybird Pipe passthrough.                                           | Tinybird Pipe forwarding, Pipe Token CORS/cache/rate-limit behavior.              |
+| `apps/web`             | Next.js dashboard on OpenNext/Workers.                                                    | UI, routes, dashboard data views, auth UX, docs pages.                            |
+| `apps/mcp`             | Cloudflare Worker MCP server for agent access to trace data.                              | MCP auth, tool calls, trace-read integration.                                     |
+| `apps/agent-ingest`    | Agent conversation ingest worker.                                                         | Parsed agent fact upload, ingest validation, queue enqueue.                       |
+| `apps/agent-consumer`  | Agent conversation queue consumer.                                                        | Agent analytics rows, pricing, transcript fact processing.                        |
+| `apps/analyst-sandbox` | Sealed Cloudflare Sandbox Worker that runs Analyst code execution and the Pi data agent.  | Analyst tool runs, sandbox egress seal, run events, snapshots, sandbox pricing.   |
+| `apps/cli`             | User-facing collector CLI.                                                                | Login, source listing, sync, status, disconnect, release packaging.               |
+| `apps/desktop`         | Tauri desktop collector.                                                                  | Tray UX, keychain storage, first-egress gate, desktop sync loop, autostart.       |
 
 ## Shared Packages
 
@@ -49,7 +48,7 @@ For agent workflow or Linear work, also read:
 | `packages/spans`            | Span parsing and normalization.                              | Trace detail, span modeling, row transforms.                                                         |
 | `packages/tinybird-client`  | Tinybird insert/query client helpers.                        | Tinybird API calls, retries, insert failures.                                                        |
 | `packages/pricing`          | Model pricing and token cost logic.                          | Cost calculation or pricing catalog changes.                                                         |
-| `packages/convex`           | Convex backend, auth/session actions, billing, org state.    | Auth0, Tinybird JWTs, orgs, subscriptions, Stripe, MCP auth, Analyst Runtime, archive control plane. |
+| `packages/convex`           | Convex backend, auth/session actions, billing, org state.    | Auth0, Tinybird JWTs, orgs, subscriptions, Stripe, MCP auth, Analyst Runtime, collector credentials. |
 | `packages/mcp-core`         | Trace Flow Tool implementations shared by MCP and Analyst.   | Tool definitions, per-surface tool exposure, tool auth.                                              |
 | `packages/logging`          | Structured logging helpers.                                  | Log fields, event names, Sentry/Axiom consistency.                                                   |
 | `packages/sdk-tests`        | SDK and integration test tooling.                            | End-to-end client or CLI test harness changes.                                                       |

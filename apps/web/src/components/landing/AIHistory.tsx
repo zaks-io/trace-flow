@@ -6,19 +6,18 @@ export function AIHistory() {
       <div className="mx-auto max-w-7xl px-5 sm:px-8">
         <div className="mb-12 max-w-3xl">
           <div className="mb-4 font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-primary">
-            Today and next
+            Today
           </div>
           <h2 className="text-balance text-3xl font-semibold tracking-[-0.035em] text-foreground sm:text-5xl">
-            Analytics today. Conversations next.
+            Analytics today.
           </h2>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-muted-foreground">
-            Today, Trace Flow keeps analytics from coding sessions and model calls so you can
-            investigate costs and performance over time. Full coding-agent conversation storage and
-            search are still in development.
+            Trace Flow keeps analytics from coding sessions and model calls so you can investigate
+            costs and performance over time.
           </p>
         </div>
 
-        <div className="grid gap-5 lg:grid-cols-2">
+        <div className="grid gap-5">
           <article className="rounded-xl border border-border bg-background p-6 sm:p-8">
             <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-primary">
               Available today
@@ -42,39 +41,6 @@ export function AIHistory() {
               Read the retention policy
             </Link>
           </article>
-
-          <article className="rounded-xl border border-border bg-background p-6 sm:p-8">
-            <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-primary">
-              In development
-            </div>
-            <h3 className="mt-3 text-xl font-semibold tracking-tight sm:text-2xl">
-              Preserve the conversations themselves
-            </h3>
-            <p className="mt-4 text-sm leading-6 text-muted-foreground">
-              We&apos;re building an opt-in archive of full agent conversations. The goal is to keep
-              your own record of the work, including the exchanges behind the metrics, so you can
-              return to it for deeper analysis and future training datasets.
-            </p>
-            <p className="mt-4 text-sm leading-6 text-muted-foreground">
-              Full conversation archiving and search are not available yet.
-            </p>
-          </article>
-        </div>
-
-        <div className="mt-12 max-w-3xl">
-          <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-primary">
-            Planned
-          </div>
-          <h3 className="mt-3 text-xl font-semibold tracking-tight sm:text-2xl">
-            Analyze archived conversations
-          </h3>
-          <p className="mt-4 text-sm leading-6 text-muted-foreground">
-            Trace Flow Analyst requires an active Pro subscription and is not available on Hobby. It
-            lets you ask questions about the analytics you collect today. We plan to extend it to
-            archived conversations to investigate repeated failures and wasted time or tokens. That
-            archive-based analysis is not available yet. Longer term, we want to explore how opt-in
-            archives could support fine-tuning and alignment research.
-          </p>
         </div>
       </div>
     </section>

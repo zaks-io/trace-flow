@@ -41,11 +41,6 @@ Collector CLI/Desktop → Agent Ingest Worker → Agent Queue
 MCP → Convex OAuth → Pipes API → Tinybird
 ```
 
-`apps/archive-api` implements the Conversation Archive upload path (enrollment authorization,
-Session Ledger and Storage Budget Durable Objects, encrypted R2 chunks, audit and integrity
-reporting). Export and deletion fail closed pending an Archive Export Grant issuer. It has no
-production configuration or deployed origin.
-
 ## Documentation
 
 ### Architecture

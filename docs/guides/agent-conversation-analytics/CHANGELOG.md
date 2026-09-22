@@ -15,6 +15,16 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-09-22 TRA-295 Conversation Archive removal
+
+**Status:** ✅ done
+**Changed:** Removed the Conversation Archive implementation and its product surfaces. Agent
+Conversation Analytics keeps the fact Collector and `collectorCredentials`. Recorded the decision to
+delete the production archive R2 bucket without export in
+[ADR 0025](../../adr/0025-remove-conversation-archive.md).
+**Verified:** Active documentation references checked. Historical changelog entries remain intact.
+**Next / blockers:** None.
+
 ## 2026-09-04 — TRA-213 — cursor/remove-legacy-raw-upload-66d3
 
 **Status:** ✅ done

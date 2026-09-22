@@ -36,8 +36,8 @@ Scope is deliberately two things:
 ## Evidence: the raw transcript already holds nearly everything
 
 This section is load-bearing. An earlier design proposed capturing a **hook event stream** as
-a third data lane alongside facts and the Conversation Archive. That was wrong, and the
-following observations against real transcript files are why.
+a third data lane alongside facts. That was wrong, and the following observations against real
+transcript files are why.
 
 ### Claude
 
@@ -128,11 +128,10 @@ an outline, not an argument: a judge reading "Verifying typecheck coverage" lear
 less than a judge reading the tool calls and diffs that follow it, which are already captured
 in full and already cross-machine.
 
-So an LLM judge, if one is ever justified, reads the **Conversation Archive** and the agent
-fact tables, not the reasoning stream. That is a separate feature with its own gate: per the
-standing rule, anything that burns tokens on a schedule ships with an eval harness, cost
-tracking, and an agreed kill threshold before it runs once. v1 succeeds if capture is provably
-complete, and a judge is not capture.
+So an LLM judge, if one is ever justified, reads the agent fact tables, not the reasoning
+stream. That is a separate feature with its own gate: per the standing rule, anything that burns
+tokens on a schedule ships with an eval harness, cost tracking, and an agreed kill threshold
+before it runs once. v1 succeeds if capture is provably complete, and a judge is not capture.
 
 ## Principles (non-negotiable)
 
@@ -249,25 +248,6 @@ permanent row per session claimed and has no delete or patch anywhere in
 | Live session state | Supervisor to Convex, reactive query to UI | Push semantics, bounded rows             |
 | Durable facts      | Existing Collector to Ingest to Tinybird   | Unchanged; this feature adds no new lane |
 | Monitoring history | None in v1                                 | Re-derivable from the Transcript File    |
-
-### Relationship to the Conversation Archive
-
-No architectural dependency, by construction. The Conversation Archive (ADR 0012, TRA-211)
-stores the **same bytes** this feature reads
-(`docs/adr/0012-agent-conversation-analytics.md:209`). Live monitoring is therefore _the same
-parse, run now instead of later_. That is a reason to share the parser, not a dependency.
-
-The Archive can never be the monitoring read path: it is encrypted per organization with
-server-side decryption required, has no query surface, and exports only through an owner-only
-interactive grant (`:211`, `:573`). This feature must create no archive binding, no archive
-entitlement check, and no archive-gated behavior, and must work with the archive switched off.
-
-**Requirement to pin into TRA-214:** the archiver must ship _every_ record in the Transcript
-File, not only records the fact parser recognizes. Monitoring depends entirely on record types
-the parser currently ignores (`worktree-state`, `turn_duration`, `permission-mode`,
-`system/stop_hook_summary`, Codex `task_started` / `task_complete` / `turn_context`). If the
-archiver filters to recognized records, the archive is not lossless and none of this is
-re-derivable.
 
 ## Forensics: seeing what went wrong
 
@@ -391,8 +371,9 @@ Out of scope:
 - Thresholds are not set up front. Emit for a week and derive them from observed data. The
   stall threshold must clear legitimate long turns: an observed real Claude turn ran 545,887ms
   (9.1 minutes) and a sampled Codex turn 297,078ms.
-- Cross-machine forensics for machines without a Supervisor has no answer. The Archive is
-  encrypted with no query surface, so this is a real product gap, named and not solved here.
+- Cross-machine forensics for machines without a Supervisor is limited to uploaded facts.
+  Full Transcript Files remain on the user's machine, so this is a real product gap that needs
+  its own solution.
 
 ## Done
 

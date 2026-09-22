@@ -38,7 +38,6 @@ pub struct StatusDto {
     pub credential_present: bool,
     pub expired: bool,
     pub sync: String,
-    pub archive_error: Option<String>,
     pub update: UpdateStatus,
 }
 
@@ -108,7 +107,6 @@ pub fn connection_status(bus: State<'_, AppStateBus>) -> StatusDto {
         credential_present,
         expired,
         sync: snapshot.sync.label().to_string(),
-        archive_error: snapshot.archive.last_error,
         update: snapshot.update,
     }
 }

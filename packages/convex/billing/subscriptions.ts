@@ -17,13 +17,18 @@ import type { Id } from '../_generated/dataModel';
 import { getStripeClient, getProPriceId, getAddonPriceId, appUrl } from './stripe';
 import { subscriptionValidator } from '../validators';
 import { ensureOrgHasSubscription } from '../auth/organizations';
-import { syncArchiveLifecycleForEntitlement } from '../archiveLib';
 import {
   getCurrentBillingPeriod,
   getSubscriptionByOrgId,
   mutationReadCtx,
   summarizeCurrentUsage,
 } from './currentPeriod';
+
+export function isActiveProSubscription(
+  subscription: { tier: string; status: string } | null,
+): boolean {
+  return subscription?.tier === 'pro' && subscription.status === 'active';
+}
 
 export function mapStripeStatusToInternal(
   status: string,
@@ -169,8 +174,6 @@ export const setTier = internalMutation({
     });
 
     await scheduleKVSync(ctx, subscription._id);
-    const next = await ctx.db.get(subscription._id);
-    await syncArchiveLifecycleForEntitlement(ctx, args.orgId, next, Date.now());
   },
 });
 
@@ -684,8 +687,6 @@ export const upsertStripeSubscriptionState = internalMutation({
     });
 
     await scheduleKVSync(ctx, subscription._id);
-    const next = await ctx.db.get(subscription._id);
-    await syncArchiveLifecycleForEntitlement(ctx, args.orgId, next, Date.now());
   },
 });
 
@@ -814,8 +815,6 @@ export const revertToHobby = internalMutation({
     });
 
     await scheduleKVSync(ctx, subscription._id);
-    const next = await ctx.db.get(subscription._id);
-    await syncArchiveLifecycleForEntitlement(ctx, args.orgId, next, Date.now());
   },
 });
 
@@ -856,7 +855,5 @@ export const transitionGraceToSuspended = internalMutation({
     });
 
     await scheduleKVSync(ctx, subscription._id);
-    const next = await ctx.db.get(subscription._id);
-    await syncArchiveLifecycleForEntitlement(ctx, args.orgId, next, Date.now());
   },
 });

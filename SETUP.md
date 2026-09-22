@@ -40,8 +40,7 @@ scripts/dev/verify.sh
 - `apps/agent-ingest`
 - `apps/agent-consumer`
 
-It does not start Web, Convex, MCP, Analyst Sandbox, or Archive API. Archive API runs as a deployed
-Cloud-Dev Worker; it is deliberately absent from the Self-Contained Local stack.
+It does not start Web, Convex, MCP, or Analyst Sandbox.
 
 Run Convex and Web separately:
 
@@ -60,15 +59,15 @@ switches.
 
 The production runtime uses these Cloudflare resource families:
 
-| Resource         | Model request path                          | Agent conversation path                        | Shared/read path                                    |
-| ---------------- | ------------------------------------------- | ---------------------------------------------- | --------------------------------------------------- |
-| Workers          | `proxy`, `proxy-consumer`                   | `agent-ingest`, `agent-consumer`               | `web`, `pipes-api`, `api`, `mcp`, `analyst-sandbox` |
-| Queues           | `trace-flow-requests-*` + DLQ               | `agent-ingest-*` + DLQ                         | None                                                |
-| R2               | `trace-flow-storage-*` Body Objects         | None in fact ingest; sandbox workspace backups | Archive bucket is not enabled                       |
-| KV               | `API_KEYS`, `MODEL_PRICING`                 | `COLLECTOR_CREDS`, `MODEL_PRICING`             | None                                                |
-| Durable Objects  | `USAGE_TRACKER`, `TRACE_BATCHER`            | `AGENT_FACT_BATCHER`                           | `Sandbox`                                           |
-| Rate limiters    | org and IP ingest limits                    | `AGENT_INGEST_LIMITER`                         | read and token-refresh limits                       |
-| Analytics Engine | proxy and consumer operational measurements | Worker logs and Sentry                         | Worker logs and Sentry                              |
+| Resource         | Model request path                          | Agent conversation path            | Shared/read path                                    |
+| ---------------- | ------------------------------------------- | ---------------------------------- | --------------------------------------------------- |
+| Workers          | `proxy`, `proxy-consumer`                   | `agent-ingest`, `agent-consumer`   | `web`, `pipes-api`, `api`, `mcp`, `analyst-sandbox` |
+| Queues           | `trace-flow-requests-*` + DLQ               | `agent-ingest-*` + DLQ             | None                                                |
+| R2               | `trace-flow-storage-*` Body Objects         | No raw transcript storage          | Sandbox workspace backups                           |
+| KV               | `API_KEYS`, `MODEL_PRICING`                 | `COLLECTOR_CREDS`, `MODEL_PRICING` | None                                                |
+| Durable Objects  | `USAGE_TRACKER`, `TRACE_BATCHER`            | `AGENT_FACT_BATCHER`               | `Sandbox`                                           |
+| Rate limiters    | org and IP ingest limits                    | `AGENT_INGEST_LIMITER`             | read and token-refresh limits                       |
+| Analytics Engine | proxy and consumer operational measurements | Worker logs and Sentry             | Worker logs and Sentry                              |
 
 The agent production resource IDs and smoke-test contract live in
 `docs/guides/agent-conversation-analytics/provisioned-resources.md` and
@@ -109,7 +108,6 @@ Set secrets through the owning platform only. Do not commit them.
 | `mcp`             | Convex JWKS/read-side runtime values for MCP access                               |
 | `agent-ingest`    | `AGENT_INGEST_SHARED_SECRET`, `SENTRY_DSN`                                        |
 | `agent-consumer`  | `TINYBIRD_TOKEN`, `SENTRY_DSN`                                                    |
-| `archive-api`     | `ARCHIVE_API_SHARED_SECRET`, `ARCHIVE_KEY_WRAPPING_SECRET`, optional `SENTRY_DSN` |
 | `analyst-sandbox` | `ANALYST_SANDBOX_SHARED_SECRET`, `OPENROUTER_API_KEY`                             |
 
 Convex Tinybird queries also require `SENTRY_DSN` and `SENTRY_ENVIRONMENT` in the
@@ -125,10 +123,6 @@ omit upstream execution statistics. SQL text, query parameters, credentials, and
 returned rows are excluded. Convex uses a separate client and scope per operation
 and flushes before returning. Search Sentry for `span.op:db.query
 span.description:tinybird.*` in the relevant environment.
-
-Archive API production configuration is deployed on merge, but Convex keeps production archive writes
-disabled until TRA-228. The required Archive API secrets are stable protected-environment values; never
-generate a new wrapping secret during a deploy.
 
 ### Convex Environment
 
@@ -191,14 +185,12 @@ The workflow:
 1. runs CI checks
 2. deploys Convex and exports `.convex.cloud` / `.convex.site` URLs through `GITHUB_OUTPUT`
 3. deploys Tinybird schema before consumer Workers
-4. deploys Proxy, Proxy Consumer, Pipes API, Raw API, MCP, Web, Agent Ingest, Agent Consumer, Archive API, and Analyst Sandbox
+4. deploys Proxy, Proxy Consumer, Pipes API, Raw API, MCP, Web, Agent Ingest, Agent Consumer, and Analyst Sandbox
 5. fails agent deploys if production config resolves to dev queues or KV namespaces
 
-The Archive API job verifies its exact config, creates its US production bucket when absent, and uploads
-the Worker plus secrets from the protected Production environment. Desktop distribution is handled
-independently by `.github/workflows/desktop-release.yml`. It signs and notarizes the macOS arm64 app, builds the
-Windows x64 installer, signs both platforms' updater artifacts with Tauri, and publishes the updater
-manifest last.
+Desktop distribution runs independently through `.github/workflows/desktop-release.yml`. It signs
+and notarizes the macOS arm64 app, builds the Windows x64 installer, signs both platforms' updater
+artifacts with Tauri, and publishes the updater manifest last.
 
 Never manually deploy production without explicit approval.
 

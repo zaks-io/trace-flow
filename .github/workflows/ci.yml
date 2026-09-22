@@ -30,7 +30,6 @@ jobs:
       convex: ${{ steps.filter.outputs.convex }}
       pricing: ${{ steps.filter.outputs.pricing }}
       agent-ingest: ${{ steps.filter.outputs.agent-ingest }}
-      archive-api: ${{ steps.filter.outputs.archive-api }}
       agent-consumer: ${{ steps.filter.outputs.agent-consumer }}
       mcp: ${{ steps.filter.outputs.mcp }}
       analyst-sandbox: ${{ steps.filter.outputs.analyst-sandbox }}
@@ -82,16 +81,6 @@ jobs:
               - 'packages/types/**'
               - 'packages/utils/**'
               - 'packages/logging/**'
-            archive-api:
-              - 'apps/archive-api/**'
-              - 'apps/archive-api/config/wrangler-resources.test.ts'
-              - 'scripts/dev/archive-api-*.ts'
-              - 'scripts/dev/archive-export*.ts'
-              - 'scripts/dev/tsconfig.archive-export.json'
-              - 'apps/agent-ingest/**'
-              - 'packages/utils/**'
-              - 'packages/logging/**'
-              - 'packages/convex/**'
             agent-consumer:
               - 'apps/agent-consumer/**'
               - 'packages/types/**'
@@ -683,65 +672,6 @@ jobs:
       - name: Build
         run: bunx turbo run build --filter=@trace-flow/agent-ingest
 
-  archive-api:
-    name: Archive API Worker
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [changes]
-    if: needs.changes.outputs.archive-api == 'true' || needs.changes.outputs.root == 'true'
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-          persist-credentials: false
-
-      - uses: oven-sh/setup-bun@v2
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Cache Turbo
-        uses: actions/cache@v6
-        with:
-          path: .turbo
-          key: ${{ runner.os }}-turbo-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-turbo-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Format check
-        run: bun prettier --check "apps/archive-api/**/*.{ts,tsx,js,jsx,json}" "scripts/dev/archive-api-*.ts" "scripts/dev/archive-export*.ts" scripts/dev/tsconfig.archive-export.json
-
-      - name: Lint
-        run: |
-          bunx turbo run lint --filter=@trace-flow/archive-api
-          bunx eslint apps/archive-api/config/wrangler-resources.test.ts "scripts/dev/archive-api-*.ts" "scripts/dev/archive-export*.ts"
-
-      - name: Type check
-        run: |
-          bunx turbo run type-check --filter=@trace-flow/archive-api
-          bunx tsc --project scripts/dev/tsconfig.archive-export.json
-
-      - name: Test
-        run: |
-          bun run archive:resources:check
-          bun test scripts/dev/archive-export.test.ts
-          bunx turbo run test --filter=@trace-flow/archive-api
-
-      - name: Build
-        run: bunx turbo run build --filter=@trace-flow/archive-api
-
-      - name: Validate Wrangler environments
-        working-directory: apps/archive-api
-        run: |
-          bunx wrangler deploy --env="" --dry-run
-          bunx wrangler deploy --env preview --dry-run
-          bunx wrangler deploy --env production --dry-run
-
   agent-consumer:
     name: Agent Consumer Worker
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -1012,7 +942,6 @@ jobs:
       - web
       - pricing
       - agent-ingest
-      - archive-api
       - agent-consumer
       - mcp
       - analyst-sandbox

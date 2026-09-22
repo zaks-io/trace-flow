@@ -76,8 +76,7 @@ export default function PrivacyPage() {
                 If you enable collector syncing, the local collector reads supported coding-agent
                 stores and uploads typed facts such as source, model, token usage, tool outcomes,
                 repository fingerprints, and redacted excerpts. The normal analytics path does not
-                upload raw transcripts. Conversation Archive is separate and is not currently
-                available.
+                upload raw transcripts.
               </dd>
             </div>
             <div className="rounded-md border border-border/50 px-4 py-3">
