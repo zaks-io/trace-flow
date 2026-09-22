@@ -8,6 +8,7 @@ import type { SourceFingerprint } from './archive-validation';
 
 export interface ScanState {
   checkpoint: ArchiveUploadRequest['checkpoint'];
+  relativePath?: string;
 }
 
 export interface LedgerSnapshot {
@@ -35,6 +36,7 @@ export interface LedgerCommit {
   scan: {
     partId: string;
     checkpoint: ArchiveUploadRequest['checkpoint'];
+    relativePath?: string;
     fingerprints: SourceFingerprint[];
     replace: boolean;
   };
@@ -83,6 +85,7 @@ export interface ArchiveAcknowledgement {
   source_transcript_part_id?: string;
   captured_byte_offset?: number;
   captured_prefix_sha256?: string;
+  relative_path?: string;
   status: 'acknowledged';
   duplicate: boolean;
   source: ArchiveScope['source'];

@@ -14,14 +14,19 @@ export interface ArchiveExportTarget {
   sourceSessionId: string;
 }
 
-export interface ArchiveExportGrant {
+interface ArchiveExportGrantBase {
   orgId: string;
   exportId: string;
   actorUserId: string;
   issuedAt: number;
   expiresAt: number;
-  targets: ArchiveExportTarget[];
 }
+
+export type ArchiveExportGrant = ArchiveExportGrantBase &
+  (
+    | { exportScope: 'organization'; targets?: never }
+    | { exportScope: 'targets'; targets: ArchiveExportTarget[] }
+  );
 
 export type ArchiveExportGrantFailure = 'missing' | 'invalid' | 'invalid_credential_class';
 export type ArchiveExportGrantResult =
@@ -97,7 +102,8 @@ export async function authenticateArchiveExportGrant(
         algorithms: ['HS256'],
       },
     );
-    const targets = parseTargets(payload.targets);
+    const exportScope = payload.exportScope;
+    const targets = payload.targets === undefined ? undefined : parseTargets(payload.targets);
     if (
       protectedHeader.alg !== 'HS256' ||
       payload.scope !== ARCHIVE_EXPORT_GRANT_SCOPE ||
@@ -109,23 +115,24 @@ export async function authenticateArchiveExportGrant(
       typeof payload.exp !== 'number' ||
       !Number.isSafeInteger(payload.exp) ||
       payload.exp <= payload.iat ||
-      payload.exp - payload.iat > 10 * 60 ||
       payload.iat > Math.floor(Date.now() / 1000) + 30 ||
-      !targets
+      (exportScope !== 'organization' && exportScope !== 'targets') ||
+      (exportScope === 'organization'
+        ? payload.targets !== undefined || payload.exp - payload.iat > 24 * 60 * 60
+        : !targets || payload.exp - payload.iat > 10 * 60)
     ) {
       return { ok: false, reason: 'invalid' };
     }
-    return {
-      ok: true,
-      grant: {
-        orgId: payload.orgId,
-        exportId: payload.exportId,
-        actorUserId: payload.actorUserId,
-        issuedAt: payload.iat,
-        expiresAt: payload.exp,
-        targets,
-      },
+    const base = {
+      orgId: payload.orgId,
+      exportId: payload.exportId,
+      actorUserId: payload.actorUserId,
+      issuedAt: payload.iat,
+      expiresAt: payload.exp,
     };
+    return exportScope === 'organization'
+      ? { ok: true, grant: { ...base, exportScope } }
+      : { ok: true, grant: { ...base, exportScope, targets: targets! } };
   } catch {
     return { ok: false, reason: 'invalid' };
   }

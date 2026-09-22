@@ -25,6 +25,7 @@ function manifestElement(element: LedgerElement, range: ChunkByteRange): Manifes
   if (element.kind === 'record') {
     return {
       element_type: 'record',
+      ...(element.relative_path === undefined ? {} : { relative_path: element.relative_path }),
       ...(element.archive_format_version === BYTE_ARCHIVE_FORMAT_VERSION
         ? {
             source_byte_start: byteSegmentRange(element.source_record_identity).start,
@@ -42,6 +43,7 @@ function manifestElement(element: LedgerElement, range: ChunkByteRange): Manifes
   }
   return {
     element_type: 'checkpoint',
+    ...(element.relative_path === undefined ? {} : { relative_path: element.relative_path }),
     chain_sequence: element.chain_sequence,
     checkpoint: element.checkpoint,
     chain_hash: element.chain_hash,

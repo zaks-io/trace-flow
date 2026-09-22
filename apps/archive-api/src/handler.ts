@@ -30,6 +30,10 @@ import { publishArchiveIntegrityStatus } from './archive-integrity-status';
 import { isRetryableDurableObjectError } from './durable-object-errors';
 import { hasInternalArchiveAuthority } from './internal-authority';
 import { executeArchiveExport, MAX_ARCHIVE_EXPORT_REQUEST_BYTES } from './archive-export';
+import {
+  listArchiveSessionCatalog,
+  registerCommittedArchiveLedgers,
+} from './archive-session-catalog';
 
 const COLLECTOR_SECRET_HEADER = 'X-Trace-Flow-Collector-Secret';
 const ARCHIVE_SOURCE_HEADER = 'X-Trace-Flow-Archive-Source';
@@ -522,6 +526,70 @@ export async function handleExport(c: Context<{ Bindings: ArchiveApiEnv }>): Pro
       const status = reason.endsWith('_invalid') ? 400 : 503;
       return c.json({ error: 'archive_export_failed', reason }, status);
     }
+  } finally {
+    c.executionCtx.waitUntil(logger.flush());
+  }
+}
+
+export async function handleArchiveSessions(
+  c: Context<{ Bindings: ArchiveApiEnv }>,
+): Promise<Response> {
+  const logger = requestLogger(c, 'archive_sessions');
+  try {
+    const auth = await authenticateArchiveExportGrant(
+      c.req.header(ARCHIVE_EXPORT_GRANT_HEADER),
+      c.req.header('Authorization'),
+      c.req.header('Cookie'),
+      c.env.ARCHIVE_API_SHARED_SECRET,
+    );
+    if (!auth.ok) {
+      logger.warn('archive_api.export_grant_rejected', { reason: auth.reason });
+      const status =
+        auth.reason === 'missing' || auth.reason === 'invalid_credential_class' ? 401 : 403;
+      return c.json({ error: 'unauthorized', reason: auth.reason }, status);
+    }
+    if (auth.grant.exportScope !== 'organization') {
+      return c.json({ error: 'forbidden', reason: 'organization_scope_required' }, 403);
+    }
+    const cursorQuery = c.req.query('cursor');
+    const cursor = cursorQuery === '' ? undefined : cursorQuery;
+    return c.json(await listArchiveSessionCatalog(c.env, auth.grant.orgId, cursor));
+  } catch (error) {
+    const reason = error instanceof ArchiveContractError ? error.errorClass : 'archive_unavailable';
+    logger.error('archive_api.session_listing_failed', error, { reason });
+    return c.json({ error: 'archive_listing_failed', reason }, 503);
+  } finally {
+    c.executionCtx.waitUntil(logger.flush());
+  }
+}
+
+export async function handleArchiveRegistryBackfill(
+  c: Context<{ Bindings: ArchiveApiEnv }>,
+): Promise<Response> {
+  const logger = requestLogger(c, 'archive_registry_backfill');
+  try {
+    if (
+      !hasInternalArchiveAuthority(c.req.header('Authorization'), c.env.ARCHIVE_API_SHARED_SECRET)
+    ) {
+      logger.warn('archive_api.registry_backfill_unauthorized');
+      return c.json({ error: 'unauthorized' }, 401);
+    }
+    const body = await readBoundedJson(c.req.raw, 16 * 1024, 'archive_registry_page_invalid');
+    const ledgerIds =
+      typeof body === 'object' && body !== null && !Array.isArray(body)
+        ? (body as { ledgerIds?: unknown }).ledgerIds
+        : undefined;
+    if (
+      !Array.isArray(ledgerIds) ||
+      !ledgerIds.every((id): id is string => typeof id === 'string')
+    ) {
+      throw new ArchiveContractError('archive_registry_page_invalid');
+    }
+    return c.json(await registerCommittedArchiveLedgers(c.env, ledgerIds));
+  } catch (error) {
+    const reason = error instanceof ArchiveContractError ? error.errorClass : 'archive_unavailable';
+    logger.error('archive_api.registry_backfill_failed', error, { reason });
+    return c.json({ error: 'archive_registry_backfill_failed', reason }, 400);
   } finally {
     c.executionCtx.waitUntil(logger.flush());
   }

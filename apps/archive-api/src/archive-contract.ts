@@ -59,6 +59,7 @@ export interface CompactArchiveAppendProof {
 
 interface ArchiveUploadRequestBase {
   source_session_id: string;
+  relative_path?: string;
   checkpoint: CompletedScanCheckpoint;
   prior_checkpoint?: CompletedScanCheckpoint;
 }
@@ -94,6 +95,7 @@ export interface ArchiveScope {
 
 export interface StoredRecord extends ArchiveObservation {
   kind: 'record';
+  relative_path?: string;
   chain_sequence: number;
   previous_chain_hash: string;
   chain_hash: string;
@@ -103,6 +105,7 @@ export type StoredRecordMetadata = Omit<StoredRecord, 'payload'>;
 
 export interface StoredCheckpoint {
   kind: 'checkpoint';
+  relative_path?: string;
   archive_format_version: number;
   chain_hash_version: number;
   source: ArchiveSource;
@@ -124,6 +127,7 @@ export interface ChunkByteRange {
 }
 
 export interface ManifestRecord {
+  relative_path?: string;
   predecessor_part_id?: string;
   source_byte_start?: number;
   source_byte_end?: number;
@@ -137,6 +141,7 @@ export interface ManifestRecord {
 }
 
 export interface ManifestCheckpoint {
+  relative_path?: string;
   element_type: 'checkpoint';
   chain_sequence: number;
   checkpoint: CompletedScanCheckpoint;
@@ -208,6 +213,17 @@ export function assertTranscriptPartId(source: ArchiveSource, value: string): vo
       ? value === 'codex:part:primary' || /^codex:part:sha256:[0-9a-f]{64}$/u.test(value)
       : value === 'claude:part:parent' || /^claude:part:sha256:[0-9a-f]{64}$/u.test(value);
   if (!valid) throw new ArchiveContractError('invalid_transcript_part_id');
+}
+
+export function assertArchiveRelativePath(value: unknown): asserts value is string {
+  if (
+    typeof value !== 'string' ||
+    !/^tool-results\/[^/\\\0]+$/u.test(value) ||
+    value.endsWith('/.') ||
+    value.endsWith('/..')
+  ) {
+    throw new ArchiveContractError('invalid_relative_path');
+  }
 }
 
 export function assertDigest(value: unknown, errorClass: string): asserts value is string {

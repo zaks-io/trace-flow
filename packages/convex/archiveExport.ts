@@ -10,7 +10,8 @@ import { isArchiveCanonicalIdentifier } from '@trace-flow/types';
 const EXPORT_GRANT_ISSUER = 'trace-flow-convex';
 const EXPORT_GRANT_AUDIENCE = 'trace-flow-archive-api';
 const EXPORT_GRANT_SCOPE = 'archive:export';
-const EXPORT_GRANT_TTL_SECONDS = 10 * 60;
+const TARGET_EXPORT_GRANT_TTL_SECONDS = 10 * 60;
+const ORGANIZATION_EXPORT_GRANT_TTL_SECONDS = 24 * 60 * 60;
 const MAX_EXPORT_TARGETS = 64;
 
 const source = v.union(v.literal('claude'), v.literal('codex'));
@@ -49,20 +50,39 @@ function archiveApiUrl(): string {
 }
 
 export const authorize = internalQuery({
-  args: { targets: v.array(requestedTarget) },
+  args: {
+    scope: v.optional(v.literal('organization')),
+    targets: v.optional(v.array(requestedTarget)),
+  },
   returns: v.object({
     orgId: v.id('organizations'),
     actorUserId: v.id('users'),
-    targets: v.array(authorizedTarget),
+    exportScope: v.union(v.literal('organization'), v.literal('targets')),
+    targets: v.optional(v.array(authorizedTarget)),
   }),
   handler: async (ctx, args) => {
-    if (args.targets.length < 1 || args.targets.length > MAX_EXPORT_TARGETS) {
+    const organization = args.scope === 'organization';
+    if (organization === (args.targets !== undefined)) {
+      throw new Error('Archive export must select organization scope or explicit targets');
+    }
+    if (
+      args.targets !== undefined &&
+      (args.targets.length < 1 || args.targets.length > MAX_EXPORT_TARGETS)
+    ) {
       throw new Error('Archive export must select between 1 and 64 sessions');
     }
     const user = await requireEnabledUser(ctx);
     const active = await getActiveOrganizationMembership(ctx, user);
     if (active?.membership.role !== 'owner' || active?.organization.ownerId !== user._id) {
       throw new Error('Only the organization owner can export Conversation Archive');
+    }
+
+    if (organization) {
+      return {
+        orgId: active.orgId,
+        actorUserId: user._id,
+        exportScope: 'organization' as const,
+      };
     }
 
     const targets: {
@@ -72,7 +92,7 @@ export const authorize = internalQuery({
       sourceSessionId: string;
     }[] = [];
     const seen = new Set<string>();
-    for (const target of args.targets) {
+    for (const target of args.targets!) {
       if (!isArchiveCanonicalIdentifier(target.sourceSessionId)) {
         throw new Error('Invalid archive session id');
       }
@@ -90,7 +110,12 @@ export const authorize = internalQuery({
         sourceSessionId: target.sourceSessionId,
       });
     }
-    return { orgId: active.orgId, actorUserId: user._id, targets };
+    return {
+      orgId: active.orgId,
+      actorUserId: user._id,
+      exportScope: 'targets' as const,
+      targets,
+    };
   },
 });
 
@@ -120,11 +145,12 @@ export const recordIssuance = internalMutation({
 
 const authorizeRef = makeFunctionReference<
   'query',
-  { targets: RequestedTarget[] },
+  { scope?: 'organization'; targets?: RequestedTarget[] },
   {
     orgId: Id<'organizations'>;
     actorUserId: Id<'users'>;
-    targets: {
+    exportScope: 'organization' | 'targets';
+    targets?: {
       userId: Id<'users'>;
       contributionId: Id<'archiveContributions'>;
       source: 'claude' | 'codex';
@@ -145,7 +171,11 @@ const recordIssuanceRef = makeFunctionReference<
 >('archiveExport:recordIssuance');
 
 export const issueGrant = action({
-  args: { exportId: v.string(), targets: v.array(requestedTarget) },
+  args: {
+    exportId: v.string(),
+    scope: v.optional(v.literal('organization')),
+    targets: v.optional(v.array(requestedTarget)),
+  },
   returns: v.object({
     archiveUrl: v.string(),
     grant: v.string(),
@@ -154,14 +184,22 @@ export const issueGrant = action({
   }),
   handler: async (ctx, args) => {
     if (!validExportId(args.exportId)) throw new Error('Invalid archive export id');
-    const authorization = await ctx.runQuery(authorizeRef, { targets: args.targets });
-    const expiresAt = Math.floor(Date.now() / 1000) + EXPORT_GRANT_TTL_SECONDS;
+    const authorization = await ctx.runQuery(authorizeRef, {
+      ...(args.scope === undefined ? {} : { scope: args.scope }),
+      ...(args.targets === undefined ? {} : { targets: args.targets }),
+    });
+    const expiresAt =
+      Math.floor(Date.now() / 1000) +
+      (authorization.exportScope === 'organization'
+        ? ORGANIZATION_EXPORT_GRANT_TTL_SECONDS
+        : TARGET_EXPORT_GRANT_TTL_SECONDS);
     const grant = await new SignJWT({
       scope: EXPORT_GRANT_SCOPE,
       orgId: authorization.orgId,
       exportId: args.exportId,
       actorUserId: authorization.actorUserId,
-      targets: authorization.targets,
+      exportScope: authorization.exportScope,
+      ...(authorization.targets === undefined ? {} : { targets: authorization.targets }),
     })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuer(EXPORT_GRANT_ISSUER)
@@ -174,7 +212,7 @@ export const issueGrant = action({
       orgId: authorization.orgId,
       actorUserId: authorization.actorUserId,
       exportId: args.exportId,
-      targetCount: authorization.targets.length,
+      targetCount: authorization.targets?.length ?? 0,
     });
     return { archiveUrl: archiveApiUrl(), grant, exportId: args.exportId, expiresAt };
   },

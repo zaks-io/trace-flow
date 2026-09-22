@@ -22,6 +22,7 @@ async function token(overrides: Record<string, unknown> = {}, secret = SECRET): 
     orgId: IDS.orgId,
     exportId: 'export-1',
     actorUserId: IDS.actorUserId,
+    exportScope: 'targets',
     targets: [
       {
         userId: IDS.userId,
@@ -74,5 +75,28 @@ describe('Archive Export Grant', () => {
     await expect(
       authenticateArchiveExportGrant(await token(), undefined, 'tf_session=abc', SECRET),
     ).resolves.toEqual({ ok: false, reason: 'invalid_credential_class' });
+  });
+
+  it('accepts a 24-hour organization grant without explicit targets', async () => {
+    const issuedAt = Math.floor(Date.now() / 1000);
+    const organizationGrant = await new SignJWT({
+      scope: ARCHIVE_EXPORT_GRANT_SCOPE,
+      orgId: IDS.orgId,
+      exportId: 'export-organization',
+      actorUserId: IDS.actorUserId,
+      exportScope: 'organization',
+    })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuer(ARCHIVE_EXPORT_GRANT_ISSUER)
+      .setAudience(ARCHIVE_EXPORT_GRANT_AUDIENCE)
+      .setIssuedAt(issuedAt)
+      .setExpirationTime(issuedAt + 24 * 60 * 60)
+      .sign(new TextEncoder().encode(SECRET));
+    await expect(
+      authenticateArchiveExportGrant(organizationGrant, undefined, undefined, SECRET),
+    ).resolves.toMatchObject({
+      ok: true,
+      grant: { exportScope: 'organization' },
+    });
   });
 });

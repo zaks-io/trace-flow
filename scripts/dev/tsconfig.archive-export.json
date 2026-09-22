@@ -4,5 +4,5 @@
     "noEmit": true,
     "types": ["bun-types"]
   },
-  "include": ["archive-export*.ts"]
+  "include": ["archive-export*.ts", "archive-registry-backfill.ts"]
 }

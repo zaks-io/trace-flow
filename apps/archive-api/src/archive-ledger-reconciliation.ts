@@ -91,6 +91,9 @@ export async function reconcileArchiveUpload(
   }
   const duplicateScan = scan && sameCheckpointLogicalPosition(scan.checkpoint, upload.checkpoint);
   if (scan) {
+    if (scan.relativePath !== upload.relativePath) {
+      throw new ArchiveContractError('relative_path_mismatch');
+    }
     if (upload.isDelta) {
       const fingerprints = sourceFingerprints(upload.observations);
       if (
@@ -180,6 +183,7 @@ export async function reconcileArchiveUpload(
       state.elementCount + newElements.length,
       chainHead,
     );
+    if (upload.relativePath !== undefined) record.relative_path = upload.relativePath;
     newElements.push(record);
     knownVersions.add(fingerprint);
     chainHead = record.chain_hash;
@@ -190,6 +194,7 @@ export async function reconcileArchiveUpload(
     const sequence = state.elementCount + newElements.length;
     newElements.push({
       kind: 'checkpoint' as const,
+      ...(upload.relativePath === undefined ? {} : { relative_path: upload.relativePath }),
       archive_format_version: upload.checkpoint.archive_format_version,
       chain_hash_version: CHAIN_HASH_VERSION,
       source: upload.checkpoint.source,

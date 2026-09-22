@@ -26,6 +26,7 @@ const grant: ArchiveExportGrant = {
   actorUserId: scope.userId,
   issuedAt: 1,
   expiresAt: 2,
+  exportScope: 'targets',
   targets: [
     {
       userId: scope.userId,
@@ -52,6 +53,43 @@ async function compress(bytes: Uint8Array): Promise<Uint8Array> {
 
 describe('archive export', () => {
   beforeEach(() => vi.restoreAllMocks());
+
+  it('pins a complete organization catalog without collector-local state', async () => {
+    const organizationGrant: ArchiveExportGrant = {
+      orgId: scope.orgId,
+      exportId: 'export-organization',
+      actorUserId: scope.userId,
+      issuedAt: 1,
+      expiresAt: 2,
+      exportScope: 'organization',
+    };
+    const result = (await executeArchiveExport(
+      { ARCHIVE_API_SHARED_SECRET: 'shared' } as ArchiveApiEnv,
+      organizationGrant,
+      {
+        operation: 'select',
+        sessions: [
+          {
+            ledgerId: 'a'.repeat(64),
+            userId: scope.userId,
+            contributionId: scope.contributionId,
+            source: scope.source,
+            sourceSessionId: scope.sourceSessionId,
+            manifestKey: 'manifest-key',
+            manifestHeadPageKey: 'manifest-head-key',
+            generation: 3,
+            elementCount: 2,
+            recordCount: 1,
+            chainHead: `sha256:${'1'.repeat(64)}`,
+          },
+        ],
+      },
+      logger(),
+    )) as { selection: ArchiveExportSelection };
+    expect(result.selection.sessions).toHaveLength(1);
+    expect(result.selection.sessions[0]).not.toHaveProperty('ledgerId');
+    expect(result.selection.sessions[0]?.manifestKey).toBe('manifest-key');
+  });
 
   it('pins the exact committed ledger manifest and validates resume selection', async () => {
     const snapshot = {

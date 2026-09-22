@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import vectorsJson from '../../../../packages/collector-archive/tests/fixtures/archive-identifiers.json?raw';
 import {
   ArchiveContractError,
+  assertArchiveRelativePath,
   assertIdentifier,
   assertTranscriptPartId,
   decodeBase64Bytes,
@@ -99,5 +100,20 @@ describe('archive transcript part contract', () => {
     expect(() =>
       assertTranscriptPartId('codex', `codex:part:sha256:${'a'.repeat(63)}`),
     ).toThrowError(ArchiveContractError);
+  });
+});
+
+describe('archive sidecar path contract', () => {
+  it('accepts one Claude tool-result filename and rejects traversal or nested paths', () => {
+    expect(() => assertArchiveRelativePath('tool-results/result.txt')).not.toThrow();
+    for (const value of [
+      '/tool-results/result.txt',
+      'tool-results/../secret',
+      'tool-results/nested/result.txt',
+      'other/result.txt',
+      'tool-results\\result.txt',
+    ]) {
+      expect(() => assertArchiveRelativePath(value)).toThrowError(ArchiveContractError);
+    }
   });
 });

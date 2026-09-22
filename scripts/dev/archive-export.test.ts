@@ -6,11 +6,43 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { GENESIS_CHAIN_HASH } from '../../apps/archive-api/src/archive-contract';
 import { collectExportManifestGraph } from './archive-export-traversal';
-import { exportSessionDirectoryId, RawPartVerifier } from './archive-export-verification';
+import {
+  exportSessionDirectoryId,
+  latestSidecarGenerations,
+  RawPartVerifier,
+} from './archive-export-verification';
 
 const digest = (hex: string) => `sha256:${hex.repeat(64)}`;
 
 describe('archive export client verification', () => {
+  it('restores the latest sidecar generation and retains older part files', () => {
+    expect(
+      latestSidecarGenerations([
+        {
+          relativePath: 'tool-results/result.txt',
+          file: 'parts/older.bin',
+          firstObservedAt: 10,
+          checkpointSequence: 8,
+        },
+        {
+          relativePath: 'tool-results/result.txt',
+          file: 'parts/latest.bin',
+          firstObservedAt: 11,
+          checkpointSequence: 3,
+        },
+        {
+          relativePath: 'tool-results/other.txt',
+          file: 'parts/other.bin',
+          firstObservedAt: 9,
+          checkpointSequence: 5,
+        },
+      ]),
+    ).toEqual([
+      { relativePath: 'tool-results/result.txt', file: 'parts/latest.bin' },
+      { relativePath: 'tool-results/other.txt', file: 'parts/other.bin' },
+    ]);
+  });
+
   it('does not mark a session verified when its declared record count is wrong', async () => {
     const directory = await mkdtemp(resolve(tmpdir(), 'archive-record-count-'));
     const unsigned = {

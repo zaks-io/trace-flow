@@ -7,9 +7,71 @@ import { GENESIS_CHAIN_HASH, type ArchiveUploadRequest } from '../archive-contra
 import { payloadBytes } from '../archive-contract';
 import { validateObservation } from '../archive-contract-validation';
 import { prefixChainHash } from '../archive-prefix-validation';
+import { buildArchiveSessionManifest } from '../archive-manifest-packing';
 import { call, envelope, newLedger, scope, digest } from './ledger.integration.fixtures';
 
 describe('exact source byte segments', () => {
+  it('stores and acknowledges a Claude tool-result relative path', async () => {
+    const currentScope = scope('claude', 'tool-result-byte-fixture');
+    const part = `claude:part:sha256:${'a'.repeat(64)}`;
+    const upload = structuredClone(fixture.upload) as ArchiveUploadRequest;
+    upload.source_session_id = currentScope.sourceSessionId;
+    upload.relative_path = 'tool-results/result.txt';
+    upload.observations[0]!.source = 'claude';
+    upload.observations[0]!.source_session_id = currentScope.sourceSessionId;
+    upload.observations[0]!.source_transcript_part_id = part;
+    upload.checkpoint.source = 'claude';
+    upload.checkpoint.source_session_id = currentScope.sourceSessionId;
+    upload.checkpoint.source_transcript_part_id = part;
+
+    const stub = newLedger(currentScope);
+    const result = await call(stub, await envelope(currentScope, upload));
+    expect(result.response.status).toBe(200);
+    expect(result.body.relative_path).toBe('tool-results/result.txt');
+    const snapshot = await stub.exportSnapshot({ scope: currentScope });
+    expect(snapshot?.manifestKey).toBe(result.body.manifest_key);
+
+    const validated = await parseAndValidateUpload(upload, currentScope);
+    const record = await buildRecord(validated.observations[0]!, 0, GENESIS_CHAIN_HASH);
+    record.relative_path = upload.relative_path;
+    const storedCheckpoint = {
+      kind: 'checkpoint' as const,
+      relative_path: upload.relative_path,
+      archive_format_version: 2,
+      chain_hash_version: 1,
+      source: 'claude' as const,
+      source_session_id: currentScope.sourceSessionId,
+      source_transcript_part_id: part,
+      checkpoint: upload.checkpoint,
+      chain_sequence: 1,
+      previous_chain_hash: record.chain_hash,
+      chain_hash: await checkpointChainHash(record.chain_hash, 1, upload.checkpoint),
+    };
+    const manifest = buildArchiveSessionManifest(
+      currentScope,
+      [record, storedCheckpoint],
+      {
+        '0': { chunk_id: 'a'.repeat(64), start: 0, end: 1 },
+        '1': { chunk_id: 'a'.repeat(64), start: 1, end: 2 },
+      },
+      1,
+    );
+    expect(manifest.elements).toEqual([
+      expect.objectContaining({ relative_path: 'tool-results/result.txt' }),
+      expect.objectContaining({ relative_path: 'tool-results/result.txt' }),
+    ]);
+  });
+
+  it('rejects sidecar paths outside Claude format 2 uploads', async () => {
+    const currentScope = scope('codex', fixture.upload.source_session_id);
+    await expect(
+      parseAndValidateUpload(
+        { ...fixture.upload, relative_path: 'tool-results/result.txt' },
+        currentScope,
+      ),
+    ).rejects.toThrow('invalid_relative_path');
+  });
+
   it('commits an empty generation and then its first byte append', async () => {
     const currentScope = scope('codex', 'empty-byte-fixture');
     const stub = newLedger(currentScope);

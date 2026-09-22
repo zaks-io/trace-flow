@@ -91,3 +91,38 @@ export async function exportSessionDirectoryId(
   );
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
+
+export function latestSidecarGenerations(
+  generations: {
+    relativePath: string;
+    file: string;
+    firstObservedAt: number;
+    checkpointSequence: number;
+  }[],
+): { relativePath: string; file: string }[] {
+  const latest = new Map<
+    string,
+    { file: string; firstObservedAt: number; checkpointSequence: number }
+  >();
+  for (const generation of generations) {
+    assert.ok(Number.isSafeInteger(generation.firstObservedAt));
+    assert.ok(Number.isSafeInteger(generation.checkpointSequence));
+    const current = latest.get(generation.relativePath);
+    if (
+      !current ||
+      generation.firstObservedAt > current.firstObservedAt ||
+      (generation.firstObservedAt === current.firstObservedAt &&
+        generation.checkpointSequence > current.checkpointSequence)
+    ) {
+      latest.set(generation.relativePath, {
+        file: generation.file,
+        firstObservedAt: generation.firstObservedAt,
+        checkpointSequence: generation.checkpointSequence,
+      });
+    }
+  }
+  return [...latest].map(([relativePath, generation]) => ({
+    relativePath,
+    file: generation.file,
+  }));
+}

@@ -7,13 +7,30 @@ describe('archive export authorization', () => {
   const authorize = makeFunctionReference<
     'query',
     {
-      targets: {
+      scope?: 'organization';
+      targets?: {
         contributionId: Id<'archiveContributions'>;
         source: 'claude' | 'codex';
         sourceSessionId: string;
       }[];
     }
   >('archiveExport:authorize');
+  it('authorizes organization scope only for the current owner', async () => {
+    const world = await seedWorld();
+    await expect(
+      asUser(world, world.owner).query(authorize, { scope: 'organization', targets: undefined }),
+    ).resolves.toMatchObject({
+      orgId: world.owner.orgId,
+      actorUserId: world.owner._id,
+      exportScope: 'organization',
+    });
+    await expect(
+      asUser(world, world.member).query(authorize, {
+        scope: 'organization',
+        targets: undefined,
+      }),
+    ).rejects.toThrow('Only the organization owner');
+  });
   it('allows the current owner to export a retained contribution after subscription loss', async () => {
     const world = await seedWorld('pro', 'canceled');
     const contributionId = await world.t.run((ctx) =>

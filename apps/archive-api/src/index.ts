@@ -15,6 +15,8 @@ import { handleCollectorPolicy } from './collector-policy-handler';
 import {
   handleDeleteArchive,
   handleDeleteContribution,
+  handleArchiveRegistryBackfill,
+  handleArchiveSessions,
   handleExport,
   handleHealthz,
   handleRotateKey,
@@ -104,6 +106,7 @@ app.get('/healthz', handleHealthz);
 app.get('/v1/archive/policy', handleCollectorPolicy);
 app.post('/v1/archive/enrollments', handleCollectorEnrollment);
 app.post('/v1/archive/uploads', handleUpload);
+app.get('/v1/archive/sessions', handleArchiveSessions);
 
 app.get('/v1/archive/exports', handleExport);
 app.post('/v1/archive/exports', handleExport);
@@ -117,5 +120,6 @@ app.get('/v1/archive/key-rotations/:orgId', handleRotationHealth);
 app.post('/internal/archive-erasure/begin', handleBeginArchiveErasure);
 app.post('/internal/archive-erasure/ledgers', handleEraseArchiveLedgers);
 app.post('/internal/archive-erasure/finish', handleFinishArchiveErasure);
+app.post('/internal/archive-registry/backfill', handleArchiveRegistryBackfill);
 
 export default Sentry.withSentry(createArchiveApiSentryOptions, app);

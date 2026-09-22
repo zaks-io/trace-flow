@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { createHash, type Hash } from 'node:crypto';
-import { appendFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { appendFile, copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import { Database } from 'bun:sqlite';
 import {
   GENESIS_CHAIN_HASH,
@@ -12,7 +12,11 @@ import {
 } from '../../apps/archive-api/src/archive-contract';
 import { checkpointChainHash, recordChainHash } from '../../apps/archive-api/src/archive-chain';
 import { collectExportManifestGraph } from './archive-export-traversal';
-import { exportSessionDirectoryId, RawPartVerifier } from './archive-export-verification';
+import {
+  exportSessionDirectoryId,
+  latestSidecarGenerations,
+  RawPartVerifier,
+} from './archive-export-verification';
 
 const grantArg = process.env.TRACE_FLOW_ARCHIVE_EXPORT_GRANT;
 const [archiveUrlArg, outputArg] = process.argv.slice(2);
@@ -77,6 +81,25 @@ async function call(body: Json): Promise<Json> {
   return result;
 }
 
+async function listSessions(): Promise<Json[]> {
+  const sessions: Json[] = [];
+  let cursor: string | undefined;
+  do {
+    const url = new URL(`${archiveUrl}/v1/archive/sessions`);
+    if (cursor) url.searchParams.set('cursor', cursor);
+    const response = await fetch(url, {
+      headers: { 'X-Trace-Flow-Archive-Export-Grant': grant },
+    });
+    const result = (await response.json()) as Json;
+    if (!response.ok)
+      throw new Error(`Archive session listing failed with HTTP ${response.status}`);
+    assert.ok(Array.isArray(result.sessions));
+    sessions.push(...(result.sessions as Json[]));
+    cursor = typeof result.cursor === 'string' ? result.cursor : undefined;
+  } while (cursor);
+  return sessions;
+}
+
 async function existingManifest(): Promise<LocalManifest | undefined> {
   try {
     const parsed = JSON.parse(await readFile(selectionPath, 'utf8')) as LocalManifest;
@@ -106,6 +129,15 @@ function decodeBase64(value: unknown): Uint8Array {
 
 function safePartName(partId: string): Promise<string> {
   return sha256(new TextEncoder().encode(partId)).then((value) => value.slice(7));
+}
+
+function safeRelativePath(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  assert.ok(typeof value === 'string');
+  assert.ok(!isAbsolute(value));
+  assert.match(value, /^tool-results\/[^/\\\0]+$/u);
+  assert.ok(!value.split('/').includes('..'));
+  return value;
 }
 
 function openProgress(): Database {
@@ -208,6 +240,9 @@ async function writeSession(
       file: string;
       verifier: RawPartVerifier;
       initialized: boolean;
+      relativePath?: string;
+      firstObservedAt: number;
+      checkpointSequence: number;
     }
   >();
   const parts: Json[] = [];
@@ -239,6 +274,7 @@ async function writeSession(
     if (element.kind === 'checkpoint') {
       const checkpoint = element.checkpoint;
       if (checkpoint.archive_format_version === 2) {
+        const relativePath = safeRelativePath(manifest.relative_path);
         let raw = rawParts.get(checkpoint.source_transcript_part_id);
         if (!raw) {
           assert.ok(
@@ -249,10 +285,17 @@ async function writeSession(
             file: `parts/${await safePartName(checkpoint.source_transcript_part_id)}.bin`,
             verifier: new RawPartVerifier(),
             initialized: true,
+            firstObservedAt: checkpoint.first_observed_at,
+            checkpointSequence: -1,
+            ...(relativePath === undefined ? {} : { relativePath }),
           };
           rawParts.set(checkpoint.source_transcript_part_id, raw);
+          await mkdir(dirname(resolve(sessionDirectory, raw.file)), { recursive: true });
           await writeFile(resolve(sessionDirectory, raw.file), new Uint8Array());
         }
+        assert.equal(raw.relativePath, relativePath);
+        raw.firstObservedAt = checkpoint.first_observed_at;
+        raw.checkpointSequence = manifest.chain_sequence;
         raw.verifier.verifyCheckpoint(checkpoint);
       }
       continue;
@@ -272,15 +315,20 @@ async function writeSession(
       );
       const start = (manifest as Json).source_byte_start as number;
       const end = (manifest as Json).source_byte_end as number;
+      const relativePath = safeRelativePath(manifest.relative_path);
       let raw = rawParts.get(element.source_transcript_part_id);
       if (!raw) {
         raw = {
           file: `parts/${await safePartName(element.source_transcript_part_id)}.bin`,
           verifier: new RawPartVerifier(),
           initialized: false,
+          firstObservedAt: element.observed_at,
+          checkpointSequence: -1,
+          ...(relativePath === undefined ? {} : { relativePath }),
         };
         rawParts.set(element.source_transcript_part_id, raw);
       }
+      assert.equal(raw.relativePath, relativePath);
       raw.verifier.addSegment({
         identity: element.source_record_identity,
         manifestStart: start,
@@ -289,6 +337,7 @@ async function writeSession(
         bytes,
       });
       const path = resolve(sessionDirectory, raw.file);
+      await mkdir(dirname(path), { recursive: true });
       if (!raw.initialized) {
         await writeFile(path, bytes);
         raw.initialized = true;
@@ -343,7 +392,27 @@ async function writeSession(
       segment_count: raw.verifier.segmentCount,
       observed_source_size: raw.verifier.observedSourceSize,
       source_capture_complete: raw.verifier.sourceCaptureComplete,
+      ...(raw.relativePath === undefined ? {} : { relative_path: raw.relativePath }),
     });
+  }
+
+  for (const sidecar of latestSidecarGenerations(
+    [...rawParts.values()].flatMap((raw) =>
+      raw.relativePath === undefined
+        ? []
+        : [
+            {
+              relativePath: raw.relativePath,
+              file: raw.file,
+              firstObservedAt: raw.firstObservedAt,
+              checkpointSequence: raw.checkpointSequence,
+            },
+          ],
+    ),
+  )) {
+    const destination = resolve(sessionDirectory, sidecar.relativePath);
+    await mkdir(dirname(destination), { recursive: true });
+    await copyFile(resolve(sessionDirectory, sidecar.file), destination);
   }
 
   for (const [partId, legacy] of legacyParts) {
@@ -363,9 +432,27 @@ async function writeSession(
 
 await mkdir(outputDirectory, { recursive: true });
 const priorManifest = await existingManifest();
+function exportScope(): unknown {
+  try {
+    const payload = grant.split('.')[1];
+    return payload
+      ? (
+          JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
+            exportScope?: unknown;
+          }
+        ).exportScope
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
 const selected = await call({
   operation: 'select',
-  ...(priorManifest ? { selection: priorManifest.selection } : {}),
+  ...(priorManifest
+    ? { selection: priorManifest.selection }
+    : exportScope() === 'organization'
+      ? { sessions: await listSessions() }
+      : {}),
 });
 const selection = selected.selection as Selection;
 await validateSelection(selection);

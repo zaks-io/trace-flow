@@ -18,8 +18,12 @@ import { MAX_ENCRYPTED_ARCHIVE_OBJECT_BYTES } from './archive-key-reencryption';
 import { archiveObjectKey, archiveSessionPrefix } from './archive-storage-key';
 import type { ArchiveExportGrant, ArchiveExportTarget } from './export-grant';
 import type { LedgerSnapshot } from './archive-ledger-state';
+import type { ArchiveSessionCatalogEntry } from './archive-session-catalog';
+import { isArchiveCanonicalIdentifier } from '@trace-flow/types';
 
-export const MAX_ARCHIVE_EXPORT_REQUEST_BYTES = 512 * 1024;
+// The current archive has several thousand sessions. Organization selection carries the
+// complete paginated catalog so the server can pin one resumable export snapshot.
+export const MAX_ARCHIVE_EXPORT_REQUEST_BYTES = 8 * 1024 * 1024;
 
 export interface ArchiveExportSessionSelection extends ArchiveExportTarget {
   manifestKey: string;
@@ -45,7 +49,11 @@ type UnsignedArchiveExportSelection = Omit<
 >;
 
 type ExportRequest =
-  | { operation: 'select'; selection?: ArchiveExportSelection }
+  | {
+      operation: 'select';
+      selection?: ArchiveExportSelection;
+      sessions?: ArchiveSessionCatalogEntry[];
+    }
   | {
       operation: 'manifest';
       selection: ArchiveExportSelection;
@@ -126,7 +134,7 @@ async function pinSelection(
   grant: ArchiveExportGrant,
 ): Promise<ArchiveExportSelection> {
   const sessions: ArchiveExportSessionSelection[] = [];
-  for (const target of grant.targets) {
+  for (const target of grant.targets ?? []) {
     const scope = scopeFor(grant.orgId, target);
     const snapshot = await ledger(env, scope).exportSnapshot({ scope });
     requiredSnapshot(snapshot);
@@ -154,6 +162,51 @@ async function pinSelection(
   };
 }
 
+async function pinOrganizationSelection(
+  env: ArchiveApiEnv,
+  grant: ArchiveExportGrant,
+  requested: ArchiveSessionCatalogEntry[] | undefined,
+): Promise<ArchiveExportSelection> {
+  if (!requested) throw new ArchiveContractError('archive_export_catalog_required');
+  const ledgerIds = new Set<string>();
+  for (const session of requested) {
+    if (
+      typeof session !== 'object' ||
+      session === null ||
+      !/^[a-f0-9]{64}$/u.test(session.ledgerId) ||
+      ledgerIds.has(session.ledgerId) ||
+      !isArchiveCanonicalIdentifier(session.userId) ||
+      !isArchiveCanonicalIdentifier(session.contributionId) ||
+      (session.source !== 'claude' && session.source !== 'codex') ||
+      !isArchiveCanonicalIdentifier(session.sourceSessionId) ||
+      typeof session.manifestKey !== 'string' ||
+      typeof session.manifestHeadPageKey !== 'string' ||
+      !Number.isSafeInteger(session.generation) ||
+      session.generation < 1 ||
+      !Number.isSafeInteger(session.elementCount) ||
+      session.elementCount < 1 ||
+      !Number.isSafeInteger(session.recordCount) ||
+      session.recordCount < 0 ||
+      !/^sha256:[0-9a-f]{64}$/u.test(session.chainHead)
+    ) {
+      throw new ArchiveContractError('archive_export_catalog_invalid');
+    }
+    ledgerIds.add(session.ledgerId);
+  }
+  const unsigned = {
+    version: 1 as const,
+    exportId: grant.exportId,
+    orgId: grant.orgId,
+    sessions: requested.map(({ ledgerId: _ledgerId, ...session }) => session),
+  };
+  const selectionSha256 = await selectionDigest(unsigned);
+  return {
+    ...unsigned,
+    selectionSha256,
+    selectionToken: await selectionToken(env.ARCHIVE_API_SHARED_SECRET, selectionSha256),
+  };
+}
+
 async function validateSelection(
   value: ArchiveExportSelection,
   grant: ArchiveExportGrant,
@@ -165,20 +218,22 @@ async function validateSelection(
     value.exportId !== grant.exportId ||
     value.orgId !== grant.orgId ||
     !Array.isArray(value.sessions) ||
-    value.sessions.length !== grant.targets.length ||
+    (grant.exportScope === 'targets' && value.sessions.length !== grant.targets?.length) ||
     !/^sha256:[0-9a-f]{64}$/u.test(value.selectionSha256) ||
     !/^[A-Za-z0-9_-]{43}$/u.test(value.selectionToken)
   ) {
     throw new ArchiveContractError('archive_export_selection_invalid');
   }
-  for (let index = 0; index < grant.targets.length; index++) {
-    const target = grant.targets[index]!;
+  for (let index = 0; index < value.sessions.length; index++) {
+    const target = grant.targets?.[index];
     const session = value.sessions[index];
     if (
-      session?.userId !== target.userId ||
-      session?.contributionId !== target.contributionId ||
-      session?.source !== target.source ||
-      session?.sourceSessionId !== target.sourceSessionId ||
+      (target !== undefined &&
+        (session?.userId !== target.userId ||
+          session?.contributionId !== target.contributionId ||
+          session?.source !== target.source ||
+          session?.sourceSessionId !== target.sourceSessionId)) ||
+      session?.userId === undefined ||
       typeof session.manifestKey !== 'string' ||
       typeof session.manifestHeadPageKey !== 'string' ||
       !Number.isSafeInteger(session.generation) ||
@@ -211,6 +266,9 @@ function parseRequest(value: unknown): ExportRequest {
   if (body.operation === 'select') {
     return {
       operation: 'select',
+      ...(body.sessions === undefined
+        ? {}
+        : { sessions: body.sessions as ArchiveSessionCatalogEntry[] }),
       ...(body.selection === undefined
         ? {}
         : { selection: body.selection as ArchiveExportSelection }),
@@ -336,7 +394,9 @@ export async function executeArchiveExport(
   if (request.operation === 'select') {
     const selection = request.selection
       ? await validateSelection(request.selection, grant, env.ARCHIVE_API_SHARED_SECRET)
-      : await pinSelection(env, grant);
+      : grant.exportScope === 'organization'
+        ? await pinOrganizationSelection(env, grant, request.sessions)
+        : await pinSelection(env, grant);
     return { operation: 'select', selection };
   }
 

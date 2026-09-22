@@ -174,6 +174,14 @@ export class ArchiveSessionLedger extends DurableObject<ArchiveApiEnv> {
     });
   }
 
+  async exportCatalogEntry() {
+    return this.runExclusive(() => {
+      const state = readLedgerSnapshot(this.ctx.storage);
+      if (!state.scope || !state.manifestKey || !state.keyVersion) return null;
+      return state;
+    });
+  }
+
   async fetch(request: Request): Promise<Response> {
     if (request.method !== 'POST' || new URL(request.url).pathname !== '/commit') {
       return Response.json({ error: 'not_found' }, { status: 404 });

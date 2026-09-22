@@ -6,6 +6,7 @@ import {
   type ArchiveObservation,
   type ArchiveScope,
   type CompletedScanCheckpoint,
+  assertArchiveRelativePath,
   decodeBase64Bytes,
 } from './archive-contract';
 import { validateCheckpoint, validateObservation } from './archive-contract-validation';
@@ -18,6 +19,7 @@ import {
 
 export interface ValidatedArchiveUpload {
   sourceSessionId: string;
+  relativePath?: string;
   observations: ArchiveObservation[];
   checkpoint: CompletedScanCheckpoint;
   priorCheckpoint?: CompletedScanCheckpoint;
@@ -30,6 +32,7 @@ export interface ValidatedArchiveUpload {
 export function archiveUploadIntentIdentity(upload: ValidatedArchiveUpload): unknown {
   return {
     sourceSessionId: upload.sourceSessionId,
+    relativePath: upload.relativePath,
     observations: upload.observations.map(({ payload: _payload, ...metadata }) => metadata),
     checkpoint: upload.checkpoint,
     priorCheckpoint: upload.priorCheckpoint,
@@ -138,6 +141,16 @@ export async function parseAndValidateUpload(
     source: scope.source,
     sourceSessionId: scope.sourceSessionId,
   });
+  const relativePath = value.relative_path;
+  if (relativePath !== undefined) {
+    assertArchiveRelativePath(relativePath);
+    if (
+      scope.source !== 'claude' ||
+      checkpoint.archive_format_version !== BYTE_ARCHIVE_FORMAT_VERSION
+    ) {
+      throw new ArchiveContractError('invalid_relative_path');
+    }
+  }
   const priorCheckpoint =
     value.prior_checkpoint === undefined
       ? undefined
@@ -200,6 +213,7 @@ export async function parseAndValidateUpload(
   }
   return {
     sourceSessionId: scope.sourceSessionId,
+    ...(relativePath === undefined ? {} : { relativePath }),
     observations,
     checkpoint,
     priorCheckpoint,

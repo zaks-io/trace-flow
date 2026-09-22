@@ -45,6 +45,7 @@ import {
   clearArchiveBudgetState,
   registerArchiveLedger,
   registeredArchiveLedgers,
+  registeredArchiveLedgersForOrganization,
   removeRegisteredArchiveLedgers,
 } from './archive-erasure-state';
 
@@ -255,6 +256,21 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
   }): Promise<{ ledgerIds: string[]; cursor?: string }> {
     return this.enqueueExclusive(() =>
       registeredArchiveLedgers(this.ctx.storage, input.orgId, input.cursor, input.limit),
+    );
+  }
+
+  listArchiveLedgersForOrganization(input: {
+    orgId: string;
+    cursor?: string;
+    limit?: number;
+  }): Promise<{ ledgerIds: string[]; cursor?: string }> {
+    return this.enqueueExclusive(() =>
+      registeredArchiveLedgersForOrganization(
+        this.ctx.storage,
+        input.orgId,
+        input.cursor,
+        input.limit,
+      ),
     );
   }
 

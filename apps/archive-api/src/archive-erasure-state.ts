@@ -63,6 +63,25 @@ export async function registeredArchiveLedgers(
   limit = DEFAULT_LEDGER_PAGE_SIZE,
 ): Promise<{ ledgerIds: string[]; cursor?: string }> {
   await assertArchiveErasureStarted(storage, orgId);
+  return listRegisteredArchiveLedgers(storage, orgId, cursor, limit);
+}
+
+export async function registeredArchiveLedgersForOrganization(
+  storage: DurableObjectStorage,
+  orgId: string,
+  cursor?: string,
+  limit = DEFAULT_LEDGER_PAGE_SIZE,
+): Promise<{ ledgerIds: string[]; cursor?: string }> {
+  assertIdentifier(orgId, 'invalid_organization_id');
+  return listRegisteredArchiveLedgers(storage, orgId, cursor, limit);
+}
+
+async function listRegisteredArchiveLedgers(
+  storage: DurableObjectStorage,
+  orgId: string,
+  cursor: string | undefined,
+  limit: number,
+): Promise<{ ledgerIds: string[]; cursor?: string }> {
   if (cursor !== undefined) assertLedgerId(cursor);
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > DEFAULT_LEDGER_PAGE_SIZE) {
     throw new ArchiveContractError('archive_erasure_page_invalid');

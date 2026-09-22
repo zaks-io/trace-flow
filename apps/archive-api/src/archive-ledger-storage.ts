@@ -72,11 +72,12 @@ function insertScan(
   storage: DurableObjectStorage,
   partId: string,
   checkpoint: LedgerCommit['scan']['checkpoint'],
+  relativePath: string | undefined,
 ): void {
   storage.sql.exec(
     'INSERT INTO ledger_scans (part_id, data) VALUES (?, ?) ON CONFLICT(part_id) DO UPDATE SET data = excluded.data',
     partId,
-    JSON.stringify({ checkpoint }),
+    JSON.stringify({ checkpoint, ...(relativePath === undefined ? {} : { relativePath }) }),
   );
 }
 
@@ -132,8 +133,17 @@ function requiredDigest(metadata: StateMetadata, field: string): string {
 
 function parseScan(data: string): ScanState {
   try {
-    const scan = JSON.parse(data) as { checkpoint: ScanState['checkpoint'] };
-    return { checkpoint: scan.checkpoint };
+    const scan = JSON.parse(data) as {
+      checkpoint: ScanState['checkpoint'];
+      relativePath?: unknown;
+    };
+    if (scan.relativePath !== undefined && typeof scan.relativePath !== 'string') {
+      throw new Error('relative path is not a string');
+    }
+    return {
+      checkpoint: scan.checkpoint,
+      ...(scan.relativePath === undefined ? {} : { relativePath: scan.relativePath }),
+    };
   } catch {
     throw new ArchiveContractError('ledger_state_corrupt');
   }
@@ -189,7 +199,7 @@ export function persistLedgerCommit(storage: DurableObjectStorage, commit: Ledge
   if (commit.scan.replace) {
     storage.sql.exec('DELETE FROM ledger_scan_fingerprints WHERE part_id = ?', commit.scan.partId);
   }
-  insertScan(storage, commit.scan.partId, commit.scan.checkpoint);
+  insertScan(storage, commit.scan.partId, commit.scan.checkpoint, commit.scan.relativePath);
   const startIndex = commit.scan.replace
     ? 0
     : ([

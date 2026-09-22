@@ -297,6 +297,7 @@ function manifestElementFor(element: LedgerElement, range: ChunkByteRange): Mani
   return element.kind === 'record'
     ? {
         element_type: 'record',
+        ...(element.relative_path === undefined ? {} : { relative_path: element.relative_path }),
         chain_sequence: element.chain_sequence,
         source_transcript_part_id: element.source_transcript_part_id,
         source_record_identity: element.source_record_identity,
@@ -306,6 +307,7 @@ function manifestElementFor(element: LedgerElement, range: ChunkByteRange): Mani
       }
     : {
         element_type: 'checkpoint',
+        ...(element.relative_path === undefined ? {} : { relative_path: element.relative_path }),
         chain_sequence: element.chain_sequence,
         checkpoint: element.checkpoint,
         chain_hash: element.chain_hash,

@@ -118,16 +118,18 @@ async function commitArchiveSessionEnvelope(
   let state = readLedgerSnapshot(storage);
   state = assertScope(state, envelope.scope);
   const upload = await parseAndValidateUpload(envelope.upload, envelope.scope);
-  const receipt = (ack: ArchiveAcknowledgement): ArchiveAcknowledgement =>
-    !envelope.requestSha256
-      ? ack
-      : {
-          ...ack,
-          ...(envelope.requestSha256 ? { request_sha256: envelope.requestSha256 } : {}),
+  const receipt = (ack: ArchiveAcknowledgement): ArchiveAcknowledgement => ({
+    ...ack,
+    ...(envelope.requestSha256
+      ? {
+          request_sha256: envelope.requestSha256,
           source_transcript_part_id: upload.checkpoint.source_transcript_part_id,
           captured_byte_offset: upload.checkpoint.last_complete_byte_offset,
           captured_prefix_sha256: upload.checkpoint.complete_prefix_sha256,
-        };
+        }
+      : {}),
+    ...(upload.relativePath === undefined ? {} : { relative_path: upload.relativePath }),
+  });
   const uploadDigest = await intentDigest(archiveUploadIntentIdentity(upload));
   let scan = readLedgerScan(storage, upload.checkpoint.source_transcript_part_id);
   if (state.keyVersion !== undefined && envelope.keyVersion < state.keyVersion) {
@@ -316,6 +318,7 @@ async function commitArchiveSessionEnvelope(
     scan: {
       partId: upload.checkpoint.source_transcript_part_id,
       checkpoint: upload.checkpoint,
+      ...(upload.relativePath === undefined ? {} : { relativePath: upload.relativePath }),
       fingerprints: sourceFingerprints(upload.observations),
       replace: !upload.isDelta,
     },
