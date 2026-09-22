@@ -5,6 +5,7 @@ import { dirname, isAbsolute, resolve } from 'node:path';
 import { Database } from 'bun:sqlite';
 import {
   GENESIS_CHAIN_HASH,
+  MAX_ARCHIVE_EXPORT_ORGANIZATION_BATCH_SESSIONS,
   digestString,
   payloadBytes,
   type ManifestElement,
@@ -12,7 +13,6 @@ import {
 } from '../../apps/archive-api/src/archive-contract';
 import { checkpointChainHash, recordChainHash } from '../../apps/archive-api/src/archive-chain';
 import { collectExportManifestGraph } from './archive-export-traversal';
-import { MAX_ARCHIVE_EXPORT_ORGANIZATION_BATCH_SESSIONS } from '../../apps/archive-api/src/archive-export';
 import {
   exportSessionDirectoryId,
   latestSidecarGenerations,

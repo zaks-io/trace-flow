@@ -46,6 +46,7 @@ interface MintResult {
 
 interface ArchiveAcknowledgement {
   status: 'acknowledged';
+  relative_path?: string;
   duplicate: boolean;
   source: ArchiveSource;
   source_session_id: string;
@@ -99,6 +100,8 @@ interface CaptureFixture {
   request_bodies: string[];
   expected_parts: {
     part_id: string;
+    relative_path?: string | null;
+    current_relative_path?: string | null;
     payload_encoding: 'utf8' | 'base64';
     payload: string;
     sha256: string;
@@ -107,6 +110,7 @@ interface CaptureFixture {
 }
 
 interface LocalExportManifest {
+  batches?: { sessionStart: number; selection: ExportSelection }[];
   selection: ExportSelection;
   sessions: { session_index: number; status: 'pending' | 'verified' | 'failed' }[];
 }
@@ -588,7 +592,6 @@ async function main(): Promise<void> {
       'api.collectorCredentials.mint',
       {
         collectorId: `archive-smoke-${crypto.randomUUID()}`,
-        expiresAt: Date.now() + 3_600_000,
         name: 'Archive Cloud-Dev smoke',
         platform: 'synthetic',
       },
@@ -800,6 +803,10 @@ async function main(): Promise<void> {
           acknowledgement.captured_prefix_sha256,
           upload.checkpoint.complete_prefix_sha256,
         );
+        assert.equal(
+          acknowledgement.relative_path,
+          (upload as ArchiveUploadRequest & { relative_path?: string }).relative_path,
+        );
         archiveObjectKeys.add(acknowledgement.manifest_key);
         acknowledgement.chunk_keys.forEach((key) => archiveObjectKeys.add(key));
         const replay = await sendUploadBody(archiveUrl, minted.secret, source, body);
@@ -811,20 +818,7 @@ async function main(): Promise<void> {
     const rawGrant = await runConvex<ExportGrantResult>(
       deployment,
       'archiveExport:issueGrant',
-      {
-        exportId: rawExportId,
-        targets: rawFixtures
-          .map(({ source, session }) => ({
-            contributionId: enrollment!.contributionId,
-            source,
-            sourceSessionId: session,
-          }))
-          .concat({
-            contributionId: enrollment.contributionId,
-            source: 'codex',
-            sourceSessionId: codexSession,
-          }),
-      },
+      { exportId: rawExportId, scope: 'organization' },
       primary.tokenIdentifier,
     );
     rawExportDirectory = await mkdtemp(resolve(tmpdir(), 'trace-flow-archive-export-smoke-'));
@@ -848,13 +842,17 @@ async function main(): Promise<void> {
       await readFile(resolve(rawExportDirectory, 'archive-manifest.json'), 'utf8'),
     ) as LocalExportManifest;
     assert.ok(localExport.sessions.every(({ status }) => status === 'verified'));
-    assert.equal(localExport.selection.sessions.length, rawFixtures.length + 1);
-    await addSelectionManifestKeys(
-      archiveUrl,
-      rawGrant.grant,
-      localExport.selection,
-      archiveObjectKeys,
-    );
+    assert.ok(localExport.selection.sessions.length >= rawFixtures.length + 1);
+    assert.ok(localExport.batches && localExport.batches.length > 0);
+    for (const batch of localExport.batches) {
+      assert.ok(batch.selection.sessions.length <= 64);
+      await addSelectionManifestKeys(
+        archiveUrl,
+        rawGrant.grant,
+        batch.selection,
+        archiveObjectKeys,
+      );
+    }
     for (const { source, session, fixture } of rawFixtures) {
       const selectedSession = localExport.selection.sessions.find(
         (candidate) => candidate.source === source && candidate.sourceSessionId === session,
@@ -876,6 +874,14 @@ async function main(): Promise<void> {
           (part) => part.source_transcript_part_id === expected.part_id,
         );
         assert.ok(restored);
+        if (expected.current_relative_path) {
+          assert.deepEqual(
+            new Uint8Array(
+              await readFile(resolve(sessionDirectory, expected.current_relative_path)),
+            ),
+            fixturePayload(expected),
+          );
+        }
         assert.equal(restored.byte_exact, true);
         assert.equal(restored.sha256, expected.sha256);
         assert.equal(restored.source_capture_complete, true);

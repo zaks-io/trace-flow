@@ -1,3 +1,4 @@
+import { v } from 'convex/values';
 import { internalMutation } from '../_generated/server';
 import { internal } from '../_generated/api';
 
@@ -7,6 +8,7 @@ import { internal } from '../_generated/api';
  */
 export const removeCollectorCredentialExpiry = internalMutation({
   args: {},
+  returns: v.object({ scanned: v.number(), migrated: v.number() }),
   handler: async (ctx) => {
     const credentials = await ctx.db.query('collectorCredentials').collect();
     let migrated = 0;

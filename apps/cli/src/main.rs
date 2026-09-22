@@ -230,7 +230,6 @@ fn cmd_status() -> Result<()> {
     };
 
     let has_credential = keychain::is_present(&conn.org_id);
-    let expired = conn.expires_at <= now_ms();
 
     println!("Organization:  {}", conn.org_id);
     println!("Collector:     {}", conn.collector_id);
@@ -241,10 +240,10 @@ fn cmd_status() -> Result<()> {
     println!("Ingest:        {ingest_url}");
     println!(
         "Credential:    {}",
-        match (has_credential, expired) {
-            (false, _) => "MISSING (run `trace-flow login`)",
-            (true, true) => "EXPIRED (run `trace-flow login` to rotate)",
-            (true, false) => "present",
+        if has_credential {
+            "present"
+        } else {
+            "MISSING (run `trace-flow login`)"
         }
     );
 

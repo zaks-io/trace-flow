@@ -139,12 +139,8 @@ fn compressed_rollout_moves_resumes_and_rewrites_through_production_capture() {
         (0, 0, 0)
     );
     assert!(runtime.drain().is_empty());
-    assert_eq!(
-        fs::read_dir(runtime.config.spool_dir.with_extension("scratch"))
-            .unwrap()
-            .count(),
-        0
-    );
+    let scratch = runtime.config.spool_dir.with_extension("scratch");
+    assert!(!scratch.exists() || fs::read_dir(scratch).unwrap().next().is_none());
     let mut appended = bytes.clone();
     appended.extend(b"{\"text\":\"append\"}\n");
     fs::write(&archived, &appended).unwrap();
@@ -245,12 +241,8 @@ fn invalid_compressed_source_is_visible_and_never_reports_complete() {
         report.history[0].initial_import,
         ArchiveInitialImport::InProgress
     );
-    assert_eq!(
-        fs::read_dir(runtime.config.spool_dir.with_extension("scratch"))
-            .unwrap()
-            .count(),
-        0
-    );
+    let scratch = runtime.config.spool_dir.with_extension("scratch");
+    assert!(!scratch.exists() || fs::read_dir(scratch).unwrap().next().is_none());
 }
 
 #[test]

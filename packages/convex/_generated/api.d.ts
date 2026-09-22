@@ -846,7 +846,8 @@ export declare const api: {
       "public",
       {
         exportId: string;
-        targets: Array<{
+        scope?: "organization";
+        targets?: Array<{
           contributionId: Id<"archiveContributions">;
           source: "claude" | "codex";
           sourceSessionId: string;
@@ -1296,11 +1297,7 @@ export declare const api: {
     mint: FunctionReference<
       "mutation",
       "public",
-      {
-        collectorId: string;
-        name?: string;
-        platform?: string;
-      },
+      { collectorId: string; name?: string; platform?: string },
       { id: Id<"collectorCredentials">; secret: string }
     >;
     revoke: FunctionReference<
@@ -2337,7 +2334,8 @@ export declare const internal: {
       "query",
       "internal",
       {
-        targets: Array<{
+        scope?: "organization";
+        targets?: Array<{
           contributionId: Id<"archiveContributions">;
           source: "claude" | "codex";
           sourceSessionId: string;
@@ -2345,8 +2343,9 @@ export declare const internal: {
       },
       {
         actorUserId: Id<"users">;
+        exportScope: "organization" | "targets";
         orgId: Id<"organizations">;
-        targets: Array<{
+        targets?: Array<{
           contributionId: Id<"archiveContributions">;
           source: "claude" | "codex";
           sourceSessionId: string;

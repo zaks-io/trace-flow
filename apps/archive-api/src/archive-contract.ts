@@ -5,6 +5,7 @@ export const CHAIN_HASH_VERSION = 1;
 export const ARCHIVE_CHUNK_TARGET_BYTES = (3 * 1024 * 1024) / 2;
 export const MAX_CHUNK_BYTES = 16 * 1024 * 1024;
 export const ARCHIVE_UPLOAD_WIRE_VERSION = 2;
+export const MAX_ARCHIVE_EXPORT_ORGANIZATION_BATCH_SESSIONS = 64;
 // This bounds one request's materialization. It is not a session lifetime cap.
 export const MAX_UPLOAD_OBSERVATIONS = 16_384;
 export const MAX_MANIFEST_BYTES = 8 * 1024 * 1024;

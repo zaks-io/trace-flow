@@ -56,6 +56,15 @@ async fn main() -> anyhow::Result<()> {
     first.extend(b"\n {malformed}\n{\"partial\":\"\xf0\x9f");
     first.extend(vec![b'x'; 600_000]);
     let second = b"\xff rewritten tail without newline".to_vec();
+    let tool_result = if source == ArchiveSource::Claude {
+        let output = path.with_extension("").join("tool-results/result.txt");
+        std::fs::create_dir_all(output.parent().unwrap())?;
+        std::fs::write(&output, b"\xffbinary tool output\0without newline")?;
+        Some(output)
+    } else {
+        None
+    };
+    let mut latest_sidecar = None;
     for (index, bytes) in [first, second, vec![]].into_iter().enumerate() {
         std::fs::write(&path, &bytes)?;
         let report = capture_archive_local(&config, "synthetic-smoke", &homes, 10 + index as i64);
@@ -66,12 +75,26 @@ async fn main() -> anyhow::Result<()> {
             report.first_error
         );
         expected.insert(spool.current_part(source, session, &base)?, bytes);
+        if index < 2 {
+            if let Some(output) = &tool_result {
+                let base = collector_archive::claude_transcript_part_id("tool-results/result.txt")?;
+                let part = spool.current_part(source, session, &base)?;
+                expected.insert(part.clone(), std::fs::read(output)?);
+                latest_sidecar = Some(part);
+                if index == 0 {
+                    std::fs::write(output, b"replacement tool output")?;
+                } else {
+                    std::fs::remove_file(output)?;
+                }
+            }
+        }
     }
     std::fs::remove_file(&path)?;
     let spool = ArchiveSpool::open(&spool_path, "synthetic-smoke", keys.as_ref())?;
     let mut uploads = Vec::new();
     let mut request_bodies = Vec::new();
     let mut observed_parts = BTreeSet::new();
+    let mut relative_paths = BTreeMap::new();
     let mut reconstructed: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     for load in spool.all_pending()? {
         let PendingLoad::Ready(pending) = load else {
@@ -82,6 +105,12 @@ async fn main() -> anyhow::Result<()> {
         }
         for slice in spool.slices_for_part(source, session, &pending.source_transcript_part_id)? {
             let upload: serde_json::Value = serde_json::from_slice(&slice.body)?;
+            if let Some(relative) = upload["relative_path"].as_str() {
+                relative_paths.insert(
+                    slice.source_transcript_part_id.clone(),
+                    relative.to_string(),
+                );
+            }
             reconstructed
                 .entry(slice.source_transcript_part_id.clone())
                 .or_default();
@@ -105,7 +134,7 @@ async fn main() -> anyhow::Result<()> {
     );
     let expected_parts: Vec<_> = expected.into_iter().map(|(part, bytes)| {
         let payload = EncodedPayload::from_bytes(&bytes);
-        json!({"part_id":part,"payload_encoding":payload.encoding,"payload":payload.value,"sha256":sha256(&bytes)})
+        json!({"part_id":part,"relative_path":relative_paths.get(&part),"current_relative_path":latest_sidecar.as_ref().filter(|latest| **latest == part).and_then(|_| relative_paths.get(&part)),"payload_encoding":payload.encoding,"payload":payload.value,"sha256":sha256(&bytes)})
     }).collect();
     drop(spool);
     temp.close()?;

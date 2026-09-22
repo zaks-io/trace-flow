@@ -349,9 +349,7 @@ fn load_local_archive(
 }
 
 async fn refresh_policy(settings_file: &SettingsFile, bus: &AppStateBus) -> Option<PolicyOverride> {
-    let Some(connection) = load_archive_connection(settings_file, bus) else {
-        return None;
-    };
+    let connection = load_archive_connection(settings_file, bus)?;
     let refreshed = archive_policy::refresh_archive_policy(
         &connection.paths,
         &connection.org_id,
@@ -365,9 +363,7 @@ async fn refresh_policy(settings_file: &SettingsFile, bus: &AppStateBus) -> Opti
             if let Some(error) = refreshed.persistence_error.as_ref() {
                 publish_error(bus, error.clone());
             }
-            let Some(confirmed) = refreshed.confirmed else {
-                return None;
-            };
+            let confirmed = refreshed.confirmed?;
             let effective = effective_policy(
                 settings_file,
                 &connection.org_id,

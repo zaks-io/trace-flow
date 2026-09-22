@@ -9,6 +9,7 @@ import type { ArchiveApiEnv } from './context';
 import {
   ArchiveContractError,
   MAX_CHUNK_BYTES,
+  MAX_ARCHIVE_EXPORT_ORGANIZATION_BATCH_SESSIONS,
   MAX_MANIFEST_BYTES,
   digestString,
   type ArchiveScope,
@@ -22,7 +23,6 @@ import type { ArchiveSessionCatalogEntry } from './archive-session-catalog';
 import { isArchiveCanonicalIdentifier } from '@trace-flow/types';
 
 export const MAX_ARCHIVE_EXPORT_REQUEST_BYTES = 512 * 1024;
-export const MAX_ARCHIVE_EXPORT_ORGANIZATION_BATCH_SESSIONS = 64;
 
 export interface ArchiveExportSessionSelection extends ArchiveExportTarget {
   manifestKey: string;

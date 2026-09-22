@@ -639,7 +639,7 @@ fn run_cycle_blocking(
         state_dir: None,
     }));
 
-    let outcome = match result {
+    match result {
         Ok(outcome) => {
             let mut advanced = 0u32;
             let mut failed = 0u32;
@@ -665,8 +665,7 @@ fn run_cycle_blocking(
             first_error: None,
             setup_error: Some(err.to_string()),
         },
-    };
-    outcome
+    }
 }
 
 fn set_idle(bus: &AppStateBus) {

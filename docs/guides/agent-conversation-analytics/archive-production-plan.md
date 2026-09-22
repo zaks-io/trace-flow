@@ -1,6 +1,6 @@
 # Conversation Archive: repair plan
 
-Reviewed code: 3339d24b. Status: proposed. Nothing in this document has been implemented, released, or run against production.
+Baseline: `3339d24b`. The repair is implemented on this branch and undergoing Cloud-Dev verification. Production migration, desktop release, full local-corpus restore, and the 24-hour installed run remain pending. See [repair evidence](archive-recovery-runbook.md#repair-verification-2026-09-22) for executed checks.
 
 Goal: Trace Flow Desktop captures every Claude and Codex conversation file into the encrypted spool and uploads it to R2, indefinitely, with no manual action. The owner can restore the whole archive and verify bytes.
 
@@ -58,7 +58,7 @@ This fixes the outage and removes the need for any credential migration flow.
 - `packages/utils/src/collector-auth.ts:51,98`: accept a record without `expiresAt`; reject only when a number is present and past.
 - `packages/convex/integrations/cloudflare.ts:203`: pass `expiresAt` through as absent. Any KV validator that requires a number is updated in the same PR.
 - Rust: `collector-embedder/src/connection.rs:39` `expires_at` becomes `Option<i64>`; `login.rs` parses an optional `expires_at`; `apps/desktop/src-tauri/src/commands.rs:100` reports expired only when present and past. Existing `connection.json` files with an old `expires_at` are read but ignored for status.
-- Web: `apps/web/src/components/api-keys/ApiKeys.tsx` shows "until revoked" when absent.
+- Web: `apps/web/src/components/archive/ArchiveSetup.tsx` shows "Until revoked" when absent.
 - Migration: one internal mutation that clears `expiresAt` on every `active` credential row and schedules `syncCollectorCredToKV` for each. Run it once on dev, then on production with approval. The installed desktop resumes on its next policy refresh with the same secret, collector ID, and enrollment. No browser flow, no keychain change, no new collector.
 - `rg expiresAt` across `packages/convex`, `packages/utils`, `apps/archive-api`, `apps/web`, and the Rust crates is the completeness check for this PR. Only export grants and body-access tokens keep an expiry.
 
@@ -66,7 +66,7 @@ Done: production returns 200 to the currently installed collector, uploads advan
 
 ### PR 2: Delete the duplicate archive path; the scheduler owns policy
 
-- Delete `ArchiveRunConfig` from `RunConfig` and `archive` from `SyncRunOutcome` in `collector-embedder/src/sync.rs:109-150`, and the archive branch of `run_detailed`. Delete `run_archive_cycle` and `capture_archive_snapshots` from `cycle.rs`; port `tests/archive_sync.rs` and `examples/archive_capture_fixture.rs` to `capture_archive_local` plus `prepare_archive_upload` / `send_archive_upload` / `apply_archive_upload`, which is what production calls.
+- Remove the archive configuration field from fact-sync `RunConfig` and `archive` from `SyncRunOutcome` in `collector-embedder/src/sync.rs:109-150`, and the archive branch of `run_detailed`. Delete `run_archive_cycle` and `capture_archive_snapshots` from `cycle.rs`; port `tests/archive_sync.rs` and `examples/archive_capture_fixture.rs` to `capture_archive_local` plus `prepare_archive_upload` / `send_archive_upload` / `apply_archive_upload`, which is what production calls.
 - Move `refresh_archive_policy` and `archive_policy_denial` handling from `engine.rs:877-930` into `archive_scheduler.rs`. The scheduler refreshes policy at the start of each reconcile (startup, wake, manual sync, and the existing 5-minute tick). `engine.rs` no longer references `archive_policy`. Port the six archive tests in `engine.rs` to the scheduler.
 - Do not change part identity. Add fixtures through the production discovery path (`prepare_configured` in `archive_history`): one Claude `.orphaned-*.jsonl` beside its live transcript with divergent content, one identical orphaned copy, and the three sanitized Codex discrepancies. Divergent files must land in distinct parts and identical copies must share one, exactly as `archive_history/tests.rs:174` already requires across agent homes. Only if a fixture fails does identity code change, and then the multi-home test must still pass.
 - `discovery.rs:114` accepts `*.jsonl.superseded-*` and `rollout-*.jsonl.zst` in addition to `.jsonl`. A superseded file then flows through the same lineage comparison as an orphaned one; add it to the fixtures above.

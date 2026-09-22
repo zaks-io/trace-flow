@@ -1025,7 +1025,13 @@ impl ArchiveSpool {
         key_store: &dyn ArchiveKeyStore,
     ) -> ArchiveSyncResult<()> {
         let scratch_lock = open_archive_scratch_lock(root)?;
-        scratch_lock.lock()?;
+        scratch_lock.try_lock().map_err(|error| match error {
+            fs::TryLockError::WouldBlock => io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "archive decoder still owns scratch",
+            ),
+            fs::TryLockError::Error(error) => error,
+        })?;
         remove_dir_if_present(&archive_scratch_dir(root))?;
         let key_reference = crate::migration::spool_key_reference(root, org_id)?;
         key_store.delete(&key_reference)?;
@@ -2346,8 +2352,11 @@ fn open_archive_scratch_lock(root: &Path) -> ArchiveSyncResult<File> {
 
 fn cleanup_archive_scratch(root: &Path) -> ArchiveSyncResult<()> {
     let lock = open_archive_scratch_lock(root)?;
-    lock.lock()?;
-    remove_dir_if_present(&archive_scratch_dir(root))
+    match lock.try_lock() {
+        Ok(()) => remove_dir_if_present(&archive_scratch_dir(root)),
+        Err(fs::TryLockError::WouldBlock) => Ok(()),
+        Err(fs::TryLockError::Error(error)) => Err(error.into()),
+    }
 }
 
 fn is_scratch_tmp(path: &Path) -> bool {

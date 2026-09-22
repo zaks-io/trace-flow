@@ -80,10 +80,11 @@ Consent still controls which source types and history are eligible.
 ## Verified export
 
 The authenticated organization owner calls `archiveExport.issueGrant` with an
-`exportId` and a bounded list of `{ contributionId, source, sourceSessionId }`
-targets. Use an authenticated Convex client. Collector Credentials do not authorize
-export. The returned grant expires after ten minutes; retain the same export ID
-and target order when renewing a grant to resume.
+`exportId` and `scope: 'organization'` to export every registered committed session.
+That grant expires after 24 hours. Explicit `{ contributionId, source, sourceSessionId }`
+targets remain supported with a ten-minute grant. Use an authenticated Convex
+client. Collector Credentials do not authorize export. Retain the same export ID
+and output directory when renewing a grant to resume.
 
 Pass the grant as `TRACE_FLOW_ARCHIVE_EXPORT_GRANT` in the environment and run
 `bun run dev:export:archive <archive-url> <output-directory>`. Do not place the grant
@@ -164,3 +165,51 @@ by these results.
 Release evidence covers the deployed commit and a restore after source loss.
 Custody recovery and the unattended run have explicit results. Until those
 checks pass, the implementation is awaiting release validation.
+
+## Repair verification, 2026-09-22
+
+The repair adds indefinite collector credentials, archive-owned policy refresh,
+source-copy and compressed-rollout discovery, raw Claude tool-result capture,
+organization export, and startup/daily updater checks. The fact-sync engine no
+longer composes archive capture and upload. `capture_archive_snapshots` remains
+because the dedicated production runtime calls it; the duplicate `run_archive_cycle`
+entry point is removed.
+
+- `bun run ci:check`: 68 tasks passed.
+- `cargo test --workspace --locked`: 726 passed, one ignored. The later scratch-lock
+  change also passed all three focused scratch cleanup tests.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`: passed.
+- Organization exports pin batches of at most 64 sessions. The 130-session CLI
+  regression verifies bounded requests, pinned resume, and tamper rejection;
+  empty organizations and older target-export manifests also pass.
+- Cloud-Dev Archive API version: `5a6fed46-1e59-4914-93cc-cd6934c80c85`.
+- Cloud-Dev Convex `hardy-iguana-812` was deployed. The expiry migration scanned
+  ten credentials and migrated all ten active rows without changing their identities.
+- The development registry backfill inspected and registered 62 committed ledgers.
+- The Cloud-Dev smoke passed real filesystem discovery/capture, source deletion,
+  byte-exact restore, sidecar overwrite generations, organization export, pinned
+  resume, receipt replay, authorization rejection, and cleanup of 44 R2 objects.
+- Read-only lifecycle checks of both archive buckets found no object-expiration
+  rule. Their sole rule aborts incomplete multipart uploads after seven days.
+- A private baseline inventory recorded 11,529 local files totaling 22,984,285,462
+  bytes with SHA-256 and no files changing during their hash read. It remains
+  outside Git. Conversation sources were not modified.
+
+Production has not been changed. Release approval, installed-collector recovery,
+full production export against the private baseline, independent key-backup
+recovery, and the 24-hour sleep/network test are still required.
+
+The repair author review compared the branch with `3339d24b`. It fixed the missed
+CLI expiry consumer, stale plaintext scratch cleanup, live-decoder cleanup
+locking, sidecar generation selection by capture time, and unbounded export
+request metadata. Review evidence labels are unchanged; this is author QA.
+
+| Repair requirement                          | Evidence                                                                                 | Result                                  |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------- | --------------------------------------- |
+| Credentials persist until revoked           | Convex migration/mint tests, legacy credential authentication tests, Cloud-Dev migration | Pass                                    |
+| Archive owns policy and rescan              | Desktop scheduler tests, no archive config or policy code in fact engine                 | Pass                                    |
+| Source variants retain bytes and lineages   | Production capture fixtures, multi-home regression, streamed zstd lifecycle              | Pass                                    |
+| Tool-result capture and exact restore       | Worker receipt tests and Cloud-Dev filesystem capture/export smoke                       | Pass                                    |
+| Whole-organization restore stays bounded    | Catalog tests, 130-session CLI export/resume test, development registry backfill         | Pass                                    |
+| Automatic updates                           | Startup/daily existing updater integration and retry test                                | Pass locally; installed release pending |
+| Production recovery and baseline comparison | Requires migration, installed release, full production export and 24-hour run            | Pending                                 |
