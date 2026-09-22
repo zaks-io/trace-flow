@@ -169,6 +169,11 @@ function interceptClaim(opts: { httpStatus?: number; claim?: ClaimStatus }): voi
   };
 }
 
+function interceptAccepted(): void {
+  interceptPolicy(200, POLICY);
+  interceptClaim({ claim: 'claimed' });
+}
+
 function installFetchMock(): void {
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const req = new Request(input, init);
@@ -285,11 +290,11 @@ describe('POST /v1/ingest', () => {
     expect(await res.json()).toMatchObject({ reason: 'expired' });
   });
 
-  it('401s a credential record whose shape is malformed (missing expiresAt)', async () => {
+  it('accepts a credential without expiry', async () => {
     const { env } = makeEnv({ creds: await validCredEntries({ expiresAt: undefined }) });
+    interceptAccepted();
     const res = await post(env, JSON.stringify(envelope()), authHeaders);
-    expect(res.status).toBe(401);
-    expect(await res.json()).toMatchObject({ reason: 'invalid' });
+    expect(res.status).toBe(202);
   });
 
   it('413s an oversized body', async () => {
@@ -339,8 +344,7 @@ describe('POST /v1/ingest', () => {
 
   it('202s a gzip-encoded body (the Collector gzips and sends Content-Encoding: gzip)', async () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
-    interceptPolicy(200, POLICY);
-    interceptClaim({ claim: 'claimed' });
+    interceptAccepted();
     const body = await gzip(JSON.stringify(envelope()));
     const res = await post(env, body, { ...authHeaders, 'Content-Encoding': 'gzip' });
     expect(res.status).toBe(202);
@@ -611,8 +615,7 @@ describe('POST /v1/ingest', () => {
       throw new Error('queue down');
     });
     const { env, deliveryObjects } = makeEnv({ creds: await validCredEntries(), queueSend });
-    interceptPolicy(200, POLICY);
-    interceptClaim({ claim: 'claimed' });
+    interceptAccepted();
     const res = await post(env, JSON.stringify(envelope()), authHeaders);
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ error: 'enqueue_failed' });
@@ -630,8 +633,7 @@ describe('POST /v1/ingest', () => {
       registerDelivery,
       deliveryPut: vi.fn().mockRejectedValue(new Error('R2 unavailable')),
     });
-    interceptPolicy(200, POLICY);
-    interceptClaim({ claim: 'claimed' });
+    interceptAccepted();
 
     const res = await post(env, JSON.stringify(envelope()), authHeaders);
 
@@ -649,8 +651,7 @@ describe('POST /v1/ingest', () => {
       queueSend,
       registerDelivery,
     });
-    interceptPolicy(200, POLICY);
-    interceptClaim({ claim: 'claimed' });
+    interceptAccepted();
 
     const res = await post(env, JSON.stringify(envelope()), authHeaders);
 
@@ -669,8 +670,7 @@ describe('POST /v1/ingest', () => {
       deliveryPut,
       registerDelivery,
     });
-    interceptPolicy(200, POLICY);
-    interceptClaim({ claim: 'claimed' });
+    interceptAccepted();
 
     const res = await post(env, JSON.stringify(envelope()), authHeaders);
 
@@ -703,8 +703,7 @@ describe('POST /v1/ingest', () => {
       registerDelivery,
       queueSend,
     });
-    interceptPolicy(200, POLICY);
-    interceptClaim({ claim: 'claimed' });
+    interceptAccepted();
 
     const res = await post(env, JSON.stringify(envelope()), authHeaders);
 
@@ -758,8 +757,7 @@ describe('POST /v1/ingest', () => {
       registerDelivery,
       queueSend,
     });
-    interceptPolicy(200, POLICY);
-    interceptClaim({ claim: 'claimed' });
+    interceptAccepted();
 
     const res = await post(env, JSON.stringify(body), authHeaders);
 
@@ -842,8 +840,7 @@ describe('POST /v1/ingest', () => {
       }),
     });
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
-    interceptPolicy(200, POLICY);
-    interceptClaim({ claim: 'claimed' });
+    interceptAccepted();
 
     const res = await post(env, JSON.stringify(body), authHeaders);
 
@@ -914,8 +911,7 @@ describe('POST /v1/ingest', () => {
 
   it('ignores legacy raw-upload fields without storing or forwarding them', async () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
-    interceptPolicy(200, POLICY);
-    interceptClaim({ claim: 'claimed' });
+    interceptAccepted();
     const legacy = {
       ...envelope(),
       batch: {
@@ -955,8 +951,7 @@ describe('POST /v1/ingest', () => {
 
   it('accepts legacy tool events without ingest-time classification fields', async () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
-    interceptPolicy(200, POLICY);
-    interceptClaim({ claim: 'claimed' });
+    interceptAccepted();
     const legacyTool = toolEventFact({ status: 'failure' });
     delete legacyTool.error_category;
     delete legacyTool.error_category_coverage;
@@ -981,8 +976,7 @@ describe('POST /v1/ingest', () => {
 
   it('re-redacts free-text excerpts and increments dropped_sensitive before enqueue', async () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
-    interceptPolicy(200, POLICY);
-    interceptClaim({ claim: 'claimed' });
+    interceptAccepted();
     const leaky = envelope({
       facts: facts({
         tool_events: [
@@ -1012,8 +1006,7 @@ describe('POST /v1/ingest', () => {
 
   it('caps navigation hints to their field cap and the remaining tool excerpt budget', async () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
-    interceptPolicy(200, POLICY);
-    interceptClaim({ claim: 'claimed' });
+    interceptAccepted();
     const bounded = envelope({
       facts: facts({
         tool_events: [
@@ -1051,8 +1044,7 @@ describe('POST /v1/ingest', () => {
 
   it('caps expanded redactions and the shared excerpt budget by UTF-8 bytes', async () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
-    interceptPolicy(200, POLICY);
-    interceptClaim({ claim: 'claimed' });
+    interceptAccepted();
     const bounded = envelope({
       facts: facts({
         tool_events: [

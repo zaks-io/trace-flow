@@ -105,12 +105,10 @@ export function registerMcpCallbackRoutes(
           return c.json({ error: 'Invalid redirect target' }, 400);
         }
 
-        const expiresAt = Date.now() + 90 * 24 * 60 * 60 * 1000;
         const collectorId = `cli-${crypto.randomUUID()}`;
         const minted = await ctx.runMutation(internal.collectorLogin.mintForUser, {
           userId,
           collectorId,
-          expiresAt,
           name: 'Trace Flow CLI',
           platform: 'cli',
         });
@@ -119,7 +117,6 @@ export function registerMcpCallbackRoutes(
         redirectUrl.searchParams.set('secret', minted.secret);
         redirectUrl.searchParams.set('org_id', minted.orgId);
         redirectUrl.searchParams.set('collector_id', collectorId);
-        redirectUrl.searchParams.set('expires_at', String(expiresAt));
         redirectUrl.searchParams.set('convex_url', url.origin);
         // Echo the CLI's one-time state nonce (the part after the `collector:` tag) back to the
         // loopback so the CLI can reject any local request that isn't the callback it initiated.

@@ -25,7 +25,7 @@ struct LoginResult {
     secret: String,
     org_id: String,
     collector_id: String,
-    expires_at: i64,
+    expires_at: Option<i64>,
     convex_url: String,
 }
 
@@ -167,11 +167,10 @@ fn parse_callback(raw_url: &str, expected_state: &str) -> Result<CallbackOutcome
     }
 
     let get = |k: &str| params.get(k).cloned();
-    let (Some(secret), Some(org_id), Some(collector_id), Some(expires_at), Some(convex_url)) = (
+    let (Some(secret), Some(org_id), Some(collector_id), Some(convex_url)) = (
         get("secret"),
         get("org_id"),
         get("collector_id"),
-        get("expires_at"),
         get("convex_url"),
     ) else {
         return Ok(CallbackOutcome::Result(Err(
@@ -179,9 +178,13 @@ fn parse_callback(raw_url: &str, expected_state: &str) -> Result<CallbackOutcome
         )));
     };
 
-    let expires_at: i64 = expires_at
-        .parse()
-        .map_err(|_| anyhow!("callback expires_at not an integer"))?;
+    let expires_at = get("expires_at")
+        .map(|value| {
+            value
+                .parse()
+                .map_err(|_| anyhow!("callback expires_at not an integer"))
+        })
+        .transpose()?;
 
     Ok(CallbackOutcome::Result(Ok(LoginResult {
         secret,
@@ -246,8 +249,21 @@ mod tests {
         assert_eq!(inner.secret, "tfc_abc");
         assert_eq!(inner.org_id, "org_1");
         assert_eq!(inner.collector_id, "cli-x");
-        assert_eq!(inner.expires_at, 123);
+        assert_eq!(inner.expires_at, Some(123));
         assert_eq!(inner.convex_url, "https://d.convex.site");
+    }
+
+    #[test]
+    fn parse_callback_accepts_a_credential_without_expiry() {
+        let inner = result_of(
+            parse_callback(
+                "/callback?state=nonce1&secret=tfc_abc&org_id=org_1&collector_id=cli-x&convex_url=https://d.convex.site",
+                "nonce1",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(inner.expires_at, None);
     }
 
     #[test]

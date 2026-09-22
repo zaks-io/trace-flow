@@ -73,7 +73,7 @@ export const listActiveForCurrentUser = query({
         (credential) =>
           credential.userId === user._id &&
           credential.status === 'active' &&
-          credential.expiresAt > now,
+          (credential.expiresAt === undefined || credential.expiresAt > now),
       )
       .map(toPublic);
   },
@@ -82,7 +82,6 @@ export const listActiveForCurrentUser = query({
 export const mint = mutation({
   args: {
     collectorId: v.string(),
-    expiresAt: v.number(),
     name: v.optional(v.string()),
     platform: v.optional(v.string()),
   },
@@ -92,14 +91,6 @@ export const mint = mutation({
     const { user, orgId } = await requireActiveOrganizationMembership(ctx);
 
     await rateLimiter.limit(ctx, 'mintCollectorCredential', { key: user._id, throws: true });
-
-    // Cap the credential lifetime at the mint boundary, mirroring collectorLogin.mintForUser, so a
-    // web/desktop caller can't widen the rotation window past 90 days or mint an already-dead secret.
-    const MAX_CREDENTIAL_TTL_MS = 90 * 24 * 60 * 60 * 1000;
-    const nowMs = Date.now();
-    if (args.expiresAt <= nowMs || args.expiresAt > nowMs + MAX_CREDENTIAL_TTL_MS) {
-      throw new Error('Collector Credential expiry must be in the future and within 90 days');
-    }
 
     const secret = generateCollectorSecret();
     const hashedSecret = await hashCollectorSecret(secret);
@@ -113,7 +104,6 @@ export const mint = mutation({
       name: args.name,
       platform: args.platform,
       status: 'active',
-      expiresAt: args.expiresAt,
     });
 
     await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.syncCollectorCredToKV, {
@@ -121,7 +111,6 @@ export const mint = mutation({
       orgId,
       userId: user._id,
       collectorId: args.collectorId,
-      expiresAt: args.expiresAt,
       status: 'active',
       createdAt,
     });

@@ -122,7 +122,10 @@ export const getCollectorCredentialSyncData = internalQuery({
       .query('collectorCredentials')
       .withIndex('by_hashed_secret', (q) => q.eq('hashedSecret', args.hashedSecret))
       .first();
-    if (credential?.status !== 'active' || credential.expiresAt <= Date.now()) {
+    if (
+      credential?.status !== 'active' ||
+      (credential.expiresAt !== undefined && credential.expiresAt <= Date.now())
+    ) {
       return null;
     }
     const user = await ctx.db.get(credential.userId);
@@ -185,7 +188,7 @@ export const syncCollectorCredToKV = internalAction({
     orgId: v.string(),
     userId: v.string(),
     collectorId: v.string(),
-    expiresAt: v.number(),
+    expiresAt: v.optional(v.number()),
     status: v.union(v.literal('active'), v.literal('revoked')),
     createdAt: v.number(),
     retryCount: v.optional(v.number()),

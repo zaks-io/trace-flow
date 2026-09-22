@@ -480,6 +480,41 @@ describe('convex/http.ts OAuth routes', () => {
   });
 
   describe('GET /mcp/callback', () => {
+    it('mints Collector Credentials without expiry', async () => {
+      const app = createApp(deps);
+      (deps.oauth.verifyState as Mock).mockResolvedValue({
+        clientState: 'collector:collector-nonce',
+        redirectUri: 'http://127.0.0.1:49152/callback',
+      });
+      (deps.oauth.exchangeAuth0Code as Mock).mockResolvedValue({
+        access_token: 'auth0-access-token',
+      });
+      (deps.oauth.getAuth0UserInfo as Mock).mockResolvedValue({
+        sub: 'auth0|123',
+        email: 'test@example.com',
+        email_verified: true,
+      });
+      ctx.runMutation
+        .mockResolvedValueOnce('user-id-123')
+        .mockResolvedValueOnce({ secret: 'one-time-secret', orgId: 'org-id-123' });
+
+      const res = await app.request(
+        'http://localhost/mcp/callback?code=auth0-code&state=state-token',
+        {},
+        ctx,
+      );
+
+      expect(res.status).toBe(302);
+      const location = new URL(res.headers.get('Location')!);
+      expect(location.searchParams.get('expires_at')).toBeNull();
+      expect(location.searchParams.get('state')).toBe('collector-nonce');
+      expect(ctx.runMutation).toHaveBeenNthCalledWith(
+        2,
+        expect.anything(),
+        expect.not.objectContaining({ expiresAt: expect.anything() }),
+      );
+    });
+
     it('successfully exchanges code and redirects with auth code', async () => {
       const app = createApp(deps);
       (deps.oauth.verifyState as Mock).mockResolvedValue({

@@ -36,17 +36,8 @@ pub struct StatusDto {
     pub connected: bool,
     pub org_id: Option<String>,
     pub credential_present: bool,
-    pub expired: bool,
     pub sync: String,
     pub update: UpdateStatus,
-}
-
-fn now_ms() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }
 
 fn home() -> Result<std::path::PathBuf, String> {
@@ -93,19 +84,17 @@ pub fn connection_status(bus: State<'_, AppStateBus>) -> StatusDto {
     let conn = Paths::resolve()
         .ok()
         .and_then(|p| p.load_connection().ok().flatten());
-    let (connected, org_id, credential_present, expired) = match conn {
+    let (connected, org_id, credential_present) = match conn {
         Some(c) => {
             let present = keychain::is_present(&c.org_id);
-            let expired = c.expires_at <= now_ms();
-            (true, Some(c.org_id), present, expired)
+            (true, Some(c.org_id), present)
         }
-        None => (false, None, false, false),
+        None => (false, None, false),
     };
     StatusDto {
         connected,
         org_id,
         credential_present,
-        expired,
         sync: snapshot.sync.label().to_string(),
         update: snapshot.update,
     }

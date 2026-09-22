@@ -406,7 +406,7 @@ export type DataModel = {
   collectorCredentials: {
     document: {
       collectorId: string;
-      expiresAt: number;
+      expiresAt?: number;
       hashedSecret: string;
       lastSeenAt?: number;
       name?: string;
