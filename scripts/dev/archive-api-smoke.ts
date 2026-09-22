@@ -461,7 +461,7 @@ async function captureFixture(
       'run',
       '--quiet',
       '-p',
-      'collector-archive-sync',
+      'collector-embedder',
       '--example',
       'archive_capture_fixture',
       '--',

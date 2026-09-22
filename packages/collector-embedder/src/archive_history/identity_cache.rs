@@ -89,6 +89,16 @@ fn candidate_from_identity(
 ) -> Candidate {
     Candidate {
         path: PathBuf::from(path),
+        source_path: PathBuf::from(path),
+        decoded: None,
+        relative_path: collector_sync::tool_result_parent(std::path::Path::new(path)).and_then(
+            |_| {
+                std::path::Path::new(path)
+                    .file_name()?
+                    .to_str()
+                    .map(|name| format!("tool-results/{name}"))
+            },
+        ),
         source,
         session: identity.session,
         part: identity.part,

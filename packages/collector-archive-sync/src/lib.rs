@@ -35,8 +35,8 @@ pub use capture::{
 pub use client::{ArchiveClient, ArchiveClientConfig, ArchiveUploader};
 pub use collector_archive::ArchiveSource;
 pub use cycle::{
-    capture_archive_snapshots, run_archive_cycle, ArchiveCycleReport, ArchiveForkEvent,
-    ArchiveInitialImport, ArchiveSnapshot, ArchiveSourceHistoryReport, DeferredArchiveSnapshot,
+    capture_archive_snapshots, ArchiveCycleReport, ArchiveForkEvent, ArchiveInitialImport,
+    ArchiveSnapshot, ArchiveSourceHistoryReport, DeferredArchiveSnapshot,
 };
 pub use enrollment::ArchiveEnrollmentRecord;
 pub use error::{ArchiveClientError, ArchiveSyncError, ArchiveSyncResult};

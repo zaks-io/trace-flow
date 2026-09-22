@@ -85,6 +85,48 @@ impl DiscoveryWalk {
 /// than failing the whole walk; they increment [`DiscoveryWalk::skipped_errors`] so the embedder
 /// can keep those files in the next incremental window instead of advancing the watermark.
 pub fn walk_transcripts(root: &Path) -> DiscoveryWalk {
+    walk_files(root, |path| {
+        path.extension().is_some_and(|ext| ext == "jsonl")
+    })
+}
+
+pub fn walk_archive_files(root: &Path, source: AgentSource) -> DiscoveryWalk {
+    walk_files(root, |path| {
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            return false;
+        };
+        if path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == "tool-results")
+        {
+            return source == AgentSource::Claude && tool_result_parent(path).is_some();
+        }
+        name.ends_with(".jsonl")
+            || (source == AgentSource::Claude
+                && (name.contains(".jsonl.superseded-") || tool_result_parent(path).is_some()))
+            || (source == AgentSource::Codex
+                && name.starts_with("rollout-")
+                && name.ends_with(".jsonl.zst"))
+    })
+}
+
+/// Sidecars belong to a session only while its parent transcript establishes ownership.
+pub fn tool_result_parent(path: &Path) -> Option<std::path::PathBuf> {
+    let results = path.parent()?;
+    if results.file_name()? != "tool-results" {
+        return None;
+    }
+    let session = results.parent()?;
+    let parent = session.with_extension("jsonl");
+    std::fs::symlink_metadata(&parent)
+        .ok()?
+        .file_type()
+        .is_file()
+        .then_some(parent)
+}
+
+fn walk_files(root: &Path, accepts: impl Fn(&Path) -> bool) -> DiscoveryWalk {
     match root.try_exists() {
         Ok(false) => return DiscoveryWalk::default(),
         Ok(true) => {}
@@ -108,13 +150,15 @@ pub fn walk_transcripts(root: &Path) -> DiscoveryWalk {
         if !entry.file_type().is_file() {
             continue;
         }
-        let Some(name) = entry.file_name().to_str() else {
+        if entry.file_name().to_str().is_none() {
+            skipped_errors += 1;
             continue;
-        };
-        if !name.ends_with(".jsonl") {
+        }
+        if !accepts(entry.path()) {
             continue;
         }
         let Some(path) = entry.path().to_str() else {
+            skipped_errors += 1;
             continue;
         };
         let meta = match entry.metadata() {

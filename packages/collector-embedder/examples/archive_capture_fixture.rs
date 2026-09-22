@@ -1,29 +1,15 @@
 //! Synthetic offline capture proof for the Cloud-Dev smoke. Never reads user transcripts.
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use collector_archive::{default_transcript_part_id, sha256, ArchiveObservation, EncodedPayload};
 use collector_archive_sync::{
-    run_archive_cycle, ArchiveAcknowledgement, ArchiveClientError, ArchiveHistoryChoice,
-    ArchiveHistoryGeneration, ArchiveHistoryPlan, ArchiveHistoryState, ArchivePolicy,
-    ArchiveSnapshot, ArchiveSource, ArchiveSpool, ArchiveUploader, ArchiveWorkClass,
-    DeferredArchiveSnapshot, MemoryKeyStore, PendingLoad,
+    ArchivePolicy, ArchiveSource, ArchiveSpool, MemoryKeyStore, PendingLoad,
 };
+use collector_embedder::sources::SourceHomes;
+use collector_embedder::sync::{capture_archive_local, ArchiveRunConfig};
+use collector_embedder::{ArchiveAuthorizedSource, ArchiveHistoryChoice};
 use serde_json::json;
-use tokio_util::sync::CancellationToken;
-
-struct Offline;
-impl ArchiveUploader for Offline {
-    async fn upload(
-        &self,
-        _: ArchiveSource,
-        _: &[u8],
-        _: Option<&CancellationToken>,
-    ) -> Result<ArchiveAcknowledgement, ArchiveClientError> {
-        Err(ArchiveClientError::Transport(anyhow::anyhow!(
-            "synthetic offline"
-        )))
-    }
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -37,54 +23,43 @@ async fn main() -> anyhow::Result<()> {
         .get(2)
         .ok_or_else(|| anyhow::anyhow!("session id required"))?;
     let temp = tempfile::TempDir::new()?;
-    let path = temp.path().join("synthetic.jsonl");
+    let homes = SourceHomes::standard(temp.path());
+    let relative = match source {
+        ArchiveSource::Claude => format!(".claude/projects/synthetic/{session}.jsonl"),
+        ArchiveSource::Codex => format!(".codex/sessions/rollout-{session}.jsonl"),
+    };
+    let path = temp.path().join(relative);
+    std::fs::create_dir_all(path.parent().unwrap())?;
     let spool_path = temp.path().join("spool");
-    let keys = MemoryKeyStore::new();
-    let mut spool = ArchiveSpool::open(&spool_path, "synthetic-smoke", &keys)?;
-    let plan = ArchiveHistoryPlan::new(vec![ArchiveHistoryState::new(
-        ArchiveHistoryGeneration {
+    let keys = Arc::new(MemoryKeyStore::new());
+    let config = ArchiveRunConfig {
+        archive_url: "http://127.0.0.1:1".to_string(),
+        spool_dir: spool_path.clone(),
+        enrollment_path: temp.path().join("enrollment.json"),
+        key_store: keys.clone(),
+        policy: ArchivePolicy::Enrolled,
+        authorized_sources: vec![ArchiveAuthorizedSource {
             source,
             history_choice: ArchiveHistoryChoice::AllHistory,
             authorized_at: 0,
-        },
-        0,
-        vec![],
-    )]);
+        }],
+    };
     let base = default_transcript_part_id(source);
     let mut expected = BTreeMap::new();
-    let mut first = b"\n {malformed}\n{\"partial\":\"\xf0\x9f".to_vec();
+    let header = match source {
+        ArchiveSource::Claude => json!({"sessionId":session,"timestamp":"2020-01-01T00:00:00Z"}),
+        ArchiveSource::Codex => {
+            json!({"type":"session_meta","payload":{"id":session,"timestamp":"2020-01-01T00:00:00Z"}})
+        }
+    };
+    let mut first = serde_json::to_vec(&header)?;
+    first.extend(b"\n {malformed}\n{\"partial\":\"\xf0\x9f");
     first.extend(vec![b'x'; 600_000]);
     let second = b"\xff rewritten tail without newline".to_vec();
     for (index, bytes) in [first, second, vec![]].into_iter().enumerate() {
         std::fs::write(&path, &bytes)?;
-        let snapshot = ArchiveSnapshot {
-            source,
-            source_session_id: session.clone(),
-            base_transcript_part_id: base.clone(),
-            source_transcript_part_id: base.clone(),
-            bytes: vec![],
-            deferred_file: Some(DeferredArchiveSnapshot {
-                expected_file_identity: None,
-                expected_identity_prefix: None,
-                path: path.clone(),
-                prior_offset: 0,
-                minimum_observed_size: 0,
-            }),
-            observed_at: 10 + index as i64,
-            class: ArchiveWorkClass::Live,
-            activity_rank_ms: None,
-        };
-        let report = run_archive_cycle(
-            &Offline,
-            &mut spool,
-            &keys,
-            &[snapshot],
-            ArchivePolicy::Enrolled,
-            &plan,
-            10 + index as i64,
-            None,
-        )
-        .await;
+        let report = capture_archive_local(&config, "synthetic-smoke", &homes, 10 + index as i64);
+        let spool = ArchiveSpool::open(&spool_path, "synthetic-smoke", keys.as_ref())?;
         anyhow::ensure!(
             report.captured > 0,
             "synthetic capture did not persist bytes: {:?}",
@@ -93,8 +68,7 @@ async fn main() -> anyhow::Result<()> {
         expected.insert(spool.current_part(source, session, &base)?, bytes);
     }
     std::fs::remove_file(&path)?;
-    drop(spool);
-    let spool = ArchiveSpool::open(&spool_path, "synthetic-smoke", &keys)?;
+    let spool = ArchiveSpool::open(&spool_path, "synthetic-smoke", keys.as_ref())?;
     let mut uploads = Vec::new();
     let mut request_bodies = Vec::new();
     let mut observed_parts = BTreeSet::new();

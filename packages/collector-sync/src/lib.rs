@@ -53,8 +53,8 @@ pub use codex_session::{codex_session_fields, CodexSessionFields};
 pub use cursor::{ComposerCursor, CursorStore, CursorStoreError, FileCursor};
 pub use cursor_reader::{assemble_cursor_units, CursorReadError};
 pub use discovery::{
-    head_hash, select_changed, walk_transcripts, DiscoveredFile, DiscoveryWalk,
-    DISCOVERY_INCOMPLETE,
+    head_hash, select_changed, tool_result_parent, walk_archive_files, walk_transcripts,
+    DiscoveredFile, DiscoveryWalk, DISCOVERY_INCOMPLETE,
 };
 pub use envelope::{build_envelope, BatchMeta};
 pub use git::{resolve_git_metadata, GitMetadata, GitRemoteCache};

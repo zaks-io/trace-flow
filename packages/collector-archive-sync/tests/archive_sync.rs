@@ -1,3 +1,4 @@
+mod support;
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::fs::{self, OpenOptions};
@@ -9,15 +10,15 @@ use collector_archive::{
 };
 use collector_archive_sync::{
     acknowledgement_matches, archive_source_session_id, build_bounded_pending_for_part,
-    run_archive_cycle, transcript_part_for, ArchiveAcknowledgement, ArchiveBaselineTarget,
-    ArchiveClient, ArchiveClientConfig, ArchiveClientError, ArchiveEnrollmentRecord,
-    ArchiveEnrollmentRequest, ArchiveHistoryChoice, ArchiveHistoryGeneration, ArchiveHistoryPlan,
-    ArchiveHistoryState, ArchiveInitialImport, ArchiveKeyStore, ArchivePolicy, ArchiveSnapshot,
-    ArchiveSourceChoice, ArchiveSpool, ArchiveSpoolKey, ArchiveSyncError, ArchiveUploader,
-    ArchiveWorkClass, BlockedArchiveRecord, DeferredArchiveSnapshot, MemoryKeyStore,
-    PendingArchiveRequest, PendingLoad, ARCHIVE_CAPTURE_WINDOW_BYTES,
-    ARCHIVE_RECORD_POLICY_VERSION, ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE,
-    MAX_ARCHIVE_UPLOAD_BYTES, MAX_UPLOAD_OBSERVATIONS,
+    transcript_part_for, ArchiveAcknowledgement, ArchiveBaselineTarget, ArchiveClient,
+    ArchiveClientConfig, ArchiveClientError, ArchiveEnrollmentRecord, ArchiveEnrollmentRequest,
+    ArchiveHistoryChoice, ArchiveHistoryGeneration, ArchiveHistoryPlan, ArchiveHistoryState,
+    ArchiveInitialImport, ArchiveKeyStore, ArchivePolicy, ArchiveSnapshot, ArchiveSourceChoice,
+    ArchiveSpool, ArchiveSpoolKey, ArchiveSyncError, ArchiveUploader, ArchiveWorkClass,
+    BlockedArchiveRecord, DeferredArchiveSnapshot, MemoryKeyStore, PendingArchiveRequest,
+    PendingLoad, ARCHIVE_CAPTURE_WINDOW_BYTES, ARCHIVE_RECORD_POLICY_VERSION,
+    ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE, MAX_ARCHIVE_UPLOAD_BYTES,
+    MAX_UPLOAD_OBSERVATIONS,
 };
 use collector_contracts::AgentSource;
 use tempfile::TempDir;
@@ -112,6 +113,7 @@ fn ack_for(pending: &PendingArchiveRequest) -> ArchiveAcknowledgement {
     let (request_sha256, captured_byte_offset, captured_prefix_sha256) =
         byte_receipt_fields(&pending.body);
     ArchiveAcknowledgement {
+        relative_path: None,
         request_sha256,
         captured_byte_offset,
         captured_prefix_sha256,
@@ -148,6 +150,7 @@ fn byte_receipt_fields(body: &[u8]) -> (Option<String>, Option<u64>, Option<Stri
 fn snapshot(source: ArchiveSource, bytes: &[u8], observed_at: i64) -> ArchiveSnapshot {
     let source_session_id = archive_source_session_id(source, bytes).unwrap();
     ArchiveSnapshot {
+        relative_path: None,
         source,
         source_session_id,
         base_transcript_part_id: default_transcript_part_id(source),
@@ -169,6 +172,7 @@ fn snapshot_for_path(
     let source_session_id = archive_source_session_id(source, bytes).unwrap();
     let source_transcript_part_id = transcript_part_for(source, Some(path), bytes).unwrap();
     ArchiveSnapshot {
+        relative_path: None,
         source,
         source_session_id,
         base_transcript_part_id: source_transcript_part_id.clone(),
@@ -341,6 +345,7 @@ fn pad_spool_leaving_room(root: &std::path::Path, cap: u64, room: u64) {
 
 fn server_aggregate_duplicate_ack(pending: &PendingArchiveRequest) -> ArchiveAcknowledgement {
     ArchiveAcknowledgement {
+        relative_path: None,
         request_sha256: None,
         captured_byte_offset: None,
         captured_prefix_sha256: None,
@@ -537,7 +542,7 @@ async fn exact_body_retry_posts_the_persisted_bytes() {
     let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
     spool.persist_pending(&pending).unwrap();
     let uploader = AckingUploader::new();
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -567,7 +572,7 @@ async fn acknowledgement_mismatch_does_not_advance() {
     mismatch.source_session_id = "other-session".to_string();
     assert!(!acknowledgement_matches(&pending, &mismatch));
     let uploader = ScriptedUploader::new([Ok(mismatch)]);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -605,7 +610,7 @@ async fn session_error_does_not_block_other_sessions() {
         }),
         Ok(ack_for(&codex)),
     ]);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -640,7 +645,7 @@ async fn cursor_snapshots_are_not_required_for_jsonl_uploads() {
     let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
     let claude = snapshot(ArchiveSource::Claude, CLAUDE, 10);
     let uploader = AckingUploader::new();
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -664,7 +669,7 @@ async fn unauthorized_source_is_neither_captured_nor_uploaded() {
     spool.persist_pending(&codex).unwrap();
     let uploader = ScriptedUploader::new([]);
 
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -704,7 +709,7 @@ async fn terminal_revocation_purges_spool_key_and_progress() {
     let uploader = ScriptedUploader::new([Err(ArchiveClientError::Forbidden {
         reason: "credential_revoked".to_string(),
     })]);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -739,7 +744,7 @@ async fn expired_credential_retains_pending_spool_key_and_progress() {
         reason: "expired".to_string(),
     })]);
 
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -769,7 +774,7 @@ async fn local_revoked_policy_purges_without_uploading() {
     let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
     spool.persist_pending(&pending).unwrap();
     let uploader = ScriptedUploader::new([]);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -795,7 +800,7 @@ async fn server_frozen_denial_does_not_purge_or_advance() {
     let uploader = ScriptedUploader::new([Err(ArchiveClientError::Forbidden {
         reason: "frozen".to_string(),
     })]);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -828,7 +833,7 @@ async fn live_frozen_during_capture_stops_later_sessions() {
     let uploader = ScriptedUploader::new([Err(ArchiveClientError::Forbidden {
         reason: "frozen".to_string(),
     })]);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -865,7 +870,7 @@ async fn grace_and_frozen_retain_without_uploading() {
         let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
         spool.persist_pending(&pending).unwrap();
         let uploader = ScriptedUploader::new([]);
-        let report = run_archive_cycle(
+        let report = support::capture_and_upload(
             &uploader,
             &mut spool,
             &keys,
@@ -900,7 +905,7 @@ async fn inactive_pending_denial_stops_later_parts_without_capturing() {
         reason: "not_activated".to_string(),
     })]);
 
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -1135,6 +1140,7 @@ impl ArchiveUploader for AckingUploader {
         let (request_sha256, captured_byte_offset, captured_prefix_sha256) =
             byte_receipt_fields(body);
         Ok(ArchiveAcknowledgement {
+            relative_path: None,
             request_sha256,
             captured_byte_offset,
             captured_prefix_sha256,
@@ -1215,7 +1221,7 @@ async fn oversized_session_splits_at_byte_limit() {
     assert!(serde_json::to_vec(&full).unwrap().len() > MAX_ARCHIVE_UPLOAD_BYTES);
 
     let uploader = AckingUploader::new();
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -1267,7 +1273,7 @@ async fn oversized_json_record_is_preserved_as_bounded_byte_segments() {
     let current = snapshot(ArchiveSource::Claude, &bytes, 10);
     let uploader = AckingUploader::new();
 
-    let first = run_archive_cycle(
+    let first = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -1296,7 +1302,7 @@ async fn oversized_json_record_is_preserved_as_bounded_byte_segments() {
         .unwrap();
     assert_eq!(progress.last_complete_byte_offset, bytes.len() as u64);
 
-    let second = run_archive_cycle(
+    let second = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -1314,7 +1320,7 @@ async fn oversized_json_record_is_preserved_as_bounded_byte_segments() {
 
     let mut changed = bytes;
     changed.push(b' ');
-    let changed_report = run_archive_cycle(
+    let changed_report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -1354,7 +1360,7 @@ async fn arbitrary_large_records_upload_as_bounded_byte_segments() {
     let current = snapshot(source, &bytes, 10);
     let uploader = AckingUploader::new();
 
-    let first = run_archive_cycle(
+    let first = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -1365,13 +1371,13 @@ async fn arbitrary_large_records_upload_as_bounded_byte_segments() {
         None,
     )
     .await;
-    assert!(first.uploaded > 2);
+    assert!(first.uploaded > 2, "{first:?}");
     assert_eq!(first.failed, 0);
     assert_eq!(first.blocked, 0);
     let first_uploads = uploader.bodies.borrow().len();
     assert_eq!(first_uploads, first.uploaded as usize);
 
-    let second = run_archive_cycle(
+    let second = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -1397,7 +1403,7 @@ async fn arbitrary_large_records_upload_as_bounded_byte_segments() {
     );
     bytes.extend_from_slice(fitting.as_bytes());
     bytes.push(b'\n');
-    let third = run_archive_cycle(
+    let third = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -1429,7 +1435,7 @@ async fn server_stored_element_rejection_is_blocked_without_format_fallback() {
         reason: "archive_element_exceeds_chunk_limit".to_string(),
     })]);
 
-    let first = run_archive_cycle(
+    let first = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -1468,7 +1474,7 @@ async fn server_stored_element_rejection_is_blocked_without_format_fallback() {
         collector_archive::sha256(CLAUDE).to_string()
     );
 
-    let second = run_archive_cycle(
+    let second = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -1601,7 +1607,7 @@ async fn changed_prefix_after_ack_forks_and_uploads_from_record_zero() {
     let original_snapshot = snapshot(ArchiveSource::Codex, original, 10);
     let source_session_id = original_snapshot.source_session_id.clone();
     let base_part = original_snapshot.source_transcript_part_id.clone();
-    let first = run_archive_cycle(
+    let first = support::capture_and_upload(
         &AckingUploader::new(),
         &mut spool,
         &keys,
@@ -1626,7 +1632,7 @@ async fn changed_prefix_after_ack_forks_and_uploads_from_record_zero() {
         .unwrap();
     changed[marker_start..marker_start + marker.len()].copy_from_slice(b"change");
     let uploader = AckingUploader::new();
-    let changed_report = run_archive_cycle(
+    let changed_report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -1690,7 +1696,7 @@ async fn shortened_compaction_forks_and_uploads_the_rewritten_prefix() {
     let compacted = br#"{"type":"session_meta","payload":{"id":"prefix-one"}}
 {"type":"compacted","payload":{"summary":"short"}}
 "#;
-    let initial = run_archive_cycle(
+    let initial = support::capture_and_upload(
         &AckingUploader::new(),
         &mut spool,
         &keys,
@@ -1703,7 +1709,7 @@ async fn shortened_compaction_forks_and_uploads_the_rewritten_prefix() {
     .await;
     assert_eq!(initial.uploaded, 1);
     let uploader = AckingUploader::new();
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -1781,7 +1787,7 @@ async fn compacted_baseline_completes_at_the_current_local_extent() {
             base_part.clone(),
             partial.len() as u64,
         )]);
-    let initial = run_archive_cycle(
+    let initial = support::capture_and_upload(
         &AckingUploader::new(),
         &mut spool,
         &keys,
@@ -1803,7 +1809,7 @@ async fn compacted_baseline_completes_at_the_current_local_extent() {
         base_part,
         compacted_complete.len() as u64,
     )]);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &AckingUploader::new(),
         &mut spool,
         &keys,
@@ -1832,7 +1838,7 @@ async fn changed_prefix_retains_and_uploads_unacknowledged_predecessor() {
     let original = br#"{"type":"session_meta","payload":{"id":"pending-rewrite"}}
 {"type":"event_msg","payload":{"value":"original"}}
 "#;
-    run_archive_cycle(
+    support::capture_and_upload(
         &AckingUploader::new(),
         &mut spool,
         &keys,
@@ -1872,7 +1878,7 @@ async fn changed_prefix_retains_and_uploads_unacknowledged_predecessor() {
 {"type":"event_msg","payload":{"value":"rewritten"}}
 "#;
     let uploader = AckingUploader::new();
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -1897,7 +1903,7 @@ async fn changed_prefix_retains_and_uploads_unacknowledged_predecessor() {
         .unwrap()
         .is_empty());
 
-    let retry = run_archive_cycle(
+    let retry = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -1941,7 +1947,7 @@ async fn new_only_retry_uses_capture_authorization_after_source_deletion() {
         reason: "archive unavailable".to_string(),
     })]);
 
-    let captured = run_archive_cycle(
+    let captured = support::capture_and_upload(
         &unavailable,
         &mut spool,
         &keys,
@@ -1975,7 +1981,7 @@ async fn new_only_retry_uses_capture_authorization_after_source_deletion() {
 
     let retry_plan = ArchiveHistoryPlan::new(vec![state]);
     let uploader = AckingUploader::new();
-    let retried = run_archive_cycle(
+    let retried = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -2003,7 +2009,7 @@ async fn a_second_rewrite_forks_from_the_current_part() {
     let original = br#"{"type":"session_meta","payload":{"id":"twice"}}
 {"type":"event_msg","payload":{"value":"one"}}
 "#;
-    run_archive_cycle(
+    support::capture_and_upload(
         &AckingUploader::new(),
         &mut spool,
         &keys,
@@ -2018,7 +2024,7 @@ async fn a_second_rewrite_forks_from_the_current_part() {
 {"type":"compacted","payload":{"summary":"two"}}
 "#;
     let first_snapshot = current_snapshot(&spool, ArchiveSource::Codex, first_rewrite, 11);
-    let first = run_archive_cycle(
+    let first = support::capture_and_upload(
         &AckingUploader::new(),
         &mut spool,
         &keys,
@@ -2034,7 +2040,7 @@ async fn a_second_rewrite_forks_from_the_current_part() {
 {"type":"compacted","payload":{"summary":"three"}}
 "#;
     let second_snapshot = current_snapshot(&spool, ArchiveSource::Codex, second_rewrite, 12);
-    let second = run_archive_cycle(
+    let second = support::capture_and_upload(
         &AckingUploader::new(),
         &mut spool,
         &keys,
@@ -2068,7 +2074,7 @@ async fn append_after_a_fork_continues_on_the_current_part() {
     let original = br#"{"type":"session_meta","payload":{"id":"append-after-fork"}}
 {"type":"event_msg","payload":{"value":"one"}}
 "#;
-    run_archive_cycle(
+    support::capture_and_upload(
         &AckingUploader::new(),
         &mut spool,
         &keys,
@@ -2083,7 +2089,7 @@ async fn append_after_a_fork_continues_on_the_current_part() {
 {"type":"compacted","payload":{"summary":"two"}}
 "#;
     let rewrite_snapshot = current_snapshot(&spool, ArchiveSource::Codex, rewritten, 11);
-    run_archive_cycle(
+    support::capture_and_upload(
         &AckingUploader::new(),
         &mut spool,
         &keys,
@@ -2100,7 +2106,7 @@ async fn append_after_a_fork_continues_on_the_current_part() {
     ]
     .concat();
     let append_snapshot = current_snapshot(&spool, ArchiveSource::Codex, &appended, 12);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &AckingUploader::new(),
         &mut spool,
         &keys,
@@ -2137,7 +2143,7 @@ async fn server_rejection_keeps_exact_single_record_metadata() {
         reason: "archive_element_exceeds_chunk_limit".to_string(),
     })]);
 
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -2186,7 +2192,7 @@ async fn unsupported_wire_stays_pending_and_retries_the_identical_body() {
     let uploader = ScriptedUploader::new([unsupported(), unsupported()]);
 
     for _ in 0..2 {
-        let report = run_archive_cycle(
+        let report = support::capture_and_upload(
             &uploader,
             &mut spool,
             &keys,
@@ -2241,7 +2247,7 @@ async fn bounded_upload_failure_keeps_later_records_after_source_disappears() {
     let uploader = ScriptedUploader::new([Err(ArchiveClientError::Unavailable {
         reason: "archive unavailable".to_string(),
     })]);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -2282,7 +2288,7 @@ async fn bounded_upload_failure_keeps_later_records_after_source_disappears() {
     drop(spool);
     let mut relaunched = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
     let ack = AckingUploader::new();
-    let replay = run_archive_cycle(
+    let replay = support::capture_and_upload(
         &ack,
         &mut relaunched,
         &keys,
@@ -2331,7 +2337,7 @@ async fn existing_pending_does_not_strand_later_observed_bytes() {
     let initial_uploader = ScriptedUploader::new([Err(ArchiveClientError::Unavailable {
         reason: "archive unavailable".to_string(),
     })]);
-    let initial = run_archive_cycle(
+    let initial = support::capture_and_upload(
         &initial_uploader,
         &mut spool,
         &keys,
@@ -2354,7 +2360,7 @@ async fn existing_pending_does_not_strand_later_observed_bytes() {
             reason: "archive unavailable".to_string(),
         }),
     ]);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -2387,7 +2393,7 @@ async fn existing_pending_does_not_strand_later_observed_bytes() {
     drop(spool);
     let mut relaunched = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
     let ack = AckingUploader::new();
-    let replay = run_archive_cycle(
+    let replay = support::capture_and_upload(
         &ack,
         &mut relaunched,
         &keys,
@@ -2437,7 +2443,7 @@ async fn oversized_session_splits_at_observation_count() {
     assert_eq!(pending.expected_appended_records, 2);
     spool.persist_pending(&pending).unwrap();
     let uploader = ScriptedUploader::new([Ok(ack_for(&pending))]);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -2488,7 +2494,7 @@ async fn acknowledgement_at_exact_cap_clears_pending() {
         ARCHIVE_SPOOL_CAP_BYTES
     );
     let uploader = ScriptedUploader::new([Ok(acknowledgement)]);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -2566,7 +2572,7 @@ async fn corrupt_claude_pending_does_not_block_codex() {
     assert_eq!(fs::read(&path).unwrap(), blob);
 
     let uploader = ScriptedUploader::new([Ok(ack_for(&codex))]);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -2614,6 +2620,7 @@ async fn claude_parent_and_subagent_same_session_upload_independently() {
     let sub_part = claude_transcript_part_id("agent-001").unwrap();
     let snapshots = [
         ArchiveSnapshot {
+            relative_path: None,
             source: ArchiveSource::Claude,
             source_session_id: "session-1".to_string(),
             base_transcript_part_id: parent_part.clone(),
@@ -2625,6 +2632,7 @@ async fn claude_parent_and_subagent_same_session_upload_independently() {
             activity_rank_ms: None,
         },
         ArchiveSnapshot {
+            relative_path: None,
             source: ArchiveSource::Claude,
             source_session_id: "session-1".to_string(),
             base_transcript_part_id: sub_part.clone(),
@@ -2637,7 +2645,7 @@ async fn claude_parent_and_subagent_same_session_upload_independently() {
         },
     ];
     let uploader = AckingUploader::new();
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -2721,7 +2729,7 @@ async fn missing_or_empty_agent_id_subagent_does_not_collide_with_parent_across_
 
         let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
         let uploader = AckingUploader::new();
-        let first = run_archive_cycle(
+        let first = support::capture_and_upload(
             &uploader,
             &mut spool,
             &keys,
@@ -2756,7 +2764,7 @@ async fn missing_or_empty_agent_id_subagent_does_not_collide_with_parent_across_
         );
         let mut relaunched = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
         let relaunch_uploader = AckingUploader::new();
-        let second = run_archive_cycle(
+        let second = support::capture_and_upload(
             &relaunch_uploader,
             &mut relaunched,
             &keys,
@@ -2989,7 +2997,7 @@ async fn session_aggregate_duplicate_parent_rescan_advances() {
     let ack = server_aggregate_duplicate_ack(&pending);
     assert!(acknowledgement_matches(&pending, &ack));
     let uploader = ScriptedUploader::new([Ok(ack)]);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -3023,7 +3031,7 @@ async fn failing_keyring_delete_does_not_claim_purge() {
     spool.persist_pending(&pending).unwrap();
     assert!(keys.load("org_1").unwrap().is_some());
     let uploader = ScriptedUploader::new([]);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -3051,7 +3059,7 @@ async fn failing_keyring_delete_does_not_claim_purge() {
     let live_uploader = ScriptedUploader::new([Err(ArchiveClientError::Forbidden {
         reason: "credential_revoked".to_string(),
     })]);
-    let live_report = run_archive_cycle(
+    let live_report = support::capture_and_upload(
         &live_uploader,
         &mut live_spool,
         &live_keys,
@@ -3081,7 +3089,7 @@ async fn failing_keyring_delete_does_not_claim_purge() {
     let stop_uploader = ScriptedUploader::new([Err(ArchiveClientError::Forbidden {
         reason: "credential_revoked".to_string(),
     })]);
-    let stop_report = run_archive_cycle(
+    let stop_report = support::capture_and_upload(
         &stop_uploader,
         &mut stop_spool,
         &stop_keys,
@@ -3116,7 +3124,7 @@ async fn enrollment_invalid_failed_delete_retries_cleanup_after_relaunch() {
     let uploader = ScriptedUploader::new([Err(ArchiveClientError::Forbidden {
         reason: "enrollment_invalid".to_string(),
     })]);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -3147,7 +3155,7 @@ async fn enrollment_invalid_failed_delete_retries_cleanup_after_relaunch() {
     let unavailable = ScriptedUploader::new([Err(ArchiveClientError::Unavailable {
         reason: "archive unavailable".to_string(),
     })]);
-    let relaunch_report = run_archive_cycle(
+    let relaunch_report = support::capture_and_upload(
         &unavailable,
         &mut relaunched,
         &keys,
@@ -3195,7 +3203,7 @@ async fn failing_policy_replace_blocks_all_sources_and_retries_purge() {
     let uploader = ScriptedUploader::new([Err(ArchiveClientError::Forbidden {
         reason: "enrollment_invalid".to_string(),
     })]);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -3227,7 +3235,7 @@ async fn failing_policy_replace_blocks_all_sources_and_retries_purge() {
     let unavailable = ScriptedUploader::new([Err(ArchiveClientError::Unavailable {
         reason: "archive unavailable".to_string(),
     })]);
-    let relaunch_report = run_archive_cycle(
+    let relaunch_report = support::capture_and_upload(
         &unavailable,
         &mut relaunched,
         &keys,
@@ -3307,7 +3315,7 @@ async fn current_new_only_authority_retains_excluded_pending() {
     )]);
     let uploader = AckingUploader::new();
 
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -3365,7 +3373,7 @@ async fn unreadable_excluded_directory_does_not_block_permitted_pending() {
     ]);
     let uploader =
         PermissionRestoringUploader::new(excluded_dir.clone(), original_permissions.clone());
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -3414,7 +3422,7 @@ async fn deferred_oversized_snapshot_makes_bounded_progress() {
     });
     let uploader = AckingUploader::new();
 
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -3468,7 +3476,7 @@ async fn invalid_source_state_does_not_block_another_source() {
     .with_failed_sources(vec![ArchiveSource::Claude]);
     let uploader = AckingUploader::new();
 
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -3510,7 +3518,7 @@ async fn ambiguous_new_only_exclusion_is_reported_without_operational_failure() 
     let plan = ArchiveHistoryPlan::new(vec![state])
         .with_ambiguous_excluded(vec![(ArchiveSource::Codex, 2)]);
 
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &AckingUploader::new(),
         &mut spool,
         &keys,
@@ -3551,7 +3559,7 @@ async fn upload_selection_is_stable_after_live_first_capture() {
     )]);
     let uploader = AckingUploader::new();
 
-    run_archive_cycle(
+    support::capture_and_upload(
         &uploader,
         &mut spool,
         &keys,
@@ -3625,7 +3633,7 @@ async fn missing_baseline_stays_in_progress() {
         "missing-session",
     );
     let plan = ArchiveHistoryPlan::new(vec![state]);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &AckingUploader::new(),
         &mut spool,
         &keys,
@@ -3679,7 +3687,7 @@ async fn acknowledgement_of_complete_records_finishes_a_partial_tail_target() {
         target.source_session_id.clone(),
         target.source_transcript_part_id.clone(),
     )]);
-    let report = run_archive_cycle(
+    let report = support::capture_and_upload(
         &AckingUploader::new(),
         &mut spool,
         &keys,

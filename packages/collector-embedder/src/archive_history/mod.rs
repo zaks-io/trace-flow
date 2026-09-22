@@ -1,3 +1,4 @@
+mod compressed;
 mod copies;
 mod identity;
 mod identity_cache;
@@ -19,7 +20,7 @@ use collector_archive_sync::{
     ARCHIVE_HISTORY_STATE_VERSION,
 };
 use collector_contracts::AgentSource;
-use collector_sync::{walk_transcripts, DISCOVERY_INCOMPLETE};
+use collector_sync::{walk_archive_files, DISCOVERY_INCOMPLETE};
 use sha2::{Digest, Sha256};
 
 use crate::sources::SourceHomes;
@@ -34,6 +35,7 @@ pub struct PreparedArchiveHistory {
     pub plan: ArchiveHistoryPlan,
     pub snapshots: Vec<ArchiveSnapshot>,
     pub errors: Vec<String>,
+    decoded_sources: Vec<std::sync::Arc<tempfile::TempPath>>,
 }
 
 #[cfg(test)]
@@ -105,7 +107,9 @@ fn prepare_configured_with_verification(
     let mut present_parts = Vec::new();
     let mut failed_sources = Vec::new();
     let mut ambiguous_excluded = Vec::new();
+    let mut discovery_errors = Vec::new();
     for authorization in authorizations {
+        let prior_errors = prepared.errors.len();
         let candidates = discover(
             source_homes,
             spool,
@@ -113,6 +117,10 @@ fn prepare_configured_with_verification(
             &mut prepared.errors,
             verification,
         );
+        discovery_errors.push((
+            authorization.source,
+            (prepared.errors.len() - prior_errors) as u32,
+        ));
         if authorization.history_choice == ArchiveHistoryChoice::NewOnly {
             let ambiguous_sessions: HashSet<_> = candidates
                 .iter()
@@ -231,7 +239,8 @@ fn prepare_configured_with_verification(
         .with_live_sessions(live_sessions)
         .with_present_part_extents(present_parts)
         .with_failed_sources(failed_sources)
-        .with_ambiguous_excluded(ambiguous_excluded);
+        .with_ambiguous_excluded(ambiguous_excluded)
+        .with_discovery_errors(discovery_errors);
     prepared
 }
 
@@ -266,11 +275,28 @@ fn discover(
     let mut remembered_provenances = HashSet::new();
     let mut skipped_errors = 0usize;
     for root in source_homes.roots(agent_source) {
-        let walk = walk_transcripts(&root);
+        let walk = walk_archive_files(&root, agent_source);
         skipped_errors += walk.skipped_errors;
         let namespace = source_home_namespace(&root);
         for file in walk.files {
-            let relative = Path::new(&file.path)
+            let original_path = Path::new(&file.path);
+            let compressed = source == ArchiveSource::Codex && file.path.ends_with(".jsonl.zst");
+            let logical_path = if compressed {
+                original_path.with_extension("")
+            } else {
+                original_path.to_path_buf()
+            };
+            if compressed {
+                match logical_path.try_exists() {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(_) => {
+                        errors.push("archive_io".to_string());
+                        continue;
+                    }
+                }
+            }
+            let relative = logical_path
                 .strip_prefix(&root)
                 .unwrap_or_else(|_| Path::new(&file.path))
                 .to_string_lossy()
@@ -279,13 +305,18 @@ fn discover(
             let was_remembered = spool
                 .source_identity(source, &provenance)
                 .is_ok_and(|identity| identity.is_some());
-            match identify_remembered(
-                spool,
-                source,
-                &file.path,
-                provenance,
-                verification.includes(Path::new(&file.path)),
-            ) {
+            let identified = if compressed {
+                compressed::identify_compressed(spool, original_path, provenance)
+            } else {
+                identify_remembered(
+                    spool,
+                    source,
+                    &file.path,
+                    provenance,
+                    verification.includes(original_path),
+                )
+            };
+            match identified {
                 Ok(candidate) => {
                     if was_remembered {
                         remembered_provenances.insert(candidate.provenance.clone());
@@ -332,9 +363,6 @@ fn discover(
                 Some(index) => lineages[index].copies.push(candidate.path),
                 None => lineages.push(candidate),
             }
-        }
-        if lineages.len() > 1 {
-            errors.push("archive_history_divergent_copy".to_string());
         }
         if !assign_lineage_parts(
             spool,
@@ -542,7 +570,7 @@ fn append_snapshots(
             candidate.complete_extent == checkpoint.last_complete_byte_offset
                 && candidate.size == checkpoint.observed_file_size
         }) {
-            if !verification.includes(&candidate.path) {
+            if !verification.includes(&candidate.source_path) {
                 continue;
             }
             match prefix_matches_checkpoint(
@@ -587,7 +615,11 @@ fn append_snapshots(
         } else {
             state.rank_of_session(&candidate.session)
         };
+        if let Some(decoded) = &candidate.decoded {
+            prepared.decoded_sources.push(decoded.clone());
+        }
         prepared.snapshots.push(ArchiveSnapshot {
+            relative_path: candidate.relative_path,
             source: candidate.source,
             source_session_id: candidate.session,
             base_transcript_part_id: base_part,

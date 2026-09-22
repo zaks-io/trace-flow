@@ -22,6 +22,7 @@ fn plan() -> ArchiveHistoryPlan {
 
 fn snapshot(bytes: &[u8]) -> ArchiveSnapshot {
     ArchiveSnapshot {
+        relative_path: None,
         source: ArchiveSource::Codex,
         source_session_id: "bytes-session".into(),
         base_transcript_part_id: default_transcript_part_id(ArchiveSource::Codex),
@@ -315,6 +316,7 @@ fn acknowledged_rewrite_cannot_hide_an_uncaptured_deleted_tail() {
 
 fn receipt(body: &[u8], upload: &serde_json::Value) -> ArchiveAcknowledgement {
     ArchiveAcknowledgement {
+        relative_path: None,
         status: "acknowledged".into(),
         duplicate: false,
         source: ArchiveSource::Codex,

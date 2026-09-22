@@ -159,10 +159,7 @@ fn codex_roots_dedupe_prefixes_and_preserve_divergence() {
         divergent.snapshots[0].source_transcript_part_id,
         divergent.snapshots[1].source_transcript_part_id
     );
-    assert!(divergent
-        .errors
-        .iter()
-        .any(|error| error == "archive_history_divergent_copy"));
+    assert!(divergent.errors.is_empty());
     assert!(home
         .path()
         .join(".codex/archived_sessions/copy.jsonl")
@@ -208,10 +205,7 @@ fn divergent_copies_in_three_agent_homes_get_distinct_lineages() {
 
     assert_eq!(prepared.snapshots.len(), 3);
     assert_eq!(parts.len(), 3);
-    assert!(prepared
-        .errors
-        .iter()
-        .any(|error| error == "archive_history_divergent_copy"));
+    assert!(prepared.errors.is_empty());
 }
 
 #[test]

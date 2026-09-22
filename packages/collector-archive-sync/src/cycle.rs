@@ -3,13 +3,7 @@ use std::path::PathBuf;
 use collector_archive::ArchiveSource;
 use tokio_util::sync::CancellationToken;
 
-use std::collections::HashSet;
-
-use crate::capture::{
-    apply_archive_upload_response, persist_snapshot, prepare_next_archive_upload_excluding,
-    send_prepared_archive_upload, UploadOutcome,
-};
-use crate::client::ArchiveUploader;
+use crate::capture::persist_snapshot;
 use crate::history::{history_reports, ordered_part_work, ArchiveHistoryPlan, ArchiveWorkClass};
 use crate::key_store::ArchiveKeyStore;
 use crate::policy::ArchivePolicy;
@@ -17,6 +11,7 @@ use crate::spool::ArchiveSpool;
 
 #[derive(Debug, Clone)]
 pub struct ArchiveSnapshot {
+    pub relative_path: Option<String>,
     pub source: ArchiveSource,
     pub source_session_id: String,
     pub base_transcript_part_id: String,
@@ -142,75 +137,6 @@ pub fn capture_archive_snapshots(
 ) -> ArchiveCycleReport {
     let mut report =
         capture_archive_snapshots_inner(spool, key_store, snapshots, policy, plan, now_ms, cancel);
-    populate_history_report(spool, snapshots, plan, &mut report);
-    report
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn run_archive_cycle<U: ArchiveUploader>(
-    uploader: &U,
-    spool: &mut ArchiveSpool,
-    key_store: &dyn ArchiveKeyStore,
-    snapshots: &[ArchiveSnapshot],
-    policy: ArchivePolicy,
-    plan: &ArchiveHistoryPlan,
-    now_ms: i64,
-    cancel: Option<&CancellationToken>,
-) -> ArchiveCycleReport {
-    let mut report =
-        capture_archive_snapshots_inner(spool, key_store, snapshots, policy, plan, now_ms, cancel);
-    if report.purged || report.halted || !policy.uploads() {
-        populate_history_report(spool, snapshots, plan, &mut report);
-        return report;
-    }
-
-    let mut attempted = HashSet::new();
-    loop {
-        if cancel.is_some_and(CancellationToken::is_cancelled) {
-            break;
-        }
-        let prepared = match prepare_next_archive_upload_excluding(spool, plan, policy, &attempted)
-        {
-            Ok(Some(prepared)) => prepared,
-            Ok(None) => break,
-            Err(class) => {
-                report.failed += 1;
-                record_error(&mut report, class);
-                break;
-            }
-        };
-        let prepared_id = prepared.id();
-        let response = send_prepared_archive_upload(uploader, &prepared, cancel).await;
-        match apply_archive_upload_response(spool, key_store, &prepared, response) {
-            Ok(UploadOutcome::Advanced) => report.uploaded += 1,
-            Ok(UploadOutcome::Blocked) => {
-                report.blocked += 1;
-                attempted.insert(prepared_id);
-            }
-            Ok(UploadOutcome::Frozen) => {
-                report.frozen = true;
-                break;
-            }
-            Ok(UploadOutcome::Purged) => {
-                report.purged = true;
-                break;
-            }
-            Ok(UploadOutcome::Halt(class)) => {
-                report.failed += 1;
-                record_error(&mut report, class);
-                report.halted = true;
-                break;
-            }
-            Err(class) => {
-                report.failed += 1;
-                if class == "archive_record_too_large" {
-                    report.blocked += 1;
-                }
-                record_error(&mut report, class);
-                attempted.insert(prepared_id);
-            }
-        }
-    }
     populate_history_report(spool, snapshots, plan, &mut report);
     report
 }

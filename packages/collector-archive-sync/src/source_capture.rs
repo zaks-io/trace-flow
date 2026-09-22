@@ -136,6 +136,7 @@ fn capture<R: Read + Seek>(
                         None,
                     )?;
                     let pending = pending_from_byte_scan(scan)?
+                        .with_relative_path(snapshot.relative_path.as_deref())?
                         .with_capture_metadata(authorization, predecessor);
                     spool.persist_slice(&pending)?;
                     report.captured += 1;
@@ -156,6 +157,7 @@ fn capture<R: Read + Seek>(
                             .as_ref()
                             .map_or(0, |p| p.last_complete_byte_offset);
                     let pending = pending_from_byte_scan(scan)?
+                        .with_relative_path(snapshot.relative_path.as_deref())?
                         .with_capture_metadata(authorization, predecessor.clone());
                     spool.persist_slice(&pending)?;
                     report.captured += 1;

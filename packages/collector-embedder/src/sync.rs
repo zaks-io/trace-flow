@@ -29,11 +29,11 @@ use anyhow::{Context, Result};
 use collector_api_client::{CollectorApiClient, CollectorApiClientConfig};
 use collector_archive_sync::{
     apply_archive_upload_response, capture_archive_snapshots, finish_terminal_cleanup,
-    prepare_archive_spool, prepare_next_archive_upload_excluding, run_archive_cycle,
-    send_prepared_archive_upload, ArchiveAuthorizedSource, ArchiveClient, ArchiveClientConfig,
-    ArchiveClientError, ArchiveCycleReport, ArchiveEnrollmentRecord, ArchiveHistoryGeneration,
-    ArchiveHistoryPlan, ArchiveSnapshot, ArchiveSyncError, ArchiveUploadResponse, OsKeyStore,
-    PreparedArchiveUpload, UploadOutcome, ARCHIVE_HISTORY_STATE_VERSION,
+    prepare_archive_spool, prepare_next_archive_upload_excluding, send_prepared_archive_upload,
+    ArchiveAuthorizedSource, ArchiveClient, ArchiveClientConfig, ArchiveClientError,
+    ArchiveCycleReport, ArchiveEnrollmentRecord, ArchiveHistoryGeneration, ArchiveHistoryPlan,
+    ArchiveSyncError, ArchiveUploadResponse, OsKeyStore, PreparedArchiveUpload, UploadOutcome,
+    ARCHIVE_HISTORY_STATE_VERSION,
 };
 
 pub use collector_archive_sync::{
@@ -134,7 +134,6 @@ pub struct RunConfig<'a> {
     /// batch id reads as `cli-<n>` / `desktop-<n>` for audit. Not security-relevant.
     pub batch_id_prefix: &'a str,
     /// Present only when local Archive enrollment is not inactive. CLI leaves this `None`.
-    pub archive: Option<ArchiveRunConfig>,
     /// Test seam for the state directory. Production embedders leave this `None` and use [`Paths`].
     pub state_dir: Option<&'a Path>,
 }
@@ -145,7 +144,6 @@ pub struct SyncRunOutcome {
     pub reports: Vec<(AgentSource, SourceReport)>,
     pub discovery_passes: usize,
     pub files_read: usize,
-    pub archive: Option<ArchiveCycleReport>,
 }
 
 /// Load Archive run inputs from the non-secret enrollment file. Missing/inactive means no spool.
@@ -340,56 +338,6 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
         format!("{prefix}-{batch_seq}")
     };
 
-    let history = if let Some(archive_cfg) = &cfg.archive {
-        if archive_cfg.policy.captures() {
-            match open_spool_for_policy(archive_cfg, cfg.org_id) {
-                Ok(Some(spool)) => prepare_archive_history(
-                    source_homes,
-                    &spool,
-                    &archive_cfg.authorized_sources,
-                    cfg.now_ms,
-                ),
-                Ok(None) => Default::default(),
-                Err(class) => {
-                    let mut history = crate::archive_history::PreparedArchiveHistory::default();
-                    history.errors.push(class.to_string());
-                    history.plan = ArchiveHistoryPlan::default().with_failed_sources(
-                        archive_cfg
-                            .authorized_sources
-                            .iter()
-                            .map(|authorization| authorization.source)
-                            .collect(),
-                    );
-                    history
-                }
-            }
-        } else {
-            Default::default()
-        }
-    } else {
-        Default::default()
-    };
-    let mut archive = if let Some(archive_cfg) = &cfg.archive {
-        let mut report = run_archive_work(
-            archive_cfg,
-            cfg.org_id,
-            &cfg.credential,
-            &history.snapshots,
-            &history.plan,
-            cfg.now_ms,
-        )
-        .await;
-        for class in &history.errors {
-            report.failed += 1;
-            if report.first_error.is_none() {
-                report.first_error = Some(class.clone());
-            }
-        }
-        Some(report)
-    } else {
-        None
-    };
-
     let mut discovery_passes = 0usize;
     let mut files_read = 0usize;
     let mut reports = Vec::new();
@@ -431,8 +379,6 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
         }
     }
 
-    apply_archive_policy_after_cycle(cfg.archive.as_ref(), cfg.org_id, archive.as_mut(), &reports);
-
     let complete = reports.iter().all(|(_, report)| report.is_complete());
     if complete {
         store.mark_parser_version(PARSER_VERSION)?;
@@ -452,7 +398,6 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
         reports,
         discovery_passes,
         files_read,
-        archive,
     })
 }
 
@@ -498,120 +443,14 @@ async fn apply_fact_cycle(
     Ok(())
 }
 
+#[cfg(test)]
 fn ingest_denial_reason(first_error: &Option<String>) -> Option<&str> {
     first_error.as_deref()?.strip_prefix("unauthorized: ")
-}
-
-fn apply_archive_policy_after_cycle(
-    archive_cfg: Option<&ArchiveRunConfig>,
-    org_id: &str,
-    archive: Option<&mut ArchiveCycleReport>,
-    reports: &[(AgentSource, SourceReport)],
-) {
-    let Some(archive_cfg) = archive_cfg else {
-        return;
-    };
-    let archive_purged = archive.as_ref().is_some_and(|report| report.purged);
-    // Terminal revocation from fact ingest always purges, including after Frozen/Grace
-    // retention. Those states only retain for frozen/expired/grace denials, not for
-    // credential_revoked / enrollment_invalid / deleting / revoked.
-    let fact_revoked = reports.iter().any(|(_, report)| {
-        matches!(
-            ingest_denial_reason(&report.first_error),
-            Some("credential_revoked" | "enrollment_invalid" | "deleting" | "revoked")
-        )
-    });
-    let archive_halted = archive.as_ref().is_some_and(|report| report.halted);
-    if archive_purged || fact_revoked || archive_halted {
-        match finish_all_terminal_cleanup(archive_cfg, org_id) {
-            Ok(()) => {
-                if let Some(report) = archive {
-                    report.purged = true;
-                }
-            }
-            Err(err) => {
-                if let Some(report) = archive {
-                    report.purged = false;
-                    report.failed += 1;
-                    if report.first_error.is_none() {
-                        report.first_error = Some(err.class().to_string());
-                    }
-                }
-            }
-        }
-        return;
-    }
-    if archive.as_ref().is_some_and(|report| report.frozen) {
-        if let Ok(mut record) = ArchiveEnrollmentRecord::load_record(&archive_cfg.enrollment_path) {
-            record.status = ArchivePolicy::Frozen.as_str().to_string();
-            let _ = record.save_record(&archive_cfg.enrollment_path);
-        }
-    }
 }
 
 #[cfg(test)]
 fn is_unauthorized(first_error: &Option<String>) -> bool {
     ingest_denial_reason(first_error).is_some()
-}
-
-async fn run_archive_work(
-    archive: &ArchiveRunConfig,
-    org_id: &str,
-    credential: &str,
-    snapshots: &[ArchiveSnapshot],
-    plan: &ArchiveHistoryPlan,
-    now_ms: i64,
-) -> ArchiveCycleReport {
-    if archive.policy.purges() || cleanup_obligation_exists(&archive.spool_dir) {
-        let mut report = ArchiveCycleReport::default();
-        match finish_all_terminal_cleanup(archive, org_id) {
-            Ok(()) => report.purged = true,
-            Err(err) => {
-                report.failed = 1;
-                report.first_error = Some(err.class().to_string());
-            }
-        }
-        return report;
-    }
-
-    let mut spool = match open_spool_for_policy(archive, org_id) {
-        Ok(Some(spool)) => spool,
-        Ok(None) => return ArchiveCycleReport::default(),
-        Err(class) => {
-            return ArchiveCycleReport {
-                failed: 1,
-                first_error: Some(class.to_string()),
-                ..ArchiveCycleReport::default()
-            };
-        }
-    };
-    spool.set_enrollment_path(archive.enrollment_path.clone());
-
-    let uploader = match ArchiveClient::new(ArchiveClientConfig::new(
-        archive.archive_url.clone(),
-        credential.to_string(),
-    )) {
-        Ok(client) => client,
-        Err(_) => {
-            return ArchiveCycleReport {
-                failed: 1,
-                first_error: Some("archive_client".to_string()),
-                ..ArchiveCycleReport::default()
-            };
-        }
-    };
-
-    run_archive_cycle(
-        &uploader,
-        &mut spool,
-        archive.key_store.as_ref(),
-        snapshots,
-        archive.policy,
-        plan,
-        now_ms,
-        None,
-    )
-    .await
 }
 
 fn open_spool_for_policy(
@@ -1221,13 +1060,79 @@ mod tests {
         }
     }
 
+    struct TestRunOutcome {
+        reports: Vec<(AgentSource, SourceReport)>,
+        discovery_passes: usize,
+        files_read: usize,
+        archive: Option<ArchiveCycleReport>,
+    }
+
     async fn run_with_servers(
         home: &Path,
         state: &Path,
         ingest_url: String,
         archive: Option<ArchiveRunConfig>,
-    ) -> SyncRunOutcome {
-        run_detailed(RunConfig {
+    ) -> TestRunOutcome {
+        let now_ms = 1_779_840_000_000;
+        let mut archive_report = archive.as_ref().map(|config| {
+            capture_archive_local(config, "org_1", &SourceHomes::standard(home), now_ms)
+        });
+        if let (Some(config), Some(report)) = (&archive, &mut archive_report) {
+            if !report.purged && config.policy.uploads() {
+                let mut attempted = HashSet::new();
+                loop {
+                    let prepared = match prepare_archive_upload(config, "org_1", &attempted) {
+                        Ok(Some(prepared)) => prepared,
+                        Ok(None) => break,
+                        Err(class) => {
+                            report.failed += 1;
+                            report.first_error.get_or_insert(class.to_string());
+                            break;
+                        }
+                    };
+                    let response = send_archive_upload(
+                        config.archive_url.clone(),
+                        "tfc_secret".to_string(),
+                        &prepared,
+                    )
+                    .await;
+                    match apply_archive_upload(config, "org_1", &prepared, response) {
+                        Ok(UploadOutcome::Advanced) => report.uploaded += 1,
+                        Ok(UploadOutcome::Blocked) => {
+                            report.blocked += 1;
+                            attempted.insert(prepared.id());
+                        }
+                        Ok(UploadOutcome::Frozen) => {
+                            report.frozen = true;
+                            break;
+                        }
+                        Ok(UploadOutcome::Purged) => {
+                            report.purged = true;
+                            break;
+                        }
+                        Ok(UploadOutcome::Halt(class)) => {
+                            report.halted = true;
+                            report.failed += 1;
+                            report.first_error.get_or_insert(class.to_string());
+                            break;
+                        }
+                        Err(class) => {
+                            report.failed += 1;
+                            report.first_error.get_or_insert(class.to_string());
+                            attempted.insert(prepared.id());
+                        }
+                    }
+                }
+            }
+        }
+        if let (Some(config), Some(report)) = (&archive, &mut archive_report) {
+            if !report.purged && !report.halted && !report.frozen {
+                report.history =
+                    capture_archive_local(config, "org_1", &SourceHomes::standard(home), now_ms)
+                        .history;
+            }
+        }
+        let facts = run_detailed(RunConfig {
             ingest_url,
             credential: "tfc_secret".to_string(),
             org_id: "org_1",
@@ -1235,13 +1140,18 @@ mod tests {
             source_homes: None,
             window: Window::Incremental,
             replay: false,
-            now_ms: 1_779_840_000_000,
+            now_ms,
             batch_id_prefix: "test",
-            archive,
             state_dir: Some(state),
         })
         .await
-        .unwrap()
+        .unwrap();
+        TestRunOutcome {
+            reports: facts.reports,
+            discovery_passes: facts.discovery_passes,
+            files_read: facts.files_read,
+            archive: archive_report,
+        }
     }
 
     fn last_complete_sync_at_ms(state: &Path) -> Option<i64> {
@@ -1273,7 +1183,6 @@ mod tests {
             replay,
             now_ms,
             batch_id_prefix: "test",
-            archive: None,
             state_dir: Some(state),
         })
         .await
@@ -1281,7 +1190,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn one_traversal_feeds_archive_and_facts() {
+    async fn independent_capture_and_fact_sync_both_ingest_sources() {
         let home = tempfile::TempDir::new().unwrap();
         let state = tempfile::TempDir::new().unwrap();
         write_home_transcripts(home.path());
@@ -2030,32 +1939,29 @@ mod tests {
         assert_eq!(after, before);
     }
 
-    #[test]
-    fn after_cycle_freeze_preserves_source_authorization_metadata() {
+    #[tokio::test]
+    async fn policy_refresh_freeze_preserves_source_authorization_metadata() {
         let state = tempfile::TempDir::new().unwrap();
-        let enrollment_path = state.path().join("archive-enrollment-org_1.json");
+        let paths = Paths::at(state.path().to_path_buf());
+        let enrollment_path = paths.archive_enrollment_file("org_1");
         let original = ArchiveEnrollmentRecord {
             status: ArchivePolicy::Enrolled.as_str().to_string(),
-            collector_id: None,
+            collector_id: Some("collector".to_string()),
             authorized_sources: vec![authorization(ArchiveSource::Claude)],
             reason: None,
         };
         original.save_record(&enrollment_path).unwrap();
-        let archive = ArchiveRunConfig {
-            archive_url: "http://127.0.0.1:1".to_string(),
-            spool_dir: state.path().join("archive-spool-org_1"),
-            enrollment_path: enrollment_path.clone(),
-            key_store: Arc::new(MemoryKeyStore::new()),
-            policy: ArchivePolicy::Enrolled,
-            authorized_sources: original.authorized_sources.clone(),
-        };
-        let mut report = ArchiveCycleReport {
-            frozen: true,
-            ..ArchiveCycleReport::default()
-        };
-
-        apply_archive_policy_after_cycle(Some(&archive), "org_1", Some(&mut report), &[]);
-
+        let endpoint =
+            spawn_http(|_| raw_response(401, "Unauthorized", r#"{"reason":"expired"}"#)).await;
+        crate::archive_policy::refresh_archive_policy(
+            &paths,
+            "org_1",
+            "collector",
+            endpoint,
+            "tfc_secret",
+        )
+        .await
+        .unwrap();
         let persisted = ArchiveEnrollmentRecord::load_record(&enrollment_path).unwrap();
         assert_eq!(persisted.policy().unwrap(), ArchivePolicy::Frozen);
         assert_eq!(persisted.authorized_sources, original.authorized_sources);
@@ -2114,7 +2020,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unauthorized_fact_ingest_purges_archive_state() {
+    async fn fact_denial_leaves_archive_policy_to_scheduler() {
         let home = tempfile::TempDir::new().unwrap();
         let state = tempfile::TempDir::new().unwrap();
         write_home_transcripts(home.path());
@@ -2155,16 +2061,16 @@ mod tests {
             .reports
             .iter()
             .any(|(_, report)| is_unauthorized(&report.first_error)));
-        assert!(keys.load("org_1").unwrap().is_none());
-        assert!(!spool_dir.exists());
+        assert!(keys.load("org_1").unwrap().is_some());
+        assert!(spool_dir.exists());
         assert_eq!(
             ArchiveEnrollmentRecord::load(&enrollment_path).unwrap(),
-            ArchivePolicy::Revoked
+            ArchivePolicy::Enrolled
         );
     }
 
     #[tokio::test]
-    async fn frozen_enrollment_still_purges_on_fact_credential_revoked() {
+    async fn fact_denial_preserves_frozen_archive_until_policy_refresh() {
         let home = tempfile::TempDir::new().unwrap();
         let state = tempfile::TempDir::new().unwrap();
         write_home_transcripts(home.path());
@@ -2205,11 +2111,11 @@ mod tests {
             .reports
             .iter()
             .any(|(_, report)| is_unauthorized(&report.first_error)));
-        assert!(keys.load("org_1").unwrap().is_none());
-        assert!(!spool_dir.exists());
+        assert!(keys.load("org_1").unwrap().is_some());
+        assert!(spool_dir.exists());
         assert_eq!(
             ArchiveEnrollmentRecord::load(&enrollment_path).unwrap(),
-            ArchivePolicy::Revoked
+            ArchivePolicy::Frozen
         );
     }
 

@@ -63,6 +63,7 @@ pub struct ArchiveHistoryPlan {
     present_parts: Vec<PresentPart>,
     failed_sources: Vec<ArchiveSource>,
     ambiguous_excluded: Vec<(ArchiveSource, u32)>,
+    discovery_errors: Vec<(ArchiveSource, u32)>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,7 +82,20 @@ impl ArchiveHistoryPlan {
             present_parts: Vec::new(),
             failed_sources: Vec::new(),
             ambiguous_excluded: Vec::new(),
+            discovery_errors: Vec::new(),
         }
+    }
+
+    pub fn with_discovery_errors(mut self, errors: Vec<(ArchiveSource, u32)>) -> Self {
+        self.discovery_errors = errors;
+        self
+    }
+
+    pub fn discovery_errors(&self, source: ArchiveSource) -> u32 {
+        self.discovery_errors
+            .iter()
+            .find(|(s, _)| *s == source)
+            .map_or(0, |(_, count)| *count)
     }
 
     pub fn with_failed_sources(mut self, failed_sources: Vec<ArchiveSource>) -> Self {

@@ -120,6 +120,26 @@ impl PendingArchiveRequest {
         }
     }
 
+    pub fn with_relative_path(mut self, relative_path: Option<&str>) -> ArchiveSyncResult<Self> {
+        if let Some(path) = relative_path {
+            let name = path
+                .strip_prefix("tool-results/")
+                .ok_or(ArchiveSyncError::InvalidSession)?;
+            if self.source != ArchiveSource::Claude
+                || name.is_empty()
+                || name == "."
+                || name == ".."
+                || name.contains(['/', '\\', '\0'])
+            {
+                return Err(ArchiveSyncError::InvalidSession);
+            }
+            let mut body: serde_json::Value = serde_json::from_slice(&self.body)?;
+            body["relative_path"] = serde_json::Value::String(path.to_string());
+            self.body = serde_json::to_vec(&body)?;
+        }
+        Ok(self)
+    }
+
     pub fn with_capture_metadata(
         mut self,
         capture_authorization: PendingCaptureAuthorization,
@@ -264,6 +284,13 @@ impl ArchiveSpool {
     pub fn debug_fail_next_ack_scratch_rename(&self) {
         self.fail_next_ack_scratch_rename
             .store(true, Ordering::SeqCst);
+    }
+
+    pub fn scratch_dir(&self) -> PathBuf {
+        // Decoded source files are temporary inputs, outside the encrypted pending-byte budget.
+        let mut path = self.root.as_os_str().to_os_string();
+        path.push(".scratch");
+        PathBuf::from(path)
     }
 
     pub fn set_enrollment_path(&mut self, path: impl Into<PathBuf>) {

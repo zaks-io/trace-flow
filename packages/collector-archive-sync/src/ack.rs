@@ -5,6 +5,8 @@ use crate::spool::PendingArchiveRequest;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ArchiveAcknowledgement {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relative_path: Option<String>,
     #[serde(default)]
     pub request_sha256: Option<String>,
     #[serde(default)]
@@ -61,6 +63,9 @@ pub fn acknowledgement_matches(
         Err(_) => return counts_match(pending, ack),
     };
     if body["checkpoint"]["archive_format_version"].as_u64() == Some(2) {
+        if ack.relative_path.as_deref() != body["relative_path"].as_str() {
+            return false;
+        }
         return ack.request_sha256.as_deref()
             == Some(
                 collector_archive::sha256(&pending.body)
@@ -117,6 +122,7 @@ mod tests {
 
     fn ack() -> ArchiveAcknowledgement {
         ArchiveAcknowledgement {
+            relative_path: None,
             request_sha256: None,
             captured_byte_offset: None,
             captured_prefix_sha256: None,
@@ -208,6 +214,7 @@ mod tests {
             body: b"{}".to_vec(),
         };
         let ack = ArchiveAcknowledgement {
+            relative_path: None,
             request_sha256: None,
             captured_byte_offset: None,
             captured_prefix_sha256: None,

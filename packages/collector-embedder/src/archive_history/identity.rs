@@ -13,6 +13,9 @@ use super::window::read_identity_window;
 #[derive(Debug, Clone)]
 pub(super) struct Candidate {
     pub path: PathBuf,
+    pub source_path: PathBuf,
+    pub decoded: Option<std::sync::Arc<tempfile::TempPath>>,
+    pub relative_path: Option<String>,
     pub source: ArchiveSource,
     pub session: String,
     pub part: String,
@@ -34,7 +37,21 @@ pub(super) fn identify(
     provenance: String,
 ) -> Result<Candidate, &'static str> {
     let path_buf = PathBuf::from(path);
-    let bytes = read_identity_window(&path_buf).map_err(|_| "archive_io")?;
+    let parent = (source == ArchiveSource::Claude)
+        .then(|| collector_sync::tool_result_parent(&path_buf))
+        .flatten();
+    let bytes =
+        read_identity_window(parent.as_deref().unwrap_or(&path_buf)).map_err(|_| "archive_io")?;
+    let relative_path = parent
+        .as_ref()
+        .map(|_| {
+            path_buf
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| format!("tool-results/{name}"))
+                .ok_or("invalid_archive_session")
+        })
+        .transpose()?;
     let records = parse_jsonl_records(&bytes);
     let session = archive_source_session_id_from_records(source, &records);
     let part = session
@@ -43,9 +60,17 @@ pub(super) fn identify(
         .and_then(|_| transcript_part_for_records(source, Some(path), &records).ok());
     let started_at = source_started_at(source, &records);
     let session = session.map_err(|_| "invalid_archive_session")?;
-    let part = part.ok_or("invalid_archive_session")?;
+    let part = if let Some(relative) = &relative_path {
+        collector_archive::claude_transcript_part_id(relative)
+            .map_err(|_| "invalid_archive_session")?
+    } else {
+        part.ok_or("invalid_archive_session")?
+    };
     Ok(Candidate {
+        source_path: path_buf.clone(),
         path: path_buf,
+        decoded: None,
+        relative_path: relative_path.clone(),
         source,
         session,
         part,
@@ -56,7 +81,9 @@ pub(super) fn identify(
         provenance,
         copies: Vec::new(),
         file_identity: None,
-        identity_prefix: Some((bytes.len() as u64, collector_archive::sha256(&bytes))),
+        identity_prefix: relative_path
+            .is_none()
+            .then(|| (bytes.len() as u64, collector_archive::sha256(&bytes))),
     })
 }
 

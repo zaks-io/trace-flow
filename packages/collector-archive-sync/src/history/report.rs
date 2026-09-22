@@ -135,7 +135,9 @@ pub(crate) fn history_reports(
             }
             ArchiveSourceHistoryReport {
                 source: state.generation.source,
-                initial_import: if completed == state.targets().len() as u32 {
+                initial_import: if completed == state.targets().len() as u32
+                    && plan.discovery_errors(state.generation.source) == 0
+                {
                     ArchiveInitialImport::Complete
                 } else {
                     ArchiveInitialImport::InProgress
