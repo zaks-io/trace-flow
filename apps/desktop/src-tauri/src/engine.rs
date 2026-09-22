@@ -1152,7 +1152,7 @@ mod archive_engine_tests {
             collector_id: collector_id.to_string(),
             convex_url: "https://example.convex.cloud".to_string(),
             ingest_url: "https://ingest.example".to_string(),
-            expires_at: 1_800_000_000_000,
+            expires_at: None,
         }
     }
 

@@ -6,7 +6,11 @@ import { api } from '@trace-flow/convex/_generated/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import type { ArchiveHistoryChoice, ArchiveSource } from './archiveSetupModel';
+import {
+  collectorCredentialLifetimeLabel,
+  type ArchiveHistoryChoice,
+  type ArchiveSource,
+} from './archiveSetupModel';
 
 interface ArchiveSetupProps {
   preloadedStatus: Preloaded<typeof api.archive.getStatus>;
@@ -90,6 +94,11 @@ export function ArchiveSetup({ preloadedStatus, preloadedCollectors }: ArchiveSe
                       <p className="font-medium">{credential?.name || 'Trace Flow Desktop'}</p>
                       {credential?.platform && (
                         <p className="text-sm text-muted-foreground">{credential.platform}</p>
+                      )}
+                      {credential && (
+                        <p className="text-sm text-muted-foreground">
+                          {collectorCredentialLifetimeLabel(credential.expiresAt)}
+                        </p>
                       )}
                     </div>
                     <Badge>Enrolled</Badge>

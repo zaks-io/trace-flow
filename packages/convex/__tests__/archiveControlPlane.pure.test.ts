@@ -261,6 +261,7 @@ describe('archive control-plane pure functions', () => {
     expect(isCollectorCredentialExpired({ expiresAt: 10 }, 10)).toBe(true);
     expect(isCollectorCredentialExpired({ expiresAt: 10 }, 11)).toBe(true);
     expect(isCollectorCredentialExpired({ expiresAt: 10 }, 9)).toBe(false);
+    expect(isCollectorCredentialExpired({}, 10)).toBe(false);
   });
 
   it('treats exact versioned replays as no-ops and rejects stale or conflicting updates', () => {

@@ -442,7 +442,7 @@ export default defineSchema({
     platform: v.optional(v.string()),
     lastSeenAt: v.optional(v.number()),
     status: v.union(v.literal('active'), v.literal('revoked')),
-    expiresAt: v.number(),
+    expiresAt: v.optional(v.number()),
     revokedAt: v.optional(v.number()),
   })
     .index('by_org_id', ['orgId'])

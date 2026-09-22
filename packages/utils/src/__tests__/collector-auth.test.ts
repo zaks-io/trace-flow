@@ -38,7 +38,7 @@ async function validRecord(over: Record<string, unknown> = {}): Promise<Record<s
 }
 
 describe('isCollectorCredKvValue', () => {
-  it('rejects a missing expiresAt so expiration cannot be bypassed', () => {
+  it('accepts a credential without expiresAt', () => {
     expect(
       isCollectorCredKvValue({
         orgId: 'org-1',
@@ -46,7 +46,7 @@ describe('isCollectorCredKvValue', () => {
         collectorId: 'collector-1',
         status: 'active',
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 
@@ -77,6 +77,15 @@ describe('authenticateCollectorCredential', () => {
       logger(),
     );
     expect(result).toEqual({ ok: false, reason: 'expired' });
+  });
+
+  it('accepts an active credential without expiry', async () => {
+    const result = await authenticateCollectorCredential(
+      store(await validRecord({ expiresAt: undefined })),
+      SECRET,
+      logger(),
+    );
+    expect(result.ok).toBe(true);
   });
 
   it('rejects malformed KV JSON', async () => {

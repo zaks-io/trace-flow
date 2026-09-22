@@ -42,14 +42,6 @@ pub struct StatusDto {
     pub update: UpdateStatus,
 }
 
-fn now_ms() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
-
 fn home() -> Result<std::path::PathBuf, String> {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
@@ -97,8 +89,9 @@ pub fn connection_status(bus: State<'_, AppStateBus>) -> StatusDto {
     let (connected, org_id, credential_present, expired) = match conn {
         Some(c) => {
             let present = keychain::is_present(&c.org_id);
-            let expired = c.expires_at <= now_ms();
-            (true, Some(c.org_id), present, expired)
+            // Server-side revocation is authoritative. Legacy local expiry metadata must not block
+            // policy refresh after the credential has been migrated to valid-until-revoked.
+            (true, Some(c.org_id), present, false)
         }
         None => (false, None, false, false),
     };

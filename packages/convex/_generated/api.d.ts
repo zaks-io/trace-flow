@@ -1265,7 +1265,7 @@ export declare const api: {
         _creationTime: number;
         _id: Id<"collectorCredentials">;
         collectorId: string;
-        expiresAt: number;
+        expiresAt?: number;
         lastSeenAt?: number;
         name?: string;
         orgId: Id<"organizations">;
@@ -1283,7 +1283,7 @@ export declare const api: {
         _creationTime: number;
         _id: Id<"collectorCredentials">;
         collectorId: string;
-        expiresAt: number;
+        expiresAt?: number;
         lastSeenAt?: number;
         name?: string;
         orgId: Id<"organizations">;
@@ -1298,7 +1298,6 @@ export declare const api: {
       "public",
       {
         collectorId: string;
-        expiresAt: number;
         name?: string;
         platform?: string;
       },
@@ -3234,7 +3233,7 @@ export declare const internal: {
         _creationTime: number;
         _id: Id<"collectorCredentials">;
         collectorId: string;
-        expiresAt: number;
+        expiresAt?: number;
         hashedSecret: string;
         lastSeenAt?: number;
         name?: string;
@@ -3253,7 +3252,7 @@ export declare const internal: {
         _creationTime: number;
         _id: Id<"collectorCredentials">;
         collectorId: string;
-        expiresAt: number;
+        expiresAt?: number;
         hashedSecret: string;
         lastSeenAt?: number;
         name?: string;
@@ -3271,7 +3270,6 @@ export declare const internal: {
       "internal",
       {
         collectorId: string;
-        expiresAt: number;
         name?: string;
         platform?: string;
         userId: Id<"users">;
@@ -3500,7 +3498,7 @@ export declare const internal: {
             _creationTime: number;
             _id: Id<"collectorCredentials">;
             collectorId: string;
-            expiresAt: number;
+            expiresAt?: number;
             hashedSecret: string;
             lastSeenAt?: number;
             name?: string;
@@ -3577,7 +3575,7 @@ export declare const internal: {
         {
           collectorId: string;
           createdAt: number;
-          expiresAt: number;
+          expiresAt?: number;
           hashedSecret: string;
           orgId: string;
           retryCount?: number;
@@ -3856,6 +3854,14 @@ export declare const internal: {
         "internal",
         any,
         any
+      >;
+    };
+    removeCollectorCredentialExpiry: {
+      removeCollectorCredentialExpiry: FunctionReference<
+        "mutation",
+        "internal",
+        {},
+        { migrated: number; scanned: number }
       >;
     };
   };

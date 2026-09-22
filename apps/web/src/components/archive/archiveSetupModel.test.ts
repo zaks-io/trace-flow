@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Id } from '@trace-flow/convex/_generated/dataModel';
-import { isCollectorActivelyEnrolled } from './archiveSetupModel';
+import { collectorCredentialLifetimeLabel, isCollectorActivelyEnrolled } from './archiveSetupModel';
 
 describe('archive setup model', () => {
   it('matches only an active enrollment for the requested Collector Credential', () => {
@@ -27,5 +27,9 @@ describe('archive setup model', () => {
         requested,
       ),
     ).toBe(true);
+  });
+
+  it('labels credentials without expiry as valid until revoked', () => {
+    expect(collectorCredentialLifetimeLabel()).toBe('Until revoked');
   });
 });

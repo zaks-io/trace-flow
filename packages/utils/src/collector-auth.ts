@@ -18,7 +18,7 @@ export interface CollectorCredKvValue {
   orgId: string;
   userId: string;
   collectorId: string;
-  expiresAt: number;
+  expiresAt?: number;
   status: 'active' | 'revoked';
   createdAt: number;
 }
@@ -48,7 +48,7 @@ export function isCollectorCredKvValue(value: unknown): value is CollectorCredKv
     typeof v.orgId === 'string' &&
     typeof v.userId === 'string' &&
     typeof v.collectorId === 'string' &&
-    typeof v.expiresAt === 'number' &&
+    (v.expiresAt === undefined || typeof v.expiresAt === 'number') &&
     (v.status === 'active' || v.status === 'revoked')
   );
 }
@@ -95,7 +95,7 @@ export async function authenticateCollectorCredential(
     logger.warn(`${eventPrefix}.auth_rejected`, { reason: 'revoked' });
     return { ok: false, reason: 'revoked' };
   }
-  if (value.expiresAt <= Date.now()) {
+  if (value.expiresAt !== undefined && value.expiresAt <= Date.now()) {
     logger.warn(`${eventPrefix}.auth_rejected`, { reason: 'expired' });
     return { ok: false, reason: 'expired' };
   }

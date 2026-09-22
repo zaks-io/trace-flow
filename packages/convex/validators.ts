@@ -79,7 +79,7 @@ export const collectorCredentialValidator = v.object({
   platform: v.optional(v.string()),
   lastSeenAt: v.optional(v.number()),
   status: collectorCredentialStatusValidator,
-  expiresAt: v.number(),
+  expiresAt: v.optional(v.number()),
   revokedAt: v.optional(v.number()),
 });
 

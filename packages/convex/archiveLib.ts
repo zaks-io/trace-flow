@@ -150,10 +150,10 @@ export function enrollmentAllowsSource(
 }
 
 export function isCollectorCredentialExpired(
-  credential: { expiresAt: number },
+  credential: { expiresAt?: number },
   now: number,
 ): boolean {
-  return credential.expiresAt <= now;
+  return credential.expiresAt !== undefined && credential.expiresAt <= now;
 }
 
 export function decideWriteAuthorization(input: {

@@ -2,12 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { listActiveForCurrentUser, mint } from '../collectorCredentials';
 import { rateLimiter } from '../rateLimits';
 
-const MAX_CREDENTIAL_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const NOW_MS = Date.UTC(2026, 8, 1);
 
 interface MintArgs {
   collectorId: string;
-  expiresAt: number;
 }
 
 type MintHandler = (ctx: unknown, args: MintArgs) => Promise<{ id: string; secret: string }>;
@@ -72,35 +70,20 @@ describe('collectorCredentials.mint', () => {
     vi.restoreAllMocks();
   });
 
-  it('accepts a credential lifetime at the 90-day maximum', async () => {
+  it('mints a credential without expiry', async () => {
     const { ctx, insert, runAfter } = makeCtx();
-    const expiresAt = NOW_MS + MAX_CREDENTIAL_TTL_MS;
 
     const result = await mintHandler(ctx, {
       collectorId: 'collector_1',
-      expiresAt,
     });
 
     expect(result.id).toBe('collector_credential_1');
     expect(insert).toHaveBeenCalledWith(
       'collectorCredentials',
-      expect.objectContaining({ expiresAt }),
+      expect.not.objectContaining({ expiresAt: expect.anything() }),
     );
     expect(runAfter).toHaveBeenCalledOnce();
-  });
-
-  it('rejects a credential lifetime beyond the 90-day maximum', async () => {
-    const { ctx, insert, runAfter } = makeCtx();
-
-    await expect(
-      mintHandler(ctx, {
-        collectorId: 'collector_1',
-        expiresAt: NOW_MS + MAX_CREDENTIAL_TTL_MS + 1,
-      }),
-    ).rejects.toThrow('Collector Credential expiry must be in the future and within 90 days');
-
-    expect(insert).not.toHaveBeenCalled();
-    expect(runAfter).not.toHaveBeenCalled();
+    expect(runAfter.mock.calls[0]?.[2]).not.toHaveProperty('expiresAt');
   });
 });
 
@@ -115,7 +98,7 @@ describe('collectorCredentials.listActiveForCurrentUser', () => {
     vi.restoreAllMocks();
   });
 
-  it('returns only the signed-in user active unexpired collectors without hashes', async () => {
+  it('returns the signed-in user active current and legacy unexpired collectors without hashes', async () => {
     const user = {
       _id: 'user_1',
       tokenIdentifier: 'https://auth.example/|auth0|user',
@@ -132,7 +115,6 @@ describe('collectorCredentials.listActiveForCurrentUser', () => {
         collectorId: 'collector_active',
         hashedSecret: 'active-hash',
         status: 'active',
-        expiresAt: NOW_MS + 1,
       },
       {
         _id: 'credential_other_user',

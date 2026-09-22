@@ -65,7 +65,6 @@ describe('deleted organization authorization', () => {
       t.mutation(internal.collectorLogin.mintForUser, {
         userId,
         collectorId: 'collector',
-        expiresAt: Date.now() + 60_000,
       }),
     ).rejects.toThrow('Active organization membership required');
     await expect(t.query(internal.collectorLogin.resolveLoginOrg, { userId })).resolves.toBeNull();
