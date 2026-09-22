@@ -30,6 +30,11 @@ const MAX_ARCHIVE_RECEIPT_BYTES: usize = 65_536;
 // Covers a maximum receipt, validated checkpoint fields, and the encrypted envelope.
 const MAX_ARCHIVE_PROGRESS_BYTES: u64 = 96 * 1024;
 
+#[derive(Debug)]
+pub struct ArchiveScratchLease {
+    _lock: File,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingArchiveRequest {
     pub source: ArchiveSource,
@@ -272,6 +277,7 @@ impl ArchiveSpool {
         spool.recover_ack_staging();
         spool.recover_acknowledged_pending();
         cleanup_tmp_files(&spool.root)?;
+        cleanup_archive_scratch(&spool.root)?;
         Ok(spool)
     }
 
@@ -287,10 +293,17 @@ impl ArchiveSpool {
     }
 
     pub fn scratch_dir(&self) -> PathBuf {
-        // Decoded source files are temporary inputs, outside the encrypted pending-byte budget.
-        let mut path = self.root.as_os_str().to_os_string();
-        path.push(".scratch");
-        PathBuf::from(path)
+        archive_scratch_dir(&self.root)
+    }
+
+    /// Hold a shared lease while decoded source bytes exist. Startup recovery and terminal cleanup
+    /// take the exclusive side before removing scratch, so another process cannot unlink a live
+    /// materialization.
+    pub fn acquire_scratch_lease(&self) -> ArchiveSyncResult<ArchiveScratchLease> {
+        let lock = open_archive_scratch_lock(&self.root)?;
+        lock.lock_shared()?;
+        create_dir_all_strict(&archive_scratch_dir(&self.root))?;
+        Ok(ArchiveScratchLease { _lock: lock })
     }
 
     pub fn set_enrollment_path(&mut self, path: impl Into<PathBuf>) {
@@ -1011,6 +1024,9 @@ impl ArchiveSpool {
         org_id: &str,
         key_store: &dyn ArchiveKeyStore,
     ) -> ArchiveSyncResult<()> {
+        let scratch_lock = open_archive_scratch_lock(root)?;
+        scratch_lock.lock()?;
+        remove_dir_if_present(&archive_scratch_dir(root))?;
         let key_reference = crate::migration::spool_key_reference(root, org_id)?;
         key_store.delete(&key_reference)?;
         if key_store.load(&key_reference)?.is_some() {
@@ -1056,6 +1072,7 @@ impl ArchiveSpool {
                 if spool.root.exists() {
                     cleanup_tmp_files(&spool.root)?;
                 }
+                cleanup_archive_scratch(&spool.root)?;
                 Ok(Some(spool))
             }
             None => {
@@ -2300,6 +2317,37 @@ fn cleanup_tmp_files(root: &Path) -> ArchiveSyncResult<()> {
         }
     }
     Ok(())
+}
+
+fn archive_scratch_dir(root: &Path) -> PathBuf {
+    let mut path = root.as_os_str().to_os_string();
+    path.push(".scratch");
+    PathBuf::from(path)
+}
+
+fn archive_scratch_lock_path(root: &Path) -> PathBuf {
+    let mut path = root.as_os_str().to_os_string();
+    path.push(".scratch.lock");
+    PathBuf::from(path)
+}
+
+fn open_archive_scratch_lock(root: &Path) -> ArchiveSyncResult<File> {
+    let path = archive_scratch_lock_path(root);
+    if let Some(parent) = path.parent() {
+        create_dir_all_strict(parent)?;
+    }
+    Ok(OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?)
+}
+
+fn cleanup_archive_scratch(root: &Path) -> ArchiveSyncResult<()> {
+    let lock = open_archive_scratch_lock(root)?;
+    lock.lock()?;
+    remove_dir_if_present(&archive_scratch_dir(root))
 }
 
 fn is_scratch_tmp(path: &Path) -> bool {

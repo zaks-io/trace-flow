@@ -6,6 +6,7 @@ use collector_archive::ArchiveSource;
 use collector_archive_sync::{ArchiveSourceIdentity, ArchiveSpool};
 
 use super::identity::{identify, Candidate};
+use super::DecodedSource;
 
 pub(super) fn identify_compressed(
     spool: &ArchiveSpool,
@@ -18,8 +19,8 @@ pub(super) fn identify_compressed(
 fn materialize(spool: &ArchiveSpool, path: &Path, provenance: String) -> anyhow::Result<Candidate> {
     let input = File::open(path)?;
     let before = input.metadata()?;
+    let lease = spool.acquire_scratch_lease()?;
     let scratch = spool.scratch_dir();
-    std::fs::create_dir_all(&scratch)?;
     let mut decoded = tempfile::Builder::new()
         .prefix("rollout-")
         .suffix(".decoded")
@@ -61,6 +62,9 @@ fn materialize(spool: &ArchiveSpool, path: &Path, provenance: String) -> anyhow:
     candidate.file_identity =
         collector_archive_sync::source_file_identity(&decoded.as_file().metadata()?);
     candidate.source_path = path.to_path_buf();
-    candidate.decoded = Some(Arc::new(decoded.into_temp_path()));
+    candidate.decoded = Some(Arc::new(DecodedSource {
+        _path: decoded.into_temp_path(),
+        _lease: lease,
+    }));
     Ok(candidate)
 }

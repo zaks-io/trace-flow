@@ -16,8 +16,8 @@ use std::path::Path;
 use collector_archive::ArchiveSource;
 use collector_archive_sync::{
     ArchiveAuthorizedSource, ArchiveHistoryChoice, ArchiveHistoryGeneration, ArchiveHistoryPlan,
-    ArchiveHistoryState, ArchiveSnapshot, ArchiveSpool, ArchiveWorkClass, DeferredArchiveSnapshot,
-    ARCHIVE_HISTORY_STATE_VERSION,
+    ArchiveHistoryState, ArchiveScratchLease, ArchiveSnapshot, ArchiveSpool, ArchiveWorkClass,
+    DeferredArchiveSnapshot, ARCHIVE_HISTORY_STATE_VERSION,
 };
 use collector_contracts::AgentSource;
 use collector_sync::{walk_archive_files, DISCOVERY_INCOMPLETE};
@@ -30,12 +30,18 @@ use self::identity::{target_from, Candidate};
 use self::identity_cache::identify_remembered;
 use self::window::{ARCHIVE_BASELINE_PARTS_PER_CYCLE, ARCHIVE_BASELINE_READ_BUDGET_BYTES};
 
+#[derive(Debug)]
+struct DecodedSource {
+    _path: tempfile::TempPath,
+    _lease: ArchiveScratchLease,
+}
+
 #[derive(Debug, Default)]
 pub struct PreparedArchiveHistory {
     pub plan: ArchiveHistoryPlan,
     pub snapshots: Vec<ArchiveSnapshot>,
     pub errors: Vec<String>,
-    decoded_sources: Vec<std::sync::Arc<tempfile::TempPath>>,
+    decoded_sources: Vec<std::sync::Arc<DecodedSource>>,
 }
 
 #[cfg(test)]

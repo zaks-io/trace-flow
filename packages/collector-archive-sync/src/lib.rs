@@ -58,9 +58,9 @@ pub use scan::{
 };
 pub use source_identity::{source_file_identity, ArchiveSourceIdentity};
 pub use spool::{
-    cleanup_obligation_exists, finish_terminal_cleanup, ArchiveSpool, BlockedArchiveRecord,
-    PendingArchiveRequest, PendingCaptureAuthorization, PendingLoad, ARCHIVE_RECORD_POLICY_VERSION,
-    ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE,
+    cleanup_obligation_exists, finish_terminal_cleanup, ArchiveScratchLease, ArchiveSpool,
+    BlockedArchiveRecord, PendingArchiveRequest, PendingCaptureAuthorization, PendingLoad,
+    ARCHIVE_RECORD_POLICY_VERSION, ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE,
 };
 
 /// Exact on-disk Archive Spool cap. Do not substitute a rounded gigabyte.

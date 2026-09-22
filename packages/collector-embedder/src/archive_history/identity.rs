@@ -9,12 +9,13 @@ use collector_sync::{claude_session_fields, codex_session_fields};
 use serde_json::Value;
 
 use super::window::read_identity_window;
+use super::DecodedSource;
 
 #[derive(Debug, Clone)]
 pub(super) struct Candidate {
     pub path: PathBuf,
     pub source_path: PathBuf,
-    pub decoded: Option<std::sync::Arc<tempfile::TempPath>>,
+    pub decoded: Option<std::sync::Arc<DecodedSource>>,
     pub relative_path: Option<String>,
     pub source: ArchiveSource,
     pub session: String,
