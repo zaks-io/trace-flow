@@ -6,7 +6,11 @@ import {
   unwrapArchiveEncryptionKey,
 } from '@trace-flow/utils';
 import type { Logger } from '@trace-flow/logging';
-import { executeArchiveExport, type ArchiveExportSelection } from '../archive-export';
+import {
+  executeArchiveExport,
+  MAX_ARCHIVE_EXPORT_REQUEST_BYTES,
+  type ArchiveExportSelection,
+} from '../archive-export';
 import type { ArchiveApiEnv } from '../context';
 import { MAX_CHUNK_BYTES, type ArchiveScope } from '../archive-contract';
 import { archiveObjectKey } from '../archive-storage-key';
@@ -89,6 +93,30 @@ describe('archive export', () => {
     expect(result.selection.sessions).toHaveLength(1);
     expect(result.selection.sessions[0]).not.toHaveProperty('ledgerId');
     expect(result.selection.sessions[0]?.manifestKey).toBe('manifest-key');
+    expect(MAX_ARCHIVE_EXPORT_REQUEST_BYTES).toBe(512 * 1024);
+    await expect(
+      executeArchiveExport(
+        { ARCHIVE_API_SHARED_SECRET: 'shared' } as ArchiveApiEnv,
+        organizationGrant,
+        { operation: 'select', sessions: {} },
+        logger(),
+      ),
+    ).rejects.toThrow('archive_export_catalog_invalid');
+    await expect(
+      executeArchiveExport(
+        { ARCHIVE_API_SHARED_SECRET: 'shared' } as ArchiveApiEnv,
+        organizationGrant,
+        { operation: 'select', sessions: Array(65).fill({}) },
+        logger(),
+      ),
+    ).rejects.toThrow('archive_export_catalog_invalid');
+    const empty = (await executeArchiveExport(
+      { ARCHIVE_API_SHARED_SECRET: 'shared' } as ArchiveApiEnv,
+      organizationGrant,
+      { operation: 'select', sessions: [] },
+      logger(),
+    )) as { selection: ArchiveExportSelection };
+    expect(empty.selection.sessions).toEqual([]);
   });
 
   it('pins the exact committed ledger manifest and validates resume selection', async () => {

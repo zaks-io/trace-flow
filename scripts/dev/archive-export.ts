@@ -12,6 +12,7 @@ import {
 } from '../../apps/archive-api/src/archive-contract';
 import { checkpointChainHash, recordChainHash } from '../../apps/archive-api/src/archive-chain';
 import { collectExportManifestGraph } from './archive-export-traversal';
+import { MAX_ARCHIVE_EXPORT_ORGANIZATION_BATCH_SESSIONS } from '../../apps/archive-api/src/archive-export';
 import {
   exportSessionDirectoryId,
   latestSidecarGenerations,
@@ -52,8 +53,26 @@ interface Selection {
   selectionToken: string;
 }
 interface LocalManifest {
-  selection: Selection;
+  selection: Pick<Selection, 'version' | 'exportId' | 'orgId' | 'sessions'> &
+    Partial<Pick<Selection, 'selectionSha256' | 'selectionToken'>>;
+  batches: { sessionStart: number; selection: Selection }[];
   sessions: { session_index: number; status: 'pending' | 'verified' | 'failed' }[];
+}
+
+function batchFor(
+  manifest: LocalManifest,
+  index: number,
+): {
+  selection: Selection;
+  sessionIndex: number;
+} {
+  let batch: LocalManifest['batches'][number] | undefined;
+  for (const candidate of manifest.batches) {
+    if (candidate.sessionStart > index) break;
+    batch = candidate;
+  }
+  assert.ok(batch && index < batch.sessionStart + batch.selection.sessions.length);
+  return { selection: batch.selection, sessionIndex: index - batch.sessionStart };
 }
 
 async function sha256(bytes: Uint8Array): Promise<string> {
@@ -105,6 +124,16 @@ async function existingManifest(): Promise<LocalManifest | undefined> {
     const parsed = JSON.parse(await readFile(selectionPath, 'utf8')) as LocalManifest;
     assert.ok(parsed.selection);
     assert.ok(Array.isArray(parsed.sessions));
+    if (!Array.isArray(parsed.batches)) {
+      assert.notEqual(
+        exportScope(),
+        'organization',
+        'Organization export manifest lacks signed batches',
+      );
+      await validateSelection(parsed.selection as Selection);
+      parsed.batches = [{ sessionStart: 0, selection: parsed.selection as Selection }];
+    }
+    await validateManifest(parsed);
     return parsed;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
@@ -120,6 +149,35 @@ async function validateSelection(selection: Selection): Promise<void> {
     selectionSha256,
     'Selection hash mismatch',
   );
+}
+
+async function validateManifest(manifest: LocalManifest): Promise<void> {
+  assert.equal(manifest.selection.version, 1);
+  assert.ok(Array.isArray(manifest.selection.sessions));
+  assert.equal(manifest.sessions.length, manifest.selection.sessions.length);
+  assert.ok(manifest.batches.length > 0);
+  let sessionStart = 0;
+  for (const batch of manifest.batches) {
+    assert.equal(batch.sessionStart, sessionStart, 'Export batches must be contiguous');
+    await validateSelection(batch.selection);
+    if (exportScope() === 'organization') {
+      assert.ok(
+        batch.selection.sessions.length <= MAX_ARCHIVE_EXPORT_ORGANIZATION_BATCH_SESSIONS,
+        'Export batch exceeds session limit',
+      );
+    }
+    assert.equal(batch.selection.exportId, manifest.selection.exportId);
+    assert.equal(batch.selection.orgId, manifest.selection.orgId);
+    for (const session of batch.selection.sessions) {
+      assert.deepEqual(session, manifest.selection.sessions[sessionStart]);
+      sessionStart++;
+    }
+  }
+  assert.equal(sessionStart, manifest.selection.sessions.length);
+  for (const [index, status] of manifest.sessions.entries()) {
+    assert.equal(status.session_index, index);
+    assert.ok(['pending', 'verified', 'failed'].includes(status.status));
+  }
 }
 
 function decodeBase64(value: unknown): Uint8Array {
@@ -151,9 +209,10 @@ function openProgress(): Database {
 
 async function collectManifestElements(
   database: Database,
-  selection: Selection,
-  sessionIndex: number,
+  manifest: LocalManifest,
+  globalIndex: number,
 ): Promise<void> {
+  const { selection, sessionIndex } = batchFor(manifest, globalIndex);
   const session = selection.sessions[sessionIndex]!;
   const insertElement = database.query(
     'INSERT OR REPLACE INTO elements (session_index, sequence, element) VALUES (?, ?, ?)',
@@ -179,7 +238,7 @@ async function collectManifestElements(
         assert.ok(
           typeof row.chain_sequence === 'number' && Number.isSafeInteger(row.chain_sequence),
         );
-        insertElement.run(sessionIndex, row.chain_sequence, JSON.stringify(row));
+        insertElement.run(globalIndex, row.chain_sequence, JSON.stringify(row));
       }
     },
   );
@@ -207,9 +266,10 @@ function parseStoredElement(chunk: Uint8Array, manifest: Json): StoredElement {
 
 async function writeSession(
   database: Database,
-  selection: Selection,
-  sessionIndex: number,
+  manifest: LocalManifest,
+  globalIndex: number,
 ): Promise<void> {
+  const { selection, sessionIndex } = batchFor(manifest, globalIndex);
   const session = selection.sessions[sessionIndex]!;
   const sessionDirectory = resolve(
     outputDirectory,
@@ -224,7 +284,7 @@ async function writeSession(
       { element: string },
       [number]
     >('SELECT element FROM elements WHERE session_index = ? ORDER BY sequence')
-    .iterate(sessionIndex);
+    .iterate(globalIndex);
   let previous = GENESIS_CHAIN_HASH;
   let count = 0;
   let recordCount = 0;
@@ -446,31 +506,59 @@ function exportScope(): unknown {
     return undefined;
   }
 }
-const selected = await call({
-  operation: 'select',
-  ...(priorManifest
-    ? { selection: priorManifest.selection }
-    : exportScope() === 'organization'
-      ? { sessions: await listSessions() }
-      : {}),
-});
-const selection = selected.selection as Selection;
-await validateSelection(selection);
-const localManifest: LocalManifest = priorManifest ?? {
-  selection,
-  sessions: selection.sessions.map((_, session_index) => ({
-    session_index,
-    status: 'pending',
-  })),
-};
+let localManifest: LocalManifest;
+if (priorManifest) {
+  for (const batch of priorManifest.batches) {
+    const selected = await call({ operation: 'select', selection: batch.selection });
+    assert.deepEqual(selected.selection, batch.selection, 'Export batch changed on resume');
+  }
+  localManifest = priorManifest;
+} else {
+  const organization = exportScope() === 'organization';
+  const catalog = organization ? await listSessions() : [];
+  const batches: LocalManifest['batches'] = [];
+  if (organization) {
+    for (
+      let sessionStart = 0;
+      sessionStart < catalog.length;
+      sessionStart += MAX_ARCHIVE_EXPORT_ORGANIZATION_BATCH_SESSIONS
+    ) {
+      const selected = await call({
+        operation: 'select',
+        sessions: catalog.slice(
+          sessionStart,
+          sessionStart + MAX_ARCHIVE_EXPORT_ORGANIZATION_BATCH_SESSIONS,
+        ),
+      });
+      batches.push({ sessionStart, selection: selected.selection as Selection });
+    }
+    if (batches.length === 0) {
+      const selected = await call({ operation: 'select', sessions: [] });
+      batches.push({ sessionStart: 0, selection: selected.selection as Selection });
+    }
+  } else {
+    const selected = await call({ operation: 'select' });
+    batches.push({ sessionStart: 0, selection: selected.selection as Selection });
+  }
+  const first = batches[0]!.selection;
+  const sessions = batches.flatMap((batch) => batch.selection.sessions);
+  localManifest = {
+    selection: organization
+      ? { version: 1, exportId: first.exportId, orgId: first.orgId, sessions }
+      : first,
+    batches,
+    sessions: sessions.map((_, session_index) => ({ session_index, status: 'pending' })),
+  };
+  await validateManifest(localManifest);
+}
 await atomicWrite(selectionPath, `${JSON.stringify(localManifest, null, 2)}\n`);
 const database = openProgress();
 let complete = false;
 try {
-  for (let index = 0; index < selection.sessions.length; index++) {
+  for (let index = 0; index < localManifest.selection.sessions.length; index++) {
     try {
-      await collectManifestElements(database, selection, index);
-      await writeSession(database, selection, index);
+      await collectManifestElements(database, localManifest, index);
+      await writeSession(database, localManifest, index);
       localManifest.sessions[index] = { session_index: index, status: 'verified' };
     } catch (error) {
       localManifest.sessions[index] = { session_index: index, status: 'failed' };

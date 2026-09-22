@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { rejects } from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { GENESIS_CHAIN_HASH } from '../../apps/archive-api/src/archive-contract';
@@ -98,8 +98,210 @@ describe('archive export client verification', () => {
       expect(stderr).toContain('Manifest record count mismatch');
       const manifest = JSON.parse(
         await readFile(resolve(directory, 'archive-manifest.json'), 'utf8'),
-      ) as { sessions: { status: string }[] };
+      ) as { selection: typeof selection; batches?: unknown[]; sessions: { status: string }[] };
       expect(manifest.sessions[0]?.status).toBe('failed');
+      delete manifest.batches;
+      await writeFile(resolve(directory, 'archive-manifest.json'), JSON.stringify(manifest));
+      const resumed = Bun.spawn(
+        [
+          process.execPath,
+          resolve(import.meta.dir, 'archive-export.ts'),
+          server.url.href,
+          directory,
+        ],
+        {
+          env: { TRACE_FLOW_ARCHIVE_EXPORT_GRANT: 'test-grant' },
+          stdout: 'pipe',
+          stderr: 'pipe',
+        },
+      );
+      const [resumeExit, resumeStderr] = await Promise.all([
+        resumed.exited,
+        new Response(resumed.stderr).text(),
+        new Response(resumed.stdout).text(),
+      ]);
+      expect(resumeExit).not.toBe(0);
+      expect(resumeStderr).toContain('Manifest record count mismatch');
+      const resumedManifest = JSON.parse(
+        await readFile(resolve(directory, 'archive-manifest.json'), 'utf8'),
+      ) as { batches: unknown[] };
+      expect(resumedManifest.batches).toHaveLength(1);
+    } finally {
+      await server.stop(true);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('exports a catalog larger than one batch with bounded requests and validates every batch on resume', async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), 'archive-batches-'));
+    const sessions = Array.from({ length: 130 }, (_, index) => ({
+      ledgerId: index.toString(16).padStart(64, '0'),
+      userId: 'user-test',
+      contributionId: 'contribution-test',
+      source: 'codex' as const,
+      sourceSessionId: `session-${index}`,
+      manifestKey: `manifest-${index}`,
+      manifestHeadPageKey: `manifest-${index}`,
+      generation: 1,
+      elementCount: 0,
+      recordCount: 0,
+      chainHead: GENESIS_CHAIN_HASH,
+    }));
+    const requestSizes: number[] = [];
+    const selectedSizes: number[] = [];
+    let resumeSelections = 0;
+    let manifestRequests = 0;
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      async fetch(request) {
+        if (request.method === 'GET') {
+          return Response.json({ sessions, cursor: null });
+        }
+        const raw = await request.text();
+        requestSizes.push(Buffer.byteLength(raw));
+        const body = JSON.parse(raw) as {
+          operation: string;
+          sessions?: typeof sessions;
+          selection?: { sessions: typeof sessions };
+          sessionIndex?: number;
+        };
+        if (body.operation === 'select') {
+          if (body.selection) {
+            resumeSelections++;
+            return Response.json({ selection: body.selection });
+          }
+          const unsigned = {
+            version: 1,
+            exportId: 'batch-test',
+            orgId: 'org-test',
+            sessions: body.sessions!.map(({ ledgerId: _ledgerId, ...session }) => session),
+          };
+          selectedSizes.push(unsigned.sessions.length);
+          return Response.json({
+            selection: {
+              ...unsigned,
+              selectionSha256: `sha256:${createHash('sha256').update(JSON.stringify(unsigned)).digest('hex')}`,
+              selectionToken: 'a'.repeat(43),
+            },
+          });
+        }
+        if (body.operation === 'manifest') {
+          expect(body.selection?.sessions[body.sessionIndex!]?.manifestKey).toBe(
+            `manifest-${manifestRequests % sessions.length}`,
+          );
+          manifestRequests++;
+          return Response.json({ manifest: { elements: [] } });
+        }
+        return new Response('unexpected operation', { status: 400 });
+      },
+    });
+    const grant = `header.${Buffer.from(JSON.stringify({ exportScope: 'organization' })).toString('base64url')}.signature`;
+    const run = async () => {
+      const child = Bun.spawn(
+        [
+          process.execPath,
+          resolve(import.meta.dir, 'archive-export.ts'),
+          server.url.href,
+          directory,
+        ],
+        {
+          env: { TRACE_FLOW_ARCHIVE_EXPORT_GRANT: grant },
+          stdout: 'pipe',
+          stderr: 'pipe',
+        },
+      );
+      const [exit, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stderr).text(),
+        new Response(child.stdout).text(),
+      ]);
+      expect(exit, stderr).toBe(0);
+    };
+    try {
+      await run();
+      expect(selectedSizes).toEqual([64, 64, 2]);
+      const manifest = JSON.parse(
+        await readFile(resolve(directory, 'archive-manifest.json'), 'utf8'),
+      ) as {
+        selection: { sessions: unknown[] };
+        batches: { sessionStart: number; selection: { sessions: unknown[] } }[];
+      };
+      expect(manifest.selection.sessions).toHaveLength(130);
+      expect(manifest.batches.map((batch) => batch.sessionStart)).toEqual([0, 64, 128]);
+      expect(manifest.batches.map((batch) => batch.selection.sessions.length)).toEqual([64, 64, 2]);
+      await run();
+      expect(resumeSelections).toBe(3);
+      expect(Math.max(...requestSizes)).toBeLessThan(512 * 1024);
+      const secondBatch = manifest.batches[1]!.selection.sessions[0] as {
+        manifestKey: string;
+      };
+      secondBatch.manifestKey = 'tampered';
+      await writeFile(resolve(directory, 'archive-manifest.json'), JSON.stringify(manifest));
+      const child = Bun.spawn(
+        [
+          process.execPath,
+          resolve(import.meta.dir, 'archive-export.ts'),
+          server.url.href,
+          directory,
+        ],
+        { env: { TRACE_FLOW_ARCHIVE_EXPORT_GRANT: grant }, stdout: 'pipe', stderr: 'pipe' },
+      );
+      const [exit, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stderr).text(),
+        new Response(child.stdout).text(),
+      ]);
+      expect(exit).not.toBe(0);
+      expect(stderr).toContain('Selection hash mismatch');
+    } finally {
+      await server.stop(true);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('writes an empty organization export with one signed empty batch', async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), 'archive-empty-org-'));
+    const unsigned = { version: 1, exportId: 'empty-org', orgId: 'org-test', sessions: [] };
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      async fetch(request) {
+        if (request.method === 'GET') return Response.json({ sessions: [] });
+        const body = (await request.json()) as { operation: string; sessions?: unknown[] };
+        expect(body).toMatchObject({ operation: 'select', sessions: [] });
+        return Response.json({
+          selection: {
+            ...unsigned,
+            selectionSha256: `sha256:${createHash('sha256').update(JSON.stringify(unsigned)).digest('hex')}`,
+            selectionToken: 'a'.repeat(43),
+          },
+        });
+      },
+    });
+    const grant = `header.${Buffer.from(JSON.stringify({ exportScope: 'organization' })).toString('base64url')}.signature`;
+    try {
+      const child = Bun.spawn(
+        [
+          process.execPath,
+          resolve(import.meta.dir, 'archive-export.ts'),
+          server.url.href,
+          directory,
+        ],
+        { env: { TRACE_FLOW_ARCHIVE_EXPORT_GRANT: grant }, stdout: 'pipe', stderr: 'pipe' },
+      );
+      const [exit, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stderr).text(),
+        new Response(child.stdout).text(),
+      ]);
+      expect(exit, stderr).toBe(0);
+      const manifest = JSON.parse(
+        await readFile(resolve(directory, 'archive-manifest.json'), 'utf8'),
+      ) as { selection: { sessions: unknown[] }; batches: { sessionStart: number }[] };
+      expect(manifest.selection.sessions).toEqual([]);
+      expect(manifest.batches).toHaveLength(1);
+      expect(manifest.batches[0]?.sessionStart).toBe(0);
     } finally {
       await server.stop(true);
       await rm(directory, { recursive: true, force: true });

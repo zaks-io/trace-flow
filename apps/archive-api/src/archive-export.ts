@@ -21,9 +21,8 @@ import type { LedgerSnapshot } from './archive-ledger-state';
 import type { ArchiveSessionCatalogEntry } from './archive-session-catalog';
 import { isArchiveCanonicalIdentifier } from '@trace-flow/types';
 
-// The current archive has several thousand sessions. Organization selection carries the
-// complete paginated catalog so the server can pin one resumable export snapshot.
-export const MAX_ARCHIVE_EXPORT_REQUEST_BYTES = 8 * 1024 * 1024;
+export const MAX_ARCHIVE_EXPORT_REQUEST_BYTES = 512 * 1024;
+export const MAX_ARCHIVE_EXPORT_ORGANIZATION_BATCH_SESSIONS = 64;
 
 export interface ArchiveExportSessionSelection extends ArchiveExportTarget {
   manifestKey: string;
@@ -167,7 +166,13 @@ async function pinOrganizationSelection(
   grant: ArchiveExportGrant,
   requested: ArchiveSessionCatalogEntry[] | undefined,
 ): Promise<ArchiveExportSelection> {
-  if (!requested) throw new ArchiveContractError('archive_export_catalog_required');
+  if (requested === undefined) throw new ArchiveContractError('archive_export_catalog_required');
+  if (
+    !Array.isArray(requested) ||
+    requested.length > MAX_ARCHIVE_EXPORT_ORGANIZATION_BATCH_SESSIONS
+  ) {
+    throw new ArchiveContractError('archive_export_catalog_invalid');
+  }
   const ledgerIds = new Set<string>();
   for (const session of requested) {
     if (
@@ -218,6 +223,8 @@ async function validateSelection(
     value.exportId !== grant.exportId ||
     value.orgId !== grant.orgId ||
     !Array.isArray(value.sessions) ||
+    (grant.exportScope === 'organization' &&
+      value.sessions.length > MAX_ARCHIVE_EXPORT_ORGANIZATION_BATCH_SESSIONS) ||
     (grant.exportScope === 'targets' && value.sessions.length !== grant.targets?.length) ||
     !/^sha256:[0-9a-f]{64}$/u.test(value.selectionSha256) ||
     !/^[A-Za-z0-9_-]{43}$/u.test(value.selectionToken)
