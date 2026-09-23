@@ -1,4 +1,18 @@
 import {
+  initializeSnapshotChecks,
+  startSnapshotCheck,
+  clearSnapshotCheck,
+  prepareSnapshotCheck,
+  requireSnapshotRecovery,
+  resumeSnapshotChecks,
+} from './snapshot-checks';
+import {
+  clearSnapshotFailure,
+  initializeSnapshotFailure,
+  readSnapshotFailure,
+  recordSnapshotFailure,
+} from './snapshot-failure';
+import {
   baselineCopyCheckpoint,
   beginBaselineCopy,
   beginBaselineMigrationWindow,
@@ -35,6 +49,7 @@ import { DurableObject } from 'cloudflare:workers';
 import type { AgentConsumerEnv } from './context';
 import {
   publishAgentSnapshot,
+  readSnapshotSchedule,
   scheduleAgentSnapshot,
   scheduleAgentSnapshotContinuation,
 } from './snapshot-schedule';
@@ -128,6 +143,8 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     initializeIngestionMigration(this.ctx.storage);
     initializeAgentIngestionErasure(this.ctx.storage);
     initializeAgentSnapshotProgress(this.ctx.storage);
+    initializeSnapshotChecks(this.ctx.storage);
+    initializeSnapshotFailure(this.ctx.storage);
     initializeLegacyRetirement(this.ctx.storage);
   }
 
@@ -421,16 +438,115 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     if (listSnapshotCopyIntents(this.ctx.storage).length !== 0) {
       throw new Error('snapshot has outstanding Copy intents');
     }
-    return finishAgentSnapshot(this.ctx.storage, generation, Date.now());
+    return this.ctx.storage.transactionSync(() => {
+      const result = finishAgentSnapshot(this.ctx.storage, generation, Date.now());
+      clearSnapshotCheck(this.ctx.storage);
+      return result;
+    });
   }
 
-  failSnapshot(input: { generation: number; claimId: string }) {
-    const { generation, claimId } = this.validateSnapshotClaim(input, 'fail snapshot');
+  failSnapshot(input: { generation: number; claimId: string; reason?: string }) {
+    assertExactKeys(
+      input,
+      input.reason === undefined ? ['generation', 'claimId'] : ['generation', 'claimId', 'reason'],
+      'fail snapshot',
+    );
+    const generation = validateGenerationInput({ generation: input.generation }, 'fail snapshot');
+    const claimId = validateSnapshotClaimId(input.claimId);
+    if (input.reason !== undefined && (!input.reason || input.reason.length > 512))
+      throw new Error('Invalid snapshot failure reason');
     assertAgentSnapshotClaim(this.ctx.storage, generation, claimId, Date.now());
     if (listSnapshotCopyIntents(this.ctx.storage).length !== 0) {
       throw new Error('snapshot has outstanding Copy intents');
     }
-    return failAgentSnapshot(this.ctx.storage, generation, Date.now());
+    return this.ctx.storage.transactionSync(() => {
+      const result = failAgentSnapshot(this.ctx.storage, generation, Date.now());
+      clearSnapshotCheck(this.ctx.storage);
+      if (input.reason)
+        recordSnapshotFailure(this.ctx.storage, generation, input.reason, Date.now());
+      return result;
+    });
+  }
+
+  getSnapshotSchedule(input: Record<string, never>) {
+    assertExactKeys(input, [], 'get snapshot schedule');
+    return readSnapshotSchedule(this.ctx.storage);
+  }
+
+  async prepareSnapshotCheck(input: {
+    orgId: string;
+    generation: number;
+    claimId: string;
+    copyIndex: number;
+    recovery: boolean;
+  }) {
+    assertExactKeys(
+      input,
+      ['orgId', 'generation', 'claimId', 'copyIndex', 'recovery'],
+      'prepare snapshot check',
+    );
+    const progress = assertAgentSnapshotClaim(
+      this.ctx.storage,
+      input.generation,
+      input.claimId,
+      Date.now(),
+    );
+    if (progress.nextCopyIndex !== input.copyIndex || typeof input.recovery !== 'boolean')
+      throw new Error('Invalid snapshot check');
+    const result = prepareSnapshotCheck(
+      this.ctx.storage,
+      input.generation,
+      input.copyIndex,
+      input.recovery,
+      Date.now(),
+    );
+    await scheduleAgentSnapshotContinuation(this.ctx.storage, input.orgId);
+    if (result.state.blockedReason) {
+      Sentry.captureMessage(result.state.blockedReason, {
+        level: 'error',
+        tags: { operation: 'agent_snapshot_recovery' },
+        extra: { orgId: input.orgId, generation: input.generation },
+      });
+    }
+    return result;
+  }
+
+  requireSnapshotRecovery(input: { generation: number; claimId: string }) {
+    const { generation, claimId } = this.validateSnapshotClaim(input, 'require snapshot recovery');
+    assertAgentSnapshotClaim(this.ctx.storage, generation, claimId, Date.now());
+    requireSnapshotRecovery(this.ctx.storage);
+  }
+
+  async resumeSnapshot(input: { orgId: string; generation: number; reason: string }) {
+    assertExactKeys(input, ['orgId', 'generation', 'reason'], 'resume snapshot');
+    if (typeof input.reason !== 'string' || input.reason.trim().length < 8)
+      throw new Error('Snapshot recovery requires a reason');
+    if (!input.orgId || input.orgId.length > 256 || input.orgId.includes(':'))
+      throw new Error('Invalid snapshot organization');
+    if (agentIngestionErasureStarted(this.ctx.storage))
+      throw new Error('Organization erasure has started');
+    const failure = readSnapshotFailure(this.ctx.storage);
+    if (failure) {
+      if (failure.generation !== input.generation)
+        throw new Error('Snapshot is not available for recovery');
+      await this.ctx.storage.put('snapshot_recovery_reason', input.reason);
+      await this.ctx.storage.put('snapshot_wake_at_ms', Date.now() + 1);
+      await this.ctx.storage.setAlarm(Date.now() + 1);
+      clearSnapshotFailure(this.ctx.storage, input.generation);
+      await scheduleAgentSnapshotContinuation(this.ctx.storage, input.orgId);
+      return readSnapshotSchedule(this.ctx.storage);
+    }
+    const state = readCoordinatorState(this.ctx.storage);
+    if (
+      state.active_snapshot_generation !== input.generation ||
+      state.gate_expires_at_ms === null ||
+      state.gate_expires_at_ms > Date.now()
+    )
+      throw new Error('Snapshot is not available for recovery');
+    await this.ctx.storage.put('snapshot_recovery_reason', input.reason);
+    resumeSnapshotChecks(this.ctx.storage, input.generation, Date.now());
+    await scheduleAgentSnapshotContinuation(this.ctx.storage, input.orgId);
+    return readSnapshotSchedule(this.ctx.storage);
   }
 
   async scheduleSnapshot(input: { orgId: string }): Promise<{ scheduled: boolean }> {
@@ -491,7 +607,11 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     const { claimId, copyIndex, ...intent } = input;
     this.assertIngestionNotErasing();
     assertSnapshotCopyCursor(this.ctx.storage, { ...intent, claimId, copyIndex }, Date.now());
-    return recordSnapshotCopyIntent(this.ctx.storage, intent);
+    return this.ctx.storage.transactionSync(() => {
+      const result = recordSnapshotCopyIntent(this.ctx.storage, intent);
+      startSnapshotCheck(this.ctx.storage, intent.generation, copyIndex, Date.now());
+      return result;
+    });
   }
 
   attachSnapshotCopyJob(
@@ -503,7 +623,13 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
   ) {
     const { claimId, copyIndex, ...job } = input;
     assertSnapshotCopyCursor(this.ctx.storage, { ...job, claimId, copyIndex }, Date.now());
-    return attachSnapshotCopyJob(this.ctx.storage, job);
+    return this.ctx.storage.transactionSync(() => {
+      const result = attachSnapshotCopyJob(this.ctx.storage, job);
+      this.ctx.storage.sql.exec(
+        'UPDATE snapshot_checks SET recovery_required = 0 WHERE singleton = 1',
+      );
+      return result;
+    });
   }
 
   settleSnapshotCopyIntent(
@@ -519,6 +645,16 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     return settleSnapshotCopyIntent(this.ctx.storage, job, () => {
       if (job.status === 'done') {
         advanceSnapshotCopyCursor(this.ctx.storage, job.generation, copyIndex);
+        clearSnapshotCheck(this.ctx.storage);
+      } else {
+        failAgentSnapshot(this.ctx.storage, job.generation, Date.now());
+        clearSnapshotCheck(this.ctx.storage);
+        recordSnapshotFailure(
+          this.ctx.storage,
+          job.generation,
+          `Snapshot Copy job ${job.jobId} failed`,
+          Date.now(),
+        );
       }
     });
   }
@@ -527,11 +663,20 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     input: Pick<AgentSnapshotCopyIntent, 'generation' | 'target' | 'copyAttempt'> & {
       claimId: string;
       copyIndex: number;
+      reason: string;
     },
   ) {
-    const { claimId, copyIndex, ...key } = input;
+    const { claimId, copyIndex, reason, ...key } = input;
+    if (!reason.startsWith('Snapshot Copy start failed: HTTP '))
+      throw new Error('Invalid rejected snapshot Copy reason');
     assertSnapshotCopyCursor(this.ctx.storage, { ...key, claimId, copyIndex }, Date.now());
-    return rejectSnapshotCopyIntent(this.ctx.storage, key);
+    return this.ctx.storage.transactionSync(() => {
+      const result = rejectSnapshotCopyIntent(this.ctx.storage, key);
+      failAgentSnapshot(this.ctx.storage, key.generation, Date.now());
+      clearSnapshotCheck(this.ctx.storage);
+      recordSnapshotFailure(this.ctx.storage, key.generation, reason, Date.now());
+      return result;
+    });
   }
 
   attachErasureSnapshotCopyJob(
@@ -563,7 +708,11 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     if (listSnapshotCopyIntents(this.ctx.storage).length !== 0) {
       throw new Error('snapshot has outstanding Copy intents');
     }
-    return failAgentSnapshot(this.ctx.storage, generation, Date.now());
+    return this.ctx.storage.transactionSync(() => {
+      const result = failAgentSnapshot(this.ctx.storage, generation, Date.now());
+      clearSnapshotCheck(this.ctx.storage);
+      return result;
+    });
   }
 
   getStats(input: Record<string, never>): AgentDeliveryCoordinatorStats {

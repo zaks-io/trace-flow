@@ -78,14 +78,9 @@ if [[ "$TEST_PHASE" == "expand" ]]; then
       "$CURRENT_REF" \
       datasources/agent_snapshot_manifest.datasource \
       "TOKEN trace_flow_agent_snapshot_worker APPEND"
-    assert_ref_file_with_token \
-      "$CURRENT_REF" \
-      pipes/agent_snapshot_job.pipe \
-      "TOKEN trace_flow_agent_snapshot_worker READ"
   else
     assert_repo_file pipes/agent_delivery_receipt.pipe
     assert_repo_file datasources/agent_snapshot_manifest.datasource
-    assert_repo_file pipes/agent_snapshot_job.pipe
   fi
 else
   assert_repo_file pipes/agent_usage_summary.pipe
@@ -93,7 +88,6 @@ else
 fi
 
 assert_repo_file pipes/agent_delivery_receipt.pipe
-assert_repo_file pipes/agent_snapshot_job.pipe
 assert_repo_file copies/repair_agent_repositories_snapshots.pipe
 node "$TEST_ROOT/scripts/ci/configure-agent-tinybird-tokens-datafiles.mjs" \
   --validate-datafiles "$PWD" >/dev/null

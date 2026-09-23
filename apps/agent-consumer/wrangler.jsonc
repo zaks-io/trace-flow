@@ -27,7 +27,8 @@
     "TINYBIRD_HOST": "https://api.us-west-2.aws.tinybird.co",
     "TINYBIRD_AGENT_WRITE_MODE": "clean",
   },
-  // CI provisions append-only TINYBIRD_TOKEN, scoped delivery/snapshot read tokens,
+  // CI provisions append-only TINYBIRD_TOKEN, scoped delivery/snapshot tokens, a separate
+  // TINYBIRD_AGENT_SNAPSHOT_JOBS_TOKEN with DATASOURCES:CREATE for Copy job status reads,
   // BODY_ENCRYPTION_ROOT_KEY for delivery buffers, and SENTRY_DSN.
   //
   // MODEL_PRICING is the shared dev pricing catalog (same namespace the proxy consumer reads); the
@@ -41,11 +42,13 @@
       { "name": "AGENT_FACT_BATCHER", "class_name": "AgentFactBatcher" },
       { "name": "AGENT_DELIVERY", "class_name": "AgentDelivery" },
       { "name": "AGENT_DELIVERY_COORDINATOR", "class_name": "AgentDeliveryCoordinator" },
+      { "name": "AGENT_SNAPSHOT_CAPACITY", "class_name": "SnapshotCapacity" },
     ],
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["AgentFactBatcher"] },
     { "tag": "v2", "new_sqlite_classes": ["AgentDelivery", "AgentDeliveryCoordinator"] },
+    { "tag": "v3", "new_sqlite_classes": ["SnapshotCapacity"] },
   ],
   // Consumes the 0d-provisioned agent-ingest-dev queue; poison + exhausted-retry messages dead-letter
   // to agent-ingest-dlq-dev.
@@ -117,6 +120,7 @@
           { "name": "AGENT_FACT_BATCHER", "class_name": "AgentFactBatcher" },
           { "name": "AGENT_DELIVERY", "class_name": "AgentDelivery" },
           { "name": "AGENT_DELIVERY_COORDINATOR", "class_name": "AgentDeliveryCoordinator" },
+          { "name": "AGENT_SNAPSHOT_CAPACITY", "class_name": "SnapshotCapacity" },
         ],
       },
       "queues": {

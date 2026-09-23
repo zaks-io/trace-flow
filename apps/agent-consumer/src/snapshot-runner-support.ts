@@ -6,15 +6,8 @@ import {
   type AgentSnapshotProgress,
 } from './agent-delivery-coordinator-contract';
 import type { AgentSnapshotCopyIntent } from './agent-ingestion-erasure';
-import {
-  discoverSnapshotCopy,
-  snapshotCopyAttempt,
-  snapshotJobStatus,
-  type SnapshotCopyPlan,
-  type SnapshotPlan,
-} from './snapshot-tinybird';
+import { snapshotCopyAttempt, type SnapshotCopyPlan, type SnapshotPlan } from './snapshot-tinybird';
 
-export const AGENT_SNAPSHOT_POLL_INTERVAL_MS = 2_000;
 export const AGENT_SNAPSHOT_RUN_DEADLINE_MS = 4 * 60 * 1_000;
 export const AGENT_SNAPSHOT_WORK_DEADLINE_MS = 3.5 * 60 * 1_000;
 
@@ -25,20 +18,9 @@ export class SnapshotCapturedDaysExpiredError extends Error {
   }
 }
 
-type SnapshotTinybirdEnv = Pick<
-  AgentConsumerEnv,
-  'TINYBIRD_AGENT_SNAPSHOT_TOKEN' | 'TINYBIRD_HOST'
->;
-type SnapshotContinuationEnv = Pick<
-  AgentConsumerEnv,
-  'AGENT_DELIVERY_COORDINATOR' | 'AGENT_SNAPSHOT_QUEUE'
->;
-type SnapshotCoordinator = ReturnType<
-  SnapshotContinuationEnv['AGENT_DELIVERY_COORDINATOR']['getByName']
->;
+type SnapshotCoordinator = ReturnType<AgentConsumerEnv['AGENT_DELIVERY_COORDINATOR']['getByName']>;
 
 export async function continueAgentSnapshot(
-  env: SnapshotContinuationEnv,
   coordinator: SnapshotCoordinator,
   orgId: string,
   progress: AgentSnapshotProgress,
@@ -46,19 +28,14 @@ export async function continueAgentSnapshot(
   deadlineAt: number,
 ) {
   await beforeSnapshotDeadline(
-    () => coordinator.scheduleSnapshotContinuation({ orgId }),
-    deadlineAt,
-    'schedule snapshot recovery alarm',
-  );
-  await beforeSnapshotDeadline(
     () => coordinator.releaseSnapshotClaim({ generation: progress.generation, claimId }),
     deadlineAt,
     'release snapshot claim',
   );
   await beforeSnapshotDeadline(
-    () => env.AGENT_SNAPSHOT_QUEUE.send({ type: 'agent-snapshot', org_id: orgId }),
+    () => coordinator.scheduleSnapshotContinuation({ orgId }),
     deadlineAt,
-    'queue continuation',
+    'schedule snapshot continuation',
   );
   return {
     status: 'continued' as const,
@@ -94,41 +71,6 @@ export function assertSnapshotDaysRetained(dirtyDays: string[], now: number): vo
   }
 }
 
-export async function waitForSnapshotJob(
-  env: SnapshotTinybirdEnv,
-  orgId: string,
-  intent: AgentSnapshotCopyIntent,
-  jobId: string,
-  deadlineAt: number,
-): Promise<'done' | 'error' | null> {
-  while (Date.now() < deadlineAt) {
-    let status = await beforeSnapshotDeadline(
-      () => snapshotJobStatus(env, jobId),
-      deadlineAt,
-      'poll snapshot job',
-    );
-    if (status === null) {
-      const discovered = await beforeSnapshotDeadline(
-        () => discoverSnapshotCopy(env, orgId, intent),
-        deadlineAt,
-        `rediscover ${intent.target} job`,
-      );
-      if (discovered && discovered.id !== jobId) {
-        throw new Error('Snapshot Copy discovery changed its attached job receipt');
-      }
-      // jobs_log trails an accepted Copy start, so a receipt with no row yet is still running.
-      status = discovered?.status ?? null;
-    }
-    if (status === 'done' || status === 'error') return status;
-    const remainingMs = deadlineAt - Date.now();
-    if (remainingMs <= 0) return null;
-    await new Promise((resolve) =>
-      setTimeout(resolve, Math.min(AGENT_SNAPSHOT_POLL_INTERVAL_MS, remainingMs)),
-    );
-  }
-  return null;
-}
-
 export function requireCurrentSnapshotIntent(
   intents: AgentSnapshotCopyIntent[],
   key: { generation: number; target: string; copyAttempt: number },
@@ -140,13 +82,6 @@ export function requireCurrentSnapshotIntent(
     throw new Error('snapshot Copy intent does not match its cursor');
   }
   return intent;
-}
-
-export function requireSnapshotIntent(
-  intents: AgentSnapshotCopyIntent[],
-  key: { generation: number; target: string; copyAttempt: number },
-): AgentSnapshotCopyIntent | null {
-  return intents.find((intent) => matchesSnapshotIntent(intent, key)) ?? null;
 }
 
 export async function beforeSnapshotDeadline<T>(

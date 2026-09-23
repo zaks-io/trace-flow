@@ -218,6 +218,41 @@ TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh           #
 TINYBIRD_DEPLOY_PHASE=switch TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh
 ```
 
+### Snapshot scheduling and recovery
+
+Ordinary snapshot batches wait one minute, then check each Copy through the Tinybird Jobs API after
+15 seconds, with subsequent checks after 30 and then 60 seconds. Two generations may run globally.
+Nine promptly completed Copies publish in at least three minutes and fifteen seconds including batching; queue delivery adds latency.
+Large corrections and slow jobs take longer. `agent_snapshot.check` records the persisted check
+counts; `agent_snapshot.published` records `dirtyAgeMs` and `gateDurationMs`.
+
+After 15 status checks or three missing-receipt recovery queries, scheduling stops with an
+`agent_snapshot_recovery` error. The generation keeps its ingestion gate and capacity slot because
+an unobserved Copy may still be running. Do not clear its intent or start a replacement Copy.
+
+A terminal Copy error, definitively rejected Copy start, or expired captured day reopens ingestion
+but records `snapshotSchedule.failure` with the failed generation and reason. Dirty days within
+retention remain queued, the capacity slot is released, and queue retries or new deliveries cannot start another
+generation until an operator resumes it. Inspect the failure and resolve the provider or retention
+problem before resuming. `/resumeSnapshot` accepts that failed generation while the gate is open;
+it clears the failure and schedules the retained dirty days as a new generation. A second failure
+blocks again and needs another investigation.
+
+Use the existing localhost ingest-recovery bridge, connected to the intended environment:
+
+1. POST `/inspectDeliveryStatus` with
+   `{"pipeline":"agent","shardId":"<org-id>","options":{}}`.
+   Inspect `snapshotSchedule.check` or `snapshotSchedule.failure`, the generation, and outstanding
+   Copy receipts.
+2. Resolve the provider failure or verify that the existing job can be observed again.
+3. POST `/resumeSnapshot` with
+   `{"pipeline":"agent","shardId":"<org-id>","confirm":"apply-recovery","options":{"generation":123,"reason":"Provider access restored; existing job verified"}}`.
+   Use the inspected generation. For blocked checks, resume replenishes the check budget and does
+   not submit another Copy for an unresolved intent. For a failed generation, resume schedules the
+   eligible dirty days as a new generation. The reason is retained in coordinator storage.
+4. Inspect again and verify publication. A repeat budget failure requires investigation rather than
+   an automated resume loop.
+
 ## Release Gate
 
 A production release is valid only if all checks pass:

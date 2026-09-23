@@ -41,6 +41,7 @@ function fixture(jobId?: string) {
   const env = {
     TINYBIRD_HOST: 'https://tinybird.test',
     TINYBIRD_AGENT_SNAPSHOT_TOKEN: 'narrow-test-token',
+    TINYBIRD_AGENT_SNAPSHOT_JOBS_TOKEN: 'narrow-test-token',
     AGENT_DELIVERY_COORDINATOR: { getByName: vi.fn(() => coordinator) },
     AGENT_FACT_BATCHER: {
       getByName: vi.fn((name: string) => {

@@ -186,11 +186,6 @@ requireMatch(
   'manifest cleanup endpoint must filter the retained calendar-year window before its row cap',
 );
 requireMatch(
-  'pipes/agent_snapshot_job.pipe',
-  /INTERVAL 10 MINUTE/,
-  'job polling must bound the service-table scan',
-);
-requireMatch(
   'pipes/agent_snapshot_copy_intent_jobs.pipe',
   /throwIf\(not\(has\(allowed_targets, requested_target\)\)/,
   'intent reconciliation must reject unknown targets',

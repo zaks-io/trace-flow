@@ -1,4 +1,4 @@
-import { fetchPipe, insertRows } from '@trace-flow/tinybird-client';
+import { AGENT_SNAPSHOT_TARGETS, fetchPipe, insertRows } from '@trace-flow/tinybird-client';
 import { readBodyWithLimit } from '@trace-flow/utils';
 import {
   AGENT_SNAPSHOT_COPY_ATTEMPT_MULTIPLIER,
@@ -9,11 +9,11 @@ import { toClickhouseDateTime64 } from './rows';
 import type { AgentSnapshotCopyIntent } from './agent-ingestion-erasure';
 
 export { AGENT_SNAPSHOT_TARGETS } from '@trace-flow/tinybird-client';
-import type { AGENT_SNAPSHOT_TARGETS } from '@trace-flow/tinybird-client';
 
 export interface SnapshotTinybirdEnv {
   TINYBIRD_HOST: string;
   TINYBIRD_AGENT_SNAPSHOT_TOKEN: string;
+  TINYBIRD_AGENT_SNAPSHOT_JOBS_TOKEN: string;
 }
 
 export interface SnapshotPlan {
@@ -121,35 +121,55 @@ export async function discoverSnapshotCopy(
     !job ||
     typeof job.job_id !== 'string' ||
     !/^[a-zA-Z0-9-]{1,128}$/.test(job.job_id) ||
-    !['waiting', 'working', 'done', 'error'].includes(job.status) ||
     (intent.jobId !== undefined && intent.jobId !== job.job_id)
   ) {
     throw new Error('Snapshot Copy discovery did not match its durable intent');
   }
-  return { id: job.job_id, status: job.status as SnapshotJobStatus };
+  return { id: job.job_id, status: normalizeSnapshotJobStatus(job.status) };
 }
 
 export async function snapshotJobStatus(
   env: SnapshotTinybirdEnv,
   jobId: string,
 ): Promise<SnapshotJobStatus | null> {
-  const rows = await fetchPipe<{ id: string; status: SnapshotJobStatus }>({
-    baseUrl: env.TINYBIRD_HOST,
-    token: env.TINYBIRD_AGENT_SNAPSHOT_TOKEN,
-    pipe: 'agent_snapshot_job',
-    params: { job_id: jobId },
-    schema: {
-      parse(value: unknown) {
-        const row = value as { id: string; status: string };
-        if (row?.id !== jobId || !['waiting', 'working', 'done', 'error'].includes(row.status)) {
-          throw new Error('Invalid snapshot job status');
-        }
-        return row as { id: string; status: SnapshotJobStatus };
-      },
-    },
+  if (!/^[a-zA-Z0-9-]{1,128}$/.test(jobId)) {
+    throw new Error('Invalid snapshot job ID');
+  }
+  const response = await fetch(new URL(`/v0/jobs/${jobId}`, env.TINYBIRD_HOST), {
+    headers: { Authorization: `Bearer ${env.TINYBIRD_AGENT_SNAPSHOT_JOBS_TOKEN}` },
+    signal: AbortSignal.timeout(30_000),
   });
-  if (rows.length > 1) throw new Error('Conflicting snapshot job statuses');
-  return rows[0]?.status ?? null;
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Snapshot job lookup failed: HTTP ${response.status}`);
+
+  let job: unknown;
+  try {
+    job = JSON.parse(new TextDecoder().decode(await readBodyWithLimit(response.body, 256 * 1024)));
+  } catch {
+    throw new Error('Invalid snapshot job response');
+  }
+  if (typeof job !== 'object' || job === null || Array.isArray(job)) {
+    throw new Error('Invalid snapshot job response');
+  }
+  const details = job as Record<string, unknown>;
+  if (
+    details.id !== jobId ||
+    details.job_id !== jobId ||
+    details.kind !== 'copy' ||
+    !AGENT_SNAPSHOT_TARGETS.some((target) => details.pipe_name === `repair_${target}`)
+  ) {
+    throw new Error('Snapshot job does not match its Copy receipt');
+  }
+  return normalizeSnapshotJobStatus(details.status);
+}
+
+function normalizeSnapshotJobStatus(status: unknown): SnapshotJobStatus {
+  if (status === 'cancelled') return 'error';
+  if (status === 'cancelling') return 'working';
+  if (['waiting', 'working', 'done', 'error'].includes(status as string)) {
+    return status as SnapshotJobStatus;
+  }
+  throw new Error('Invalid snapshot job status');
 }
 
 export async function publishSnapshotManifest(

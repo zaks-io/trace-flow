@@ -1,22 +1,22 @@
-import { describe, expect, it, vi } from 'vitest';
+import { env as workerEnv } from 'cloudflare:workers';
+import { runInDurableObject } from 'cloudflare:test';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AgentDeliveryCoordinatorInstance } from '../agent-delivery-coordinator';
 import type { AgentDeliveryCoordinatorStats } from '../agent-delivery-coordinator-contract';
-import { publishAgentSnapshot } from '../snapshot-schedule';
+import type { AgentConsumerEnv } from '../context';
+import {
+  publishAgentSnapshot,
+  scheduleAgentSnapshot,
+  scheduleAgentSnapshotContinuation,
+} from '../snapshot-schedule';
 
-function fixture(overrides: Partial<AgentDeliveryCoordinatorStats>) {
-  let alarm: number | null = null;
-  const storage = {
-    get: vi.fn(async () => 'org-1'),
-    getAlarm: vi.fn(async () => alarm),
-    setAlarm: vi.fn(async (value: number) => {
-      alarm = value;
-    }),
-    deleteAlarm: vi.fn(async () => {
-      alarm = null;
-    }),
-  } as unknown as DurableObjectStorage;
-  const send = vi.fn(async () => undefined);
-  const queue = { send } as unknown as Queue<{ type: 'agent-snapshot'; org_id: string }>;
-  const stats: AgentDeliveryCoordinatorStats = {
+const env = workerEnv as unknown as AgentConsumerEnv;
+const START = Date.now() + 24 * 60 * 60_000;
+
+function stats(
+  overrides: Partial<AgentDeliveryCoordinatorStats> = {},
+): AgentDeliveryCoordinatorStats {
+  return {
     lastDeliverySequence: 1,
     lastSnapshotGeneration: 1,
     activeDeliveries: 0,
@@ -26,24 +26,90 @@ function fixture(overrides: Partial<AgentDeliveryCoordinatorStats>) {
     capturedSnapshotDays: 1,
     gatePhase: 'snapshot',
     activeSnapshotGeneration: 1,
-    gateExpiresAtMs: Date.now() - 1,
+    gateExpiresAtMs: START - 1,
     erasureStarted: false,
     databaseSizeBytes: 1,
     ...overrides,
   };
-  return { storage, queue, send, stats };
 }
 
 describe('snapshot recovery alarm', () => {
-  it('requeues an active generation whose worker claim expired', async () => {
-    const f = fixture({});
-    await publishAgentSnapshot(f.storage, f.queue, f.stats);
-    expect(f.send).toHaveBeenCalledWith({ type: 'agent-snapshot', org_id: 'org-1' });
+  let host: DurableObjectStub<AgentDeliveryCoordinatorInstance>;
+  let send: ReturnType<typeof vi.fn>;
+  let queue: Queue<{ type: 'agent-snapshot'; org_id: string }>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(START);
+    host = env.AGENT_DELIVERY_COORDINATOR.get(env.AGENT_DELIVERY_COORDINATOR.newUniqueId());
+    send = vi.fn(async () => undefined);
+    queue = { send } as unknown as typeof queue;
   });
 
-  it('does not compete with a live snapshot worker claim', async () => {
-    const f = fixture({ gateExpiresAtMs: Date.now() + 60_000 });
-    await publishAgentSnapshot(f.storage, f.queue, f.stats);
-    expect(f.send).not.toHaveBeenCalled();
+  afterEach(() => vi.useRealTimers());
+
+  const withStorage = <T>(
+    callback: (storage: DurableObjectStorage) => T | Promise<T>,
+  ): Promise<T> => runInDurableObject(host, (_instance, state) => callback(state.storage));
+
+  it('debounces the first dispatch and retains a wake-up after a queue send', async () => {
+    await withStorage((storage) => scheduleAgentSnapshot(storage, 'org-1'));
+    expect(await withStorage((storage) => storage.getAlarm())).toBe(START + 60_000);
+    expect(send).not.toHaveBeenCalled();
+
+    await withStorage((storage) =>
+      publishAgentSnapshot(storage, queue, stats({ gatePhase: 'open' })),
+    );
+    await withStorage((storage) => storage.deleteAlarm());
+    vi.setSystemTime(START + 59_999);
+    await withStorage((storage) =>
+      publishAgentSnapshot(storage, queue, stats({ gatePhase: 'open' })),
+    );
+    expect(send).not.toHaveBeenCalled();
+
+    await withStorage((storage) => storage.deleteAlarm());
+    vi.setSystemTime(START + 60_000);
+    await withStorage((storage) =>
+      publishAgentSnapshot(storage, queue, stats({ gatePhase: 'open' })),
+    );
+    expect(send).toHaveBeenCalledExactlyOnceWith({ type: 'agent-snapshot', org_id: 'org-1' });
+    expect(await withStorage((storage) => storage.getAlarm())).toBe(Date.now() + 60_000);
+  });
+
+  it('suppresses a duplicate while a claim is live, then dispatches for crash recovery', async () => {
+    await withStorage((storage) => scheduleAgentSnapshotContinuation(storage, 'org-1'));
+    await withStorage((storage) => storage.deleteAlarm());
+    vi.setSystemTime(START + 15_000);
+    await withStorage((storage) =>
+      publishAgentSnapshot(storage, queue, stats({ gateExpiresAtMs: START + 300_000 })),
+    );
+    expect(send).not.toHaveBeenCalled();
+    expect(await withStorage((storage) => storage.getAlarm())).toBe(START + 300_000);
+
+    await withStorage((storage) => storage.deleteAlarm());
+    vi.setSystemTime(START + 300_000);
+    await withStorage((storage) =>
+      publishAgentSnapshot(storage, queue, stats({ gateExpiresAtMs: START + 300_000 })),
+    );
+    expect(send).toHaveBeenCalledExactlyOnceWith({ type: 'agent-snapshot', org_id: 'org-1' });
+    expect(await withStorage((storage) => storage.getAlarm())).toBe(START + 360_000);
+
+    await withStorage((storage) => storage.deleteAlarm());
+    vi.setSystemTime(START + 360_000);
+    await withStorage((storage) =>
+      publishAgentSnapshot(storage, queue, stats({ gateExpiresAtMs: START + 300_000 })),
+    );
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears an idle alarm without dispatching', async () => {
+    await withStorage((storage) => scheduleAgentSnapshot(storage, 'org-1'));
+    await withStorage((storage) => storage.deleteAlarm());
+    vi.setSystemTime(START + 60_000);
+    await withStorage((storage) =>
+      publishAgentSnapshot(storage, queue, stats({ gatePhase: 'open', dirtyDays: 0 })),
+    );
+    expect(send).not.toHaveBeenCalled();
+    expect(await withStorage((storage) => storage.getAlarm())).toBeNull();
   });
 });

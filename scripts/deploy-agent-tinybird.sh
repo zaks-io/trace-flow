@@ -190,6 +190,10 @@ is_preservable_path() {
   local ref="$1"
   local path="$2"
 
+  if [[ "$path" == pipes/agent_snapshot_*.pipe && ! -f "$ROOT_DIR/$path" ]]; then
+    return 1
+  fi
+
   if has_legacy_copy_resource_name "$path"; then
     return 1
   fi
