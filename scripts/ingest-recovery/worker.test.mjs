@@ -9,6 +9,53 @@ const request = (method, body, headers = {}) =>
     body: JSON.stringify(body),
   });
 
+test('snapshot inspection is read-only and resume requires an agent mutation confirmation', async () => {
+  const calls = [];
+  const env = {
+    AGENT_RECOVERY: {
+      inspectDeliveryStatus: async (org, options) => ({ org, options }),
+      resumeSnapshot: async (org, options) => {
+        calls.push({ org, options });
+        return { resumed: true };
+      },
+    },
+  };
+  const body = { pipeline: 'agent', shardId: 'org-test', options: {} };
+  const inspection = await worker.fetch(request('inspectDeliveryStatus', body), env);
+  assert.equal(inspection.status, 200);
+  assert.deepEqual(await inspection.json(), { org: 'org-test', options: {} });
+  const options = { generation: 7, reason: 'Provider access restored' };
+  assert.equal(
+    (await worker.fetch(request('resumeSnapshot', { ...body, options }), env)).status,
+    400,
+  );
+  assert.equal(
+    (
+      await worker.fetch(
+        request('resumeSnapshot', {
+          ...body,
+          pipeline: 'proxy',
+          options,
+          confirm: 'apply-recovery',
+        }),
+        env,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(calls.length, 0);
+  const resumed = await worker.fetch(
+    request('resumeSnapshot', {
+      ...body,
+      options,
+      confirm: 'apply-recovery',
+    }),
+    env,
+  );
+  assert.equal(resumed.status, 200);
+  assert.deepEqual(calls, [{ org: 'org-test', options }]);
+});
+
 test('returns full recovery payload from the selected private service', async () => {
   const payload = 'x'.repeat(100_000);
   const response = await worker.fetch(

@@ -1,4 +1,6 @@
 const AGENT_METHODS = new Set([
+  'inspectDeliveryStatus',
+  'resumeSnapshot',
   'inspectGlobalIngestionMigration',
   'inspectIngestionMigration',
   'getBaselineCopy',
@@ -28,6 +30,7 @@ const AGENT_METHODS = new Set([
   'quiesceFactRepairCapacity',
 ]);
 const READ_METHODS = new Set([
+  'inspectDeliveryStatus',
   'inspectGlobalIngestionMigration',
   'inspectIngestionMigration',
   'getBaselineCopy',

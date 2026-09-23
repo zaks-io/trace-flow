@@ -67,6 +67,7 @@ export { processAgentBatch } from './consumer';
 export { AgentFactBatcher } from './fact-batcher';
 export { AgentDelivery } from './agent-delivery';
 export { AgentDeliveryCoordinator } from './agent-delivery-coordinator';
+export { SnapshotCapacity } from './snapshot-capacity';
 
 const AGENT_DLQ_NAMES = new Set(['agent-ingest-dlq-dev', 'agent-ingest-dlq-prod']);
 const DLQ_PRESERVATION_RETRY_DELAY_SECONDS = 60;
@@ -385,10 +386,23 @@ export class TraceRecovery extends WorkerEntrypoint<AgentConsumerEnv> {
     ).completeIngestionMigration(input);
   }
 
-  inspectDeliveryStatus(orgId: string) {
-    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(
+  async inspectDeliveryStatus(orgId: string) {
+    const coordinator = this.env.AGENT_DELIVERY_COORDINATOR.getByName(
       `org:${normalizeAgentShardId(orgId)}`,
-    ).getStats({});
+    );
+    return {
+      ...(await coordinator.getStats({})),
+      snapshotSchedule: await coordinator.getSnapshotSchedule({}),
+      snapshotCopyIntents: await coordinator.getOutstandingSnapshotCopyIntents({}),
+    };
+  }
+
+  resumeSnapshot(orgId: string, input: { generation: number; reason: string }) {
+    const normalized = normalizeAgentShardId(orgId);
+    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${normalized}`).resumeSnapshot({
+      ...input,
+      orgId: normalized,
+    });
   }
 
   listRecovery(shardId: string, options: RecoveryPageOptions = {}): Promise<RecoveryPage> {

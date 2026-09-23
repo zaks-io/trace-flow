@@ -45,7 +45,6 @@ export const AGENT_TINYBIRD_TOKENS = [
     variable: 'TINYBIRD_AGENT_SNAPSHOT_TOKEN',
     scopes: [
       'DATASOURCES:APPEND:agent_snapshot_manifest',
-      'PIPES:READ:agent_snapshot_job',
       'PIPES:READ:agent_snapshot_copy_intent_jobs',
       'PIPES:READ:agent_snapshot_manifest_latest',
       ...SNAPSHOT_DATASOURCES.map((name) => `DATASOURCES:APPEND:${name}`),
@@ -59,6 +58,12 @@ export const AGENT_TINYBIRD_TOKENS = [
   },
 ];
 
+export const AGENT_SNAPSHOT_JOBS_TOKEN = {
+  name: 'trace_flow_agent_snapshot_jobs',
+  variable: 'TINYBIRD_AGENT_SNAPSHOT_JOBS_TOKEN',
+  scopes: ['DATASOURCES:CREATE'],
+};
+
 function required(value, name) {
   if (!value) throw new Error(`${name} is required`);
   return value;
@@ -68,10 +73,12 @@ function normalizedScopes(scopes) {
   return scopes.map((scope) => `${scope.type}${scope.resource ? `:${scope.resource}` : ''}`).sort();
 }
 
-async function request(fetchImpl, host, deployToken, path) {
+async function request(fetchImpl, host, deployToken, path, init = {}) {
   const response = await fetchImpl(new URL(path, host), {
+    ...init,
     headers: {
       Authorization: `Bearer ${deployToken}`,
+      ...init.headers,
     },
   });
   const body = await response.json();
@@ -104,6 +111,29 @@ export async function configureAgentTinybirdTokens(outputPath, options = {}) {
     }
     values.push(`${definition.variable}=${token.token}`);
   }
+
+  // Tinybird forbids operational scopes on deployment-managed resource tokens.
+  const jobsDefinition = AGENT_SNAPSHOT_JOBS_TOKEN;
+  const jobsMatches = listing.tokens.filter((token) => token.name === jobsDefinition.name);
+  if (jobsMatches.length > 1) throw new Error('Duplicate snapshot Jobs API token');
+  let jobsToken = jobsMatches[0];
+  if (!jobsToken) {
+    await request(fetchImpl, host, deployToken, '/v0/tokens', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ name: jobsDefinition.name, scope: 'DATASOURCES:CREATE' }),
+    });
+    jobsToken = await request(fetchImpl, host, deployToken, `/v0/tokens/${jobsDefinition.name}`);
+  }
+  if (
+    JSON.stringify(normalizedScopes(jobsToken.scopes ?? [])) !==
+      JSON.stringify(jobsDefinition.scopes) ||
+    typeof jobsToken.token !== 'string' ||
+    !jobsToken.token ||
+    /[\r\n]/.test(jobsToken.token)
+  )
+    throw new Error('Invalid snapshot Jobs API token or scopes');
+  values.push(`${jobsDefinition.variable}=${jobsToken.token}`);
 
   await writeFile(outputPath, `${values.join('\n')}\n`, { mode: 0o600 });
   await chmod(outputPath, 0o600);

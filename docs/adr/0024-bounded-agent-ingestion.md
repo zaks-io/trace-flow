@@ -53,9 +53,37 @@ publication. Copy start intents are durable before the HTTP request, and unknown
 unresolved until a matching terminal job is found. Copy job history is not assumed to prove that an
 unknown request never ran.
 
+Snapshot scheduling targets roughly five-minute dashboard freshness for ordinary batches. The
+coordinator batches dirty dates for two minutes, then uses one durable alarm to dispatch each
+continuation. A Copy's first status check is after 15 seconds, followed by 30-second and then
+60-second delays. Checks use Tinybird's Jobs API (`GET /v0/jobs/:id`), not a SQL endpoint over
+`jobs_log`. The next check time and attempt count are persisted before the request, so duplicate
+queue deliveries cannot restart the polling cadence. There is no immediate continuation enqueue.
+
+A global Durable Object admits two snapshot generations at a time. If no slot is available before
+any Copy starts, the coordinator ends that attempt, preserves dirty dates, and reopens ingestion
+while waiting. Each admitted generation starts one Copy at a time and retains its slot until its
+durable intents are settled and the generation ends.
+Capacity never expires on a timer: an unknown Copy may still be running. The organization delivery
+gate stays closed throughout a generation because separate `FINAL` reads must see stable input.
+Removing that gate requires an immutable input boundary and is not part of this change.
+
+Each Copy permits 15 Jobs API checks. A missing start receipt or expired Jobs API record permits
+three bounded `jobs_log` discovery queries; normal successful execution makes none. Exhausting
+either budget stops scheduling, emits an error, and retains the gate and capacity reservation for
+operator recovery. The private recovery service exposes inspection and an explicit, reasoned resume
+of the same generation. Large linked corrections and provider delays can exceed five minutes;
+`agent_snapshot.published` records dirty age and gate duration rather than promising a hard deadline.
+
 Superseded snapshot generations are deleted by the existing privileged Convex backend after a grace
 period. Consumer Workers receive scoped append, Copy, and read permissions. Tinybird datasource
-creation/deletion authority remains outside the data-plane Workers. Facts and snapshots retain their
+deletion authority remains outside the data-plane Workers. The snapshot runner has a separate
+`TINYBIRD_AGENT_SNAPSHOT_JOBS_TOKEN` with `DATASOURCES:CREATE`: Cloud-Dev Copy job reads returned 403
+with target-scoped `APPEND` despite the Jobs API documentation. Isaac approved this permission on
+2026-09-22. Tinybird rejects operational scopes on deployment-managed resource tokens, so the CI
+token provisioning script creates and verifies this separate operational token. The runner uses it
+only for job-detail GETs; Copy starts, discovery and manifest writes retain their resource token.
+Facts and snapshots retain their
 one-year TTL; transport receipts have four-day retention. Day-grain snapshot and identity metadata
 expires one calendar year plus one day after its bucket timestamp. The boundary day prevents metadata
 from disappearing at midnight while canonical facts from later that date still survive. It does not

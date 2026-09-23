@@ -1,126 +1,81 @@
-import type { AgentSnapshotProgress } from '../agent-delivery-coordinator-contract';
-import type { AgentSnapshotCopyIntent } from '../agent-ingestion-erasure';
-import type { AgentConsumerEnv } from '../context';
-import type { SnapshotPlan } from '../snapshot-tinybird';
+import { env as workerEnv } from 'cloudflare:workers';
+import { runInDurableObject } from 'cloudflare:test';
 import { vi } from 'vitest';
+import type * as SentryCloudflare from '@sentry/cloudflare';
 
-interface FixtureOptions {
-  initialStats?: Record<string, unknown>;
-  finalStats?: Record<string, unknown>;
-  initialIntent?: AgentSnapshotCopyIntent;
-  overrides?: Record<string, unknown>;
-}
+vi.mock('@sentry/cloudflare', async (importOriginal) => ({
+  ...(await importOriginal<typeof SentryCloudflare>()),
+  instrumentDurableObjectWithSentry: <T>(_options: unknown, DurableObjectClass: T): T =>
+    DurableObjectClass,
+  captureException: vi.fn(),
+  captureMessage: vi.fn(),
+}));
+import type { AgentConsumerEnv } from '../context';
+import type { AgentDeliveryCoordinatorInstance } from '../agent-delivery-coordinator';
+import { AgentDeliveryCoordinator } from '../agent-delivery-coordinator';
+import { MAX_AGENT_DELIVERY_RETENTION_MS } from '../agent-delivery-coordinator-contract';
+import { runAgentSnapshot } from '../snapshot-runner';
 
-export function makeSnapshotRunner(
-  snapshot: Omit<SnapshotPlan, 'orgId'>,
-  options: FixtureOptions = {},
-) {
-  let nextCopyIndex = 0;
-  let claimId: string | undefined;
-  let manifestPublishedAtMs: number | undefined;
-  let intents: AgentSnapshotCopyIntent[] = options.initialIntent ? [options.initialIntent] : [];
-  const totalCopies = Math.ceil(snapshot.dirtyDays.length / 31) * 9;
-  const progress = (): AgentSnapshotProgress => ({
-    ...snapshot,
-    nextCopyIndex,
-    totalCopies,
-    claimId: claimId ?? 'unclaimed',
-    claimExpiresAtMs: Date.now() + 5 * 60_000,
-    ...(manifestPublishedAtMs === undefined ? {} : { manifestPublishedAtMs }),
-  });
-  const coordinator = {
-    getStats: vi
-      .fn()
-      .mockResolvedValueOnce(snapshotStats(options.initialStats))
-      .mockResolvedValue(snapshotStats({ dirtyDays: 0, ...options.finalStats })),
-    requestSnapshot: vi.fn().mockResolvedValue({ status: 'draining', activeDeliveries: 0 }),
-    beginSnapshot: vi.fn(async ({ claimId: owner }: { claimId: string }) => {
-      claimId = owner;
-      return snapshot;
-    }),
-    claimSnapshot: vi.fn(async ({ claimId: owner }: { claimId: string }) => {
-      claimId = owner;
-      return progress();
-    }),
-    getSnapshotProgress: vi.fn(async () => progress()),
-    renewSnapshotClaim: vi.fn(async () => progress()),
-    releaseSnapshotClaim: vi.fn(async () => progress()),
-    scheduleSnapshotContinuation: vi.fn(async () => ({ scheduled: true })),
-    assertSnapshotActive: vi.fn(async () => ({
-      generation: snapshot.generation,
-      expiresAtMs: Date.now() + 5 * 60_000,
-    })),
-    prepareSnapshotManifest: vi.fn(async () => {
-      manifestPublishedAtMs ??= Date.now();
-      return progress();
-    }),
-    finishSnapshot: vi.fn(async () => ({
-      generation: snapshot.generation,
-      clearedDirtyDays: snapshot.dirtyDays.length,
-    })),
-    failSnapshot: vi.fn(async () => ({
-      generation: snapshot.generation,
-      retainedDirtyDays: snapshot.dirtyDays.length,
-    })),
-    getOutstandingSnapshotCopyIntents: vi.fn(async () => intents),
-    recordSnapshotCopyIntent: vi.fn(async (input: AgentSnapshotCopyIntent) => {
-      const intent = {
-        generation: input.generation,
-        target: input.target,
-        copyAttempt: input.copyAttempt,
-        startedAt: input.startedAt,
-      };
-      intents = [intent];
-      return intent;
-    }),
-    attachSnapshotCopyJob: vi.fn(async (input: AgentSnapshotCopyIntent & { jobId: string }) => {
-      intents = [{ ...intents[0]!, jobId: input.jobId }];
-      return intents[0];
-    }),
-    settleSnapshotCopyIntent: vi.fn(
-      async (input: AgentSnapshotCopyIntent & { jobId: string; status: 'done' | 'error' }) => {
-        intents = [];
-        if (input.status === 'done') nextCopyIndex += 1;
-        return { removed: true };
-      },
-    ),
-    rejectSnapshotCopyIntent: vi.fn(async () => {
-      intents = [];
-      return { removed: true };
-    }),
-    ...options.overrides,
-  };
+export async function makeSnapshotRunner(dirtyDays = [new Date().toISOString().slice(0, 10)]) {
+  const orgId = `snapshot-${crypto.randomUUID()}`;
   const queueSend = vi.fn().mockResolvedValue(undefined);
-  const env = {
-    AGENT_DELIVERY_COORDINATOR: { getByName: vi.fn(() => coordinator) },
-    AGENT_SNAPSHOT_QUEUE: { send: queueSend },
-    TINYBIRD_AGENT_SNAPSHOT_TOKEN: 'snapshot-token',
-    TINYBIRD_HOST: 'https://api.tinybird.test',
-  } as unknown as Pick<
-    AgentConsumerEnv,
-    | 'AGENT_DELIVERY_COORDINATOR'
-    | 'AGENT_SNAPSHOT_QUEUE'
-    | 'TINYBIRD_AGENT_SNAPSHOT_TOKEN'
-    | 'TINYBIRD_HOST'
-  >;
-  return { coordinator, env, queueSend, progress };
-}
-
-function snapshotStats(overrides: Record<string, unknown> = {}) {
-  return {
-    lastDeliverySequence: 5,
-    lastSnapshotGeneration: 2,
-    activeDeliveries: 0,
-    dirtyDays: 2,
-    incompleteDays: 0,
-    dirtyDayLinks: 0,
-    gatePhase: 'open',
-    gateExpiresAtMs: null,
-    capturedSnapshotDays: 0,
-    activeSnapshotGeneration: null,
-    activeSnapshotCopyIntents: 0,
-    erasureStarted: false,
-    databaseSizeBytes: 1,
-    ...overrides,
+  const capacity = {
+    acquire: vi.fn().mockResolvedValue(true),
+    release: vi.fn().mockResolvedValue(undefined),
   };
+  const host = workerEnv.AGENT_FACT_BATCHER.getByName(`org:${orgId}`);
+  const bindings = {
+    ...workerEnv,
+    AGENT_SNAPSHOT_QUEUE: { send: queueSend },
+  } as unknown as AgentConsumerEnv;
+  // Real SQLite coordinator state survives every runner invocation; only external services are fake.
+  const coordinator = new Proxy({} as DurableObjectStub<AgentDeliveryCoordinatorInstance>, {
+    get(_target, name) {
+      return (...args: unknown[]) =>
+        runInDurableObject(host, async (_instance, state) => {
+          const instance = new AgentDeliveryCoordinator(state, bindings);
+          const method = instance[name as keyof AgentDeliveryCoordinatorInstance] as (
+            ...input: unknown[]
+          ) => unknown;
+          try {
+            return await method.apply(instance, args);
+          } finally {
+            await state.storage.deleteAlarm();
+          }
+        });
+    },
+  });
+  const env = {
+    ...bindings,
+    AGENT_DELIVERY_COORDINATOR: { getByName: () => coordinator },
+    AGENT_SNAPSHOT_CAPACITY: { getByName: () => capacity },
+  } as unknown as AgentConsumerEnv;
+  const delivery = { deliveryId: 'delivery-1', payloadSha256: 'a'.repeat(64) };
+  await coordinator.reserve({
+    ...delivery,
+    dirtyDays,
+    createdAtMs: Date.now(),
+    expiresAtMs: Date.now() + MAX_AGENT_DELIVERY_RETENTION_MS,
+  });
+  if (dirtyDays.length > 1) {
+    await coordinator.linkDirtyDays({
+      ...delivery,
+      links: dirtyDays.slice(1).map((newDay, index) => ({ oldDay: dirtyDays[index]!, newDay })),
+    });
+  }
+  await coordinator.complete(delivery);
+  const wake = async () => {
+    const schedule = await coordinator.getSnapshotSchedule({});
+    if (schedule.wakeAtMs !== null && schedule.wakeAtMs > Date.now())
+      vi.setSystemTime(schedule.wakeAtMs);
+    return runAgentSnapshot(env, orgId);
+  };
+  const finish = async () => {
+    for (let i = 0; i < 150; i++) {
+      const result = await wake();
+      if (result.status === 'complete' || result.status === 'blocked') return result;
+    }
+    throw new Error('Snapshot did not settle within its test budget');
+  };
+  return { coordinator, env, orgId, queueSend, capacity, wake, finish };
 }

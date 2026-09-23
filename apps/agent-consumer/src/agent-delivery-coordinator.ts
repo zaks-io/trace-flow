@@ -1,4 +1,12 @@
 import {
+  initializeSnapshotChecks,
+  startSnapshotCheck,
+  clearSnapshotCheck,
+  prepareSnapshotCheck,
+  requireSnapshotRecovery,
+  resumeSnapshotChecks,
+} from './snapshot-checks';
+import {
   baselineCopyCheckpoint,
   beginBaselineCopy,
   beginBaselineMigrationWindow,
@@ -35,6 +43,7 @@ import { DurableObject } from 'cloudflare:workers';
 import type { AgentConsumerEnv } from './context';
 import {
   publishAgentSnapshot,
+  readSnapshotSchedule,
   scheduleAgentSnapshot,
   scheduleAgentSnapshotContinuation,
 } from './snapshot-schedule';
@@ -128,6 +137,7 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     initializeIngestionMigration(this.ctx.storage);
     initializeAgentIngestionErasure(this.ctx.storage);
     initializeAgentSnapshotProgress(this.ctx.storage);
+    initializeSnapshotChecks(this.ctx.storage);
     initializeLegacyRetirement(this.ctx.storage);
   }
 
@@ -421,7 +431,11 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     if (listSnapshotCopyIntents(this.ctx.storage).length !== 0) {
       throw new Error('snapshot has outstanding Copy intents');
     }
-    return finishAgentSnapshot(this.ctx.storage, generation, Date.now());
+    return this.ctx.storage.transactionSync(() => {
+      const result = finishAgentSnapshot(this.ctx.storage, generation, Date.now());
+      clearSnapshotCheck(this.ctx.storage);
+      return result;
+    });
   }
 
   failSnapshot(input: { generation: number; claimId: string }) {
@@ -430,7 +444,79 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     if (listSnapshotCopyIntents(this.ctx.storage).length !== 0) {
       throw new Error('snapshot has outstanding Copy intents');
     }
-    return failAgentSnapshot(this.ctx.storage, generation, Date.now());
+    return this.ctx.storage.transactionSync(() => {
+      const result = failAgentSnapshot(this.ctx.storage, generation, Date.now());
+      clearSnapshotCheck(this.ctx.storage);
+      return result;
+    });
+  }
+
+  getSnapshotSchedule(input: Record<string, never>) {
+    assertExactKeys(input, [], 'get snapshot schedule');
+    return readSnapshotSchedule(this.ctx.storage);
+  }
+
+  async prepareSnapshotCheck(input: {
+    orgId: string;
+    generation: number;
+    claimId: string;
+    copyIndex: number;
+    recovery: boolean;
+  }) {
+    assertExactKeys(
+      input,
+      ['orgId', 'generation', 'claimId', 'copyIndex', 'recovery'],
+      'prepare snapshot check',
+    );
+    const progress = assertAgentSnapshotClaim(
+      this.ctx.storage,
+      input.generation,
+      input.claimId,
+      Date.now(),
+    );
+    if (progress.nextCopyIndex !== input.copyIndex || typeof input.recovery !== 'boolean')
+      throw new Error('Invalid snapshot check');
+    const result = prepareSnapshotCheck(
+      this.ctx.storage,
+      input.generation,
+      input.copyIndex,
+      input.recovery,
+      Date.now(),
+    );
+    await scheduleAgentSnapshotContinuation(this.ctx.storage, input.orgId);
+    if (result.state.blockedReason) {
+      Sentry.captureMessage(result.state.blockedReason, {
+        level: 'error',
+        tags: { operation: 'agent_snapshot_recovery' },
+        extra: { orgId: input.orgId, generation: input.generation },
+      });
+    }
+    return result;
+  }
+
+  requireSnapshotRecovery(input: { generation: number; claimId: string }) {
+    const { generation, claimId } = this.validateSnapshotClaim(input, 'require snapshot recovery');
+    assertAgentSnapshotClaim(this.ctx.storage, generation, claimId, Date.now());
+    requireSnapshotRecovery(this.ctx.storage);
+  }
+
+  async resumeSnapshot(input: { orgId: string; generation: number; reason: string }) {
+    assertExactKeys(input, ['orgId', 'generation', 'reason'], 'resume snapshot');
+    if (typeof input.reason !== 'string' || input.reason.trim().length < 8)
+      throw new Error('Snapshot recovery requires a reason');
+    if (agentIngestionErasureStarted(this.ctx.storage))
+      throw new Error('Organization erasure has started');
+    const state = readCoordinatorState(this.ctx.storage);
+    if (
+      state.active_snapshot_generation !== input.generation ||
+      state.gate_expires_at_ms === null ||
+      state.gate_expires_at_ms > Date.now()
+    )
+      throw new Error('Snapshot is not available for recovery');
+    await this.ctx.storage.put('snapshot_recovery_reason', input.reason);
+    resumeSnapshotChecks(this.ctx.storage, input.generation, Date.now());
+    await scheduleAgentSnapshotContinuation(this.ctx.storage, input.orgId);
+    return readSnapshotSchedule(this.ctx.storage);
   }
 
   async scheduleSnapshot(input: { orgId: string }): Promise<{ scheduled: boolean }> {
@@ -491,7 +577,11 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     const { claimId, copyIndex, ...intent } = input;
     this.assertIngestionNotErasing();
     assertSnapshotCopyCursor(this.ctx.storage, { ...intent, claimId, copyIndex }, Date.now());
-    return recordSnapshotCopyIntent(this.ctx.storage, intent);
+    return this.ctx.storage.transactionSync(() => {
+      const result = recordSnapshotCopyIntent(this.ctx.storage, intent);
+      startSnapshotCheck(this.ctx.storage, intent.generation, copyIndex, Date.now());
+      return result;
+    });
   }
 
   attachSnapshotCopyJob(
@@ -503,7 +593,13 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
   ) {
     const { claimId, copyIndex, ...job } = input;
     assertSnapshotCopyCursor(this.ctx.storage, { ...job, claimId, copyIndex }, Date.now());
-    return attachSnapshotCopyJob(this.ctx.storage, job);
+    return this.ctx.storage.transactionSync(() => {
+      const result = attachSnapshotCopyJob(this.ctx.storage, job);
+      this.ctx.storage.sql.exec(
+        'UPDATE snapshot_checks SET recovery_required = 0 WHERE singleton = 1',
+      );
+      return result;
+    });
   }
 
   settleSnapshotCopyIntent(
@@ -519,6 +615,7 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     return settleSnapshotCopyIntent(this.ctx.storage, job, () => {
       if (job.status === 'done') {
         advanceSnapshotCopyCursor(this.ctx.storage, job.generation, copyIndex);
+        clearSnapshotCheck(this.ctx.storage);
       }
     });
   }
@@ -563,7 +660,11 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     if (listSnapshotCopyIntents(this.ctx.storage).length !== 0) {
       throw new Error('snapshot has outstanding Copy intents');
     }
-    return failAgentSnapshot(this.ctx.storage, generation, Date.now());
+    return this.ctx.storage.transactionSync(() => {
+      const result = failAgentSnapshot(this.ctx.storage, generation, Date.now());
+      clearSnapshotCheck(this.ctx.storage);
+      return result;
+    });
   }
 
   getStats(input: Record<string, never>): AgentDeliveryCoordinatorStats {

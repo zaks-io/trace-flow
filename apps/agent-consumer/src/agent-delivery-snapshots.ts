@@ -15,6 +15,7 @@ import {
   readCoordinatorState,
 } from './agent-delivery-coordinator-storage';
 import { retainedDayBounds } from './agent-delivery-coordinator-validation';
+import { beginSnapshotTiming } from './snapshot-checks';
 
 export function requestAgentSnapshot(
   storage: DurableObjectStorage,
@@ -80,6 +81,7 @@ export function beginAgentSnapshot(
       now + MAX_AGENT_SNAPSHOT_LEASE_MS,
     );
     createAgentSnapshotProgress(storage, generation, claimId, now);
+    beginSnapshotTiming(storage, generation, now);
     return { generation, dirtyDays };
   });
   if (!snapshot) throw new Error('agent snapshot has no complete dirty days; recovery is required');

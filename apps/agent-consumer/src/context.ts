@@ -2,6 +2,7 @@ import type { AgentIngestQueuePayload, AgentSnapshotQueueMessage } from '@trace-
 import type { AgentFactBatcherInstance } from './fact-batcher';
 import type { AgentDeliveryInstance } from './agent-delivery';
 import type { AgentDeliveryCoordinatorInstance } from './agent-delivery-coordinator';
+import type { SnapshotCapacityInstance } from './snapshot-capacity';
 
 /**
  * Bindings for the agent-consumer Worker. All bindings are required — a misconfigured deploy must
@@ -17,9 +18,11 @@ export interface AgentConsumerEnv {
   BODY_ENCRYPTION_ROOT_KEY: string;
   AGENT_DELIVERY: DurableObjectNamespace<AgentDeliveryInstance>;
   AGENT_DELIVERY_COORDINATOR: DurableObjectNamespace<AgentDeliveryCoordinatorInstance>;
+  AGENT_SNAPSHOT_CAPACITY: DurableObjectNamespace<SnapshotCapacityInstance>;
   /** Only the delivery receipt and identity lookup pipes; never a workspace admin token. */
   TINYBIRD_AGENT_DELIVERY_READ_TOKEN: string;
   TINYBIRD_AGENT_SNAPSHOT_TOKEN: string;
+  TINYBIRD_AGENT_SNAPSHOT_JOBS_TOKEN: string;
   /** Shared model pricing catalog, keyed `pricing:<provider>:<model>` (models.dev import, 2d). */
   MODEL_PRICING: KVNamespace;
   /** Durable Object ledger that dedupes and batches facts before Tinybird insert. */

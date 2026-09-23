@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import {
   AGENT_APPEND_DATASOURCES,
   AGENT_TINYBIRD_TOKENS,
+  AGENT_SNAPSHOT_JOBS_TOKEN,
   configureAgentTinybirdTokens,
 } from './configure-agent-tinybird-tokens.mjs';
 import {
@@ -23,7 +24,7 @@ function scope(value) {
 }
 
 function deployedTokens() {
-  return AGENT_TINYBIRD_TOKENS.map((definition) => ({
+  return [...AGENT_TINYBIRD_TOKENS, AGENT_SNAPSHOT_JOBS_TOKEN].map((definition) => ({
     name: definition.name,
     token: `p.${definition.name}`,
     scopes: [...definition.scopes].reverse().map(scope),
@@ -75,7 +76,6 @@ test('defines the exact deployed token names, Worker variables, and resource sco
       variable: 'TINYBIRD_AGENT_SNAPSHOT_TOKEN',
       scopes: [
         'DATASOURCES:APPEND:agent_snapshot_manifest',
-        'PIPES:READ:agent_snapshot_job',
         'PIPES:READ:agent_snapshot_copy_intent_jobs',
         'PIPES:READ:agent_snapshot_manifest_latest',
         'DATASOURCES:APPEND:agent_context_call_buckets_hourly_snapshots',
@@ -151,7 +151,9 @@ test('reads and exports deployed least-privilege tokens without mutation', async
     },
   ]);
   expect(await readFile(output, 'utf8')).toBe(
-    AGENT_TINYBIRD_TOKENS.map(({ name, variable }) => `${variable}=p.${name}`).join('\n') + '\n',
+    [...AGENT_TINYBIRD_TOKENS, AGENT_SNAPSHOT_JOBS_TOKEN]
+      .map(({ name, variable }) => `${variable}=p.${name}`)
+      .join('\n') + '\n',
   );
   expect((await stat(output)).mode & 0o777).toBe(0o600);
 });
@@ -166,6 +168,52 @@ test('fails without writing an export when a deployed token is missing', async (
       fetchImpl: async () => Response.json({ tokens }),
     }),
   ).rejects.toThrow('Tinybird did not deploy token trace_flow_agent_delivery_read');
+  await expect(readFile(output, 'utf8')).rejects.toThrow();
+});
+
+test('creates and reads back the operational Jobs token without changing resource tokens', async () => {
+  const output = await outputPath();
+  const tokens = deployedTokens();
+  const jobs = tokens.pop();
+  const calls = [];
+  await configureAgentTinybirdTokens(output, {
+    host: 'https://tinybird.test',
+    deployToken: 'operator-secret',
+    fetchImpl: async (url, init = {}) => {
+      calls.push({ path: new URL(url).pathname, method: init.method ?? 'GET' });
+      if (init.method === 'POST') {
+        expect([...init.body.entries()]).toEqual([
+          ['name', 'trace_flow_agent_snapshot_jobs'],
+          ['scope', 'DATASOURCES:CREATE'],
+        ]);
+        return Response.json({});
+      }
+      return Response.json(
+        String(url).endsWith('/trace_flow_agent_snapshot_jobs') ? jobs : { tokens },
+      );
+    },
+  });
+  expect(calls).toEqual([
+    { path: '/v0/tokens', method: 'GET' },
+    { path: '/v0/tokens', method: 'POST' },
+    { path: '/v0/tokens/trace_flow_agent_snapshot_jobs', method: 'GET' },
+  ]);
+  expect(await readFile(output, 'utf8')).toContain(
+    'TINYBIRD_AGENT_SNAPSHOT_JOBS_TOKEN=p.trace_flow_agent_snapshot_jobs',
+  );
+});
+
+test('rejects broader Jobs credentials and does not export them', async () => {
+  const output = await outputPath();
+  const tokens = deployedTokens();
+  tokens.at(-1).scopes.push({ type: 'ADMIN' });
+  await expect(
+    configureAgentTinybirdTokens(output, {
+      host: 'https://tinybird.test',
+      deployToken: 'operator-secret',
+      fetchImpl: async () => Response.json({ tokens }),
+    }),
+  ).rejects.toThrow('Invalid snapshot Jobs API token or scopes');
   await expect(readFile(output, 'utf8')).rejects.toThrow();
 });
 
@@ -187,7 +235,7 @@ test('fails without writing an export when deployed scopes are not exact', async
 
 test('adds every missing datafile binding without changing existing bytes or tokens', async () => {
   const { root, expectedBase } = await datafileFixture();
-  expect(await ensureAgentTinybirdTokenDatafiles(root)).toEqual({ added: 41, present: 0 });
+  expect(await ensureAgentTinybirdTokenDatafiles(root)).toEqual({ added: 40, present: 0 });
   const inventory = await validateAgentTinybirdTokenDatafiles(root);
   expect(inventory).toEqual(
     Object.fromEntries(AGENT_TINYBIRD_TOKENS.map(({ name, scopes }) => [name, [...scopes].sort()])),
@@ -206,7 +254,7 @@ test('keeps one existing exact datafile binding byte-for-byte', async () => {
   const before = await Promise.all(
     [...expectedBase.keys()].map(async (path) => [path, await readFile(path, 'utf8')]),
   );
-  expect(await ensureAgentTinybirdTokenDatafiles(root)).toEqual({ added: 0, present: 41 });
+  expect(await ensureAgentTinybirdTokenDatafiles(root)).toEqual({ added: 0, present: 40 });
   for (const [path, contents] of before) expect(await readFile(path, 'utf8')).toBe(contents);
 });
 

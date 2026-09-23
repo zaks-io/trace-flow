@@ -20,6 +20,7 @@ vi.mock('@trace-flow/tinybird-client', async (importOriginal) => ({
 const env: SnapshotTinybirdEnv = {
   TINYBIRD_HOST: 'https://api.tinybird.test',
   TINYBIRD_AGENT_SNAPSHOT_TOKEN: 'snapshot-token',
+  TINYBIRD_AGENT_SNAPSHOT_JOBS_TOKEN: 'jobs-token',
 };
 const plan: SnapshotPlan = {
   orgId: 'org-1',
@@ -101,17 +102,115 @@ describe('snapshot Tinybird transport', () => {
     ).rejects.toThrow('outcome is unknown: HTTP 502');
   });
 
-  it('accepts only the four statuses returned by the bounded job pipe', async () => {
-    vi.mocked(fetchPipe).mockImplementation(async (options) => {
-      const row = { id: 'job-123', status: 'working' };
-      return [options.schema!.parse(row)] as never;
-    });
-    await expect(snapshotJobStatus(env, 'job-123')).resolves.toBe('working');
+  it('reads a matching Copy job with the separate Jobs API token', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 'job-123',
+          job_id: 'job-123',
+          kind: 'copy',
+          pipe_name: 'repair_agent_session_signals_snapshots',
+          status: 'working',
+        }),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
 
-    vi.mocked(fetchPipe).mockImplementation(async (options) => {
-      return [options.schema!.parse({ id: 'job-123', status: 'cancelled' })] as never;
-    });
+    await expect(snapshotJobStatus(env, 'job-123')).resolves.toBe('working');
+    const [input, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(input.href).toBe('https://api.tinybird.test/v0/jobs/job-123');
+    expect(init).toMatchObject({ headers: { Authorization: 'Bearer jobs-token' } });
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(fetchPipe).not.toHaveBeenCalled();
+  });
+
+  it('returns null only when the job is absent', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 404 })));
+    await expect(snapshotJobStatus(env, 'job-123')).resolves.toBeNull();
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response('secret details', { status: 403 })),
+    );
+    await expect(snapshotJobStatus(env, 'job-123')).rejects.toThrow('HTTP 403');
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response('secret details', { status: 502 })),
+    );
+    await expect(snapshotJobStatus(env, 'job-123')).rejects.toThrow('HTTP 502');
+  });
+
+  it.each([
+    ['cancelled', 'error'],
+    ['cancelling', 'working'],
+    ['waiting', 'waiting'],
+    ['done', 'done'],
+  ])('maps Tinybird %s to %s', async (status, expected) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            id: 'job-123',
+            job_id: 'job-123',
+            kind: 'copy',
+            pipe_name: 'repair_agent_session_signals_snapshots',
+            status,
+          }),
+        ),
+      ),
+    );
+    await expect(snapshotJobStatus(env, 'job-123')).resolves.toBe(expected);
+  });
+
+  it.each([
+    { id: 'job-other' },
+    { job_id: 'job-other' },
+    { kind: 'import' },
+    { pipe_name: 'unrelated_pipe' },
+  ])('rejects a job that does not match its receipt: %j', async (override) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            id: 'job-123',
+            job_id: 'job-123',
+            kind: 'copy',
+            pipe_name: 'repair_agent_session_signals_snapshots',
+            status: 'done',
+            ...override,
+          }),
+        ),
+      ),
+    );
+    await expect(snapshotJobStatus(env, 'job-123')).rejects.toThrow(
+      'does not match its Copy receipt',
+    );
+  });
+
+  it('rejects invalid job status and malformed JSON without exposing response contents', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            id: 'job-123',
+            job_id: 'job-123',
+            kind: 'copy',
+            pipe_name: 'repair_agent_session_signals_snapshots',
+            status: 'unknown',
+          }),
+        ),
+      ),
+    );
     await expect(snapshotJobStatus(env, 'job-123')).rejects.toThrow('Invalid snapshot job status');
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('secret malformed json')));
+    await expect(snapshotJobStatus(env, 'job-123')).rejects.toThrow(
+      'Invalid snapshot job response',
+    );
   });
 
   it('rejects intent discovery when it differs from the attached job receipt', async () => {
@@ -126,6 +225,22 @@ describe('snapshot Tinybird transport', () => {
         jobId: 'job-attached',
       }),
     ).rejects.toThrow('did not match its durable intent');
+  });
+
+  it.each([
+    ['cancelled', 'error'],
+    ['cancelling', 'working'],
+  ])('recovers a %s Copy as %s', async (status, expected) => {
+    vi.mocked(fetchPipe).mockResolvedValueOnce([{ job_id: 'job-attached', status }] as never);
+    await expect(
+      discoverSnapshotCopy(env, plan.orgId, {
+        generation: plan.generation,
+        target: 'agent_session_signals_snapshots',
+        copyAttempt: plan.generation,
+        startedAt: Date.now(),
+        jobId: 'job-attached',
+      }),
+    ).resolves.toEqual({ id: 'job-attached', status: expected });
   });
 
   it('publishes one immutable manifest row for the complete captured group', async () => {
