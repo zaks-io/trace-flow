@@ -54,21 +54,21 @@ describe('snapshot recovery alarm', () => {
 
   it('debounces the first dispatch and retains a wake-up after a queue send', async () => {
     await withStorage((storage) => scheduleAgentSnapshot(storage, 'org-1'));
-    expect(await withStorage((storage) => storage.getAlarm())).toBe(START + 120_000);
+    expect(await withStorage((storage) => storage.getAlarm())).toBe(START + 60_000);
     expect(send).not.toHaveBeenCalled();
 
     await withStorage((storage) =>
       publishAgentSnapshot(storage, queue, stats({ gatePhase: 'open' })),
     );
     await withStorage((storage) => storage.deleteAlarm());
-    vi.setSystemTime(START + 119_999);
+    vi.setSystemTime(START + 59_999);
     await withStorage((storage) =>
       publishAgentSnapshot(storage, queue, stats({ gatePhase: 'open' })),
     );
     expect(send).not.toHaveBeenCalled();
 
     await withStorage((storage) => storage.deleteAlarm());
-    vi.setSystemTime(START + 120_000);
+    vi.setSystemTime(START + 60_000);
     await withStorage((storage) =>
       publishAgentSnapshot(storage, queue, stats({ gatePhase: 'open' })),
     );
@@ -105,7 +105,7 @@ describe('snapshot recovery alarm', () => {
   it('clears an idle alarm without dispatching', async () => {
     await withStorage((storage) => scheduleAgentSnapshot(storage, 'org-1'));
     await withStorage((storage) => storage.deleteAlarm());
-    vi.setSystemTime(START + 120_000);
+    vi.setSystemTime(START + 60_000);
     await withStorage((storage) =>
       publishAgentSnapshot(storage, queue, stats({ gatePhase: 'open', dirtyDays: 0 })),
     );

@@ -220,9 +220,9 @@ TINYBIRD_DEPLOY_PHASE=switch TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-
 
 ### Snapshot scheduling and recovery
 
-Ordinary snapshot batches wait two minutes, then check each Copy through the Tinybird Jobs API after
+Ordinary snapshot batches wait one minute, then check each Copy through the Tinybird Jobs API after
 15 seconds, with subsequent checks after 30 and then 60 seconds. Two generations may run globally.
-Nine promptly completed Copies publish in about four minutes and fifteen seconds including batching.
+Nine promptly completed Copies publish in at least three minutes and fifteen seconds including batching; queue delivery adds latency.
 Large corrections and slow jobs take longer. `agent_snapshot.check` records the persisted check
 counts; `agent_snapshot.published` records `dirtyAgeMs` and `gateDurationMs`.
 

@@ -2,7 +2,7 @@ import type { AgentSnapshotQueueMessage } from '@trace-flow/types';
 import type { AgentDeliveryCoordinatorStats } from './agent-delivery-coordinator-contract';
 import { readSnapshotCheck, SNAPSHOT_FIRST_CHECK_MS, snapshotStartedAt } from './snapshot-checks';
 
-const AGENT_SNAPSHOT_DEBOUNCE_MS = 2 * 60_000;
+const AGENT_SNAPSHOT_DEBOUNCE_MS = 60_000;
 const DISPATCH_RECOVERY_MS = 60_000;
 
 export async function readSnapshotSchedule(storage: DurableObjectStorage) {

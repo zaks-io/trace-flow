@@ -54,7 +54,7 @@ unresolved until a matching terminal job is found. Copy job history is not assum
 unknown request never ran.
 
 Snapshot scheduling targets roughly five-minute dashboard freshness for ordinary batches. The
-coordinator batches dirty dates for two minutes, then uses one durable alarm to dispatch each
+coordinator batches dirty dates for one minute, then uses one durable alarm to dispatch each
 continuation. A Copy's first status check is after 15 seconds, followed by 30-second and then
 60-second delays. Checks use Tinybird's Jobs API (`GET /v0/jobs/:id`), not a SQL endpoint over
 `jobs_log`. The next check time and attempt count are persisted before the request, so duplicate
