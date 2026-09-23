@@ -122,22 +122,52 @@ describe('durable snapshot runner', () => {
     expect(discoverSnapshotCopy).toHaveBeenCalledOnce();
   });
 
-  it('fails a terminal job without publishing or clearing dirty days', async () => {
+  it('blocks a terminal job across queue retries and new dirty scheduling until operator resume', async () => {
     vi.mocked(snapshotJobStatus).mockResolvedValueOnce('error');
     const f = await makeSnapshotRunner();
     await f.wake();
     await expect(f.wake()).rejects.toThrow('Copy job');
     expect(publishSnapshotManifest).not.toHaveBeenCalled();
     expect(await f.coordinator.getStats({})).toMatchObject({ gatePhase: 'open', dirtyDays: 1 });
+    expect(await f.coordinator.getSnapshotSchedule({})).toMatchObject({
+      failure: { generation: 1, reason: expect.stringContaining('job') },
+    });
     expect(f.capacity.release).toHaveBeenCalledOnce();
+    await f.coordinator.scheduleSnapshot({ orgId: f.orgId });
+    for (let attempt = 0; attempt < 3; attempt += 1)
+      expect(await runAgentSnapshot(f.env, f.orgId)).toEqual({ status: 'blocked' });
+    await expect(f.coordinator.beginSnapshot({ claimId: 'unexpected' })).rejects.toThrow(
+      'operator recovery',
+    );
+    expect(startSnapshotCopy).toHaveBeenCalledOnce();
+    await f.coordinator.resumeSnapshot({
+      orgId: f.orgId,
+      generation: 1,
+      reason: 'Provider job failure investigated',
+    });
+    expect(await f.finish()).toMatchObject({ status: 'complete', generation: 2 });
+    expect(startSnapshotCopy).toHaveBeenCalledTimes(10);
   });
 
-  it('fails a definitively rejected start and removes its intent', async () => {
+  it('blocks a rejected start without retaining an intent, then resumes a new generation', async () => {
     vi.mocked(startSnapshotCopy).mockRejectedValueOnce(new SnapshotCopyStartRejectedError(400));
     const f = await makeSnapshotRunner();
     await expect(f.wake()).rejects.toThrow('HTTP 400');
     expect(await f.coordinator.getOutstandingSnapshotCopyIntents({})).toEqual([]);
-    expect(await f.coordinator.getStats({})).toMatchObject({ gatePhase: 'open' });
+    expect(await f.coordinator.getStats({})).toMatchObject({ gatePhase: 'open', dirtyDays: 1 });
+    expect(await f.coordinator.getSnapshotSchedule({})).toMatchObject({
+      failure: { generation: 1, reason: 'Snapshot Copy start failed: HTTP 400' },
+    });
+    expect(f.capacity.release).toHaveBeenCalledOnce();
+    await f.coordinator.scheduleSnapshotContinuation({ orgId: f.orgId });
+    expect(await f.wake()).toEqual({ status: 'blocked' });
+    expect(startSnapshotCopy).toHaveBeenCalledOnce();
+    await f.coordinator.resumeSnapshot({
+      orgId: f.orgId,
+      generation: 1,
+      reason: 'Provider request corrected',
+    });
+    expect(await f.finish()).toMatchObject({ status: 'complete', generation: 2 });
   });
 
   it('does not start any Copy without a durable capacity slot', async () => {

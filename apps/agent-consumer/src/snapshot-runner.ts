@@ -54,7 +54,7 @@ export async function runAgentSnapshot(
   const initial = await coordinator.getStats({});
   if (initial.erasureStarted) return { status: 'idle' };
   const schedule = await coordinator.getSnapshotSchedule({});
-  if (schedule.check?.blockedReason) return { status: 'blocked' };
+  if (schedule.failure || schedule.check?.blockedReason) return { status: 'blocked' };
   if (schedule.wakeAtMs !== null && schedule.wakeAtMs > Date.now()) return { status: 'scheduled' };
   let progress: AgentSnapshotProgress;
   if (initial.gatePhase === 'snapshot') {
@@ -134,7 +134,7 @@ export async function runAgentSnapshot(
           await coordinator.attachSnapshotCopyJob({ ...key, jobId });
         } catch (error) {
           if (error instanceof SnapshotCopyStartRejectedError)
-            await coordinator.rejectSnapshotCopyIntent(key);
+            await coordinator.rejectSnapshotCopyIntent({ ...key, reason: error.message });
           throw error;
         }
         return await continueRun(progress);
@@ -215,6 +215,12 @@ export async function runAgentSnapshot(
       tags: { operation: 'agent_snapshot' },
       extra: { orgId, generation: plan.generation },
     });
+    const failure = (await coordinator.getSnapshotSchedule({})).failure;
+    if (failure?.generation === plan.generation) {
+      await capacity.release(slot);
+      await coordinator.scheduleSnapshotContinuation({ orgId });
+      throw error;
+    }
     const [latest, intents] = await Promise.all([
       coordinator.getSnapshotProgress({ generation: plan.generation, claimId }),
       coordinator.getOutstandingSnapshotCopyIntents({}),
@@ -224,7 +230,14 @@ export async function runAgentSnapshot(
       (intents.length > 0 || latest.nextCopyIndex === latest.totalCopies)
     )
       return await continueRun(latest);
-    await coordinator.failSnapshot({ generation: plan.generation, claimId });
+    await coordinator.failSnapshot({
+      generation: plan.generation,
+      claimId,
+      reason:
+        error instanceof SnapshotCapturedDaysExpiredError
+          ? 'Snapshot captured days expired before publication'
+          : 'Snapshot failed before Copy completion',
+    });
     await capacity.release(slot);
     await coordinator.scheduleSnapshotContinuation({ orgId });
     throw error;

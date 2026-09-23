@@ -7,6 +7,12 @@ import {
   resumeSnapshotChecks,
 } from './snapshot-checks';
 import {
+  clearSnapshotFailure,
+  initializeSnapshotFailure,
+  readSnapshotFailure,
+  recordSnapshotFailure,
+} from './snapshot-failure';
+import {
   baselineCopyCheckpoint,
   beginBaselineCopy,
   beginBaselineMigrationWindow,
@@ -138,6 +144,7 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     initializeAgentIngestionErasure(this.ctx.storage);
     initializeAgentSnapshotProgress(this.ctx.storage);
     initializeSnapshotChecks(this.ctx.storage);
+    initializeSnapshotFailure(this.ctx.storage);
     initializeLegacyRetirement(this.ctx.storage);
   }
 
@@ -438,8 +445,16 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     });
   }
 
-  failSnapshot(input: { generation: number; claimId: string }) {
-    const { generation, claimId } = this.validateSnapshotClaim(input, 'fail snapshot');
+  failSnapshot(input: { generation: number; claimId: string; reason?: string }) {
+    assertExactKeys(
+      input,
+      input.reason === undefined ? ['generation', 'claimId'] : ['generation', 'claimId', 'reason'],
+      'fail snapshot',
+    );
+    const generation = validateGenerationInput({ generation: input.generation }, 'fail snapshot');
+    const claimId = validateSnapshotClaimId(input.claimId);
+    if (input.reason !== undefined && (!input.reason || input.reason.length > 512))
+      throw new Error('Invalid snapshot failure reason');
     assertAgentSnapshotClaim(this.ctx.storage, generation, claimId, Date.now());
     if (listSnapshotCopyIntents(this.ctx.storage).length !== 0) {
       throw new Error('snapshot has outstanding Copy intents');
@@ -447,6 +462,8 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     return this.ctx.storage.transactionSync(() => {
       const result = failAgentSnapshot(this.ctx.storage, generation, Date.now());
       clearSnapshotCheck(this.ctx.storage);
+      if (input.reason)
+        recordSnapshotFailure(this.ctx.storage, generation, input.reason, Date.now());
       return result;
     });
   }
@@ -504,8 +521,21 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     assertExactKeys(input, ['orgId', 'generation', 'reason'], 'resume snapshot');
     if (typeof input.reason !== 'string' || input.reason.trim().length < 8)
       throw new Error('Snapshot recovery requires a reason');
+    if (!input.orgId || input.orgId.length > 256 || input.orgId.includes(':'))
+      throw new Error('Invalid snapshot organization');
     if (agentIngestionErasureStarted(this.ctx.storage))
       throw new Error('Organization erasure has started');
+    const failure = readSnapshotFailure(this.ctx.storage);
+    if (failure) {
+      if (failure.generation !== input.generation)
+        throw new Error('Snapshot is not available for recovery');
+      await this.ctx.storage.put('snapshot_recovery_reason', input.reason);
+      await this.ctx.storage.put('snapshot_wake_at_ms', Date.now() + 1);
+      await this.ctx.storage.setAlarm(Date.now() + 1);
+      clearSnapshotFailure(this.ctx.storage, input.generation);
+      await scheduleAgentSnapshotContinuation(this.ctx.storage, input.orgId);
+      return readSnapshotSchedule(this.ctx.storage);
+    }
     const state = readCoordinatorState(this.ctx.storage);
     if (
       state.active_snapshot_generation !== input.generation ||
@@ -616,6 +646,15 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
       if (job.status === 'done') {
         advanceSnapshotCopyCursor(this.ctx.storage, job.generation, copyIndex);
         clearSnapshotCheck(this.ctx.storage);
+      } else {
+        failAgentSnapshot(this.ctx.storage, job.generation, Date.now());
+        clearSnapshotCheck(this.ctx.storage);
+        recordSnapshotFailure(
+          this.ctx.storage,
+          job.generation,
+          `Snapshot Copy job ${job.jobId} failed`,
+          Date.now(),
+        );
       }
     });
   }
@@ -624,11 +663,20 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     input: Pick<AgentSnapshotCopyIntent, 'generation' | 'target' | 'copyAttempt'> & {
       claimId: string;
       copyIndex: number;
+      reason: string;
     },
   ) {
-    const { claimId, copyIndex, ...key } = input;
+    const { claimId, copyIndex, reason, ...key } = input;
+    if (!reason.startsWith('Snapshot Copy start failed: HTTP '))
+      throw new Error('Invalid rejected snapshot Copy reason');
     assertSnapshotCopyCursor(this.ctx.storage, { ...key, claimId, copyIndex }, Date.now());
-    return rejectSnapshotCopyIntent(this.ctx.storage, key);
+    return this.ctx.storage.transactionSync(() => {
+      const result = rejectSnapshotCopyIntent(this.ctx.storage, key);
+      failAgentSnapshot(this.ctx.storage, key.generation, Date.now());
+      clearSnapshotCheck(this.ctx.storage);
+      recordSnapshotFailure(this.ctx.storage, key.generation, reason, Date.now());
+      return result;
+    });
   }
 
   attachErasureSnapshotCopyJob(

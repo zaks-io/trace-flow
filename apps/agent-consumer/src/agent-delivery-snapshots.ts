@@ -16,11 +16,13 @@ import {
 } from './agent-delivery-coordinator-storage';
 import { retainedDayBounds } from './agent-delivery-coordinator-validation';
 import { beginSnapshotTiming } from './snapshot-checks';
+import { readSnapshotFailure } from './snapshot-failure';
 
 export function requestAgentSnapshot(
   storage: DurableObjectStorage,
   now: number,
 ): { status: 'draining'; activeDeliveries: number } {
+  if (readSnapshotFailure(storage)) throw new Error('agent snapshot requires operator recovery');
   recoverExpiredSnapshotGate(storage, now);
   storage.transactionSync(() => pruneRetainedDayMetadata(storage, now));
   return storage.transactionSync(() => {
@@ -46,6 +48,7 @@ export function beginAgentSnapshot(
   claimId: string,
   now: number,
 ): BeginAgentSnapshotResult {
+  if (readSnapshotFailure(storage)) throw new Error('agent snapshot requires operator recovery');
   recoverExpiredSnapshotGate(storage, now);
   storage.transactionSync(() => pruneRetainedDayMetadata(storage, now));
   const snapshot = storage.transactionSync(() => {

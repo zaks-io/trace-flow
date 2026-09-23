@@ -1,6 +1,7 @@
 import type { AgentSnapshotQueueMessage } from '@trace-flow/types';
 import type { AgentDeliveryCoordinatorStats } from './agent-delivery-coordinator-contract';
 import { readSnapshotCheck, SNAPSHOT_FIRST_CHECK_MS, snapshotStartedAt } from './snapshot-checks';
+import { readSnapshotFailure } from './snapshot-failure';
 
 const AGENT_SNAPSHOT_DEBOUNCE_MS = 60_000;
 const DISPATCH_RECOVERY_MS = 60_000;
@@ -9,6 +10,7 @@ export async function readSnapshotSchedule(storage: DurableObjectStorage) {
   const check = readSnapshotCheck(storage);
   return {
     check,
+    failure: readSnapshotFailure(storage),
     startedAtMs: snapshotStartedAt(storage),
     dirtySinceMs: (await storage.get<number>('snapshot_dirty_since_ms')) ?? null,
     wakeAtMs: check?.nextCheckAtMs ?? (await storage.get<number>('snapshot_wake_at_ms')) ?? null,
@@ -20,7 +22,10 @@ export async function scheduleAgentSnapshot(
   orgId: string,
 ): Promise<void> {
   await bindSnapshotOrg(storage, orgId);
-  if (readSnapshotCheck(storage)?.blockedReason) return;
+  if (readSnapshotFailure(storage) || readSnapshotCheck(storage)?.blockedReason) {
+    await storage.deleteAlarm();
+    return;
+  }
   if ((await storage.get<number>('snapshot_dirty_since_ms')) === undefined)
     await storage.put('snapshot_dirty_since_ms', Date.now());
   if ((await storage.getAlarm()) === null) {
@@ -35,6 +40,10 @@ export async function scheduleAgentSnapshotContinuation(
   orgId: string,
 ): Promise<void> {
   await bindSnapshotOrg(storage, orgId);
+  if (readSnapshotFailure(storage)) {
+    await storage.deleteAlarm();
+    return;
+  }
   const check = readSnapshotCheck(storage);
   if (check?.blockedReason) {
     await storage.deleteAlarm();
@@ -52,6 +61,7 @@ export async function publishAgentSnapshot(
 ): Promise<void> {
   const schedule = await readSnapshotSchedule(storage);
   if (
+    schedule.failure ||
     schedule.check?.blockedReason ||
     (stats.gatePhase !== 'snapshot' && stats.dirtyDays <= stats.incompleteDays)
   ) {
