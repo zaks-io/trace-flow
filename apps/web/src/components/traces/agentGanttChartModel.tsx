@@ -189,6 +189,7 @@ export function getSpanType(span: TraceSpan, attrs: Record<string, string>): Spa
     operationName === 'text_completion' ||
     operationName === 'generate_content' ||
     operationName === 'embeddings' ||
+    operationName === 'count_tokens' ||
     operationName === 'invoke_agent'
   ) {
     return 'llm';

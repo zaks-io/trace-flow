@@ -27,12 +27,54 @@ export class UpstreamFetchError extends Error {
   }
 }
 
+const PROXY_ONLY_HEADERS = [
+  'x-trace-flow-api-key',
+  'x-trace-flow-omit-body',
+  'traceparent',
+  'tracestate',
+  'baggage',
+  'host',
+  'content-length',
+];
+
+/** RFC 9110 §7.6.1 connection-scoped headers; they describe the client hop, not ours. */
+const HOP_BY_HOP_HEADERS = [
+  'connection',
+  'keep-alive',
+  'proxy-authorization',
+  'proxy-connection',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+];
+
+/** Caller network identity added by Cloudflare or client-side proxies. */
+const CLIENT_NETWORK_HEADERS = ['forwarded', 'x-real-ip', 'true-client-ip'];
+const CLIENT_NETWORK_HEADER_PREFIXES = ['cf-', 'x-forwarded-'];
+
+export function buildUpstreamHeaders(incoming: Headers): Headers {
+  const headers = new Headers(incoming);
+  const stripped = new Set([
+    ...PROXY_ONLY_HEADERS,
+    ...HOP_BY_HOP_HEADERS,
+    ...CLIENT_NETWORK_HEADERS,
+  ]);
+  for (const name of headers.keys()) {
+    if (CLIENT_NETWORK_HEADER_PREFIXES.some((prefix) => name.startsWith(prefix))) {
+      stripped.add(name);
+    }
+  }
+  for (const name of stripped) headers.delete(name);
+  return headers;
+}
+
 /**
  * Give forwarding and capture independent views of the request body validated by the prior stage.
  *
- * Strips proxy-internal headers (`X-Trace-Flow-Api-Key`,
- * `X-Trace-Flow-Omit-Body`) and W3C trace context — those are for us, not
- * the upstream provider. `Authorization` / `x-api-key` pass through.
+ * Strips proxy-internal headers and W3C trace context (those are for us), plus
+ * hop-by-hop and caller network headers so the end user's IP never reaches the
+ * provider. `Authorization` / `x-api-key` pass through.
  */
 export async function forwardToUpstream(
   c: Context<{ Bindings: ProxyEnv }>,
@@ -46,14 +88,7 @@ export async function forwardToUpstream(
   const body = validated.requestBody;
   const streamToCapture = body.byteLength > 0 ? new Blob([body]).stream() : null;
 
-  const headers = new Headers(c.req.raw.headers);
-  headers.delete('X-Trace-Flow-Api-Key');
-  headers.delete('X-Trace-Flow-Omit-Body');
-  headers.delete('traceparent');
-  headers.delete('tracestate');
-  headers.delete('baggage');
-  headers.delete('host');
-  headers.delete('content-length');
+  const headers = buildUpstreamHeaders(c.req.raw.headers);
 
   const requestSent = getCurrentTimestamp();
 

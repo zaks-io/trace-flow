@@ -1,6 +1,7 @@
 import { PROVIDER_SCHEMAS } from '../schemas';
 import {
   aggregateOpenAIStyleSSETokens,
+  findOpenAIStyleStreamFailure,
   handleOpenAIStyleSSEEvent,
   parseOpenAIStyleRequestBody,
   parseOpenAIStyleResponseMetadata,
@@ -19,4 +20,5 @@ export const openai: Provider = {
 
   handleSSEEvent: (event, timestamp, state) => handleOpenAIStyleSSEEvent(event, timestamp, state),
   aggregateSSETokens: (state) => aggregateOpenAIStyleSSETokens(state, 'openai'),
+  findStreamFailure: findOpenAIStyleStreamFailure,
 };

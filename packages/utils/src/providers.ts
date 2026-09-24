@@ -18,12 +18,27 @@ export function extractProviderFromUrl(url: string): string {
 }
 
 /**
+ * Token-counting endpoints (Anthropic `/v1/messages/count_tokens`, Gemini
+ * `:countTokens`, OpenAI `/v1/responses/input_tokens`) return a prompt size,
+ * not billed usage.
+ */
+export const COUNT_TOKENS_OPERATION = 'count_tokens';
+
+/**
  * Derives the gen_ai.operation.name from the API endpoint path.
  * Per OpenTelemetry GenAI semantic conventions:
  * https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/
  */
 export function deriveOperationName(path: string): string {
   const normalizedPath = path.toLowerCase();
+
+  if (
+    normalizedPath.includes('/count_tokens') ||
+    normalizedPath.includes(':counttokens') ||
+    normalizedPath.includes('/responses/input_tokens')
+  ) {
+    return COUNT_TOKENS_OPERATION;
+  }
 
   // OpenAI / Groq / OpenRouter patterns
   if (normalizedPath.includes('/chat/completions')) return 'chat';

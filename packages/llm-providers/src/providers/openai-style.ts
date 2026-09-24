@@ -1,6 +1,7 @@
 import type {
   InputMessage,
   InputContentBlock,
+  LLMError,
   LLMResponseMetadataSummary,
   LLMTokenUsage,
   SSEStreamData,
@@ -18,6 +19,7 @@ import {
   isBoundedSSEEventData,
   reportSSEHandlerFailure,
 } from './sse-state';
+import { recordStreamError, streamFailure } from './stream-failure';
 
 type OpenAIContentPart =
   | { type: 'text'; text?: string }
@@ -294,11 +296,14 @@ export function handleOpenAIStyleSSEEvent(
       if (!event.data || event.data.trim().length === 0) return;
 
       if (isBoundedSSEEventData(event.data)) {
+        let parsed: unknown;
         try {
-          JSON.parse(event.data);
+          parsed = JSON.parse(event.data);
         } catch {
           return;
         }
+        // OpenRouter's mid-stream error chunk also carries usage and metadata, so keep going.
+        recordStreamError(state, parsed);
       }
 
       if (state.messages.length === 0) {
@@ -321,16 +326,25 @@ export function handleOpenAIStyleSSEEvent(
       return;
     }
 
+    // Failure events are parsed at any size: `response.failed` echoes the request's
+    // instructions and tools, and a missed failure would be recorded as a success.
+    const isFailureEvent = eventType === 'error' || eventType === 'response.failed';
+    let parsedEventData: unknown;
     if (event.data && event.data.trim().length > 0) {
-      if (isBoundedSSEEventData(event.data)) {
+      if (isBoundedSSEEventData(event.data) || isFailureEvent) {
         try {
-          JSON.parse(event.data);
+          parsedEventData = JSON.parse(event.data);
         } catch {
           return;
         }
       } else if (!OVERSIZED_RESPONSES_EVENT_TYPES.has(eventType)) {
         return;
       }
+    }
+
+    if (isFailureEvent) {
+      recordStreamError(state, parsedEventData);
+      if (eventType === 'error') return;
     }
 
     if (eventType === 'response.created') {
@@ -373,6 +387,19 @@ export function handleOpenAIStyleSSEEvent(
   } catch {
     reportSSEHandlerFailure(state);
   }
+}
+
+const TERMINATED_STREAM_OBJECTS = new Set(['chat.completion.chunk', 'response']);
+
+/**
+ * Chat Completions ends with `[DONE]` and the Responses API with a terminal
+ * `response.*` event. Other OpenAI-style SSE shapes (audio, transcription) are
+ * not tracked, so an unknown stream never reads as truncated.
+ */
+export function findOpenAIStyleStreamFailure(state: SSEStreamData): LLMError | undefined {
+  return streamFailure(state, (message) =>
+    TERMINATED_STREAM_OBJECTS.has(message.metadata?.object ?? ''),
+  );
 }
 
 export function parseOpenAIStyleResponseMetadata(

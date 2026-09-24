@@ -64,6 +64,21 @@ describe('respond', () => {
     expect(res.statusText).toBe('Bad');
   });
 
+  it('drops provider cookies from the client response', () => {
+    const res = respond(
+      makeAttached(
+        { record: true, reason: 'ok' },
+        {
+          status: 200,
+          statusText: 'OK',
+          headers: { 'set-cookie': '__cf_bm=abc; Domain=api.openai.com', 'x-request-id': 'r1' },
+        },
+      ),
+    );
+    expect(res.headers.get('Set-Cookie')).toBeNull();
+    expect(res.headers.get('x-request-id')).toBe('r1');
+  });
+
   it('applies security headers', () => {
     const res = respond(makeAttached({ record: true, reason: 'ok' }));
     expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');

@@ -7,6 +7,7 @@ export * from './time';
 export * from './body-format';
 export * from './message-parsing';
 export * from './redaction';
+export * from './body-redaction';
 export * from './security-headers';
 export * from './collector-auth';
 export * from './trace-delivery';

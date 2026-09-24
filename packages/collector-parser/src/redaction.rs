@@ -84,9 +84,13 @@ static IPV4: LazyLock<Regex> = LazyLock::new(|| {
 });
 /// US-style phone numbers. The TS pattern uses a `(?<![A-Za-z0-9])` lookbehind the `regex` crate
 /// can't express, so capture the leading boundary char and re-emit it around the mask instead.
+/// Unprefixed numbers need a separator: bare ten-digit runs are usually timestamps or ids.
+/// Keep in sync with PHONE_PATTERN in packages/utils/src/redaction.ts.
 static PHONE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(^|[^A-Za-z0-9])((?:\+1\s?)?(?:\(\d{3}\)\s*|\d{3}[-.\s]?)\d{3}[-.\s]?\d{4})\b")
-        .expect("phone")
+    Regex::new(
+        r"(^|[^A-Za-z0-9])((?:\+1[\s.-]?\d{3}[-.\s]?\d{3}[-.\s]?\d{4}|(?:\(\d{3}\)\s*|\d{3}[-.\s])\d{3}[-.\s]?\d{4}|\d{6}[-.\s]\d{4}))\b",
+    )
+    .expect("phone")
 });
 /// JSON-ish quoted value after a sensitive key — masks the value, keeps the key and quotes.
 static SENSITIVE_JSON_VALUE: LazyLock<Regex> = LazyLock::new(|| {
@@ -271,6 +275,16 @@ mod tests {
         // Flipping the last check digit breaks Luhn, so the run is left intact.
         let kept = redact_field("ref 4111111111111112 ok");
         assert_eq!(kept.value, "ref 4111111111111112 ok");
+        assert_eq!(kept.dropped, 0);
+    }
+
+    #[test]
+    fn masks_separated_phone_numbers_but_keeps_bare_ten_digit_runs() {
+        assert_eq!(redact_field("call 415-555-0100").value, "call [REDACTED]");
+        assert_eq!(redact_field("call (415) 5550100").value, "call [REDACTED]");
+        assert_eq!(redact_field("call +14155550100").value, "call [REDACTED]");
+        let kept = redact_field("gen-1727100000-AbCd at 1727100000");
+        assert_eq!(kept.value, "gen-1727100000-AbCd at 1727100000");
         assert_eq!(kept.dropped, 0);
     }
 }

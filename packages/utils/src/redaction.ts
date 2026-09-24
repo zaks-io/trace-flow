@@ -1,6 +1,7 @@
 /**
- * Regex-based PII redaction for persisted proxy bodies and structured queue fields.
- * Does not attempt semantic JSON parsing of full bodies — runs pattern passes on strings.
+ * Regex-based PII redaction for strings and structured queue fields. Whole
+ * request/response bodies go through `redactBody`, which applies these passes
+ * per JSON string value so numeric fields are never rewritten.
  */
 
 const REDACTED = '[REDACTED]';
@@ -70,9 +71,12 @@ const SSN_PATTERN = /\b\d{3}-\d{2}-\d{4}\b/g;
 
 const IPV4_PATTERN = /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g;
 
-// US-style numbers; (?<![A-Za-z0-9]) so "(415) 555-0100" matches after a space (\\b fails before "(")
+// US-style numbers; (?<![A-Za-z0-9]) so "(415) 555-0100" matches after a space (\\b fails before "(").
+// Unprefixed numbers need at least one separator: a bare ten-digit run is far more often a Unix
+// timestamp or an id segment (OpenRouter's `gen-1727100000-…`) than a phone number.
+// Keep in sync with PHONE in packages/collector-parser/src/redaction.rs.
 const PHONE_PATTERN =
-  /(?<![A-Za-z0-9])(?:\+1\s?)?(?:\(\d{3}\)\s*|\d{3}[-.\s]?)\d{3}[-.\s]?\d{4}\b/g;
+  /(?<![A-Za-z0-9])(?:\+1[\s.-]?\d{3}[-.\s]?\d{3}[-.\s]?\d{4}|(?:\(\d{3}\)\s*|\d{3}[-.\s])\d{3}[-.\s]?\d{4}|\d{6}[-.\s]\d{4})\b/g;
 
 // Authorization: Bearer … — trailing \b breaks on base64 padding (= is non-word); use lookahead instead
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9\-._~+/]+=*(?=\s|$|[^A-Za-z0-9\-._~+/=])/gi;
@@ -95,14 +99,15 @@ export function redactText(text: string): string {
   out = out.replace(IPV4_PATTERN, REDACTED);
   out = out.replace(PHONE_PATTERN, REDACTED);
   out = out.replace(BEARER_PATTERN, `Bearer ${REDACTED}`);
-  out = out.replace(
-    SENSITIVE_JSON_VALUE_PATTERN,
-    (_m, prefix: string, _val: string, suffix: string) => {
-      return `${prefix}${REDACTED}${suffix}`;
-    },
-  );
+  return redactSensitiveJsonValues(out);
+}
 
-  return out;
+/** Masks quoted JSON values that follow credential-like keys (`"api_key": "…"`). */
+export function redactSensitiveJsonValues(text: string): string {
+  return text.replace(
+    SENSITIVE_JSON_VALUE_PATTERN,
+    (_m, prefix: string, _val: string, suffix: string) => `${prefix}${REDACTED}${suffix}`,
+  );
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

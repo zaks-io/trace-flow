@@ -13,6 +13,10 @@ describe('deriveOperationName', () => {
       expect(deriveOperationName('/v1/completions')).toBe('text_completion');
     });
 
+    it('should identify Responses input token counting separately from chat', () => {
+      expect(deriveOperationName('/openai/v1/responses/input_tokens')).toBe('count_tokens');
+    });
+
     it('should identify embeddings', () => {
       expect(deriveOperationName('/openai/v1/embeddings')).toBe('embeddings');
       expect(deriveOperationName('/v1/embeddings')).toBe('embeddings');
@@ -24,12 +28,22 @@ describe('deriveOperationName', () => {
       expect(deriveOperationName('/anthropic/v1/messages')).toBe('chat');
       expect(deriveOperationName('/v1/messages')).toBe('chat');
     });
+
+    it('should identify token counting separately from chat', () => {
+      expect(deriveOperationName('/anthropic/v1/messages/count_tokens')).toBe('count_tokens');
+    });
   });
 
   describe('Google Gemini patterns', () => {
     it('should identify generateContent as chat', () => {
       expect(deriveOperationName('/google/v1beta/models/gemini-pro:generateContent')).toBe('chat');
       expect(deriveOperationName('/v1beta/models/gemini-1.5-flash:generateContent')).toBe('chat');
+    });
+
+    it('should identify countTokens separately from chat', () => {
+      expect(deriveOperationName('/google/v1beta/models/gemini-2.0-flash:countTokens')).toBe(
+        'count_tokens',
+      );
     });
 
     it('should identify streamGenerateContent as chat', () => {
