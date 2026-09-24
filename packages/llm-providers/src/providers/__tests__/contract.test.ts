@@ -252,6 +252,7 @@ describe.each(Object.entries(PROVIDERS))('Provider contract: %s', (id, provider)
     expect(tokens).toBeDefined();
     expect(tokens?.promptTokens).toBe(fixture.expectedPromptTokens);
     expect(tokens?.completionTokens).toBe(fixture.expectedCompletionTokens);
+    expect(provider.findStreamFailure(state)).toBeUndefined();
   });
 
   it('aggregateSSETokens returns undefined for empty stream', () => {

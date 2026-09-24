@@ -3,6 +3,7 @@ import { validateApiKey, isAuthError, checkBillingStatus } from '../auth';
 import { _clearAll } from '../cache';
 import { analyticsKeyId } from '@trace-flow/utils';
 import type { Context } from 'hono';
+import type { Logger } from '@trace-flow/logging';
 
 beforeEach(async () => {
   await _clearAll();
@@ -210,6 +211,28 @@ describe('validateApiKey', () => {
         message: 'Retry the request',
       });
     }
+  });
+
+  it('bounds the authorization call and fails closed when it times out', async () => {
+    const context = createMockContext({ 'x-trace-flow-api-key': 'slow-key' }, {});
+    vi.mocked(fetch).mockImplementation((_input, init) => {
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      return Promise.reject(new DOMException('The operation timed out', 'TimeoutError'));
+    });
+
+    const error = vi.fn();
+    const logger = { error, warn: vi.fn() } as unknown as Logger;
+
+    const result = await validateApiKey(context, logger);
+
+    expect(isAuthError(result)).toBe(true);
+    if (isAuthError(result)) {
+      expect(result.status).toBe(503);
+    }
+    expect(error).toHaveBeenCalledWith('proxy.auth_unavailable', undefined, {
+      reason: 'timeout',
+      status: undefined,
+    });
   });
 
   it('should handle edge case where expiresAt equals current time', async () => {

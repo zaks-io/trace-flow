@@ -21,6 +21,7 @@ import {
   isBoundedSSEEventData,
   reportSSEHandlerFailure,
 } from './sse-state';
+import { recordStreamError, streamFailure } from './stream-failure';
 
 interface AnthropicRequestBody {
   model?: string;
@@ -234,6 +235,11 @@ function handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStre
       }
     }
 
+    if (eventType === 'error') {
+      recordStreamError(state, parsedEventData);
+      return;
+    }
+
     if (eventType === 'message_start') {
       const metadata = extractMetadata(event.data);
       const usage = event.data ? extractUsage(event.data) : undefined;
@@ -329,4 +335,6 @@ export const anthropic: Provider = {
 
   handleSSEEvent,
   aggregateSSETokens,
+  // Every Messages stream opens with message_start and closes with message_stop.
+  findStreamFailure: (state) => streamFailure(state, () => true),
 };

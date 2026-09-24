@@ -1,4 +1,4 @@
-import type { LLMResponseMetadataSummary } from './llm';
+import type { LLMError, LLMResponseMetadataSummary } from './llm';
 
 export interface SSEEvent {
   type: string;
@@ -49,4 +49,9 @@ export interface SSEMessage {
 
 export interface SSEStreamData {
   messages: SSEMessage[];
+  /**
+   * First error the provider reported inside an otherwise successful (HTTP 2xx) stream.
+   * Worker-local: the queue boundary copies only `messages`.
+   */
+  error?: LLMError;
 }

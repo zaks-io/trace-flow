@@ -19,6 +19,7 @@ import {
   isBoundedSSEEventData,
   reportSSEHandlerFailure,
 } from './sse-state';
+import { recordStreamError, streamFailure } from './stream-failure';
 
 interface GoogleRequestBody {
   contents?: {
@@ -165,11 +166,13 @@ function handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStre
     if (!event.data || event.data.trim().length === 0) return;
 
     if (isBoundedSSEEventData(event.data)) {
+      let parsed: unknown;
       try {
-        JSON.parse(event.data);
+        parsed = JSON.parse(event.data);
       } catch {
         return;
       }
+      if (recordStreamError(state, parsed)) return;
     }
 
     if (state.messages.length === 0) {
@@ -237,4 +240,6 @@ export const google: Provider = {
 
   handleSSEEvent,
   aggregateSSETokens,
+  // Gemini streams have no terminal event, so only in-stream errors count.
+  findStreamFailure: (state) => streamFailure(state, () => false),
 };

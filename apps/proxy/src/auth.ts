@@ -15,10 +15,23 @@ type ApiKeyAuthorization =
   | { authorized: true; expiresAt: number; createdAt: number; orgId: string }
   | { authorized: false; reason: 'invalid' | 'expired' };
 
+/** Why Convex could not answer; logged so a stall is distinguishable from a bad response. */
+interface AuthorizationUnavailable {
+  unavailable: 'timeout' | 'network_error' | 'http_error' | 'malformed_response';
+  status?: number;
+}
+
+/**
+ * Every proxied request waits on this call, so a stalled Convex must fail into the
+ * existing 503 + Retry-After path rather than hold the client connection open.
+ */
+const AUTHORIZE_TIMEOUT_MS = 5_000;
+
 async function authorizeApiKey(
   env: { CONVEX_SITE_URL: string; USAGE_SYNC_SECRET: string },
   key: string,
-): Promise<ApiKeyAuthorization | null> {
+): Promise<ApiKeyAuthorization | AuthorizationUnavailable> {
+  const signal = AbortSignal.timeout(AUTHORIZE_TIMEOUT_MS);
   try {
     const response = await fetch(`${env.CONVEX_SITE_URL}/worker/authorize-api-key`, {
       method: 'POST',
@@ -27,10 +40,19 @@ async function authorizeApiKey(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ key }),
+      signal,
     });
-    if (!response.ok) return null;
-    const body: unknown = await response.json();
-    if (!body || typeof body !== 'object' || !('authorized' in body)) return null;
+    if (!response.ok) return { unavailable: 'http_error', status: response.status };
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      // The timeout also covers a body that stalls after headers arrive.
+      return { unavailable: signal.aborted ? 'timeout' : 'malformed_response' };
+    }
+    if (!body || typeof body !== 'object' || !('authorized' in body)) {
+      return { unavailable: 'malformed_response' };
+    }
     if (
       body.authorized === false &&
       'reason' in body &&
@@ -54,9 +76,10 @@ async function authorizeApiKey(
         orgId: body.orgId,
       };
     }
-    return null;
-  } catch {
-    return null;
+    return { unavailable: 'malformed_response' };
+  } catch (error) {
+    const timedOut = error instanceof DOMException && error.name === 'TimeoutError';
+    return { unavailable: timedOut ? 'timeout' : 'network_error' };
   }
 }
 
@@ -86,8 +109,11 @@ export async function validateApiKey<
 
   const identifier = await analyticsKeyId(apiKey);
   const authorization = await authorizeApiKey(c.env, apiKey);
-  if (!authorization) {
-    logger?.error('proxy.auth_unavailable');
+  if ('unavailable' in authorization) {
+    logger?.error('proxy.auth_unavailable', undefined, {
+      reason: authorization.unavailable,
+      status: authorization.status,
+    });
     return c.json(
       {
         error: 'Authentication unavailable',

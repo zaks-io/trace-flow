@@ -11,6 +11,9 @@ export function respond(attached: AttachedCapture): Response {
   const { decision } = attached.forwarded.validated;
 
   const headers = new Headers(response.headers);
+  // Provider edge cookies (e.g. `__cf_bm`) are scoped to the provider's domain; they are
+  // meaningless to API clients and must not be set under the proxy's origin.
+  headers.delete('Set-Cookie');
   headers.set('X-Trace-Flow-Recording', String(decision.record));
   if (!decision.record) {
     headers.set('X-Trace-Flow-Recording-Reason', decision.reason);

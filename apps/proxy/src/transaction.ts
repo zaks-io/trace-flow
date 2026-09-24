@@ -8,7 +8,12 @@ import type {
 } from '@trace-flow/types';
 import type { ResolvedRoute } from '@trace-flow/llm-providers';
 import type { Logger } from '@trace-flow/logging';
-import { getCurrentTimestamp, redactText, redactValue } from '@trace-flow/utils';
+import {
+  COUNT_TOKENS_OPERATION,
+  getCurrentTimestamp,
+  redactBody,
+  redactValue,
+} from '@trace-flow/utils';
 import { currentSentryTraceContext } from '@trace-flow/utils/sentry-tracing';
 import { parseError } from './parsers/errors';
 import { writeRequestAnalytics, writeSkippedAnalytics } from './analytics';
@@ -35,6 +40,8 @@ interface DrainedCapture {
   responseComplete: number;
   requestCaptureError?: unknown;
   streamError?: unknown;
+  /** Provider-level failure inside a stream that reached EOF (see `findStreamFailure`). */
+  streamFailure?: LLMError;
 }
 
 /**
@@ -150,7 +157,9 @@ export async function buildUpstreamFailureTransaction(
  * Google's SSE stream doesn't terminate with a blank line, leaving the final
  * event (with totals) stuck in the parser buffer — we feed a synthetic `\n\n`
  * to flush. Google also omits `[DONE]`, so we stamp `messageStop` on the last
- * SSE message ourselves once we know the response is complete.
+ * SSE message ourselves once we know the response is complete. Stream failure
+ * is read before that stamp, because a missing `messageStop` is the signal
+ * that a provider with a terminal event was cut off.
  */
 export async function drainCapture(attached: AttachedCapture): Promise<DrainedCapture> {
   const { capture, parser, isSSE, sseStreamData, forwarded } = attached;
@@ -168,6 +177,11 @@ export async function drainCapture(attached: AttachedCapture): Promise<DrainedCa
   }
 
   const responseComplete = getCurrentTimestamp();
+
+  const streamFailure =
+    responseResult.complete && isSSE
+      ? forwarded.validated.route.provider.findStreamFailure(sseStreamData)
+      : undefined;
 
   if (responseResult.complete && isSSE && sseStreamData.messages.length > 0) {
     const lastMessage = sseStreamData.messages[sseStreamData.messages.length - 1];
@@ -189,14 +203,18 @@ export async function drainCapture(attached: AttachedCapture): Promise<DrainedCa
     responseComplete,
     requestCaptureError: requestResult.error,
     streamError: responseResult.complete ? undefined : responseResult.error,
+    streamFailure,
   };
 }
 
 /**
  * Pure extraction: turn a drained capture into a Transaction. Branches between
  * streaming (read tokens + metadata off the accumulated SSE state) and
- * whole-body responses (parse them out of the response body). Skips token/
- * metadata parsing on error responses to avoid leaking partial data.
+ * whole-body responses (parse them out of the response body). Whole-body
+ * parsing is skipped for error or interrupted responses, whose bodies are not
+ * usage documents. Interrupted streams keep the usage and metadata already
+ * observed (Anthropic reports input tokens in `message_start`); the error
+ * marks those counts as partial.
  *
  * Request-body parsing is wrapped in try/catch with a logger — provider
  * adapters may throw on malformed bodies, and we want a breadcrumb without
@@ -221,27 +239,28 @@ export function buildTransaction(drained: DrainedCapture, logger: Logger): Trans
 
   // For SSE responses, only use aggregated SSE tokens — parsing raw SSE text
   // would match partial data from individual events and could leak stale fields.
+  const hasSSEMessages = isSSE && sseStreamData.messages.length > 0;
+  const parseWholeBody = !drained.streamError && response.status < 400;
+  const reportsUsage = validated.operationName !== COUNT_TOKENS_OPERATION;
+
   let tokens: LLMTokenUsage | undefined;
-  if (!drained.streamError && isSSE && sseStreamData.messages.length > 0) {
+  if (reportsUsage && hasSSEMessages) {
     tokens = provider.aggregateSSETokens(sseStreamData);
-  } else if (!drained.streamError && response.status < 400) {
+  } else if (reportsUsage && parseWholeBody) {
     tokens = provider.parseResponseTokenUsage(responseBody);
   }
 
-  const error = drained.streamError
+  const error: LLMError | undefined = drained.streamError
     ? { type: 'stream_interrupted', message: 'Upstream response stream did not complete' }
     : response.status >= 400
       ? parseError(responseBody, response.status)
-      : undefined;
+      : drained.streamFailure;
 
   let responseMetadata: LLMResponseMetadataSummary | undefined;
-  if (!drained.streamError && response.status < 400) {
-    if (isSSE && sseStreamData.messages.length > 0) {
-      const lastMessage = sseStreamData.messages[sseStreamData.messages.length - 1];
-      responseMetadata = lastMessage?.metadata;
-    } else {
-      responseMetadata = provider.parseResponseMetadata(responseBody, { targetUrl });
-    }
+  if (hasSSEMessages && response.status < 400) {
+    responseMetadata = sseStreamData.messages[sseStreamData.messages.length - 1]?.metadata;
+  } else if (parseWholeBody) {
+    responseMetadata = provider.parseResponseMetadata(responseBody, { targetUrl });
   }
 
   let inputMessages: InputMessage[] | undefined;
@@ -303,8 +322,8 @@ export async function persistTransaction(
   const { tier, route, omitBody, logger } = opts;
 
   try {
-    const redactedRequestBody = redactText(transaction.requestBody);
-    const redactedResponseBody = redactText(transaction.responseBody);
+    const redactedRequestBody = redactBody(transaction.requestBody);
+    const redactedResponseBody = redactBody(transaction.responseBody);
     const redactedError = transaction.error ? redactValue(transaction.error) : undefined;
     const redactedResponseMetadata = transaction.responseMetadata
       ? redactValue(transaction.responseMetadata)
@@ -353,6 +372,7 @@ export async function persistTransaction(
         orgId: transaction.orgId,
         route,
         responseStatus: transaction.responseStatus,
+        streamFailed: transaction.responseStatus < 400 && transaction.error !== undefined,
         operationName: transaction.operationName,
         isSSE: transaction.isSSE,
         responseMetadata: transaction.responseMetadata,

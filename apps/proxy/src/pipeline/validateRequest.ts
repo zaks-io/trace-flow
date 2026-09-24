@@ -54,6 +54,20 @@ export async function validateRequest(c: Context<{ Bindings: ProxyEnv }>): Promi
     context: { component: 'gateway' },
   });
 
+  // Before auth so a flood of bad keys is shed here instead of reaching Convex.
+  const clientIp = c.req.header('cf-connecting-ip') ?? 'unknown';
+  const ipLimit = await c.env.IP_LIMITER.limit({ key: clientIp });
+  if (!ipLimit.success) {
+    requestLogger.warn('proxy.rate_limited', { reason: 'per_ip', clientIp });
+    c.executionCtx.waitUntil(requestLogger.flush());
+    return {
+      kind: 'reject',
+      response: c.json({ error: 'Too many requests', message: 'Per-IP rate limit exceeded' }, 429, {
+        'Retry-After': '60',
+      }),
+    };
+  }
+
   const authResult = await validateApiKey(c, requestLogger);
   if (isAuthError(authResult)) {
     c.executionCtx.waitUntil(requestLogger.flush());
@@ -77,18 +91,6 @@ export async function validateRequest(c: Context<{ Bindings: ProxyEnv }>): Promi
   }
 
   const orgLogger = requestLogger.child({ orgId: keyData.orgId });
-  const clientIp = c.req.header('cf-connecting-ip') ?? 'unknown';
-  const ipLimit = await c.env.IP_LIMITER.limit({ key: clientIp });
-  if (!ipLimit.success) {
-    orgLogger.warn('proxy.rate_limited', { reason: 'per_ip', clientIp });
-    c.executionCtx.waitUntil(orgLogger.flush());
-    return {
-      kind: 'reject',
-      response: c.json({ error: 'Too many requests', message: 'Per-IP rate limit exceeded' }, 429, {
-        'Retry-After': '60',
-      }),
-    };
-  }
 
   const contentLength = parseInt(c.req.header('Content-Length') ?? '0', 10);
   if (contentLength > MAX_REQUEST_SIZE) {

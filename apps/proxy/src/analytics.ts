@@ -4,7 +4,7 @@ import type { TracingDecision } from './context';
 
 // Analytics Engine slot layout:
 // blobs:   provider, status_code, operation, skip_reason, is_sse, model
-// doubles: total_latency_ms, prep_latency_ms, ttfb_ms, is_server_error,
+// doubles: total_latency_ms, prep_latency_ms, ttfb_ms, is_server_error (5xx or failed 2xx stream),
 //          total_tokens, prompt_tokens, completion_tokens, cache_read_tokens,
 //          response_size, storage_status (1=stored, 0=failed, -1=skipped/omitBody),
 //          upstream_ttfb_ms
@@ -15,6 +15,8 @@ interface RecordedAnalyticsParams {
   orgId: string;
   route: ResolvedRoute;
   responseStatus: number;
+  /** Provider failure inside a 2xx stream (in-stream error or missing terminal event). */
+  streamFailed: boolean;
   operationName: string | undefined;
   isSSE: boolean;
   responseMetadata: Partial<LLMResponseMetadata> | undefined;
@@ -35,6 +37,7 @@ export function writeRequestAnalytics(params: RecordedAnalyticsParams): void {
     orgId,
     route,
     responseStatus,
+    streamFailed,
     operationName,
     isSSE,
     responseMetadata,
@@ -63,7 +66,7 @@ export function writeRequestAnalytics(params: RecordedAnalyticsParams): void {
       responseComplete - requestStart,
       requestSent - requestStart,
       firstTokenReceived ? firstTokenReceived - requestSent : 0,
-      responseStatus >= 500 ? 1 : 0,
+      responseStatus >= 500 || streamFailed ? 1 : 0,
       tokens?.totalTokens ?? 0,
       tokens?.promptTokens ?? 0,
       tokens?.completionTokens ?? 0,

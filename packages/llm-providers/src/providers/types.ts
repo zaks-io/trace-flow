@@ -1,5 +1,6 @@
 import type {
   InputMessage,
+  LLMError,
   LLMResponseMetadataSummary,
   LLMTokenUsage,
   SSEStreamData,
@@ -50,6 +51,9 @@ export interface Provider {
 
   handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStreamData): void;
   aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | undefined;
+  /** Error for a 2xx stream that reached EOF: an in-stream provider error, or a
+   *  missing terminal event where the provider's protocol guarantees one. */
+  findStreamFailure(streamData: SSEStreamData): LLMError | undefined;
 }
 
 /**
