@@ -1,7 +1,7 @@
 import type { LLMError, SSEStreamData } from '@trace-flow/types';
 import { boundedSSEMetadataValue } from './sse-state';
 
-export const STREAM_INCOMPLETE_ERROR: LLMError = {
+const STREAM_INCOMPLETE_ERROR: LLMError = {
   type: 'stream_incomplete',
   message: 'Upstream stream ended before its terminal event',
 };
@@ -27,7 +27,7 @@ function boundedField(value: unknown): string | undefined {
  * Anthropic `event: error`, OpenAI/OpenRouter/Gemini `data: {"error": …}`, and
  * Responses API `error` / `response.failed` events.
  */
-export function parseStreamError(value: unknown): LLMError | undefined {
+function parseStreamError(value: unknown): LLMError | undefined {
   if (!isRecord(value)) return undefined;
   const payload = errorPayload(value);
   if (!payload) return undefined;
