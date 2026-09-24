@@ -372,6 +372,7 @@ export async function persistTransaction(
         orgId: transaction.orgId,
         route,
         responseStatus: transaction.responseStatus,
+        streamFailed: transaction.responseStatus < 400 && transaction.error !== undefined,
         operationName: transaction.operationName,
         isSSE: transaction.isSSE,
         responseMetadata: transaction.responseMetadata,
