@@ -1,10 +1,10 @@
 # Local Agent Environment
 
-> **Vocabulary:** "dev" is overloaded. See the **Environments** section of `CONTEXT.md` for the
-> shared terms used here: **Local Workers**, **Cloud-Dev**, **Self-Contained Local**, and the
-> **Control Plane** / **Data Plane** split. This document describes the **Self-Contained Local**
-> stack. If you mean "local Workers pointed at a developer's Convex/Tinybird Cloud dev" — that is
-> **Cloud-Dev**, a different data plane, and these scripts do not provision it by default.
+> **Vocabulary:** "dev" means the deployed **Dev Environment**. See the **Environments** section of `CONTEXT.md` for the
+> shared terms used here: **Dev Environment**, **Local Workers**, **Self-Contained Local**, and
+> the **Control Plane** / **Data Plane** split. This document describes the **Self-Contained Local**
+> stack. Everyday development uses the **Dev Environment** instead: deployed `*-dev` Workers, Convex
+> dev, and Tinybird dev, with only Web running locally. These scripts do not provision it.
 
 This repo exposes one local-development contract for humans, Cursor background agents, and other
 coding agents:
@@ -24,11 +24,10 @@ By default these scripts provision **Self-Contained Local**: **Local Workers** p
 and **Tinybird Local** in Docker, with generated local-only tokens and no cloud credentials. This is
 the right target for Cursor Background Agents and CI, which cannot hold cloud access.
 
-It is **not** the same as **Cloud-Dev** — the "Local Workers → Convex Cloud dev + Tinybird Cloud
-dev" setup a developer typically runs day to day and where they expect their data to appear in the
-cloud dashboards. To run Cloud-Dev, point the **Data Plane** and **Control Plane** at cloud via env
-vars (`TRACE_FLOW_TINYBIRD_HOST` + `TINYBIRD_TOKEN`, `TRACE_FLOW_CONVEX_URL` / `CONVEX_SITE_URL`)
-instead of the local defaults. Each plane can be pointed independently.
+It is **not** the **Dev Environment**, where a developer's data lands day to day. To run Local
+Workers against the dev data instead, point the **Data Plane** and **Control Plane** at cloud via
+env vars (`TRACE_FLOW_TINYBIRD_HOST` + `TINYBIRD_TOKEN`, `TRACE_FLOW_CONVEX_URL` /
+`CONVEX_SITE_URL`) instead of the local defaults. Each plane can be pointed independently.
 
 ## What Setup Does
 

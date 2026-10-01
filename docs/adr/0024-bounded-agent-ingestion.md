@@ -78,7 +78,7 @@ of the same generation. Large linked corrections and provider delays can exceed 
 Superseded snapshot generations are deleted by the existing privileged Convex backend after a grace
 period. Consumer Workers receive scoped append, Copy, and read permissions. Tinybird datasource
 deletion authority remains outside the data-plane Workers. The snapshot runner has a separate
-`TINYBIRD_AGENT_SNAPSHOT_JOBS_TOKEN` with `DATASOURCES:CREATE`: Cloud-Dev Copy job reads returned 403
+`TINYBIRD_AGENT_SNAPSHOT_JOBS_TOKEN` with `DATASOURCES:CREATE`: dev Copy job reads returned 403
 with target-scoped `APPEND` despite the Jobs API documentation. Isaac approved this permission on
 2026-09-22. Tinybird rejects operational scopes on deployment-managed resource tokens, so the CI
 token provisioning script creates and verifies this separate operational token. The runner uses it

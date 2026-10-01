@@ -271,7 +271,7 @@ Three gaps close it:
 2. **No Checkout column.** `repo_fingerprint` collapses every worktree of a remote
    (`packages/collector-sync/src/git_remote.rs:21`), so concurrent agents in separate worktrees
    are indistinguishable in the fact tables.
-3. **`repo_fingerprint` is a hash.** On verified Cloud-Dev data only 90 of 168 fingerprints map
+3. **`repo_fingerprint` is a hash.** On verified dev data only 90 of 168 fingerprints map
    back to a real repository name, so "which repo did this happen in" is currently unanswerable
    for nearly half the data. This is also the prerequisite for joining anything to git.
 

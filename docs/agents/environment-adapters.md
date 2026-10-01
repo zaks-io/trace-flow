@@ -5,10 +5,11 @@ which runtime to choose and what each runtime must read.
 
 > **Runtime vs environment.** This file is about which _agent runtime_ (Codex /
 > Claude / Cursor) handles a task. That is different from which _deployment
-> environment_ the code runs against. For the latter — **Local Workers**,
-> **Cloud-Dev**, **Self-Contained Local**, **Control Plane** / **Data Plane** —
+> environment_ the code runs against. For the latter (**Dev Environment**,
+> **Local Workers**, **Self-Contained Local**, **Control Plane** / **Data Plane**),
 > see the **Environments** section of `CONTEXT.md` and
-> `docs/agents/local-environment.md`. Do not say "dev" without naming which.
+> `docs/agents/local-environment.md`. "Dev" means the Dev Environment; name
+> Local Workers or Self-Contained Local when you mean those.
 
 ## Codex
 

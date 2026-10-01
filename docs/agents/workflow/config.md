@@ -429,8 +429,8 @@ workflow logic lives in the centrally managed org skills pinned by
 - Local modes:
   - Self-Contained Local / Cursor-mode: local Workers, local Convex, Tinybird
     Local through `scripts/dev/start.sh`
-  - Cloud-Dev collector testing: deployed cloud `-dev` ingest Worker and Convex
-    Cloud dev deployment; only the web dev server should be local unless the
+  - Dev collector testing: deployed `-dev` ingest Worker and Convex dev
+    deployment; only the web dev server should be local unless the
     user explicitly asks for local Workers
 - Local commands: `bun run dev:setup`; `bun run dev:all`; `bunx convex dev`;
   `bun run dev:web`; `bun run dev:verify`; `bun run dev:smoke`

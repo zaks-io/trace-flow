@@ -60,9 +60,9 @@ defaults do not establish that the complete normal-user production flow has pass
 | `TRACE_FLOW_COLLECTOR_SECRET` | OS keychain                              | Headless or CI credential override                |
 | `TRACE_FLOW_STATE_DIR`        | OS application config directory          | Connection state and per-org sync cursor location |
 
-For Cloud-Dev, override both endpoint variables with the deployed cloud `-dev` Agent Ingest origin
-and the Convex Cloud dev **site** origin. A bare collector launch targets production. Use
-`127.0.0.1:8787` only for the explicitly self-contained local Worker stack; it is not Cloud-Dev.
+For dev, override both endpoint variables with the deployed `-dev` Agent Ingest origin and the
+Convex dev **site** origin. A bare collector launch targets production. Use `127.0.0.1:8787` only
+for the explicitly self-contained local Worker stack; it is not the dev environment.
 
 Copy `.env.example` only as a development starting point. Never commit a Collector Credential.
 
