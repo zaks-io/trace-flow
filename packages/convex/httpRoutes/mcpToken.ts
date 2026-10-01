@@ -11,10 +11,7 @@ import { isValidCodeVerifier } from './mcpPkce';
 
 const TOKEN_REQUEST_MAX_BYTES = 16 * 1024;
 
-export function registerMcpTokenRoutes(
-  app: HonoWithConvex<ActionCtx>,
-  { oauth, tokens }: HttpDeps,
-): void {
+export function registerMcpTokenRoutes(app: HonoWithConvex<ActionCtx>, { tokens }: HttpDeps): void {
   // OAuth: Token endpoint (for authorization code and refresh)
   app.post('/mcp/token', async (c) => {
     c.header('Cache-Control', 'no-store');
@@ -124,6 +121,14 @@ export function registerMcpTokenRoutes(
       }
 
       if (grantType === 'refresh_token') {
+        const rejectRefresh = async (reason: string): Promise<Response> => {
+          logger.warn('convex.mcp_refresh_rejected', { reason });
+          await logger.flush();
+          return c.json(
+            { error: 'invalid_grant', error_description: 'Invalid or expired refresh token' },
+            400,
+          );
+        };
         const refreshTokenId = body.get('refresh_token') ?? undefined;
         const clientId = body.get('client_id') ?? undefined;
         const resource = body.get('resource') ?? undefined;
@@ -158,44 +163,27 @@ export function registerMcpTokenRoutes(
         });
 
         if (!refreshToken) {
-          return c.json(
-            { error: 'invalid_grant', error_description: 'Invalid or expired refresh token' },
-            401,
-          );
+          return rejectRefresh('unknown_or_expired');
         }
 
         if (refreshToken.clientId !== clientId || refreshToken.resource !== canonicalResource) {
-          return c.json(
-            { error: 'invalid_grant', error_description: 'Invalid or expired refresh token' },
-            401,
-          );
+          return rejectRefresh('client_or_resource_mismatch');
         }
 
         const rotated = await ctx.runMutation(internal.mcp.tokens.rotateRefreshToken, {
           tokenId: refreshTokenId,
           clientId,
           resource: canonicalResource,
-          auth0RefreshToken: refreshToken.auth0RefreshToken,
         });
 
         if ('error' in rotated) {
-          return c.json(rotated, 401);
+          return rejectRefresh('rotation_rejected');
         }
 
-        // Refresh Auth0 token if we have one
-        if (refreshToken.auth0RefreshToken) {
-          try {
-            const newAuth0Tokens = await oauth.refreshAuth0Token(refreshToken.auth0RefreshToken);
-
-            if (newAuth0Tokens.refresh_token) {
-              await ctx.runMutation(internal.mcp.tokens.updateRefreshToken, {
-                tokenId: rotated.tokenId,
-                auth0RefreshToken: newAuth0Tokens.refresh_token,
-              });
-            }
-          } catch (err) {
-            logger.error('convex.auth0_token_refresh_failed', err);
-          }
+        if (rotated.reusedRotatedAt !== undefined) {
+          logger.info('convex.mcp_refresh_token_reused_in_grace', {
+            rotatedAgoMs: Date.now() - rotated.reusedRotatedAt,
+          });
         }
 
         const issuer = new URL(c.req.url).origin;

@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   exchangeAuth0Code,
-  refreshAuth0Token,
   getAuth0UserInfo,
   signConsent,
   signState,
@@ -83,62 +82,6 @@ describe('exchangeAuth0Code', () => {
 
     await expect(exchangeAuth0Code('invalid-code', 'https://example.com/callback')).rejects.toThrow(
       'Auth0 token exchange failed with status 401',
-    );
-  });
-});
-
-describe('refreshAuth0Token', () => {
-  const originalFetch = globalThis.fetch;
-
-  beforeEach(() => {
-    vi.stubEnv('AUTH0_DOMAIN', 'test.auth0.com');
-    vi.stubEnv('AUTH0_CLIENT_ID', 'test-client-id');
-    vi.stubEnv('AUTH0_CLIENT_SECRET', 'test-client-secret');
-  });
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-    vi.unstubAllEnvs();
-  });
-
-  it('returns new tokens on successful refresh', async () => {
-    const mockTokens = {
-      access_token: 'new-access-token',
-      token_type: 'Bearer',
-      expires_in: 3600,
-    };
-
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve(mockTokens),
-    });
-
-    const result = await refreshAuth0Token('refresh-token');
-
-    expect(result).toEqual(mockTokens);
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      'https://test.auth0.com/oauth/token',
-      expect.objectContaining({
-        method: 'POST',
-      }),
-    );
-  });
-
-  it('throws when Auth0 config missing', async () => {
-    vi.stubEnv('AUTH0_DOMAIN', '');
-
-    await expect(refreshAuth0Token('refresh-token')).rejects.toThrow('Auth0 configuration missing');
-  });
-
-  it('throws on non-200 response', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 400,
-      text: () => Promise.resolve('Invalid refresh token'),
-    });
-
-    await expect(refreshAuth0Token('invalid-refresh-token')).rejects.toThrow(
-      'Auth0 token refresh failed with status 400',
     );
   });
 });

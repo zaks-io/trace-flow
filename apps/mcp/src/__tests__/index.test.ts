@@ -139,6 +139,81 @@ describe('MCP worker auth discovery', () => {
     });
   });
 
+  async function postRpc(authorization: string, method: string, sessionId?: string) {
+    return SELF.fetch('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        Authorization: authorization,
+        'cf-connecting-ip': '203.0.113.10',
+        'Content-Type': 'application/json',
+        ...(sessionId ? { 'Mcp-Session-Id': sessionId } : {}),
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method }),
+    });
+  }
+
+  it('404s an expired session so the client re-initializes', async () => {
+    const authorization = await signedAuthHeader();
+    const expiredSession = await new SignJWT({ userId: 'u-1', protocolVersion: '2025-11-25' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt(Math.floor(Date.now() / 1000) - 2 * 86400)
+      .setExpirationTime(Math.floor(Date.now() / 1000) - 86400)
+      .sign(new TextEncoder().encode('test-session-secret-at-least-32-bytes-long'));
+
+    const res = await postRpc(authorization, 'tools/list', expiredSession);
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ error: { message: 'Session not found or expired.' } });
+  });
+
+  it('404s a session minted for a different user', async () => {
+    const authorization = await signedAuthHeader();
+    const foreignSession = await new SignJWT({ userId: 'u-2', protocolVersion: '2025-11-25' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(new TextEncoder().encode('test-session-secret-at-least-32-bytes-long'));
+
+    const res = await postRpc(authorization, 'tools/list', foreignSession);
+
+    expect(res.status).toBe(404);
+  });
+
+  it('400s a non-initialize request without a session', async () => {
+    const res = await postRpc(await signedAuthHeader(), 'tools/list');
+
+    expect(res.status).toBe(400);
+  });
+
+  it('serves tools/list on the session minted by initialize', async () => {
+    const authorization = await signedAuthHeader();
+    const init = await SELF.fetch('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        Authorization: authorization,
+        'cf-connecting-ip': '203.0.113.10',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-11-25',
+          capabilities: {},
+          clientInfo: { name: 'test', version: '1' },
+        },
+      }),
+    });
+    const sessionId = init.headers.get('Mcp-Session-Id');
+    expect(init.status).toBe(200);
+    expect(sessionId).toBeTruthy();
+
+    const res = await postRpc(authorization, 'tools/list', sessionId!);
+
+    expect(res.status).toBe(200);
+  });
+
   it('401s missing GET auth with a protected-resource challenge', async () => {
     const res = await SELF.fetch('http://localhost/mcp', {
       headers: {

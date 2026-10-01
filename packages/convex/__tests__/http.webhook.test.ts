@@ -48,7 +48,6 @@ function createMockDeps(): HttpDeps {
       buildAuth0AuthorizeUrl: vi.fn(),
       exchangeAuth0Code: vi.fn(),
       getAuth0UserInfo: vi.fn(),
-      refreshAuth0Token: vi.fn(),
     },
     tokens: {
       createAccessToken: vi.fn(),

@@ -339,6 +339,8 @@ export default defineSchema({
     resource: v.optional(v.string()),
     auth0RefreshToken: v.string(),
     expiresAt: v.number(),
+    rotatedAt: v.optional(v.number()),
+    successorCount: v.optional(v.number()),
   })
     .index('by_token_id', ['hashedTokenId'])
     .index('by_user_id', ['userId']),

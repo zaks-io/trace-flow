@@ -19,10 +19,26 @@ import { getSigningKey } from './keys';
 
 const ACCESS_TOKEN_TTL_SECONDS = MCP_ACCESS_TOKEN_TTL_SECONDS;
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+// Clients such as Claude Code share one stored credential across concurrent processes, and
+// they all refresh the same expiring access token at once. Strict single-use rotation makes
+// every loser present a just-rotated token, get invalid_grant, and wipe the shared credential.
+const REFRESH_TOKEN_REUSE_GRACE_MS = 2 * 60 * 1000;
+// Bounds how many parallel chains one leaked token can fork while it is in grace.
+const REFRESH_TOKEN_MAX_SUCCESSORS = 20;
 
 const oauthGrantResultValidator = v.union(
   v.object({ error: v.string(), error_description: v.string() }),
   v.object({ userId: v.id('users'), tokenId: v.string(), resource: v.string() }),
+);
+
+const refreshGrantResultValidator = v.union(
+  v.object({ error: v.string(), error_description: v.string() }),
+  v.object({
+    userId: v.id('users'),
+    tokenId: v.string(),
+    resource: v.string(),
+    reusedRotatedAt: v.optional(v.number()),
+  }),
 );
 
 export type { AccessTokenPayload };
@@ -177,6 +193,8 @@ export const getRefreshToken = internalQuery({
       resource: v.optional(v.string()),
       auth0RefreshToken: v.string(),
       expiresAt: v.number(),
+      rotatedAt: v.optional(v.number()),
+      successorCount: v.optional(v.number()),
     }),
     v.null(),
   ),
@@ -207,60 +225,60 @@ export const deleteRefreshToken = internalMutation({
   },
 });
 
-export const updateRefreshToken = internalMutation({
-  args: {
-    tokenId: v.string(),
-    auth0RefreshToken: v.string(),
-  },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<void> => {
-    const { hashedTokenId, token } = await getRefreshTokenByTokenId(ctx, args.tokenId);
-
-    if (token) {
-      const expiresAt = refreshTokenExpiresAt();
-      await ctx.db.patch(token._id, {
-        auth0RefreshToken: args.auth0RefreshToken,
-        expiresAt,
-      });
-      await scheduleRefreshTokenCleanup(ctx, hashedTokenId, expiresAt);
-    }
-  },
-});
-
 export const rotateRefreshToken = internalMutation({
   args: {
     tokenId: v.string(),
     clientId: v.string(),
     resource: v.string(),
-    auth0RefreshToken: v.string(),
   },
-  returns: oauthGrantResultValidator,
+  returns: refreshGrantResultValidator,
   handler: async (ctx, args) => {
     const { token } = await getRefreshTokenByTokenId(ctx, args.tokenId);
+    const now = Date.now();
 
     if (
       !token ||
-      token.expiresAt < Date.now() ||
+      token.expiresAt < now ||
       token.clientId !== args.clientId ||
       token.resource !== args.resource
     ) {
       return { error: 'invalid_grant', error_description: 'Invalid or expired refresh token' };
     }
 
+    if (token.rotatedAt === undefined) {
+      const graceExpiresAt = Math.min(token.expiresAt, now + REFRESH_TOKEN_REUSE_GRACE_MS);
+      await ctx.db.patch(token._id, {
+        rotatedAt: now,
+        expiresAt: graceExpiresAt,
+        successorCount: 1,
+      });
+      await scheduleRefreshTokenCleanup(ctx, token.hashedTokenId, graceExpiresAt);
+    } else {
+      const successorCount = token.successorCount ?? 1;
+      if (successorCount >= REFRESH_TOKEN_MAX_SUCCESSORS) {
+        return { error: 'invalid_grant', error_description: 'Invalid or expired refresh token' };
+      }
+      await ctx.db.patch(token._id, { successorCount: successorCount + 1 });
+    }
+
     const tokenId = crypto.randomUUID();
     const hashedTokenId = await sha256Hex(tokenId);
 
-    await ctx.db.delete(token._id);
     await insertRefreshTokenRecord(ctx, {
       hashedTokenId,
       userId: token.userId,
       clientId: args.clientId,
       resource: args.resource,
-      auth0RefreshToken: args.auth0RefreshToken,
+      auth0RefreshToken: token.auth0RefreshToken,
       expiresAt: refreshTokenExpiresAt(),
     });
 
-    return { userId: token.userId, tokenId, resource: args.resource };
+    return {
+      userId: token.userId,
+      tokenId,
+      resource: args.resource,
+      ...(token.rotatedAt === undefined ? {} : { reusedRotatedAt: token.rotatedAt }),
+    };
   },
 });
 
