@@ -36,7 +36,7 @@ TRACE_FLOW_CONVEX_SITE_URL  Convex site origin for login (default: production de
 TRACE_FLOW_INGEST_URL       Ingest Worker base URL for sync (default: https://collector.trace-flow.dev)\n  \
 TRACE_FLOW_COLLECTOR_SECRET Headless/CI credential override (normally stored in OS keychain)\n\
 \n\
-Local/cloud-dev: set TRACE_FLOW_CONVEX_SITE_URL and TRACE_FLOW_INGEST_URL to your dev endpoints.\n\
+Local/dev: set TRACE_FLOW_CONVEX_SITE_URL and TRACE_FLOW_INGEST_URL to your dev endpoints.\n\
 See apps/cli/README.md for details.";
 
 #[derive(Parser)]

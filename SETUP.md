@@ -11,9 +11,10 @@ This file is the setup map. For architecture details, read `specs/architecture/o
 
 ## Local Development
 
-The scripted contract provisions **Self-Contained Local**. It does not connect to a Cloud-Dev data
-plane unless you explicitly supply the Cloud-Dev endpoints and tokens described in
-`docs/agents/local-environment.md`.
+The scripted contract provisions **Self-Contained Local**. It does not connect to the dev
+environment unless you explicitly supply the dev endpoints and tokens described in
+`docs/agents/local-environment.md`. Everyday development runs only Web locally against the dev
+environment: `bun run dev:web`.
 
 ```bash
 scripts/dev/install.sh
@@ -49,9 +50,9 @@ scripts/dev/convex.sh
 scripts/dev/web.sh
 ```
 
-For day-to-day Cloud-Dev collector testing, run Web locally but point the collector at the deployed
-cloud `-dev` Agent Ingest Worker and the Convex Cloud dev site. The collector embeds production URLs,
-so both `TRACE_FLOW_INGEST_URL` and `TRACE_FLOW_CONVEX_SITE_URL` must be set for Cloud-Dev. See
+For day-to-day collector testing, run Web locally but point the collector at the deployed
+`-dev` Agent Ingest Worker and the Convex dev site. The collector embeds production URLs,
+so both `TRACE_FLOW_INGEST_URL` and `TRACE_FLOW_CONVEX_SITE_URL` must be set for dev. See
 `docs/agents/local-environment.md` and `CONTEXT.md` for the exact environment vocabulary and script
 switches.
 
@@ -111,7 +112,7 @@ Set secrets through the owning platform only. Do not commit them.
 | `analyst-sandbox` | `ANALYST_SANDBOX_SHARED_SECRET`, `OPENROUTER_API_KEY`                             |
 
 Convex Tinybird queries also require `SENTRY_DSN` and `SENTRY_ENVIRONMENT` in the
-Convex deployment. Use `development` for Cloud-Dev, `preview` for PR previews, and
+Convex deployment. Use `development` for dev, `preview` for PR previews, and
 `prod` for production. CI configures these for previews and production from the
 existing `NEXT_PUBLIC_SENTRY_DSN` GitHub variable. The Pipes API needs its own
 `SENTRY_DSN` Worker secret; browser configuration does not configure the Worker.
@@ -147,7 +148,7 @@ changes without explicit approval.
 
 The `trace-flow` Splitch App owns `pro-subscription-enabled`, with `off=false` as
 its default and `on=true` as its alternative. Keep the flag disabled until Pro
-subscriptions are explicitly enabled. Cloud-Dev and previews use the Splitch
+subscriptions are explicitly enabled. Dev and previews use the Splitch
 `dev` Environment; production uses `prod`.
 
 The official [`@splitch/convex` component](https://splitch.dev/docs/sdk/convex)
@@ -161,7 +162,7 @@ the `data-plane:evaluate` scope. Configure the same variable
 in Convex's preview deployment defaults before creating a PR preview. Keep the
 key in the platform's secret configuration, never in frontend build variables.
 
-After a Cloud-Dev deployment, run the internal installation action:
+After a dev deployment, run the internal installation action:
 
 ```bash
 bunx convex run integrations/splitch:install --deployment hardy-iguana-812

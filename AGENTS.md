@@ -9,7 +9,7 @@ Run from the repo root. Use the package's name from its `package.json` for scope
 | Task                              | Command                                |
 | --------------------------------- | -------------------------------------- |
 | Install dependencies              | `bun install --frozen-lockfile`        |
-| Start Web for Cloud-Dev           | `bun run dev:web`                      |
+| Start Web against dev             | `bun run dev:web`                      |
 | Lint / types                      | `bun run lint` / `bun run type-check`  |
 | Test all / watch                  | `bun run test` / `bun run test:watch`  |
 | Test one package                  | `bun run --filter <package-name> test` |
@@ -22,11 +22,12 @@ Other scripts, bindings, and environment values belong in `package.json` and eac
 
 ## Environment and delivery
 
-- Use Cloud-Dev for everyday development. Only Web runs locally; Workers, Convex, and
-  data are in the cloud. The setup scripts default to Self-Contained Local, which is
-  for explicit local/CI/Cursor work. Do not start that stack for Cloud-Dev.
+- Use the dev environment for everyday development. Only Web runs locally; the `*-dev`
+  Workers, Convex dev, and Tinybird dev are in the cloud. The setup scripts default to
+  Self-Contained Local, which is for explicit local/CI/Cursor work. Do not start that
+  stack for everyday development.
 - Collectors embed production defaults. Set `TRACE_FLOW_INGEST_URL` and
-  `TRACE_FLOW_CONVEX_SITE_URL` to cloud-dev endpoints before CLI or desktop testing.
+  `TRACE_FLOW_CONVEX_SITE_URL` to dev endpoints before CLI or desktop testing.
   See [SETUP.md](SETUP.md) and [endpoint reference](CONTEXT.md#concrete-endpoints-canonical--stop-rediscovering-these).
 - Never deploy production manually. Production changes require explicit approval;
   GitHub Actions deploys on merge to `main`. The repository owner manually dispatches PR previews.

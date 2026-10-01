@@ -175,7 +175,7 @@ materialized pipes from append-clean fact tables. There are no scheduled replace
 steady-state path.
 
 Deploy schema changes through the normal PR/merge Tinybird path. For a repair or backfill, use a
-bounded, explicitly approved Tinybird branch/cloud-dev operation first, then promote through CI. Any
+bounded, explicitly approved Tinybird branch/dev operation first, then promote through CI. Any
 repo-backed repair pipe must live under `copies/`, be unscheduled, and use a `repair_*` name.
 
 Context-health uses `agent_context_call_buckets_hourly`, an incremental serving table maintained from
@@ -340,7 +340,7 @@ TRACE_FLOW_TINYBIRD_HOST=https://api.us-west-2.aws.tinybird.co \
 scripts/agent-ingest-smoke.sh
 ```
 
-**Advanced / dev only:** override CLI endpoints when pointing at a local worker or cloud-dev (see
+**Advanced / dev only:** override CLI endpoints when pointing at a local worker or the dev environment (see
 `apps/cli/README.md`):
 
 ```sh

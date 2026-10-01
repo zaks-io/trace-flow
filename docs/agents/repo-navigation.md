@@ -95,11 +95,11 @@ not edit generated skill copies in place; update the source and re-sync.
 
 ## CI, Deploy, And Local Runtime
 
-- Environment vocabulary (**Local Workers**, **Cloud-Dev**, **Self-Contained
+- Environment vocabulary (**Dev Environment**, **Local Workers**, **Self-Contained
   Local**, **Control Plane** / **Data Plane**) is defined in the **Environments**
   section of `CONTEXT.md`. `docs/agents/local-environment.md` describes the
-  Self-Contained Local stack the dev scripts build by default. Never say "dev"
-  unqualified — name which plane points at cloud vs local.
+  Self-Contained Local stack the dev scripts build by default. "Dev" means the
+  Dev Environment; name Local Workers or Self-Contained Local when you mean those.
 - `package.json` defines root scripts. Use `bun run ci:check` as the full local
   gate unless a narrower check is justified.
 - `turbo.json` defines package tasks and caching.

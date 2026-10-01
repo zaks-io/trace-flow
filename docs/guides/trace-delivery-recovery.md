@@ -75,7 +75,7 @@ HTTP endpoint. The local operator tool connects to it through authenticated Wran
 [remote service bindings](https://developers.cloudflare.com/workers/local-development/).
 It needs Cloudflare access to the target account. No new application secret is needed.
 
-Start the tool against Cloud-Dev:
+Start the tool against dev:
 
 ```sh
 bunx wrangler dev --config scripts/ingest-recovery/wrangler.jsonc --ip 127.0.0.1 --port 8799
@@ -167,7 +167,7 @@ explicit `trace-flow sync --since 1y --replay` resends Claude, Codex, and Cursor
 while preserving the local cursor evidence. Cursor snapshots include committed SQLite
 WAL records and retained messages without session headers. Content hashes detect edits
 even when message counts and creation timestamps stay unchanged; existing cursors
-without a hash trigger one reparse. Set the collector endpoints to Cloud-Dev for
+without a hash trigger one reparse. Set the collector endpoints to dev for
 verification. Running that command against a saved production connection requires
 production approval. It does not prove that an asynchronously accepted fact reached
 Tinybird; compare persisted identities afterward.

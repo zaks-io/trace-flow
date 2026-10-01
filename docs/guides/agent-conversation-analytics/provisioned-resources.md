@@ -34,7 +34,7 @@ control plane, not the sole minting mechanism.
 | ----------------- | ----------------- | ---------------------------------- |
 | `COLLECTOR_CREDS` | `COLLECTOR_CREDS` | `f945ee3d71954ffabd364e3db385d3ab` |
 
-Preview uses its own namespace so reviewed code cannot read or modify Cloud-Dev credentials:
+Preview uses its own namespace so reviewed code cannot read or modify dev credentials:
 
 | Binding           | Namespace name            | Namespace ID                       |
 | ----------------- | ------------------------- | ---------------------------------- |
@@ -46,7 +46,7 @@ Preview uses its own namespace so reviewed code cannot read or modify Cloud-Dev 
   worker's `wrangler.jsonc` `[[unsafe.bindings]]`; Cloudflare allocates it at deploy time, so there
   is no `wrangler` create command and no ID to record here.
 - `AGENT_INGEST_LIMITER` preview — rate-limit namespace **2010**. Preview keeps its Worker,
-  Collector Credentials KV, and rate-limit budget separate from Cloud-Dev; it still uses the dev
+  Collector Credentials KV, and rate-limit budget separate from dev; it still uses the dev
   ingest queue.
 
 ## Production resources (TRA-110)
