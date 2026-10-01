@@ -3132,6 +3132,8 @@ export declare const internal: {
           expiresAt: number;
           hashedTokenId: string;
           resource?: string;
+          rotatedAt?: number;
+          successorCount?: number;
           tokenId?: string;
           userId: Id<"users">;
         } | null
@@ -3147,12 +3149,6 @@ export declare const internal: {
         },
         | { error: string; error_description: string }
         | { resource: string; tokenId: string; userId: Id<"users"> }
-      >;
-      updateRefreshToken: FunctionReference<
-        "mutation",
-        "internal",
-        { auth0RefreshToken: string; tokenId: string },
-        null
       >;
     };
   };

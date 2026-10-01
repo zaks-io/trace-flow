@@ -786,6 +786,8 @@ export type DataModel = {
       expiresAt: number;
       hashedTokenId: string;
       resource?: string;
+      rotatedAt?: number;
+      successorCount?: number;
       tokenId?: string;
       userId: Id<"users">;
       _id: Id<"mcpRefreshTokens">;
@@ -799,6 +801,8 @@ export type DataModel = {
       | "expiresAt"
       | "hashedTokenId"
       | "resource"
+      | "rotatedAt"
+      | "successorCount"
       | "tokenId"
       | "userId";
     indexes: {

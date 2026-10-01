@@ -415,16 +415,18 @@ app.post('/mcp', async (c) => {
   }
 
   const sessionId = c.req.header('Mcp-Session-Id');
-  const response = await traceMcpInteraction(message, sessionId, undefined, () =>
-    handleRequest(c.env, message, sessionId, userId),
-  );
-  if (response === null) return c.body(null, 204);
+  let status: RpcOutcome['status'] = 200;
+  const response = await traceMcpInteraction(message, sessionId, undefined, async () => {
+    const outcome = await handleRequest(c.env, message, sessionId, userId);
+    status = outcome.status;
+    return outcome.response;
+  });
 
   const result = response.result as { sessionId?: string } | undefined;
   if (result && typeof result === 'object' && 'sessionId' in result && result.sessionId) {
     c.header('Mcp-Session-Id', result.sessionId);
   }
-  return c.json(response);
+  return c.json(response, status);
 });
 
 // Stateless sessions self-expire via the session token's TTL, so termination is
@@ -435,52 +437,64 @@ app.delete('/mcp', async (c) => {
   return c.body(null, 204);
 });
 
+interface RpcOutcome {
+  response: JsonRpcResponse;
+  status: 200 | 400 | 404;
+}
+
+function ok(response: JsonRpcResponse): RpcOutcome {
+  return { response, status: 200 };
+}
+
 async function handleRequest(
   env: Env,
   request: JsonRpcRequest,
   sessionId: string | undefined,
   userId: string,
-): Promise<JsonRpcResponse | null> {
+): Promise<RpcOutcome> {
   const { method, params, id } = request;
 
   if (method === 'initialize') {
     if (!isInitializeParams(params)) {
-      return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, 'Invalid initialize params');
+      return ok(
+        createErrorResponse(id, JsonRpcErrorCode.InvalidParams, 'Invalid initialize params'),
+      );
     }
-    return handleInitialize(env, id, params, userId);
+    return ok(await handleInitialize(env, id, params, userId));
   }
 
   if (method === 'ping') {
-    return createSuccessResponse(id, {});
+    return ok(createSuccessResponse(id, {}));
   }
 
   if (!sessionId) {
-    return createErrorResponse(
-      id,
-      JsonRpcErrorCode.InvalidRequest,
-      'Session not initialized. Please send initialize request first.',
-    );
+    return {
+      response: createErrorResponse(
+        id,
+        JsonRpcErrorCode.InvalidRequest,
+        'Session not initialized. Please send initialize request first.',
+      ),
+      status: 400,
+    };
   }
 
+  // The spec requires 404 for a terminated session; clients re-initialize only on that
+  // status, so any other code leaves a long-running client stuck once the session expires.
   const session = await verifySessionToken(sessionId, env.MCP_SESSION_SECRET);
-  if (!session) {
-    return createErrorResponse(
-      id,
-      JsonRpcErrorCode.InvalidRequest,
-      'Session not found or expired.',
-    );
-  }
-  if (session.userId !== userId) {
-    return createErrorResponse(
-      id,
-      JsonRpcErrorCode.InvalidRequest,
-      'Session does not belong to this user.',
-    );
+  if (session?.userId !== userId) {
+    return {
+      response: createErrorResponse(
+        id,
+        JsonRpcErrorCode.InvalidRequest,
+        'Session not found or expired.',
+      ),
+      status: 404,
+    };
   }
   Sentry.getActiveSpan()?.setAttribute('mcp.protocol.version', session.protocolVersion);
 
   if (method === 'tools/list') {
-    return handleToolsList(id);
+    return ok(handleToolsList(id));
   }
 
   if (method === 'tools/call') {
@@ -488,16 +502,20 @@ async function handleRequest(
       connectBaseUrl: env.CONNECT_BASE_URL,
       sharedSecret: env.MCP_BACKEND_SHARED_SECRET,
     });
-    return dispatchToolCall(
-      backend,
-      env.TINYBIRD_API_URL,
-      id,
-      params as ToolCallParams,
-      session.protocolVersion,
+    return ok(
+      await dispatchToolCall(
+        backend,
+        env.TINYBIRD_API_URL,
+        id,
+        params as ToolCallParams,
+        session.protocolVersion,
+      ),
     );
   }
 
-  return createErrorResponse(id, JsonRpcErrorCode.MethodNotFound, `Method not found: ${method}`);
+  return ok(
+    createErrorResponse(id, JsonRpcErrorCode.MethodNotFound, `Method not found: ${method}`),
+  );
 }
 
 async function handleInitialize(
