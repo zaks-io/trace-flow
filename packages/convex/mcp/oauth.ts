@@ -109,16 +109,6 @@ export async function exchangeAuth0Code(
   );
 }
 
-export async function refreshAuth0Token(refreshToken: string): Promise<Auth0TokenResponse> {
-  return requestAuth0Token(
-    {
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-    },
-    'refresh',
-  );
-}
-
 export async function getAuth0UserInfo(accessToken: string): Promise<Auth0UserInfo> {
   const domain = process.env.AUTH0_DOMAIN;
 

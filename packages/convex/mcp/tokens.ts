@@ -31,6 +31,16 @@ const oauthGrantResultValidator = v.union(
   v.object({ userId: v.id('users'), tokenId: v.string(), resource: v.string() }),
 );
 
+const refreshGrantResultValidator = v.union(
+  v.object({ error: v.string(), error_description: v.string() }),
+  v.object({
+    userId: v.id('users'),
+    tokenId: v.string(),
+    resource: v.string(),
+    reusedRotatedAt: v.optional(v.number()),
+  }),
+);
+
 export type { AccessTokenPayload };
 
 let verificationKeyCache: { pem: string; key: Promise<CryptoKey> } | null = null;
@@ -220,9 +230,8 @@ export const rotateRefreshToken = internalMutation({
     tokenId: v.string(),
     clientId: v.string(),
     resource: v.string(),
-    auth0RefreshToken: v.string(),
   },
-  returns: oauthGrantResultValidator,
+  returns: refreshGrantResultValidator,
   handler: async (ctx, args) => {
     const { token } = await getRefreshTokenByTokenId(ctx, args.tokenId);
     const now = Date.now();
@@ -260,11 +269,16 @@ export const rotateRefreshToken = internalMutation({
       userId: token.userId,
       clientId: args.clientId,
       resource: args.resource,
-      auth0RefreshToken: args.auth0RefreshToken,
+      auth0RefreshToken: token.auth0RefreshToken,
       expiresAt: refreshTokenExpiresAt(),
     });
 
-    return { userId: token.userId, tokenId, resource: args.resource };
+    return {
+      userId: token.userId,
+      tokenId,
+      resource: args.resource,
+      ...(token.rotatedAt === undefined ? {} : { reusedRotatedAt: token.rotatedAt }),
+    };
   },
 });
 

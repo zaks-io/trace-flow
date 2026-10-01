@@ -26,9 +26,6 @@ describe('convex/http.ts OAuth refresh_token grant', () => {
         resource: 'https://mcp.trace-flow.dev/mcp',
         auth0RefreshToken: 'auth0-refresh',
       });
-      (deps.oauth.refreshAuth0Token as Mock).mockResolvedValue({
-        refresh_token: 'new-auth0-refresh',
-      });
       ctx.runMutation.mockResolvedValue({
         userId: 'user123',
         tokenId: 'rotated-token-id',
@@ -51,7 +48,6 @@ describe('convex/http.ts OAuth refresh_token grant', () => {
       expect(json.access_token).toBe('new-access-token');
       expect(json.token_type).toBe('Bearer');
       expect(json.refresh_token).toBe('rotated-token-id');
-      expect(deps.oauth.refreshAuth0Token).toHaveBeenCalledWith('auth0-refresh');
       expect(ctx.runMutation).toHaveBeenCalledTimes(1);
       expect(ctx.runMutation).toHaveBeenCalledWith(
         expect.anything(),
@@ -59,7 +55,6 @@ describe('convex/http.ts OAuth refresh_token grant', () => {
           tokenId: 'token-id',
           clientId: 'client-1',
           resource: 'https://mcp.trace-flow.dev/mcp',
-          auth0RefreshToken: 'new-auth0-refresh',
         }),
       );
       expect(deps.tokens.createAccessToken).toHaveBeenCalledWith(
@@ -108,90 +103,20 @@ describe('convex/http.ts OAuth refresh_token grant', () => {
       expect(json.error).toBe('invalid_grant');
     });
 
-    it('handles Auth0 refresh failure gracefully', async () => {
+    it('rotates without calling Auth0, whose refresh token nothing consumes', async () => {
       const app = createApp(deps);
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
       ctx.runQuery.mockResolvedValue({
         userId: 'user123',
         clientId: 'client-1',
         resource: 'https://mcp.trace-flow.dev/mcp',
         auth0RefreshToken: 'auth0-refresh',
-      });
-      (deps.oauth.refreshAuth0Token as Mock).mockRejectedValue(new Error('Auth0 error'));
-      ctx.runMutation.mockResolvedValue({
-        userId: 'user123',
-        tokenId: 'rotated-token-id',
-        resource: 'https://mcp.trace-flow.dev/mcp',
-      });
-      (deps.tokens.createAccessToken as Mock).mockResolvedValue('new-access-token');
-
-      const res = await app.request(
-        'http://localhost/mcp/token',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: 'grant_type=refresh_token&refresh_token=token-id&client_id=client-1&resource=https://mcp.trace-flow.dev/mcp',
-        },
-        ctx,
-      );
-
-      // Should still succeed - Auth0 refresh failure is non-fatal
-      expect(res.status).toBe(200);
-      expect(ctx.runMutation).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ auth0RefreshToken: 'auth0-refresh' }),
-      );
-    });
-
-    it('refreshes Auth0 before committing the rotation', async () => {
-      const app = createApp(deps);
-      const calls: string[] = [];
-      ctx.runQuery.mockResolvedValue({
-        userId: 'user123',
-        clientId: 'client-1',
-        resource: 'https://mcp.trace-flow.dev/mcp',
-        auth0RefreshToken: 'auth0-refresh',
-      });
-      (deps.oauth.refreshAuth0Token as Mock).mockImplementation(async () => {
-        calls.push('auth0');
-        return { refresh_token: 'new-auth0-refresh' };
-      });
-      ctx.runMutation.mockImplementation(async () => {
-        calls.push('rotate');
-        return {
-          userId: 'user123',
-          tokenId: 'rotated-token-id',
-          resource: 'https://mcp.trace-flow.dev/mcp',
-        };
-      });
-      (deps.tokens.createAccessToken as Mock).mockResolvedValue('new-access-token');
-
-      const res = await app.request(
-        'http://localhost/mcp/token',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: 'grant_type=refresh_token&refresh_token=token-id&client_id=client-1&resource=https://mcp.trace-flow.dev/mcp',
-        },
-        ctx,
-      );
-
-      expect(res.status).toBe(200);
-      expect(calls).toEqual(['auth0', 'rotate']);
-    });
-
-    it('does not replay the Auth0 token when a concurrent client reuses a token in grace', async () => {
-      const app = createApp(deps);
-      ctx.runQuery.mockResolvedValue({
-        userId: 'user123',
-        clientId: 'client-1',
-        resource: 'https://mcp.trace-flow.dev/mcp',
-        auth0RefreshToken: 'auth0-refresh',
-        rotatedAt: Date.now() - 5_000,
       });
       ctx.runMutation.mockResolvedValue({
         userId: 'user123',
         tokenId: 'sibling-token-id',
         resource: 'https://mcp.trace-flow.dev/mcp',
+        reusedRotatedAt: Date.now() - 5_000,
       });
       (deps.tokens.createAccessToken as Mock).mockResolvedValue('new-access-token');
 
@@ -207,11 +132,8 @@ describe('convex/http.ts OAuth refresh_token grant', () => {
 
       expect(res.status).toBe(200);
       expect((await res.json()).refresh_token).toBe('sibling-token-id');
-      expect(deps.oauth.refreshAuth0Token).not.toHaveBeenCalled();
-      expect(ctx.runMutation).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ auth0RefreshToken: 'auth0-refresh' }),
-      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
     });
 
     it('returns a JSON OAuth error when refreshed access-token signing fails', async () => {

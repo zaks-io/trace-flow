@@ -3141,14 +3141,14 @@ export declare const internal: {
       rotateRefreshToken: FunctionReference<
         "mutation",
         "internal",
-        {
-          auth0RefreshToken: string;
-          clientId: string;
-          resource: string;
-          tokenId: string;
-        },
+        { clientId: string; resource: string; tokenId: string },
         | { error: string; error_description: string }
-        | { resource: string; tokenId: string; userId: Id<"users"> }
+        | {
+            resource: string;
+            reusedRotatedAt?: number;
+            tokenId: string;
+            userId: Id<"users">;
+          }
       >;
     };
   };

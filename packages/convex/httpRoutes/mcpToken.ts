@@ -11,10 +11,7 @@ import { isValidCodeVerifier } from './mcpPkce';
 
 const TOKEN_REQUEST_MAX_BYTES = 16 * 1024;
 
-export function registerMcpTokenRoutes(
-  app: HonoWithConvex<ActionCtx>,
-  { oauth, tokens }: HttpDeps,
-): void {
+export function registerMcpTokenRoutes(app: HonoWithConvex<ActionCtx>, { tokens }: HttpDeps): void {
   // OAuth: Token endpoint (for authorization code and refresh)
   app.post('/mcp/token', async (c) => {
     c.header('Cache-Control', 'no-store');
@@ -173,34 +170,19 @@ export function registerMcpTokenRoutes(
           return rejectRefresh('client_or_resource_mismatch');
         }
 
-        // Runs before rotation commits so a slow Auth0 call cannot strand the client: if the
-        // client times out here, its presented refresh token is still valid for a retry. A
-        // token already in its reuse grace has spent its Auth0 token, so replaying it would
-        // trip Auth0 reuse detection.
-        let auth0RefreshToken = refreshToken.auth0RefreshToken;
-        if (auth0RefreshToken && refreshToken.rotatedAt === undefined) {
-          try {
-            const newAuth0Tokens = await oauth.refreshAuth0Token(auth0RefreshToken);
-            auth0RefreshToken = newAuth0Tokens.refresh_token ?? auth0RefreshToken;
-          } catch (err) {
-            logger.error('convex.auth0_token_refresh_failed', err);
-          }
-        }
-
         const rotated = await ctx.runMutation(internal.mcp.tokens.rotateRefreshToken, {
           tokenId: refreshTokenId,
           clientId,
           resource: canonicalResource,
-          auth0RefreshToken,
         });
 
         if ('error' in rotated) {
           return rejectRefresh('rotation_rejected');
         }
 
-        if (refreshToken.rotatedAt !== undefined) {
+        if (rotated.reusedRotatedAt !== undefined) {
           logger.info('convex.mcp_refresh_token_reused_in_grace', {
-            rotatedAgoMs: Date.now() - refreshToken.rotatedAt,
+            rotatedAgoMs: Date.now() - rotated.reusedRotatedAt,
           });
         }
 

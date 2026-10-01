@@ -24,7 +24,6 @@ function rotate(t: Awaited<ReturnType<typeof setup>>['t'], tokenId: string, clie
     tokenId,
     clientId,
     resource: RESOURCE,
-    auth0RefreshToken: 'auth0-refresh',
   });
 }
 
@@ -43,6 +42,8 @@ describe('rotateRefreshToken', () => {
     expect(second).toMatchObject({ resource: RESOURCE });
     if ('error' in first || 'error' in second) throw new Error('rotation rejected');
     expect(second.tokenId).not.toBe(first.tokenId);
+    expect(first).not.toHaveProperty('reusedRotatedAt');
+    expect(second.reusedRotatedAt).toBe(Date.now() - 30_000);
     await expect(rotate(t, first.tokenId)).resolves.not.toHaveProperty('error');
     await expect(rotate(t, second.tokenId)).resolves.not.toHaveProperty('error');
   });
