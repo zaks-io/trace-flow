@@ -82,6 +82,8 @@ export interface OTLPQueueMessage {
   apiKey: string;
   traces: TinybirdTrace[];
   receivedAt: number;
+  /** Server-authenticated tenant routing for the imported execution contract. */
+  importedExecution?: { contract: string; orgId: string };
   /** Proxy's own Sentry trace, so the consumer's work joins the export request that received it. */
   sentry_trace_context?: SentryTraceContext;
 }

@@ -33,7 +33,49 @@ SCHEMA >
     `ProxyOverheadNano` Int64,
     `UpstreamTtfbNano` Int64,
     `TierAtIngestion` LowCardinality(String),
-    `RetentionExpiresAt` Int64
+    `RetentionExpiresAt` Int64,
+    `Source` LowCardinality(String),
+    `UnclassifiedTokens` UInt32,
+    `UsageQuality` LowCardinality(String),
+    `UsageMissing` UInt8
+
+FORWARD_QUERY >
+    SELECT
+        `ReceivedAt`,
+        `Timestamp`,
+        `TraceId`,
+        `SpanId`,
+        `ApiKey`,
+        `Provider`,
+        `Model`,
+        `OperationName`,
+        `BaggageOperation`,
+        `BaggageUserId`,
+        `StatusCode`,
+        `InputTokens`,
+        `OutputTokens`,
+        `CacheReadInputTokens`,
+        `CacheCreationInputTokens`,
+        `ReasoningTokens`,
+        `UncachedInputTokens`,
+        `InputCostMicrodollars`,
+        `OutputCostMicrodollars`,
+        `CacheReadCostMicrodollars`,
+        `CacheCreationCostMicrodollars`,
+        `ReasoningCostMicrodollars`,
+        `PromptBaselineCostMicrodollars`,
+        `CacheImpactCostMicrodollars`,
+        `UpstreamCostMicrodollars`,
+        `TotalCostMicrodollars`,
+        `DurationNano`,
+        `ProxyOverheadNano`,
+        `UpstreamTtfbNano`,
+        `TierAtIngestion`,
+        `RetentionExpiresAt`,
+        CAST('proxy', 'LowCardinality(String)') AS Source,
+        toUInt32(0) AS UnclassifiedTokens,
+        CAST('', 'LowCardinality(String)') AS UsageQuality,
+        toUInt8(0) AS UsageMissing
 
 ENGINE "MergeTree"
 ENGINE_SORTING_KEY "ApiKey, ReceivedAt, Provider, Model, OperationName, BaggageOperation, StatusCode, BaggageUserId, TraceId, SpanId"

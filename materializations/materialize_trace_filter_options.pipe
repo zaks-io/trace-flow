@@ -11,7 +11,7 @@ SQL >
         BaggageOperation,
         maxState(ReceivedAt) AS LastSeenAt
     FROM otel_genai_spans
-    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
+    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') IN ('proxy', 'imported_execution')
     GROUP BY ApiKey, Provider, Model, StatusCode, BaggageOperation
 
 TYPE MATERIALIZED

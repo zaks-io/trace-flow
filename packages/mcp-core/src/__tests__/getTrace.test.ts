@@ -51,6 +51,55 @@ describe('parseSpanRow', () => {
     });
   });
 
+  it('preserves imported canonical buckets, known zeros, and unclassified total', () => {
+    const span = parseSpanRow({
+      ...baseRow,
+      SpanAttributes: {
+        'trace_flow.source': 'imported_execution',
+        'gen_ai.usage.quality': 'unclassified',
+        'gen_ai.usage.input_tokens': '100',
+        'gen_ai.usage.input_tokens_uncached': '80',
+        'gen_ai.usage.cache_read_input_tokens': '20',
+        'gen_ai.usage.cache_creation_input_tokens': '0',
+        'gen_ai.usage.output_tokens': '50',
+        'gen_ai.usage.output_tokens_non_reasoning': '40',
+        'gen_ai.usage.reasoning_tokens': '10',
+        'gen_ai.usage.unclassified_tokens': '7',
+        'gen_ai.usage.total_tokens': '157',
+      },
+    });
+    expect(buildOutputSpan(span, new Set(['tokens']))).toMatchObject({
+      source: 'imported_execution',
+      usage_quality: 'unclassified',
+      usage_missing: false,
+      tokens: {
+        prompt: 100,
+        uncached_input: 80,
+        cached: 20,
+        cache_creation: 0,
+        completion: 50,
+        non_reasoning: 40,
+        reasoning: 10,
+        unclassified: 7,
+        total: 157,
+      },
+    });
+  });
+
+  it('marks imported missing usage without inventing zero buckets', () => {
+    const span = parseSpanRow({
+      ...baseRow,
+      SpanAttributes: {
+        'trace_flow.source': 'imported_execution',
+        'gen_ai.usage.missing': 'true',
+      },
+    });
+    const output = buildOutputSpan(span, new Set(['tokens']));
+    expect(output).toMatchObject({ source: 'imported_execution', usage_missing: true });
+    expect(output).not.toHaveProperty('tokens');
+    expect(output).not.toHaveProperty('usage_quality');
+  });
+
   it('parses costs', () => {
     const result = parseSpanRow(baseRow);
     expect(result.cost_usd).toEqual({

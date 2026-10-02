@@ -34,14 +34,16 @@ SQL >
             groupArray(DISTINCT JSONExtractString(SpanAttributes, 'baggage.operation')) AS operations,
             sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens'))) AS prompt_tokens,
             sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.output_tokens'))) AS completion_tokens,
-            sum(
+            sum(if(
+                JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution',
+                toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.total_tokens')),
                 toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens')) +
                 toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.output_tokens'))
-            ) AS total_tokens,
+            )) AS total_tokens,
             max(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.server.time_to_first_token'))) AS max_ttft_ms,
             sum(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.total'))) AS total_cost_usd
         FROM otel_trace_spans
-        WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
+        WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') IN ('proxy', 'imported_execution')
             AND (
                 ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
                 OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))

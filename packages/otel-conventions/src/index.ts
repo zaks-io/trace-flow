@@ -3,6 +3,7 @@ export {
   GEN_AI_USAGE,
   GEN_AI_COST,
   TRACE_FLOW,
+  CLI_PROXY,
   ERROR_ATTRS,
   HTTP,
   EVENT_NAMES,
@@ -11,6 +12,7 @@ export {
   SPAN_KIND,
   STATUS_CODE,
   SOURCE_PROXY,
+  SOURCE_IMPORTED_EXECUTION,
   ALL_ATTRIBUTE_KEYS,
   outputEventName,
   inputEventName,
@@ -34,3 +36,9 @@ export {
 } from './attributes/messages';
 
 export { createSpan, packEvents, type SpanBase, type SpanVariant } from './createSpan';
+
+export {
+  IMPORTED_EXECUTION,
+  IMPORTED_ACCOUNT_COVERAGE,
+  IMPORTED_USAGE_QUALITY,
+} from './importedExecution';

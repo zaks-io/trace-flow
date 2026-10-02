@@ -66,9 +66,13 @@ SQL >
         toInt64(round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'trace_flow.proxy_overhead_ms')) * 1000000)) AS ProxyOverheadNano,
         toInt64(round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'trace_flow.upstream_ttfb_ms')) * 1000000)) AS UpstreamTtfbNano,
         TierAtIngestion,
-        RetentionExpiresAt
+        RetentionExpiresAt,
+        JSONExtractString(SpanAttributes, 'trace_flow.source') AS Source,
+        toUInt32OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.unclassified_tokens')) AS UnclassifiedTokens,
+        JSONExtractString(SpanAttributes, 'gen_ai.usage.quality') AS UsageQuality,
+        toUInt8(JSONExtractString(SpanAttributes, 'gen_ai.usage.missing') = 'true') AS UsageMissing
     FROM otel_trace_spans
-    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
+    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') IN ('proxy', 'imported_execution')
 
 TYPE MATERIALIZED
 DATASOURCE llm_request_facts

@@ -29,8 +29,47 @@ SCHEMA >
     `TotalCostMicrodollars` AggregateFunction(sum, UInt64),
     `AvgDurationNano` AggregateFunction(avg, Int64),
     `MaxDurationNano` AggregateFunction(max, Int64),
-    `P95DurationNano` AggregateFunction(quantile(0.95), Int64)
+    `P95DurationNano` AggregateFunction(quantile(0.95), Int64),
+    `UnclassifiedTokens` AggregateFunction(sum, UInt64),
+    `UsageCompleteCount` AggregateFunction(sum, UInt64),
+    `UsageInconsistentCount` AggregateFunction(sum, UInt64),
+    `UsageUnclassifiedCount` AggregateFunction(sum, UInt64),
+    `UsageMissingCount` AggregateFunction(sum, UInt64)
 
+FORWARD_QUERY >
+    SELECT
+        `BucketStart`,
+        `ApiKey`,
+        `Provider`,
+        `Model`,
+        `OperationName`,
+        `BaggageOperation`,
+        `BaggageUserId`,
+        `StatusCode`,
+        `RequestCount`,
+        `InputTokens`,
+        `OutputTokens`,
+        `CacheReadInputTokens`,
+        `CacheCreationInputTokens`,
+        `ReasoningTokens`,
+        `UncachedInputTokens`,
+        `InputCostMicrodollars`,
+        `OutputCostMicrodollars`,
+        `CacheReadCostMicrodollars`,
+        `CacheCreationCostMicrodollars`,
+        `ReasoningCostMicrodollars`,
+        `PromptBaselineCostMicrodollars`,
+        `CacheImpactCostMicrodollars`,
+        `UpstreamCostMicrodollars`,
+        `TotalCostMicrodollars`,
+        `AvgDurationNano`,
+        `MaxDurationNano`,
+        `P95DurationNano`,
+        arrayReduce('sumState', [toUInt64(0)]) AS UnclassifiedTokens,
+        arrayReduce('sumState', [toUInt64(0)]) AS UsageCompleteCount,
+        arrayReduce('sumState', [toUInt64(0)]) AS UsageInconsistentCount,
+        arrayReduce('sumState', [toUInt64(0)]) AS UsageUnclassifiedCount,
+        arrayReduce('sumState', [toUInt64(0)]) AS UsageMissingCount
 
 ENGINE "AggregatingMergeTree"
 ENGINE_SORTING_KEY "ApiKey, BucketStart, Provider, Model, OperationName, BaggageOperation, StatusCode, BaggageUserId"

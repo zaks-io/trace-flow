@@ -1,0 +1,29 @@
+# Token sorting and token columns use declared canonical totals for imported roots.
+
+- name: imported_complete_tokens
+  description: reads imported complete token counts without dropping unclassified usage
+  expected_http_status: 200
+  parameters: api_keys=sha256:ea89ad73ab4059786d1e6b3a16ebab8d79bd6c4d0b7ed720c6f2007d4c1355e2&start_time_ns=1790812800000000000&retention_days=3650&sort_by=tokens&order=desc&limit=1&offset=0
+  expected_result: |
+    {"trace_id":"aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaa1","timestamp":"2026-10-01T12:00:00.000Z","duration_ms":1000,"status":"ok","provider":"openai","model":"gpt-5","prompt_tokens":13,"completion_tokens":10,"total_tokens":23,"cost_usd":0,"total_count":5}
+
+- name: imported_unclassified_tokens
+  description: reads imported unclassified token counts without dropping unclassified usage
+  expected_http_status: 200
+  parameters: api_keys=sha256:ea89ad73ab4059786d1e6b3a16ebab8d79bd6c4d0b7ed720c6f2007d4c1355e2&start_time_ns=1790812800000000000&retention_days=3650&sort_by=tokens&order=desc&limit=1&offset=2
+  expected_result: |
+    {"trace_id":"aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaa2","timestamp":"2026-10-01T12:00:00.000Z","duration_ms":800,"status":"ok","provider":"openai","model":"gpt-5","prompt_tokens":5,"completion_tokens":3,"total_tokens":10,"cost_usd":0,"total_count":5}
+
+- name: imported_failed_with_usage_tokens
+  description: reads imported failed_with_usage token counts without dropping unclassified usage
+  expected_http_status: 200
+  parameters: api_keys=sha256:ea89ad73ab4059786d1e6b3a16ebab8d79bd6c4d0b7ed720c6f2007d4c1355e2&start_time_ns=1790812800000000000&retention_days=3650&sort_by=tokens&order=desc&limit=1&offset=0&status=STATUS_CODE_ERROR
+  expected_result: |
+    {"trace_id":"aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaa5","timestamp":"2026-10-01T12:00:00.000Z","duration_ms":500,"status":"error","provider":"openai","model":"gpt-5","prompt_tokens":5,"completion_tokens":2,"total_tokens":7,"cost_usd":0,"total_count":2}
+
+- name: imported_missing_tokens
+  description: reads imported missing token counts without dropping unclassified usage
+  expected_http_status: 200
+  parameters: api_keys=sha256:ea89ad73ab4059786d1e6b3a16ebab8d79bd6c4d0b7ed720c6f2007d4c1355e2&start_time_ns=1790812800000000000&retention_days=3650&sort_by=tokens&order=desc&limit=1&offset=1&status=STATUS_CODE_ERROR
+  expected_result: |
+    {"trace_id":"aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaa4","timestamp":"2026-10-01T12:00:00.000Z","duration_ms":200,"status":"error","provider":"openai","model":"gpt-5","prompt_tokens":0,"completion_tokens":0,"total_tokens":0,"cost_usd":0,"total_count":2}

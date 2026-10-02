@@ -1,0 +1,7 @@
+# Inconsistent v2 accounting keeps all 17 reported tokens unclassified.
+- name: imported_inconsistent_total
+  description: uses the declared total for an imported root whose classified buckets are zero
+  expected_http_status: 200
+  parameters: api_keys=sha256:ea89ad73ab4059786d1e6b3a16ebab8d79bd6c4d0b7ed720c6f2007d4c1355e2&trace_id=aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaa3&retention_days=3650
+  expected_result: |
+    {"span_count":1,"total_duration_ms":600,"total_cost_usd":0,"total_tokens":17,"error_count":0,"first_timestamp":1760000004000000000,"last_timestamp":1760000004000000000}

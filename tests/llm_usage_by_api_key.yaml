@@ -24,11 +24,24 @@
   expected_http_status: 200
   parameters: api_keys=sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953&start_time_ns=1775001600000000000&end_time_ns=1782864000000000000&retention_days=3650
   expected_result: |
-    {"api_key":"sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953","request_count":5,"input_tokens":50900,"uncached_input_tokens":50900,"output_tokens":25450,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"reasoning_tokens":0,"total_cost_usd":4.09,"input_cost_usd":2.045,"output_cost_usd":2.045,"cache_read_cost_usd":0,"cache_creation_cost_usd":0,"reasoning_cost_usd":0,"prompt_baseline_cost_usd":2.045,"cache_impact_cost_usd":0,"upstream_cost_usd":0,"total_tokens":76350,"avg_duration_ms":2520,"max_duration_ms":8000,"p95_duration_ms":6659.999999999999}
+    {"api_key":"sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953","request_count":5,"input_tokens":50900,"uncached_input_tokens":50900,"output_tokens":25450,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"reasoning_tokens":0,"unclassified_tokens":0,"usage_complete_count":0,"usage_inconsistent_count":0,"usage_unclassified_count":0,"usage_missing_count":0,"total_cost_usd":4.09,"input_cost_usd":2.045,"output_cost_usd":2.045,"cache_read_cost_usd":0,"cache_creation_cost_usd":0,"reasoning_cost_usd":0,"prompt_baseline_cost_usd":2.045,"cache_impact_cost_usd":0,"upstream_cost_usd":0,"total_tokens":76350,"avg_duration_ms":2520,"max_duration_ms":8000,"p95_duration_ms":6659.999999999999}
 
 - name: authorized_monthly_visibility
   description: a signed long visibility window retains the five known key_proj fixture requests
   expected_http_status: 200
   parameters: api_keys=sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953&start_time_ns=1767225600000000000&end_time_ns=1798761600000000000&retention_days=3650
   expected_result: |
-    {"api_key":"sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953","request_count":5,"input_tokens":50900,"uncached_input_tokens":50900,"output_tokens":25450,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"reasoning_tokens":0,"total_cost_usd":4.09,"input_cost_usd":2.045,"output_cost_usd":2.045,"cache_read_cost_usd":0,"cache_creation_cost_usd":0,"reasoning_cost_usd":0,"prompt_baseline_cost_usd":2.045,"cache_impact_cost_usd":0,"upstream_cost_usd":0,"total_tokens":76350,"avg_duration_ms":2520,"max_duration_ms":8000,"p95_duration_ms":6659.999999999999}
+    {"api_key":"sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953","request_count":5,"input_tokens":50900,"uncached_input_tokens":50900,"output_tokens":25450,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"reasoning_tokens":0,"unclassified_tokens":0,"usage_complete_count":0,"usage_inconsistent_count":0,"usage_unclassified_count":0,"usage_missing_count":0,"total_cost_usd":4.09,"input_cost_usd":2.045,"output_cost_usd":2.045,"cache_read_cost_usd":0,"cache_creation_cost_usd":0,"reasoning_cost_usd":0,"prompt_baseline_cost_usd":2.045,"cache_impact_cost_usd":0,"upstream_cost_usd":0,"total_tokens":76350,"avg_duration_ms":2520,"max_duration_ms":8000,"p95_duration_ms":6659.999999999999}
+
+- name: imported_execution_accounting
+  description: an imported API key keeps complete, inconsistent, unclassified and missing counts separate
+  expected_http_status: 200
+  parameters: api_keys=sha256:ea89ad73ab4059786d1e6b3a16ebab8d79bd6c4d0b7ed720c6f2007d4c1355e2&start_time_ns=1790812800000000000&end_time_ns=1790899200000000000&retention_days=3650
+  expected_result: |
+    {"api_key":"sha256:ea89ad73ab4059786d1e6b3a16ebab8d79bd6c4d0b7ed720c6f2007d4c1355e2","request_count":5,"input_tokens":23,"uncached_input_tokens":19,"output_tokens":15,"cache_read_input_tokens":3,"cache_creation_input_tokens":1,"reasoning_tokens":3,"unclassified_tokens":19,"usage_complete_count":2,"usage_inconsistent_count":1,"usage_unclassified_count":1,"usage_missing_count":1,"total_cost_usd":0,"input_cost_usd":0,"output_cost_usd":0,"cache_read_cost_usd":0,"cache_creation_cost_usd":0,"reasoning_cost_usd":0,"prompt_baseline_cost_usd":0,"cache_impact_cost_usd":0,"upstream_cost_usd":0,"total_tokens":57,"avg_duration_ms":620,"max_duration_ms":1000,"p95_duration_ms":960}
+
+- name: imported_execution_tenant_scope
+  description: a different API key cannot read imported execution usage
+  expected_http_status: 200
+  parameters: api_keys=key_other&start_time_ns=1790812800000000000&end_time_ns=1790899200000000000&retention_days=3650
+  expected_result: ''

@@ -2,7 +2,14 @@
 
 import type { ColumnDef, VisibilityState } from '@tanstack/react-table';
 import { parseSpanAttributes, type TraceSpanRow } from '@trace-flow/spans';
-import { GEN_AI, GEN_AI_COST, GEN_AI_USAGE, HTTP } from '@trace-flow/otel-conventions';
+import {
+  GEN_AI,
+  GEN_AI_COST,
+  GEN_AI_USAGE,
+  HTTP,
+  SOURCE_IMPORTED_EXECUTION,
+  TRACE_FLOW,
+} from '@trace-flow/otel-conventions';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatNumber, formatRelativeTime } from '@/lib/format';
 import { calculateCacheHitRate } from '@/lib/cacheMetrics';
@@ -306,6 +313,10 @@ export const allColumns: ColumnDef<RequestRow>[] = [
     id: 'totalTokens',
     accessorFn: (row) => {
       const attrs = parseSpanAttributes(row.SpanAttributes);
+      if (attrs[TRACE_FLOW.SOURCE] === SOURCE_IMPORTED_EXECUTION) {
+        const totalRaw = attrs[GEN_AI_USAGE.TOTAL_TOKENS];
+        return totalRaw === undefined ? undefined : Number(totalRaw);
+      }
       const inputRaw = attrs[GEN_AI_USAGE.INPUT_TOKENS];
       const outputRaw = attrs[GEN_AI_USAGE.OUTPUT_TOKENS];
       if (inputRaw === undefined && outputRaw === undefined) return undefined;

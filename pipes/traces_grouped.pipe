@@ -10,7 +10,8 @@ SQL >
     %
     SELECT DISTINCT TraceId
     FROM otel_genai_spans
-    WHERE (
+    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') IN ('proxy', 'imported_execution')
+        AND (
         ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
     )
@@ -69,7 +70,7 @@ SQL >
             JSONExtractString(SpanAttributes, 'gen_ai.request.model'))
         ) as Models,
         groupArray(DISTINCT JSONExtractString(SpanAttributes, 'baggage.operation')) as Operations,
-        sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens')) + toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.output_tokens'))) as TotalTokens,
+        sum(if(JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution', toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.total_tokens')), toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens')) + toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.output_tokens')))) as TotalTokens,
         sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens'))) as PromptTokens,
         sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.output_tokens'))) as CompletionTokens,
         max(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.server.time_to_first_token'))) as MaxTTFT,
@@ -78,7 +79,7 @@ SQL >
     WHERE {% if defined(provider) or defined(model) or defined(status) or defined(operation) or defined(search) or defined(api_key_filter) %}
         TraceId IN (SELECT TraceId FROM filter_traces)
         AND {% end %}
-        JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
+        JSONExtractString(SpanAttributes, 'trace_flow.source') IN ('proxy', 'imported_execution')
         AND (
             ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
             OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))

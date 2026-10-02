@@ -11,7 +11,7 @@ import { BAGGAGE_PREFIX } from '../attributes/baggage';
  * silently break the materialized view, and this test catches that.
  *
  * The test scans every `JSONExtract*(SpanAttributes, '...')` call in the
- * pipes/datasources tree and asserts each key is in `ALL_ATTRIBUTE_KEYS`
+ * pipes/datasources/materializations trees and asserts each key is in `ALL_ATTRIBUTE_KEYS`
  * (or has the `baggage.` prefix, which is caller-controlled).
  */
 
@@ -40,7 +40,8 @@ const SQL_EXTRACT_PATTERN = /JSONExtract\w+\(\s*SpanAttributes\s*,\s*['"]([^'"]+
 describe('SpanAttributes SQL ↔ TS constant consistency', () => {
   const pipeFiles = findFilesRecursive(join(REPO_ROOT, 'pipes'), ['.pipe']);
   const datasourceFiles = findFilesRecursive(join(REPO_ROOT, 'datasources'), ['.datasource']);
-  const files = [...pipeFiles, ...datasourceFiles];
+  const materializationFiles = findFilesRecursive(join(REPO_ROOT, 'materializations'), ['.pipe']);
+  const files = [...pipeFiles, ...datasourceFiles, ...materializationFiles];
 
   it('finds at least one .pipe file to scan', () => {
     expect(pipeFiles.length).toBeGreaterThan(0);

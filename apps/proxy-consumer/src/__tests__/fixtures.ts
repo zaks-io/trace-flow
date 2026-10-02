@@ -2,6 +2,9 @@ import type { TinybirdTrace } from '@trace-flow/types';
 import {
   createSpan,
   GEN_AI,
+  CLI_PROXY,
+  SOURCE_IMPORTED_EXECUTION,
+  TRACE_FLOW,
   SPAN_KIND,
   SPAN_NAMES,
   type SpanBase,
@@ -33,4 +36,20 @@ export function createMockTrace(traceId: string): TinybirdTrace {
       },
     },
   );
+}
+
+export function createImportedMockTrace(
+  identity: string,
+  hash: string,
+  requestId = 'same-inbound',
+): TinybirdTrace {
+  const trace = createMockTrace('imported-trace');
+  trace.SpanAttributes = {
+    ...trace.SpanAttributes,
+    [TRACE_FLOW.SOURCE]: SOURCE_IMPORTED_EXECUTION,
+    [TRACE_FLOW.IMPORT_IDENTITY]: identity,
+    [TRACE_FLOW.IMPORT_SOURCE_HASH]: hash,
+    [CLI_PROXY.INBOUND_REQUEST_ID]: requestId,
+  };
+  return trace;
 }

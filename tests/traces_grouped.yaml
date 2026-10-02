@@ -1,0 +1,7 @@
+# The canonical total survives grouping even when no tokens classify as input or output.
+- name: imported_inconsistent_total
+  description: groups an imported root with all 17 tokens unclassified
+  expected_http_status: 200
+  parameters: api_keys=sha256:ea89ad73ab4059786d1e6b3a16ebab8d79bd6c4d0b7ed720c6f2007d4c1355e2&search=aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaa3&retention_days=3650
+  expected_result: |
+    {"TraceId":"aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaa3","ChildSpanCount":1,"FirstTimestamp":1760000004000000000,"LastTimestamp":1760000004000000000,"LatestReceivedAt":1790856000000000000,"TotalDuration":600000000,"AvgDuration":600000000,"MaxDuration":600000000,"ErrorCount":0,"Models":["openai\/gpt-5"],"Operations":[""],"TotalTokens":17,"PromptTokens":0,"CompletionTokens":0,"MaxTTFT":0,"TotalCost":0}

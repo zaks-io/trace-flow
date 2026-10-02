@@ -1,21 +1,24 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type * as SentryCloudflare from '@sentry/cloudflare';
 import { env as workerEnv } from 'cloudflare:workers';
-import { runInDurableObject } from 'cloudflare:test';
+import { evictDurableObject, runInDurableObject } from 'cloudflare:test';
 import type { TraceBatcherInstance, MessageTraceBatchItem, MessageTraceResult } from '../batcher';
 import {
   TRACE_BATCHER_FLUSH_INTERVAL_MS,
   TRACE_BATCHER_MAX_INSERT_ROWS,
   TRACE_BATCHER_MAX_JITTER_MS,
 } from '../batcher';
-import { createMockTrace } from './fixtures';
+import { createImportedMockTrace, createMockTrace } from './fixtures';
 import { TinybirdInsertError, TinybirdRecoveryStore } from '@trace-flow/tinybird-client';
 import { analyticsKeyId } from '@trace-flow/utils';
+import { IMPORTED_EXECUTION, TRACE_FLOW } from '@trace-flow/otel-conventions';
 import { insertIntoTinybirdWithRetry } from '../tinybird';
 
 const env = workerEnv as unknown as {
   TRACE_BATCHER: DurableObjectNamespace<TraceBatcherInstance>;
 };
+
+const IMPORT_METADATA = { contract: IMPORTED_EXECUTION.CONTRACT, orgId: 'org-a' };
 
 // Stub the Tinybird transport so nothing leaves the isolate. The DO loads this
 // same module, so the mock covers any flush triggered inside the batcher. Tests
@@ -426,5 +429,92 @@ describe('TraceBatcher logic', () => {
 
     const stats = await getStats();
     expect(stats.queuedTraces).toBe(traceCount);
+  });
+  it('dedupes an imported replay after a real Durable Object eviction', async () => {
+    const original = createImportedMockTrace('1'.repeat(64), 'a'.repeat(64));
+    await addTraces([
+      { messageId: 'delivery-1', traces: [original], importedExecution: IMPORT_METADATA },
+    ]);
+    await evictDurableObject(batcher);
+
+    const replay = {
+      ...original,
+      ReceivedAt: original.ReceivedAt + 10_000_000,
+      TierAtIngestion: 'pro',
+      RetentionExpiresAt: original.RetentionExpiresAt + 10_000_000,
+      ApiKey: 'another-org-a-api-key',
+      SpanAttributes: { ...original.SpanAttributes, 'gen_ai.cost.total': '999' },
+    };
+    const result = await addTraces([
+      { messageId: 'delivery-2', traces: [replay], importedExecution: IMPORT_METADATA },
+    ]);
+    expect(result).toEqual([{ messageId: 'delivery-2', status: 'inserted' }]);
+    expect((await getStats()).queuedTraces).toBe(1);
+    const repairs = await runInDurableObject(batcher, (instance: TraceBatcherInstance) =>
+      instance.listRecovery(),
+    );
+    expect(repairs.records).toHaveLength(0);
+  });
+
+  it('records changed imported source content as one repair without a second row', async () => {
+    const original = createImportedMockTrace('2'.repeat(64), 'a'.repeat(64));
+    await addTraces([
+      { messageId: 'delivery-1', traces: [original], importedExecution: IMPORT_METADATA },
+    ]);
+    const changed = createImportedMockTrace('2'.repeat(64), 'b'.repeat(64));
+    changed.SpanAttributes['gen_ai.usage.total_tokens'] = '24';
+    await addTraces([
+      { messageId: 'delivery-2', traces: [changed], importedExecution: IMPORT_METADATA },
+    ]);
+    await addTraces([
+      { messageId: 'delivery-3', traces: [changed], importedExecution: IMPORT_METADATA },
+    ]);
+
+    expect((await getStats()).queuedTraces).toBe(1);
+    const repairs = await runInDurableObject(batcher, (instance: TraceBatcherInstance) =>
+      instance.listRecovery(),
+    );
+    expect(repairs.records).toHaveLength(1);
+    expect(repairs.records[0]?.kind).toBe('repair');
+    expect(JSON.parse(repairs.records[0]?.outcome ?? '{}')).toMatchObject({
+      ledger: 'imported_execution',
+      contract: IMPORTED_EXECUTION.CONTRACT,
+    });
+  });
+
+  it('keeps two executions with one inbound ID and two organizations distinct', async () => {
+    const first = createImportedMockTrace('3'.repeat(64), 'c'.repeat(64), 'inbound-1');
+    const second = createImportedMockTrace('4'.repeat(64), 'd'.repeat(64), 'inbound-1');
+    const otherOrg = createImportedMockTrace('5'.repeat(64), 'c'.repeat(64), 'inbound-1');
+    await addTraces([
+      { messageId: 'delivery-1', traces: [first, second], importedExecution: IMPORT_METADATA },
+      {
+        messageId: 'delivery-2',
+        traces: [otherOrg],
+        importedExecution: { ...IMPORT_METADATA, orgId: 'org-b' },
+      },
+    ]);
+    expect((await getStats()).queuedTraces).toBe(3);
+  });
+
+  it('fails an imported row with missing source hash and can retry the message', async () => {
+    const invalid = createImportedMockTrace('6'.repeat(64), 'a'.repeat(64));
+    delete invalid.SpanAttributes[TRACE_FLOW.IMPORT_SOURCE_HASH];
+    expect(
+      await addTraces([
+        { messageId: 'delivery-1', traces: [invalid], importedExecution: IMPORT_METADATA },
+      ]),
+    ).toEqual([{ messageId: 'delivery-1', status: 'failed' }]);
+    expect((await getStats()).queuedTraces).toBe(0);
+    expect(
+      await addTraces([
+        {
+          messageId: 'delivery-1',
+          traces: [createImportedMockTrace('6'.repeat(64), 'a'.repeat(64))],
+          importedExecution: IMPORT_METADATA,
+        },
+      ]),
+    ).toEqual([{ messageId: 'delivery-1', status: 'inserted' }]);
+    expect((await getStats()).queuedTraces).toBe(1);
   });
 });

@@ -38,6 +38,12 @@ export const GEN_AI = {
 } as const;
 
 export const GEN_AI_USAGE = {
+  SCHEMA_VERSION: 'gen_ai.usage.schema_version',
+  QUALITY: 'gen_ai.usage.quality',
+  TOTAL_TOKENS: 'gen_ai.usage.total_tokens',
+  MISSING: 'gen_ai.usage.missing',
+  UNCLASSIFIED_TOKENS: 'gen_ai.usage.unclassified_tokens',
+  OUTPUT_TOKENS_NON_REASONING: 'gen_ai.usage.output_tokens_non_reasoning',
   INPUT_TOKENS: 'gen_ai.usage.input_tokens',
   INPUT_TOKENS_UNCACHED: 'gen_ai.usage.input_tokens_uncached',
   OUTPUT_TOKENS: 'gen_ai.usage.output_tokens',
@@ -64,6 +70,21 @@ export const TRACE_FLOW = {
   SOURCE: 'trace_flow.source',
   PROXY_OVERHEAD_MS: 'trace_flow.proxy_overhead_ms',
   UPSTREAM_TTFB_MS: 'trace_flow.upstream_ttfb_ms',
+  IMPORT_IDENTITY: 'trace_flow.import.identity',
+  IMPORT_SOURCE_HASH: 'trace_flow.import.source_hash',
+} as const;
+
+export const CLI_PROXY = {
+  INSTALLATION_ID: 'cliproxyapi.installation.id',
+  EXECUTION_ID: 'cliproxyapi.execution.id',
+  INBOUND_REQUEST_ID: 'cliproxyapi.request.id',
+  REQUEST_MODEL_ALIAS: 'cliproxyapi.request.model_alias',
+  REQUEST_SERVICE_TIER: 'cliproxyapi.request.service_tier',
+  RESPONSE_SERVICE_TIER: 'cliproxyapi.response.service_tier',
+  ACCOUNT_COVERAGE: 'cliproxyapi.account.coverage',
+  ACCOUNT_REF: 'cliproxyapi.account.ref',
+  SESSION_ID: 'cliproxyapi.session.id',
+  PARENT_SESSION_ID: 'cliproxyapi.session.parent_id',
 } as const;
 
 export const ERROR_ATTRS = {
@@ -77,6 +98,7 @@ export const HTTP = {
 } as const;
 
 export const SOURCE_PROXY = 'proxy';
+export const SOURCE_IMPORTED_EXECUTION = 'imported_execution';
 
 export const EVENT_NAMES = {
   INPUT_SYSTEM: 'input.system',
@@ -134,6 +156,7 @@ export const ALL_ATTRIBUTE_KEYS: readonly string[] = [
   ...Object.values(GEN_AI_USAGE),
   ...Object.values(GEN_AI_COST),
   ...Object.values(TRACE_FLOW),
+  ...Object.values(CLI_PROXY),
   ...Object.values(ERROR_ATTRS),
   ...Object.values(HTTP),
 ];
