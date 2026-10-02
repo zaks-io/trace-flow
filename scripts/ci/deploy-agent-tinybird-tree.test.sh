@@ -64,6 +64,20 @@ assert_ref_file "$LEGACY_REF" pipes/llm_requests_mv.pipe
 }
 
 if [[ "$TEST_PHASE" == "expand" ]]; then
+  filter_options=datasources/trace_filter_options.datasource
+  if git -C "$TEST_ROOT" cat-file -e "$CURRENT_REF:$filter_options" 2>/dev/null; then
+    [[ "$(grep -c '^FORWARD_QUERY' "$PWD/$filter_options")" == "1" ]]
+    if git -C "$TEST_ROOT" show "$CURRENT_REF:$filter_options" | grep -q '^FORWARD_QUERY'; then
+      assert_ref_file "$CURRENT_REF" "$filter_options"
+    else
+      cmp -s <(git -C "$TEST_ROOT" show "$CURRENT_REF:$filter_options"; printf '\nFORWARD_QUERY >\n    SELECT *\n') "$PWD/$filter_options" || {
+        echo "Generated tree changed historical filter schema while adding its identity forward query" >&2
+        exit 1
+      }
+    fi
+  else
+    assert_repo_file "$filter_options"
+  fi
   assert_ref_file "$CURRENT_REF" pipes/agent_usage_summary.pipe
   assert_ref_file_with_token \
     "$CURRENT_REF" \
