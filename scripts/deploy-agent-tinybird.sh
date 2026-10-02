@@ -320,6 +320,13 @@ prepare_phase_project() {
     verify_preserved_inventory "$current_ref"
   fi
 
+  # Filter dimensions outlive their TTL-limited sources, so preserve the live aggregate states.
+  local filter_options="$TMP_DIR/datasources/trace_filter_options.datasource"
+  if [[ "$phase" == "expand" && -f "$filter_options" ]] &&
+    ! grep -q '^FORWARD_QUERY' "$filter_options"; then
+    printf '\nFORWARD_QUERY >\n    SELECT *\n' >> "$filter_options"
+  fi
+
   DEPLOY_DIR="$TMP_DIR"
   echo "Prepared Tinybird $phase deploy tree."
 }

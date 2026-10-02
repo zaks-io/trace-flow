@@ -9,5 +9,8 @@ SCHEMA >
     `BaggageOperation` LowCardinality(String),
     `LastSeenAt` AggregateFunction(max, Int64)
 
+FORWARD_QUERY >
+    SELECT *
+
 ENGINE "AggregatingMergeTree"
 ENGINE_SORTING_KEY "ApiKey, Provider, Model, StatusCode, BaggageOperation"
