@@ -72,9 +72,22 @@ class_name = "UsageTracker"
 tag = "v1"
 new_sqlite_classes = ["UsageTracker"]
 
+# Preserve the applied dev capture migration history before retiring its namespace.
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["CaptureLedger"]
+
+[[migrations]]
+tag = "v3"
+deleted_classes = ["CaptureLedger"]
+
 [env.production]
 name = "trace-flow-proxy"
 workers_dev = false
+
+[[env.production.migrations]]
+tag = "v1"
+new_sqlite_classes = ["UsageTracker"]
 
 [env.production.triggers]
 crons = ["*/5 * * * *"]
@@ -124,6 +137,10 @@ class_name = "UsageTracker"
 
 [env.preview]
 name = "trace-flow-proxy-preview"
+
+[[env.preview.migrations]]
+tag = "v1"
+new_sqlite_classes = ["UsageTracker"]
 
 [env.preview.triggers]
 crons = ["*/5 * * * *"]
