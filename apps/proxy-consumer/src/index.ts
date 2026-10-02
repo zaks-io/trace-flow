@@ -1,6 +1,7 @@
 import * as Sentry from '@sentry/cloudflare';
 import type {
   QueueMessageUnion,
+  OTLPQueueMessage,
   TinybirdTrace,
   QueueMessage,
   TraceDeliveryPayload,
@@ -25,6 +26,11 @@ import {
 } from './batcher';
 import { buildSpans } from './spans';
 import { calculateShardId } from './sharding';
+import {
+  IMPORTED_EXECUTION,
+  SOURCE_IMPORTED_EXECUTION,
+  TRACE_FLOW,
+} from '@trace-flow/otel-conventions';
 import { getPricing, type ModelPricing } from '@trace-flow/pricing';
 import { fetchOpenRouterPricing } from './openrouter-pricing';
 import { WorkerEntrypoint } from 'cloudflare:workers';
@@ -254,6 +260,33 @@ async function buildDeliveryTraces(
   return buildSpans({ ...payload, apiKey }, await getPricingForMessage(payload, env.MODEL_PRICING));
 }
 
+function importedMetadata(
+  payload: TraceDeliveryPayload,
+): OTLPQueueMessage['importedExecution'] | undefined {
+  return payload.type === 'otlp' ? payload.importedExecution : undefined;
+}
+
+function traceShardKey(payload: TraceDeliveryPayload): string {
+  if (payload.type !== 'otlp') return payload.apiKey;
+  if (!payload.importedExecution) {
+    if (
+      payload.traces.some(
+        (trace) => trace.SpanAttributes[TRACE_FLOW.SOURCE] === SOURCE_IMPORTED_EXECUTION,
+      )
+    ) {
+      throw new Error('Imported execution shard metadata is missing');
+    }
+    return payload.apiKey;
+  }
+  if (
+    payload.importedExecution.contract !== IMPORTED_EXECUTION.CONTRACT ||
+    !payload.importedExecution.orgId
+  ) {
+    throw new Error('Imported execution shard metadata is invalid');
+  }
+  return `org:${payload.importedExecution.orgId}`;
+}
+
 async function stageSingleQueueBody(
   body: QueueMessageUnion,
   messageId: string,
@@ -262,10 +295,11 @@ async function stageSingleQueueBody(
   const resolved = await resolveQueueItem(body, messageId, env);
   if (!resolved) throw new Error('Delivery envelope is missing; replay was not staged');
   const traces = await buildDeliveryTraces(resolved.payload, env);
+  const importedExecution = importedMetadata(resolved.payload);
   const result = await getTraceBatcher(
     env,
-    calculateShardId(resolved.payload.apiKey, getNumShards(env)),
-  ).addMessageTraces([{ messageId: resolved.messageId, traces }]);
+    calculateShardId(traceShardKey(resolved.payload), getNumShards(env)),
+  ).addMessageTraces([{ messageId: resolved.messageId, traces, importedExecution }]);
   if (result[0]?.status === 'failed') throw new Error('trace batcher rejected replay');
   if (resolved.deliveryKey) await completeTraceDelivery(env.STORAGE, resolved.deliveryKey);
 }
@@ -327,6 +361,7 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
         traces: TinybirdTrace[];
         message: Message<QueueMessageUnion>;
         deliveryKey?: string;
+        importedExecution?: OTLPQueueMessage['importedExecution'];
       }[];
     }
   >();
@@ -342,7 +377,7 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
       }
       const traces = await buildDeliveryTraces(resolved.payload, env);
       // Keep pre-cutover queue retries on the shard that owns their message ledger.
-      const shardId = calculateShardId(resolved.payload.apiKey, numShards);
+      const shardId = calculateShardId(traceShardKey(resolved.payload), numShards);
 
       if (!shardedMessages.has(shardId)) {
         shardedMessages.set(shardId, { items: [] });
@@ -354,6 +389,7 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
         traces,
         message,
         deliveryKey: resolved.deliveryKey,
+        importedExecution: importedMetadata(resolved.payload),
       });
     } catch (error) {
       logger.error('consumer.message_process_failed', error, { messageId: message.id });
@@ -382,7 +418,11 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
         const batcher = getTraceBatcher(env, shardId);
 
         const results = await batcher.addMessageTraces(
-          shard.items.map((item) => ({ messageId: item.messageId, traces: item.traces })),
+          shard.items.map((item) => ({
+            messageId: item.messageId,
+            traces: item.traces,
+            importedExecution: item.importedExecution,
+          })),
         );
         const statusById = new Map(results.map((result) => [result.messageId, result.status]));
 

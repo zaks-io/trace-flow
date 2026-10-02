@@ -30,7 +30,12 @@ SQL >
         sumState(toUInt64(TotalCostMicrodollars)) AS TotalCostMicrodollars,
         avgState(DurationNano) AS AvgDurationNano,
         maxState(DurationNano) AS MaxDurationNano,
-        quantileState(0.95)(DurationNano) AS P95DurationNano
+        quantileState(0.95)(DurationNano) AS P95DurationNano,
+        sumState(toUInt64(UnclassifiedTokens)) AS UnclassifiedTokens,
+        sumState(toUInt64(UsageQuality = 'complete')) AS UsageCompleteCount,
+        sumState(toUInt64(UsageQuality = 'inconsistent')) AS UsageInconsistentCount,
+        sumState(toUInt64(UsageQuality = 'unclassified')) AS UsageUnclassifiedCount,
+        sumState(toUInt64(UsageMissing)) AS UsageMissingCount
     FROM llm_request_facts
     GROUP BY BucketStart, ApiKey, Provider, Model, OperationName, BaggageOperation, BaggageUserId, StatusCode
 

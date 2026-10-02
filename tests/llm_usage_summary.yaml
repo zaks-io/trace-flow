@@ -1,0 +1,7 @@
+# Five imported roots with non-overlapping canonical tokens and one missing usage block.
+- name: imported_execution_quality_and_missing
+  description: reconciles canonical total and distinct quality and missing counts, including failed usage
+  expected_http_status: 200
+  parameters: api_keys=sha256:ea89ad73ab4059786d1e6b3a16ebab8d79bd6c4d0b7ed720c6f2007d4c1355e2&start_time_ns=1790812800000000000&end_time_ns=1790899200000000000&retention_days=3650
+  expected_result: |
+    {"request_count":5,"input_tokens":23,"uncached_input_tokens":19,"output_tokens":15,"cache_read_input_tokens":3,"cache_creation_input_tokens":1,"reasoning_tokens":3,"unclassified_tokens":19,"usage_complete_count":2,"usage_inconsistent_count":1,"usage_unclassified_count":1,"usage_missing_count":1,"total_cost_usd":0,"input_cost_usd":0,"output_cost_usd":0,"cache_read_cost_usd":0,"cache_creation_cost_usd":0,"reasoning_cost_usd":0,"prompt_baseline_cost_usd":0,"cache_impact_cost_usd":0,"upstream_cost_usd":0,"total_tokens":57,"avg_duration_ms":620,"max_duration_ms":1000,"p95_duration_ms":960,"error_count":2}

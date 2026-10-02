@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { decodeOTLPProtobuf, readOTLPBody, OTLPProtoDecodeError } from '../decode';
 import { transformOTLPToTraces } from '../transform';
+import { validateOTLPRequest } from '../validation';
+import { validateImportedExecutionRequest } from '../imported/validate';
+import { buildImportedExecutionTraces } from '../imported/traces';
+import { IMPORTED_EXECUTION, GEN_AI_USAGE } from '@trace-flow/otel-conventions';
 import { Writer, WIRE_FIXED64, WIRE_LEN, WIRE_VARINT } from '../wire';
 
 /**
@@ -748,5 +752,60 @@ describe('decoder hardening', () => {
     const span = decoded.resourceSpans[0]!.scopeSpans[0]!.spans[0]!;
     expect(span.traceId).toBe(''); // skipped, not corrupted
     expect(span.name).toBe('mismatched'); // other fields still decoded
+  });
+  it('decodes a protobuf CLIProxyAPI v2 execution through the imported contract', async () => {
+    const executionId = 'aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaa1';
+    const encoded = encodeRequest([
+      {
+        resourceAttributes: [
+          {
+            key: 'cliproxyapi.installation.id',
+            value: { stringValue: '11111111-1111-4111-8111-111111111111' },
+          },
+          { key: 'service.name', value: { stringValue: 'CLIProxyAPI' } },
+        ],
+        scopes: [
+          {
+            name: IMPORTED_EXECUTION.SCOPE_NAME,
+            version: IMPORTED_EXECUTION.SCOPE_VERSION,
+            spans: [
+              {
+                traceIdHex: executionId,
+                spanIdHex: executionId.slice(16),
+                name: 'gpt-5',
+                kind: 2,
+                startNano: 1_000_000_000n,
+                endNano: 2_000_000_000n,
+                status: { code: 1 },
+                attributes: [
+                  {
+                    key: 'cliproxyapi.execution.id',
+                    value: { stringValue: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1' },
+                  },
+                  { key: 'gen_ai.system', value: { stringValue: 'openai' } },
+                  { key: 'gen_ai.request.model', value: { stringValue: 'gpt-5' } },
+                  { key: 'cliproxyapi.account.coverage', value: { stringValue: 'unknown' } },
+                  { key: GEN_AI_USAGE.MISSING, value: { boolValue: true } },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    const decoded = decodeOTLPProtobuf(encoded);
+    expect(validateOTLPRequest(decoded).valid).toBe(true);
+    const imported = validateImportedExecutionRequest(decoded);
+    expect(imported.valid).toBe(true);
+    if (!imported.valid) return;
+    const traces = await buildImportedExecutionTraces(
+      imported.executions,
+      'key',
+      'org-a',
+      3_000_000_000,
+    );
+    expect(traces).toHaveLength(1);
+    expect(traces[0]!.SpanAttributes[GEN_AI_USAGE.MISSING]).toBe('true');
+    expect(traces[0]!.SpanAttributes[GEN_AI_USAGE.TOTAL_TOKENS]).toBeUndefined();
   });
 });

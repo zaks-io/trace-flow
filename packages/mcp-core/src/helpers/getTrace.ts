@@ -6,6 +6,8 @@ import {
   GEN_AI_USAGE,
   HTTP,
   STATUS_CODE,
+  SOURCE_IMPORTED_EXECUTION,
+  TRACE_FLOW,
 } from '@trace-flow/otel-conventions';
 
 export interface SpanRow {
@@ -33,6 +35,9 @@ export interface ParsedSpan {
   model: string | undefined;
   target_url: string | undefined;
   http_status: string | undefined;
+  source?: string;
+  usage_quality?: string;
+  usage_missing?: boolean;
   tokens: Record<string, number> | undefined;
   cost_usd: Record<string, number> | undefined;
   time_to_first_token_ms: number | undefined;
@@ -99,6 +104,7 @@ function extractBaggage(attrs: Record<string, unknown>): Record<string, string> 
 export function parseSpanRow(row: SpanRow): ParsedSpan {
   const attrs = parseSpanAttributes(row.SpanAttributes);
 
+  const isImported = attrs[TRACE_FLOW.SOURCE] === SOURCE_IMPORTED_EXECUTION;
   const promptTokens = Number(attrs[GEN_AI_USAGE.INPUT_TOKENS]) || 0;
   const completionTokens = Number(attrs[GEN_AI_USAGE.OUTPUT_TOKENS]) || 0;
   const totalTokens = promptTokens + completionTokens;
@@ -115,6 +121,22 @@ export function parseSpanRow(row: SpanRow): ParsedSpan {
   if (totalTokens > 0) tokens.total = totalTokens;
   if (cachedTokens > 0) tokens.cached = cachedTokens;
   if (reasoningTokens > 0) tokens.reasoning = reasoningTokens;
+  if (isImported) {
+    for (const [name, key] of [
+      ['prompt', GEN_AI_USAGE.INPUT_TOKENS],
+      ['uncached_input', GEN_AI_USAGE.INPUT_TOKENS_UNCACHED],
+      ['completion', GEN_AI_USAGE.OUTPUT_TOKENS],
+      ['non_reasoning', GEN_AI_USAGE.OUTPUT_TOKENS_NON_REASONING],
+      ['cached', GEN_AI_USAGE.CACHE_READ_INPUT_TOKENS],
+      ['cache_creation', GEN_AI_USAGE.CACHE_CREATION_INPUT_TOKENS],
+      ['reasoning', GEN_AI_USAGE.REASONING_TOKENS],
+      ['unclassified', GEN_AI_USAGE.UNCLASSIFIED_TOKENS],
+      ['total', GEN_AI_USAGE.TOTAL_TOKENS],
+    ] as const) {
+      const value = optionalNumber(attrs[key]);
+      if (value !== undefined) tokens[name] = value;
+    }
+  }
 
   const costUsd: Record<string, number> = {};
   if (inputCost > 0) costUsd.input = inputCost;
@@ -133,6 +155,11 @@ export function parseSpanRow(row: SpanRow): ParsedSpan {
     model: attrs[GEN_AI.REQUEST_MODEL] as string | undefined,
     target_url: attrs[HTTP.URL] as string | undefined,
     http_status: attrs[HTTP.RESPONSE_STATUS_CODE] as string | undefined,
+    source: isImported ? SOURCE_IMPORTED_EXECUTION : undefined,
+    usage_quality: isImported ? (attrs[GEN_AI_USAGE.QUALITY] as string | undefined) : undefined,
+    usage_missing: isImported
+      ? attrs[GEN_AI_USAGE.MISSING] === true || attrs[GEN_AI_USAGE.MISSING] === 'true'
+      : undefined,
     tokens: Object.keys(tokens).length > 0 ? tokens : undefined,
     cost_usd: Object.keys(costUsd).length > 0 ? costUsd : undefined,
     time_to_first_token_ms: optionalNumber(attrs[GEN_AI.SERVER_TTFT]),
@@ -150,6 +177,7 @@ export function buildOutputSpan(span: ParsedSpan, expand: Set<string>): Record<s
   };
 
   if (span.timestamp !== undefined) output.timestamp = span.timestamp;
+  if (span.source !== undefined) output.source = span.source;
   if (expand.has('parent') && span.parent_span_id) output.parent_span_id = span.parent_span_id;
   if (expand.has('status_message') && span.status_message)
     output.status_message = span.status_message;
@@ -157,7 +185,11 @@ export function buildOutputSpan(span: ParsedSpan, expand: Set<string>): Record<s
   if (expand.has('model') && span.model) output.model = span.model;
   if (expand.has('url') && span.target_url) output.target_url = span.target_url;
   if (expand.has('http') && span.http_status) output.http_status = span.http_status;
-  if (expand.has('tokens') && span.tokens) output.tokens = span.tokens;
+  if (expand.has('tokens')) {
+    if (span.tokens) output.tokens = span.tokens;
+    if (span.usage_quality !== undefined) output.usage_quality = span.usage_quality;
+    if (span.usage_missing !== undefined) output.usage_missing = span.usage_missing;
+  }
   if (expand.has('costs') && span.cost_usd) output.cost_usd = span.cost_usd;
   if (expand.has('ttft') && span.time_to_first_token_ms !== undefined)
     output.time_to_first_token_ms = span.time_to_first_token_ms;

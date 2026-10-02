@@ -11,6 +11,16 @@ describe('isLLMRequestSpan', () => {
     ).toBe(true);
   });
 
+  it('returns true for an imported execution root', () => {
+    expect(
+      isLLMRequestSpan({
+        SpanName: 'gpt-5',
+        SpanAttributes:
+          '{"trace_flow.source":"imported_execution","cliproxyapi.execution.id":"execution"}',
+      }),
+    ).toBe(true);
+  });
+
   it('returns false when trace_flow.source is missing', () => {
     expect(
       isLLMRequestSpan({

@@ -2,14 +2,20 @@ import { captureMessage } from '@sentry/cloudflare';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type * as SentryCloudflare from '@sentry/cloudflare';
 import { createExecutionContext, env, runInDurableObject } from 'cloudflare:test';
-import type { QueueMessage, TraceDeliveryEnvelope, TraceDeliveryMessage } from '@trace-flow/types';
+import type {
+  QueueMessage,
+  QueueMessageUnion,
+  TraceDeliveryEnvelope,
+  TraceDeliveryMessage,
+} from '@trace-flow/types';
 import { buildTraceDeliveryKey } from '@trace-flow/utils';
 import type { TraceBatcherInstance } from '../batcher';
 import worker from '../index';
 import { runTraceBatcherHealthCheck, TraceRecovery } from '../index';
-import { createMockTrace } from './fixtures';
+import { createImportedMockTrace, createMockTrace } from './fixtures';
 import { analyticsKeyId } from '@trace-flow/utils';
 import { calculateShardId } from '../sharding';
+import { IMPORTED_EXECUTION } from '@trace-flow/otel-conventions';
 
 // The batcher's flush calls insertIntoTinybirdWithRetry, which does a real
 // fetch to TINYBIRD_HOST. Tests must never touch the network, and the batcher
@@ -128,6 +134,48 @@ describe('Queue Handler Integration', () => {
     expect(ledgerKeys.length).toBeGreaterThan(0);
     expect(ledgerKeys.every((key) => key.includes(identifier))).toBe(true);
     expect(JSON.stringify(ledgerKeys)).not.toContain(message.apiKey);
+  });
+
+  it('routes imported retries from two API keys in one organization to one durable ledger', async () => {
+    env.NUM_SHARDS = 97;
+    const trace = createImportedMockTrace('7'.repeat(64), 'a'.repeat(64));
+    let acks = 0;
+    const messages = ['first-import-key', 'second-import-key'].map((apiKey, index) => ({
+      id: `import-${index}`,
+      timestamp: new Date(),
+      body: {
+        type: 'otlp' as const,
+        apiKey,
+        traces: [{ ...trace, ReceivedAt: trace.ReceivedAt + index * 1_000_000 }],
+        receivedAt: trace.ReceivedAt + index * 1_000_000,
+        importedExecution: { contract: IMPORTED_EXECUTION.CONTRACT, orgId: 'org-import' },
+      },
+      attempts: 0,
+      ack: () => acks++,
+      retry: () => undefined,
+    }));
+    const batch = {
+      queue: 'test-queue',
+      messages,
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
+      retryAll: () => undefined,
+      ackAll: () => undefined,
+    } as unknown as MessageBatch<QueueMessageUnion>;
+
+    await worker.queue(batch, env, createExecutionContext());
+
+    expect(acks).toBe(2);
+    const shardId = calculateShardId('org:org-import', 97);
+    const stub = env.TRACE_BATCHER.get(env.TRACE_BATCHER.idFromName(`batcher-${shardId}`));
+    const stored = await runInDurableObject(stub, (_instance, state) => ({
+      ledgers: [
+        ...state.storage.sql.exec<{ trace_key: string }>('SELECT trace_key FROM trace_ledger'),
+      ],
+      rows: [...state.storage.sql.exec<{ data: string }>('SELECT data FROM traces')],
+    }));
+    expect(stored.ledgers).toHaveLength(1);
+    expect(stored.rows).toHaveLength(1);
+    expect(stored.ledgers[0]?.trace_key).toBe(`imported_execution\x1f${'7'.repeat(64)}`);
   });
 
   it('copies an encrypted body before durable staging, then deletes the outbox reference', async () => {

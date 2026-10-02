@@ -84,7 +84,7 @@ function retentionExpiresAt(receivedAt: number, tier: string | undefined): numbe
   return receivedAt + retentionDays * NANOSECONDS_PER_DAY;
 }
 
-function transformSpan(
+export function transformSpan(
   span: OTLPSpan,
   resource: OTLPResource | undefined,
   apiKey: string,

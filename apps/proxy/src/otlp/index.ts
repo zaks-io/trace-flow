@@ -11,6 +11,10 @@ import { applyTierToTraces, transformOTLPToTraces } from './transform';
 import { decodeOTLPProtobuf, readOTLPBody, OTLPProtoDecodeError } from './decode';
 import type { OTLPExportTraceServiceRequest, OTLPExportTraceServiceResponse } from './types';
 import { validateOTLPRequest } from './validation';
+import { IMPORTED_EXECUTION } from '@trace-flow/otel-conventions';
+import { selectImportedScope } from './imported/selection';
+import { validateImportedExecutionRequest } from './imported/validate';
+import { buildImportedExecutionTraces } from './imported/traces';
 import {
   buildTraceDeliveryEnvelope,
   enqueueTraceDelivery,
@@ -262,10 +266,36 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     );
   }
 
+  const selection = selectImportedScope(body);
+  if (selection.kind === 'invalid') {
+    orgLogger.warn('otlp.imported_execution_rejected', { reason: selection.reason, spanIndex: 0 });
+    c.executionCtx.waitUntil(orgLogger.flush());
+    return c.json({ error: { code: 400, message: selection.reason } }, 400);
+  }
+  const imported =
+    selection.kind === 'imported' ? validateImportedExecutionRequest(body) : undefined;
+  if (imported && !imported.valid) {
+    orgLogger.warn('otlp.imported_execution_rejected', {
+      reason: imported.reason,
+      spanIndex: imported.spanIndex,
+    });
+    c.executionCtx.waitUntil(orgLogger.flush());
+    return c.json({ error: { code: 400, message: imported.reason } }, 400);
+  }
   const apiKey = keyData.analyticsKeyId;
   // Convert milliseconds to nanoseconds for OTLP spec compliance
   const receivedAtNano = getCurrentTimestamp() * 1_000_000;
-  const traces = transformOTLPToTraces(body, apiKey, receivedAtNano);
+  if (imported?.valid && !keyData.orgId) {
+    orgLogger.warn('otlp.rejected_no_org');
+    c.executionCtx.waitUntil(orgLogger.flush());
+    return c.json(
+      { error: { code: 403, message: 'API key is not associated with an organization' } },
+      403,
+    );
+  }
+  const traces = imported?.valid
+    ? await buildImportedExecutionTraces(imported.executions, apiKey, keyData.orgId, receivedAtNano)
+    : transformOTLPToTraces(body, apiKey, receivedAtNano);
 
   if (traces.length === 0) {
     const response: OTLPExportTraceServiceResponse = { partialSuccess: {} };
@@ -322,6 +352,9 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     apiKey,
     traces,
     receivedAt: receivedAtNano,
+    ...(imported?.valid
+      ? { importedExecution: { contract: IMPORTED_EXECUTION.CONTRACT, orgId: keyData.orgId } }
+      : {}),
     sentry_trace_context: currentSentryTraceContext(),
   };
 

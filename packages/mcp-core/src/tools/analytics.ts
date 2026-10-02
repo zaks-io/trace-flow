@@ -35,6 +35,11 @@ interface BaseUsageRow {
   cache_impact_cost_usd: number;
   upstream_cost_usd: number;
   total_tokens: number;
+  unclassified_tokens: number;
+  usage_complete_count: number;
+  usage_inconsistent_count: number;
+  usage_unclassified_count: number;
+  usage_missing_count: number;
   avg_duration_ms: number;
   max_duration_ms: number;
   p95_duration_ms: number;
@@ -66,6 +71,16 @@ function buildTokens(row: BaseUsageRow) {
     cache_creation_input: row.cache_creation_input_tokens,
     reasoning: row.reasoning_tokens,
     total: row.total_tokens,
+    unclassified: row.unclassified_tokens,
+  };
+}
+
+function buildUsageCounts(row: BaseUsageRow) {
+  return {
+    usage_complete_count: row.usage_complete_count,
+    usage_inconsistent_count: row.usage_inconsistent_count,
+    usage_unclassified_count: row.usage_unclassified_count,
+    usage_missing_count: row.usage_missing_count,
   };
 }
 
@@ -133,6 +148,7 @@ export async function getUsageSummary(
           error_count: row.error_count,
           error_rate: row.request_count > 0 ? row.error_count / row.request_count : 0,
           tokens: buildTokens(row),
+          ...buildUsageCounts(row),
           cost_usd: buildCosts(row),
           duration_ms: buildDurations(row),
         }
@@ -171,6 +187,7 @@ export async function listOperationUsage(
       request_count: row.request_count,
       unique_user_count: row.unique_user_count,
       tokens: buildTokens(row),
+      ...buildUsageCounts(row),
       cost_usd: buildCosts(row),
       duration_ms: buildDurations(row),
       cost_per_request_usd: row.cost_per_request_usd,
@@ -209,6 +226,7 @@ export async function listModelUsage(
       model: row.model,
       request_count: row.request_count,
       tokens: buildTokens(row),
+      ...buildUsageCounts(row),
       cost_usd: buildCosts(row),
       duration_ms: buildDurations(row),
       cost_per_1k_output_tokens: row.cost_per_1k_output_tokens,

@@ -31,7 +31,12 @@ describe('analytics MCP helpers', () => {
             cache_read_input_tokens: 200,
             cache_creation_input_tokens: 50,
             reasoning_tokens: 25,
-            total_tokens: 1400,
+            total_tokens: 1407,
+            unclassified_tokens: 7,
+            usage_complete_count: 16,
+            usage_inconsistent_count: 1,
+            usage_unclassified_count: 1,
+            usage_missing_count: 2,
             total_cost_usd: 1.5,
             input_cost_usd: 0.4,
             output_cost_usd: 0.7,
@@ -59,7 +64,14 @@ describe('analytics MCP helpers', () => {
 
     expect(payload.window.hours).toBe(24);
     expect(payload.summary.error_rate).toBe(0.25);
-    expect(payload.summary.tokens.total).toBe(1400);
+    expect(payload.summary.tokens.total).toBe(1407);
+    expect(payload.summary.tokens.unclassified).toBe(7);
+    expect(payload.summary).toMatchObject({
+      usage_complete_count: 16,
+      usage_inconsistent_count: 1,
+      usage_unclassified_count: 1,
+      usage_missing_count: 2,
+    });
     expect(payload.summary.cost_usd.total).toBe(1.5);
     expect(payload.summary.duration_ms.p95).toBe(900);
   });

@@ -3,7 +3,7 @@ import { normalizeAnalyticsKey } from '@trace-flow/utils';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { DurableObject } from 'cloudflare:workers';
 import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
-import type { TinybirdTrace } from '@trace-flow/types';
+import type { OTLPQueueMessage, TinybirdTrace } from '@trace-flow/types';
 import {
   classifyTinybirdInsertFailure,
   requireRecoveryReason,
@@ -17,6 +17,7 @@ import {
 } from '@trace-flow/tinybird-client';
 import type { Env } from './index';
 import { insertIntoTinybirdWithRetry } from './tinybird';
+import { traceLedgerEntry } from './ledger';
 
 const BATCH_SIZE = 10_000;
 const MAX_NDJSON_BYTES = 900_000;
@@ -62,6 +63,7 @@ interface TinybirdTraceTarget {
 export interface MessageTraceBatchItem {
   messageId: string;
   traces: TinybirdTrace[];
+  importedExecution?: OTLPQueueMessage['importedExecution'];
 }
 
 export interface MessageTraceResult {
@@ -715,8 +717,9 @@ class TraceBatcherBase extends DurableObject<Env> {
         const tracesToQueue: TinybirdTrace[] = [];
 
         for (const trace of item.traces) {
-          const traceKey = traceIdentity(trace);
-          const contentHash = stableHash(trace);
+          const ledger = traceLedgerEntry(trace, item.importedExecution);
+          const traceKey = ledger.key;
+          const contentHash = ledger.hash;
           const existing = [
             ...this.durableState.storage.sql.exec<{ content_hash: string }>(
               'SELECT content_hash FROM trace_ledger WHERE trace_key = ?',
@@ -754,7 +757,14 @@ class TraceBatcherBase extends DurableObject<Env> {
             }
             this.recovery.preserveRepair(
               changedData,
-              JSON.stringify({ traceKey, oldHash: existing.content_hash, newHash: contentHash }),
+              JSON.stringify({
+                traceKey,
+                oldHash: existing.content_hash,
+                newHash: contentHash,
+                ...(ledger.contract
+                  ? { ledger: 'imported_execution', contract: ledger.contract }
+                  : {}),
+              }),
               JSON.stringify([traceKey, existing.content_hash, contentHash]),
             );
             continue;
@@ -813,10 +823,6 @@ class TraceBatcherBase extends DurableObject<Env> {
   }
 }
 
-function traceIdentity(trace: TinybirdTrace): string {
-  return [trace.ApiKey, trace.TraceId, trace.SpanId].map(identityPart).join('\x1f');
-}
-
 function firstTraceId(rows: StoredTraceRow[]): string | undefined {
   const first = rows[0];
   if (!first) {
@@ -859,38 +865,6 @@ function isPayloadTooLarge(error: unknown): boolean {
 function requireTargetKey(value: string | null): TinybirdTraceTarget['sentColumn'] {
   if (value === 'clean_sent_at_ms' || value === 'legacy_sent_at_ms') return value;
   throw new Error('recovery record has invalid target key');
-}
-
-function stableHash(value: unknown): string {
-  const input = stableStringify(value);
-  let hash = 0xcbf29ce484222325n;
-  const prime = 0x100000001b3n;
-  for (let i = 0; i < input.length; i++) {
-    hash ^= BigInt(input.charCodeAt(i));
-    hash = BigInt.asUintN(64, hash * prime);
-  }
-  return hash.toString(16).padStart(16, '0');
-}
-
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(stableStringify).join(',')}]`;
-  }
-  if (isRecord(value)) {
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
-      .join(',')}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function identityPart(value: string): string {
-  return value;
 }
 
 interface TinybirdTraceWriteEnv {

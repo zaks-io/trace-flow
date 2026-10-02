@@ -6,6 +6,8 @@ import { app } from '../../index';
 import { _clearUsageCache } from '../../usage';
 import type { OTLPExportTraceServiceRequest } from '../types';
 import { Writer, WIRE_LEN } from '../wire';
+import { GEN_AI_USAGE, SOURCE_IMPORTED_EXECUTION, TRACE_FLOW } from '@trace-flow/otel-conventions';
+import importedFixture from '../../../../../fixtures/cliproxyapi-execution-v2.json';
 
 const API_KEY = 'otlp-durable-test-key';
 
@@ -263,6 +265,85 @@ describe('OTLP durable acceptance', () => {
     expect(usageGet).not.toHaveBeenCalled();
     expect(storagePut).not.toHaveBeenCalled();
     expect(queueSend).not.toHaveBeenCalled();
+    await waitOnExecutionContext(ctx);
+  });
+  it('rejects an unauthenticated imported export before durable storage', async () => {
+    const { env, storagePut, queueSend } = makeEnv();
+    const ctx = createExecutionContext();
+    const response = await app.request(
+      '/v1/traces',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(importedFixture),
+      },
+      env,
+      ctx,
+    );
+    expect(response.status).toBe(401);
+    expect(storagePut).not.toHaveBeenCalled();
+    expect(queueSend).not.toHaveBeenCalled();
+    await waitOnExecutionContext(ctx);
+  });
+
+  it('authenticates and durably stores only imported execution metadata before 200', async () => {
+    const { env, getStoredValue, queueSend, storagePut } = makeEnv();
+    const { response, ctx } = await postOTLP(env, importedFixture);
+
+    expect(response.status).toBe(200);
+    const stored = getStoredValue();
+    expect(stored).not.toContain(API_KEY);
+    expect(stored).not.toContain('failure body');
+    const envelope = JSON.parse(stored);
+    expect(envelope.message.importedExecution).toEqual({
+      contract: 'cliproxyapi.execution/2',
+      orgId: 'org-otlp',
+    });
+    expect(envelope.message.traces).toHaveLength(5);
+    expect(envelope.message.traces[0].SpanAttributes).toMatchObject({
+      [TRACE_FLOW.SOURCE]: SOURCE_IMPORTED_EXECUTION,
+      [GEN_AI_USAGE.TOTAL_TOKENS]: '23',
+      [GEN_AI_USAGE.QUALITY]: 'complete',
+    });
+    expect(envelope.message.traces[3].SpanAttributes[GEN_AI_USAGE.MISSING]).toBe('true');
+    expect(envelope.message.traces[3].SpanAttributes[GEN_AI_USAGE.TOTAL_TOKENS]).toBeUndefined();
+    expect(envelope.message.traces[4].StatusCode).toBe('STATUS_CODE_ERROR');
+    await waitOnExecutionContext(ctx);
+    expect(queueSend).toHaveBeenCalledTimes(1);
+    expect(storagePut.mock.invocationCallOrder[0]).toBeLessThan(
+      queueSend.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('rejects imported source payloads with unapproved fields before storage', async () => {
+    const { env, storagePut, queueSend } = makeEnv();
+    const request = structuredClone(importedFixture) as OTLPExportTraceServiceRequest;
+    request.resourceSpans[0]!.scopeSpans[0]!.spans[0]!.attributes!.push({
+      key: 'http.request.header.authorization',
+      value: { stringValue: 'secret-canary' },
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { response, ctx } = await postOTLP(env, request);
+    expect(response.status).toBe(400);
+    expect(storagePut).not.toHaveBeenCalled();
+    expect(queueSend).not.toHaveBeenCalled();
+    await waitOnExecutionContext(ctx);
+    expect(warn.mock.calls.flat().join('\n')).not.toContain('secret-canary');
+  });
+
+  it('preserves generic OTLP usage metadata on the existing path', async () => {
+    const { env, getStoredValue } = makeEnv();
+    const request = otlpBody();
+    request.resourceSpans[0]!.scopeSpans[0]!.spans[0]!.attributes!.push(
+      { key: GEN_AI_USAGE.INPUT_TOKENS, value: { intValue: '7' } },
+      { key: GEN_AI_USAGE.OUTPUT_TOKENS, value: { intValue: '3' } },
+    );
+    const { response, ctx } = await postOTLP(env, request);
+    expect(response.status).toBe(200);
+    const envelope = JSON.parse(getStoredValue());
+    expect(envelope.message.importedExecution).toBeUndefined();
+    expect(envelope.message.traces[0].SpanAttributes[GEN_AI_USAGE.INPUT_TOKENS]).toBe('7');
+    expect(envelope.message.traces[0].SpanAttributes[GEN_AI_USAGE.OUTPUT_TOKENS]).toBe('3');
     await waitOnExecutionContext(ctx);
   });
 });
