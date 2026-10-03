@@ -143,6 +143,7 @@ name = "trace-flow-consumer-preview"
 binding = "CF_VERSION_METADATA"
 
 [env.preview.vars]
+TINYBIRD_TRACE_WRITE_MODE = "clean"
 SENTRY_ENVIRONMENT = "preview"
 AXIOM_DATASET = "cloudflare"
 TINYBIRD_HOST = "https://api.us-west-2.aws.tinybird.co"

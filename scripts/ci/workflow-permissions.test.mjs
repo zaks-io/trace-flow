@@ -211,6 +211,7 @@ describe('preview credential boundary', () => {
       'CLOUDFLARE_API_TOKEN',
       'AGENT_INGEST_SHARED_SECRET',
       'ANALYST_SANDBOX_SHARED_SECRET',
+      'USAGE_SYNC_SECRET',
     ]) {
       expect(configure.env[name]).toBe(`\${{ secrets.${name} }}`);
       expect(configure.run).toContain(name);
@@ -245,6 +246,52 @@ describe('preview credential boundary', () => {
     expect(analyst.run).toContain('cd apps/analyst-sandbox');
     expect(analyst.run).not.toContain('--cwd');
     expect(analyst.run).not.toContain('--prod');
+  });
+
+  test('protects the Proxy token helper with its native Node tests in CI', () => {
+    const filters = YAML.parse(
+      ci.jobs.changes.steps.find((step) => step.id === 'filter').with.filters,
+    );
+    expect(filters.workflows).toContain('scripts/ci/configure-proxy-tinybird-token*');
+    const steps = ci.jobs.actionlint.steps;
+    const testIndex = steps.findIndex((step) => step.name === 'Test workflow helpers');
+    expect(steps[testIndex].run).toContain(
+      'node --test scripts/ci/configure-proxy-tinybird-token.test.mjs',
+    );
+    expect(
+      steps
+        .slice(0, testIndex)
+        .some(
+          (step) =>
+            step.uses?.startsWith('actions/setup-node@') && step.with?.['node-version'] === 24,
+        ),
+    ).toBe(true);
+  });
+
+  test('provisions Gateway usage auth and a scoped Proxy Consumer trace append token', () => {
+    const configure = preview.jobs['deploy-convex'].steps.find(
+      (step) => step.name === 'Configure Convex query tracing',
+    );
+    const workers = preview.jobs.preview.steps.find(
+      (step) => step.name === 'Deploy Convex-backed Preview Workers',
+    );
+    expect(workers.env.USAGE_SYNC_SECRET).toBe(configure.env.USAGE_SYNC_SECRET);
+    expect(workers.env.BODY_ENCRYPTION_ROOT_KEY).toBe('${{ secrets.BODY_ENCRYPTION_ROOT_KEY }}');
+    expect(workers.run).toContain(
+      'cd apps/proxy && bunx wrangler deploy --env preview --secrets-file "$proxy_secrets_file"',
+    );
+    expect(workers.run).toContain(
+      'cd apps/proxy-consumer && bunx wrangler deploy --env preview --secrets-file "$proxy_consumer_secrets_file"',
+    );
+    expect(workers.run).toContain(
+      'node scripts/ci/configure-proxy-tinybird-token.mjs "$proxy_consumer_secrets_file"',
+    );
+    expect(workers.run).toContain(
+      `printf 'BODY_ACCESS_JWT_SECRET=%s\\nBODY_ENCRYPTION_ROOT_KEY=%s\\n' "$BODY_ACCESS_JWT_SECRET" "$BODY_ENCRYPTION_ROOT_KEY" > "$api_secrets_file"`,
+    );
+    expect(workers.run).not.toContain(
+      '"$BODY_ENCRYPTION_ROOT_KEY" >> "$proxy_consumer_secrets_file"',
+    );
   });
 
   test('aligns Preview Web runtime authentication with the configured Auth0 application', () => {

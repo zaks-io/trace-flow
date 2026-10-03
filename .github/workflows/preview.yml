@@ -144,7 +144,7 @@ jobs:
           bunx convex env set --preview-name "$BRANCH_NAME" TINYBIRD_API_URL "$TB_HOST"
           bunx convex env set --preview-name "$BRANCH_NAME" CLOUDFLARE_KV_NAMESPACE_ID "$PREVIEW_API_KEYS_NAMESPACE_ID"
           bunx convex env set --preview-name "$BRANCH_NAME" CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID "$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID"
-          for name in AUTH0_CLIENT_SECRET CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN AGENT_INGEST_SHARED_SECRET ANALYST_SANDBOX_SHARED_SECRET; do
+          for name in AUTH0_CLIENT_SECRET CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN AGENT_INGEST_SHARED_SECRET ANALYST_SANDBOX_SHARED_SECRET USAGE_SYNC_SECRET; do
             value="${!name}"
             test -n "$value"
             printf '%s' "$value" | bunx convex env set --preview-name "$BRANCH_NAME" "$name"
@@ -176,6 +176,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           AGENT_INGEST_SHARED_SECRET: ${{ secrets.AGENT_INGEST_SHARED_SECRET }}
           ANALYST_SANDBOX_SHARED_SECRET: ${{ secrets.ANALYST_SANDBOX_SHARED_SECRET }}
+          USAGE_SYNC_SECRET: ${{ secrets.USAGE_SYNC_SECRET }}
           TB_TOKEN: ${{ secrets.TINYBIRD_DEV_TOKEN_MANAGER_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
           BRANCH_NAME: ${{ needs.prepare.outputs.head_ref }}
@@ -238,6 +239,7 @@ jobs:
               --filter='./apps/*' \
               --filter='!@trace-flow/web' \
               --filter='!@trace-flow/proxy' \
+              --filter='!@trace-flow/proxy-consumer' \
               --filter='!@trace-flow/mcp' \
               --filter='!@trace-flow/agent-ingest' \
               --filter='!@trace-flow/agent-consumer' \
@@ -279,21 +281,29 @@ jobs:
           api_secrets_file="$secrets_directory/api.env"
           agent_consumer_secrets_file="$secrets_directory/agent-consumer.env"
           agent_ingest_secrets_file="$secrets_directory/agent-ingest.env"
+          proxy_secrets_file="$secrets_directory/proxy.env"
+          proxy_consumer_secrets_file="$secrets_directory/proxy-consumer.env"
           test -n "$PIPES_API_SHARED_SECRET"
           test -n "$BODY_ACCESS_JWT_SECRET"
           test -n "$AGENT_DELIVERY_ENCRYPTION_ROOT_KEY"
           test -n "$AGENT_INGEST_SHARED_SECRET"
+          test -n "$USAGE_SYNC_SECRET"
+          test -n "$BODY_ENCRYPTION_ROOT_KEY"
           test -n "$TB_TOKEN"
           printf 'PIPES_API_SHARED_SECRET=%s\n' "$PIPES_API_SHARED_SECRET" > "$pipes_secrets_file"
-          printf 'BODY_ACCESS_JWT_SECRET=%s\n' "$BODY_ACCESS_JWT_SECRET" > "$api_secrets_file"
+          printf 'BODY_ACCESS_JWT_SECRET=%s\nBODY_ENCRYPTION_ROOT_KEY=%s\n' "$BODY_ACCESS_JWT_SECRET" "$BODY_ENCRYPTION_ROOT_KEY" > "$api_secrets_file"
           bun scripts/ci/configure-agent-tinybird-tokens.mjs "$agent_consumer_secrets_file"
+          node scripts/ci/configure-proxy-tinybird-token.mjs "$proxy_consumer_secrets_file"
           unset TB_TOKEN
+          printf 'USAGE_SYNC_SECRET=%s\nBODY_ENCRYPTION_ROOT_KEY=%s\n' "$USAGE_SYNC_SECRET" "$BODY_ENCRYPTION_ROOT_KEY" > "$proxy_secrets_file"
           printf 'BODY_ENCRYPTION_ROOT_KEY=%s\n' "$AGENT_DELIVERY_ENCRYPTION_ROOT_KEY" >> "$agent_consumer_secrets_file"
           printf 'BODY_ENCRYPTION_ROOT_KEY=%s\n' "$AGENT_DELIVERY_ENCRYPTION_ROOT_KEY" > "$agent_ingest_secrets_file"
           printf 'AGENT_INGEST_SHARED_SECRET=%s\n' "$AGENT_INGEST_SHARED_SECRET" >> "$agent_ingest_secrets_file"
           for attempt in 1 2 3; do
             if (
-              cd apps/proxy && bunx wrangler deploy --env preview --var CONVEX_SITE_URL:"$CONVEX_SITE_URL"
+              cd apps/proxy && bunx wrangler deploy --env preview --secrets-file "$proxy_secrets_file" --var CONVEX_SITE_URL:"$CONVEX_SITE_URL"
+            ) && (
+              cd apps/proxy-consumer && bunx wrangler deploy --env preview --secrets-file "$proxy_consumer_secrets_file"
             ) && (
               cd apps/mcp && bunx wrangler deploy --env preview
             ) && (
@@ -330,6 +340,8 @@ jobs:
           BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}
           AGENT_DELIVERY_ENCRYPTION_ROOT_KEY: ${{ secrets.AGENT_DELIVERY_ENCRYPTION_ROOT_KEY }}
           AGENT_INGEST_SHARED_SECRET: ${{ secrets.AGENT_INGEST_SHARED_SECRET }}
+          USAGE_SYNC_SECRET: ${{ secrets.USAGE_SYNC_SECRET }}
+          BODY_ENCRYPTION_ROOT_KEY: ${{ secrets.BODY_ENCRYPTION_ROOT_KEY }}
           TB_TOKEN: ${{ secrets.TINYBIRD_DEV_TOKEN_MANAGER_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
           CONVEX_URL: ${{ needs.deploy-convex.outputs.convex_url }}
