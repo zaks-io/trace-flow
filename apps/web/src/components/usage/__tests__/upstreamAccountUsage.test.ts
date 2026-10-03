@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { costGapNote, estimatedCost, tokenCell, usageGapNote } from '../upstreamAccountUsage';
+import {
+  costGapNote,
+  estimatedCost,
+  reasoningShare,
+  tokenCell,
+  usageGapNote,
+} from '../upstreamAccountUsage';
 import type { UpstreamAccountRow } from '../types';
 
 const row: UpstreamAccountRow = {
@@ -7,6 +13,7 @@ const row: UpstreamAccountRow = {
   request_count: 2,
   error_count: 1,
   input_tokens: 140,
+  uncached_input_tokens: 140,
   output_tokens: 50,
   cache_read_input_tokens: 0,
   cache_creation_input_tokens: 0,
@@ -45,12 +52,14 @@ describe('upstream account usage display', () => {
     expect(tokenCell(unavailable, unavailable.input_tokens)).toBe('-');
     expect(estimatedCost(unavailable)).toBeNull();
     expect(costGapNote(unavailable)).toBe('1 unpriced');
+    expect(reasoningShare(unavailable)).toBe('-');
   });
 
   it('keeps known usage from failed executions and flags partial gaps beside the sums', () => {
     expect(tokenCell(row, row.input_tokens)).toBe('140');
     expect(estimatedCost(row)).toBe(0.012);
     expect(usageGapNote(row)).toBeNull();
+    expect(reasoningShare({ ...row, output_tokens: 40, reasoning_tokens: 10 })).toBe('25%');
 
     const partial = { ...row, request_count: 3, usage_missing_count: 1, unclassified_tokens: 7 };
     expect(tokenCell(partial, partial.input_tokens)).toBe('140');

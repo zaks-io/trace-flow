@@ -16,6 +16,17 @@ export function tokenCell(
   return isUsageUnavailable(row) ? '-' : formatNumber(value);
 }
 
+/** Reasoning is part of output, so it is shown as a share rather than a separate bucket. */
+export function reasoningShare(
+  row: Pick<
+    UpstreamAccountRow,
+    'usage_missing_count' | 'request_count' | 'output_tokens' | 'reasoning_tokens'
+  >,
+): string {
+  if (isUsageUnavailable(row) || row.output_tokens === 0) return '-';
+  return formatPercent((row.reasoning_tokens / row.output_tokens) * 100);
+}
+
 /** Partial gaps stay visible next to the sums they qualify. */
 export function usageGapNote(
   row: Pick<UpstreamAccountRow, 'usage_missing_count' | 'request_count' | 'unclassified_tokens'>,

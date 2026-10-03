@@ -11,14 +11,21 @@ import {
   type AccountDrilldownFilters,
 } from '@/lib/upstreamAccount';
 import type { UpstreamAccountRow } from './types';
-import { costGapNote, estimatedCost, tokenCell, usageGapNote } from './upstreamAccountUsage';
+import {
+  costGapNote,
+  estimatedCost,
+  reasoningShare,
+  tokenCell,
+  usageGapNote,
+} from './upstreamAccountUsage';
 
+// Non-overlapping buckets that add up to Total (plus unclassified); input includes cache and
+// output includes reasoning, so showing those totals beside their parts invites double counting.
 const TOKEN_COLUMNS = [
-  ['Input', 'input_tokens'],
+  ['Uncached input', 'uncached_input_tokens'],
   ['Cache read', 'cache_read_input_tokens'],
   ['Cache write', 'cache_creation_input_tokens'],
   ['Output', 'output_tokens'],
-  ['Reasoning', 'reasoning_tokens'],
   ['Total', 'total_tokens'],
 ] as const;
 
@@ -44,6 +51,7 @@ export function UpstreamAccountTable({
                 {label}
               </th>
             ))}
+            <th className="pb-2 text-right font-medium">Reasoning %</th>
             <th className="pb-2 text-right font-medium">Avg TTFT</th>
             <th className="pb-2 text-right font-medium">Est. cost</th>
           </tr>
@@ -94,6 +102,9 @@ export function UpstreamAccountTable({
                     {tokenCell(row, row[field])}
                   </td>
                 ))}
+                <td className="py-2 text-right font-mono text-muted-foreground">
+                  {reasoningShare(row)}
+                </td>
                 <td className="py-2 text-right font-mono text-muted-foreground">
                   {formatDuration(row.avg_ttft_ms)}
                 </td>
