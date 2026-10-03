@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { axiomConfigFromEnv, createWorkerLogger } from '@trace-flow/logging';
+import { axiomConfigFromEnv, createWorkerLogger, type Logger } from '@trace-flow/logging';
 import { currentSentryTraceContext } from '@trace-flow/utils/sentry-tracing';
 import {
   MAX_AGENT_ANALYTICS_DAY_BUCKETS,
@@ -54,6 +54,17 @@ const MAX_INGEST_BYTES = 10 * 1024 * 1024;
 const QUEUE_SEND_BATCH_MAX_MESSAGES = 100;
 const QUEUE_SEND_BATCH_MAX_BYTES = 240 * 1024;
 const DELIVERY_GROUP_SIZE = 10;
+const MAX_LOGGED_IDENTITY_CONFLICTS = 10;
+// The snapshot gate lease is at most five minutes and backpressure drains faster, so one minute
+// avoids hammering a closed gate without stretching the Collector's next attempt.
+const DELIVERY_ADMISSION_RETRY_AFTER_SECONDS = 60;
+
+class DeliveryAdmissionClosedError extends Error {
+  constructor() {
+    super('Agent delivery admission is temporarily unavailable');
+    this.name = 'DeliveryAdmissionClosedError';
+  }
+}
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -208,8 +219,25 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
       queueFacts = normalizeAgentFactIdentities(assembled.queueFacts);
     } catch (err) {
       if (err instanceof AgentFactIdentityConflictError) {
-        logger.warn('agent_ingest.fact_identity_conflict', { category: err.category });
-        return c.json({ error: 'invalid_envelope' }, 400);
+        for (const conflict of err.conflicts.slice(0, MAX_LOGGED_IDENTITY_CONFLICTS)) {
+          logger.warn('agent_ingest.fact_identity_conflict', {
+            category: err.category,
+            // Collector-supplied text, so it gets the same secret backstop as excerpts before logging.
+            vendor_session_id: redactField(conflict.vendorSessionId).value,
+            identity_pk: conflict.identityPk,
+            conflict_count: err.conflicts.length,
+          });
+        }
+        // Names only sessions the Collector sent so it can isolate them instead of retrying forever.
+        return c.json(
+          {
+            error: 'invalid_envelope',
+            reason: 'fact_identity_conflict',
+            category: err.category,
+            vendor_session_ids: err.vendorSessionIds,
+          },
+          400,
+        );
       }
       throw err;
     }
@@ -256,6 +284,19 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
         return c.json({ error: 'internal_error' }, 500);
       }
       throw err;
+    }
+
+    // Org-scoped and read-only, so checking before the claim cannot admit an unowned session: the
+    // claim below still drops conflicted sessions and the coordinator re-enforces the gate on
+    // registration. Checking first avoids writing ownership claims for a batch that cannot land.
+    try {
+      await assertDeliveriesAdmitted(c.env, credential.orgId);
+    } catch (err) {
+      if (err instanceof DeliveryAdmissionClosedError) {
+        return admissionClosedResponse(c, logger, credential.orgId);
+      }
+      logger.error('agent_ingest.delivery_admission_failed', err);
+      return c.json({ error: 'enqueue_failed' }, 503);
     }
 
     let claims;
@@ -306,6 +347,9 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
     try {
       await publishDeliveryGroups(c.env, messages, enqueuedAt);
     } catch (err) {
+      if (err instanceof DeliveryAdmissionClosedError) {
+        return admissionClosedResponse(c, logger, credential.orgId);
+      }
       logger.error('agent_ingest.delivery_publish_failed', err, { messages: messages.length });
       return c.json({ error: 'enqueue_failed' }, 503);
     }
@@ -337,10 +381,7 @@ async function publishDeliveryGroups(
 ): Promise<void> {
   for (let offset = 0; offset < messages.length; offset += DELIVERY_GROUP_SIZE) {
     const messageGroup = messages.slice(offset, offset + DELIVERY_GROUP_SIZE);
-    const orgId = messageGroup[0]!.tenancy.org_id;
-    if (!(await env.AGENT_CONSUMER.canAcceptDeliveries(orgId))) {
-      throw new Error('Agent delivery admission is temporarily unavailable');
-    }
+    await assertDeliveriesAdmitted(env, messageGroup[0]!.tenancy.org_id);
     const days = messageGroup.map(deliveryDays);
     const staged = await settleAll(
       messageGroup.map((message) =>
@@ -371,6 +412,23 @@ async function publishDeliveryGroups(
       await env.AGENT_QUEUE.sendBatch(group.map((body) => ({ body })));
     }
   }
+}
+
+async function assertDeliveriesAdmitted(env: AgentIngestEnv, orgId: string): Promise<void> {
+  if (!(await env.AGENT_CONSUMER.canAcceptDeliveries(orgId))) {
+    throw new DeliveryAdmissionClosedError();
+  }
+}
+
+function admissionClosedResponse(
+  c: Context<{ Bindings: AgentIngestEnv }>,
+  logger: Logger,
+  orgId: string,
+): Response {
+  logger.warn('agent_ingest.delivery_admission_closed', { org_id: orgId });
+  return c.json({ error: 'enqueue_failed' }, 503, {
+    'Retry-After': String(DELIVERY_ADMISSION_RETRY_AFTER_SECONDS),
+  });
 }
 
 async function settleAll<T>(promises: Promise<T>[]): Promise<T[]> {
