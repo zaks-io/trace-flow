@@ -122,6 +122,23 @@ jobs:
           test -n "$BODY_ACCESS_JWT_SECRET"
           test -n "$AUTH0_DOMAIN"
           test -n "$AUTH0_CLIENT_ID"
+          test -n "$TB_TOKEN"
+          tinybird_workspace_id=$(node --input-type=module <<'NODE'
+          const response = await fetch(new URL("/v1/workspace", process.env.TB_HOST), {
+            headers: { Authorization: `Bearer ${process.env.TB_TOKEN}` },
+          });
+          if (!response.ok) throw new Error(`Tinybird workspace lookup failed: HTTP ${response.status}`);
+          const workspace = await response.json();
+          if (workspace.name !== "trace_flow_dev" || !/^[0-9a-f-]{36}$/.test(workspace.id ?? "")) {
+            throw new Error("Preview requires the trace_flow_dev Tinybird workspace");
+          }
+          process.stdout.write(workspace.id);
+          NODE
+          )
+          bunx convex env set --preview-name "$BRANCH_NAME" TINYBIRD_WORKSPACE_ID "$tinybird_workspace_id"
+          bunx convex env set --preview-name "$BRANCH_NAME" TINYBIRD_API_URL "$TB_HOST"
+          printf '%s' "$TB_TOKEN" |
+            bunx convex env set --preview-name "$BRANCH_NAME" TINYBIRD_ADMIN_TOKEN
           bunx convex env set --preview-name "$BRANCH_NAME" AUTH0_DOMAIN "$AUTH0_DOMAIN"
           bunx convex env set --preview-name "$BRANCH_NAME" AUTH0_CLIENT_ID "$AUTH0_CLIENT_ID"
           printf '%s' "$SENTRY_DSN" |
@@ -142,6 +159,8 @@ jobs:
           BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}
           AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
           AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
+          TB_TOKEN: ${{ secrets.TINYBIRD_DEV_TOKEN_MANAGER_TOKEN }}
+          TB_HOST: https://api.us-west-2.aws.tinybird.co
           BRANCH_NAME: ${{ needs.prepare.outputs.head_ref }}
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
 

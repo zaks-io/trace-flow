@@ -160,6 +160,47 @@ describe('preview credential boundary', () => {
     expect(deployWorkers.env).not.toHaveProperty('TINYBIRD_AGENT_SNAPSHOT_TOKEN');
   });
 
+  test('binds Convex JWT signing to the approved dev Tinybird workspace', async () => {
+    const configure = preview.jobs['deploy-convex'].steps.find(
+      (step) => step.name === 'Configure Convex query tracing',
+    );
+    expect(configure.env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_DEV_TOKEN_MANAGER_TOKEN }}');
+    expect(configure.env.TB_HOST).toBe('https://api.us-west-2.aws.tinybird.co');
+    const source = configure.run.match(/node --input-type=module <<'NODE'\n([\s\S]*?)\nNODE/)[1];
+    const lookup = new Function('process', 'fetch', `return (async () => { ${source} })()`);
+    const output = [];
+    const workspaceId = '11111111-2222-3333-4444-555555555555';
+    const context = {
+      env: { TB_HOST: configure.env.TB_HOST, TB_TOKEN: 'dummy-dev-admin-token' },
+      stdout: { write: (value) => output.push(value) },
+    };
+    await lookup(context, async (url, init) => {
+      expect(String(url)).toBe(`${context.env.TB_HOST}/v1/workspace`);
+      expect(init.headers.Authorization).toBe(`Bearer ${context.env.TB_TOKEN}`);
+      return Response.json({ name: 'trace_flow_dev', id: workspaceId });
+    });
+    expect(output).toEqual([workspaceId]);
+    for (const workspace of [
+      { name: 'trace_flow_prod', id: workspaceId },
+      { name: 'trace_flow_dev', id: 'test' },
+    ]) {
+      await expect(lookup(context, async () => Response.json(workspace))).rejects.toThrow(
+        'Preview requires the trace_flow_dev Tinybird workspace',
+      );
+    }
+    await expect(lookup(context, async () => new Response('', { status: 403 }))).rejects.toThrow(
+      'Tinybird workspace lookup failed: HTTP 403',
+    );
+    expect(output).toEqual([workspaceId]);
+    const push = configure.run.indexOf('convex deploy --preview-name "$BRANCH_NAME"');
+    for (const name of ['TINYBIRD_WORKSPACE_ID', 'TINYBIRD_API_URL', 'TINYBIRD_ADMIN_TOKEN']) {
+      const set = configure.run.indexOf(`convex env set --preview-name "$BRANCH_NAME" ${name}`);
+      expect(set).toBeGreaterThan(0);
+      expect(set).toBeLessThan(push);
+    }
+    expect(configure.run).toContain(`printf '%s' "$TB_TOKEN" |`);
+  });
+
   test('aligns Preview Web runtime authentication with the configured Auth0 application', () => {
     const steps = preview.jobs.preview.steps;
     const configure = steps.find((step) => step.name === 'Configure Web Preview authentication');
@@ -178,7 +219,7 @@ describe('preview credential boundary', () => {
       );
     }
     for (const name of ['AUTH0_CLIENT_SECRET', 'AUTH0_SECRET', 'BODY_ACCESS_JWT_SECRET']) {
-      expect(configure.env[name]).toBe('${{ secrets.' + name + ' }}');
+      expect(configure.env[name]).toBe(`\${{ secrets.${name} }}`);
     }
     expect(configure.run).toContain('if (!value) throw new Error');
     expect(configure.run).toContain('wrangler secret bulk "$web_secrets_file" --env preview');
