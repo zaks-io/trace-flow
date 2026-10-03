@@ -1,6 +1,6 @@
 'use client';
 
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useRef, useState } from 'react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,11 +33,24 @@ export function ConfirmDialog<T>({
   // Keep rendering the last target while the close animation plays.
   const [shown, setShown] = useState(target);
   if (target !== null && target !== shown) setShown(target);
+  // Callers open this from plain buttons, not an AlertDialogTrigger, so Radix has nothing to refocus.
+  const opener = useRef<HTMLElement | null>(null);
 
   return (
     <AlertDialog open={target !== null} onOpenChange={(open) => !open && onClose()}>
       {shown !== null && (
-        <AlertDialogContent>
+        <AlertDialogContent
+          onOpenAutoFocus={() => {
+            opener.current =
+              document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          }}
+          onCloseAutoFocus={(event) => {
+            if (opener.current?.isConnected) {
+              event.preventDefault();
+              opener.current.focus();
+            }
+          }}
+        >
           <AlertDialogHeader>
             <AlertDialogTitle>{title(shown)}</AlertDialogTitle>
             <AlertDialogDescription>{description(shown)}</AlertDialogDescription>
