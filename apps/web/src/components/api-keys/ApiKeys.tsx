@@ -5,6 +5,7 @@ import { type Preloaded, usePreloadedQuery, useMutation, useAction, useQuery } f
 import { api } from '@trace-flow/convex/_generated/api';
 import { useMemo, useState } from 'react';
 import type { Id } from '@trace-flow/convex/_generated/dataModel';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { PageToolbar } from '@/components/shared/PageToolbar';
 import { ApiKeyQuickStart } from '@/components/onboarding/ApiKeyQuickStart';
 import { SetupCallout } from '@/components/onboarding/SetupCallout';
@@ -52,6 +53,9 @@ export default function ApiKeys({
   } | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
   const [deletingId, setDeletingId] = useState<Id<'apiKeys'> | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ id: Id<'apiKeys'>; key: string } | null>(
+    null,
+  );
   const [syncingId, setSyncingId] = useState<Id<'apiKeys'> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -417,15 +421,7 @@ export default function ApiKeys({
                           {syncingId === apiKey._id ? 'Syncing...' : 'Sync'}
                         </button>
                         <button
-                          onClick={() => {
-                            if (
-                              confirm(
-                                `Are you sure you want to delete this API key?\n\n${apiKey.key}\n\nThis action cannot be undone.`,
-                              )
-                            ) {
-                              handleDeleteKey(apiKey._id);
-                            }
-                          }}
+                          onClick={() => setPendingDelete({ id: apiKey._id, key: apiKey.key })}
                           disabled={deletingId === apiKey._id}
                           className="font-medium text-destructive transition-colors hover:text-destructive/80 disabled:cursor-not-allowed disabled:opacity-50"
                         >
@@ -450,6 +446,20 @@ export default function ApiKeys({
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        target={pendingDelete}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={(apiKey) => handleDeleteKey(apiKey.id)}
+        title={() => 'Delete this API key?'}
+        description={(apiKey) => (
+          <>
+            <code className="break-all font-mono text-foreground">{apiKey.key}</code> will stop
+            working immediately. This action cannot be undone.
+          </>
+        )}
+        confirmLabel="Delete"
+      />
     </div>
   );
 }

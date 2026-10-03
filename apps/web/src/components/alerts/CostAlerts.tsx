@@ -4,6 +4,7 @@ import { type Preloaded, useMutation, usePaginatedQuery, usePreloadedQuery } fro
 import { api } from '@trace-flow/convex/_generated/api';
 import type { Id } from '@trace-flow/convex/_generated/dataModel';
 import { useMemo, useState } from 'react';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { PageToolbar } from '@/components/shared/PageToolbar';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -54,6 +55,14 @@ export default function CostAlerts({
   const [submitting, setSubmitting] = useState(false);
   const [testingChannelId, setTestingChannelId] = useState<Id<'costAlertChannels'> | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pendingAlertDelete, setPendingAlertDelete] = useState<{
+    id: Id<'costAlerts'>;
+    name: string;
+  } | null>(null);
+  const [pendingChannelDelete, setPendingChannelDelete] = useState<{
+    id: Id<'costAlertChannels'>;
+    name: string;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -346,15 +355,9 @@ export default function CostAlerts({
                                   Edit
                                 </button>
                                 <button
-                                  onClick={() => {
-                                    if (
-                                      confirm(
-                                        `Delete the cost alert "${rule.name}"?\n\nThis action cannot be undone.`,
-                                      )
-                                    ) {
-                                      handleDeleteAlert(rule._id, rule.name);
-                                    }
-                                  }}
+                                  onClick={() =>
+                                    setPendingAlertDelete({ id: rule._id, name: rule.name })
+                                  }
                                   disabled={deletingId === String(rule._id)}
                                   className="font-medium text-destructive transition-colors hover:text-destructive/80 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
@@ -443,15 +446,9 @@ export default function CostAlerts({
                                 Edit
                               </button>
                               <button
-                                onClick={() => {
-                                  if (
-                                    confirm(
-                                      `Delete the channel "${channel.name}"?\n\nAny alerts using it will need another destination.`,
-                                    )
-                                  ) {
-                                    handleDeleteChannel(channel._id, channel.name);
-                                  }
-                                }}
+                                onClick={() =>
+                                  setPendingChannelDelete({ id: channel._id, name: channel.name })
+                                }
                                 disabled={deletingId === String(channel._id)}
                                 className="font-medium text-destructive transition-colors hover:text-destructive/80 disabled:cursor-not-allowed disabled:opacity-50"
                               >
@@ -574,6 +571,24 @@ export default function CostAlerts({
         error={error}
         submitting={submitting}
         onSubmit={submitAlert}
+      />
+
+      <ConfirmDialog
+        target={pendingAlertDelete}
+        onClose={() => setPendingAlertDelete(null)}
+        onConfirm={(rule) => handleDeleteAlert(rule.id, rule.name)}
+        title={(rule) => `Delete the cost alert "${rule.name}"?`}
+        description={() => 'This action cannot be undone.'}
+        confirmLabel="Delete"
+      />
+
+      <ConfirmDialog
+        target={pendingChannelDelete}
+        onClose={() => setPendingChannelDelete(null)}
+        onConfirm={(channel) => handleDeleteChannel(channel.id, channel.name)}
+        title={(channel) => `Delete the channel "${channel.name}"?`}
+        description={() => 'Any alerts using it will need another destination.'}
+        confirmLabel="Delete"
       />
     </div>
   );
