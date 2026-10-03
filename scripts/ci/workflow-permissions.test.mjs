@@ -201,6 +201,52 @@ describe('preview credential boundary', () => {
     expect(configure.run).toContain(`printf '%s' "$TB_TOKEN" |`);
   });
 
+  test('aligns Collector, key sync, and Analyst Preview authentication without production resources', () => {
+    const configure = preview.jobs['deploy-convex'].steps.find(
+      (step) => step.name === 'Configure Convex query tracing',
+    );
+    for (const name of [
+      'AUTH0_CLIENT_SECRET',
+      'CLOUDFLARE_ACCOUNT_ID',
+      'CLOUDFLARE_API_TOKEN',
+      'AGENT_INGEST_SHARED_SECRET',
+      'ANALYST_SANDBOX_SHARED_SECRET',
+    ]) {
+      expect(configure.env[name]).toBe(`\${{ secrets.${name} }}`);
+      expect(configure.run).toContain(name);
+    }
+    expect(configure.run).toContain('test -n "$value"');
+    expect(configure.run).toContain(
+      `printf '%s' "$value" | bunx convex env set --preview-name "$BRANCH_NAME" "$name"`,
+    );
+    expect(configure.run).toContain('CLOUDFLARE_KV_NAMESPACE_ID "$PREVIEW_API_KEYS_NAMESPACE_ID"');
+    expect(configure.run).toContain(
+      'CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID "$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID"',
+    );
+    const workers = preview.jobs.preview.steps.find(
+      (step) => step.name === 'Deploy Convex-backed Preview Workers',
+    );
+    expect(workers.env.AGENT_INGEST_SHARED_SECRET).toBe(configure.env.AGENT_INGEST_SHARED_SECRET);
+    expect(workers.run).toContain(
+      `printf 'AGENT_INGEST_SHARED_SECRET=%s\\n' "$AGENT_INGEST_SHARED_SECRET" >> "$agent_ingest_secrets_file"`,
+    );
+    const analyst = preview.jobs.preview.steps.find(
+      (step) => step.name === 'Configure Analyst Preview authentication',
+    );
+    expect(analyst.env.ANALYST_SANDBOX_SHARED_SECRET).toBe(
+      configure.env.ANALYST_SANDBOX_SHARED_SECRET,
+    );
+    expect(analyst.env.OPENROUTER_API_KEY).toBe('${{ secrets.OPENROUTER_API_KEY }}');
+    expect(analyst.run).toContain('test -n "$OPENROUTER_API_KEY"');
+    expect(analyst.run).toContain('wrangler secret put OPENROUTER_API_KEY --env preview');
+    expect(analyst.run).toContain(
+      'convex env set --preview-name "$BRANCH_NAME" OPENROUTER_API_KEY',
+    );
+    expect(analyst.run).toContain('cd apps/analyst-sandbox');
+    expect(analyst.run).not.toContain('--cwd');
+    expect(analyst.run).not.toContain('--prod');
+  });
+
   test('aligns Preview Web runtime authentication with the configured Auth0 application', () => {
     const steps = preview.jobs.preview.steps;
     const configure = steps.find((step) => step.name === 'Configure Web Preview authentication');
@@ -338,6 +384,7 @@ describe('preview credential boundary', () => {
       cwd: new URL('../..', import.meta.url).pathname,
       env: {
         ...process.env,
+        PREVIEW_API_KEYS_NAMESPACE_ID: preview.env.PREVIEW_API_KEYS_NAMESPACE_ID,
         PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: preview.env.PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID,
         PREVIEW_AGENT_DELIVERY_BUCKET: preview.env.PREVIEW_AGENT_DELIVERY_BUCKET,
       },
@@ -346,6 +393,26 @@ describe('preview credential boundary', () => {
     });
 
     expect(result.exitCode).toBe(0);
+  });
+
+  test('fails before deploying when Preview proxy keys target another namespace', () => {
+    const verify = preview.jobs['deploy-convex'].steps.find(
+      (step) => step.name === 'Verify Preview resource isolation',
+    );
+    const result = Bun.spawnSync({
+      cmd: ['bash', '-euo', 'pipefail', '-c', verify.run],
+      cwd: new URL('../..', import.meta.url).pathname,
+      env: {
+        ...process.env,
+        PREVIEW_API_KEYS_NAMESPACE_ID: 'wrong-namespace',
+        PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: preview.env.PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID,
+        PREVIEW_AGENT_DELIVERY_BUCKET: preview.env.PREVIEW_AGENT_DELIVERY_BUCKET,
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr.toString()).toContain('Proxy Preview namespace mismatch');
   });
 
   test('fails the Preview resource isolation check on a trusted resource mismatch', () => {
@@ -357,6 +424,7 @@ describe('preview credential boundary', () => {
       cwd: new URL('../..', import.meta.url).pathname,
       env: {
         ...process.env,
+        PREVIEW_API_KEYS_NAMESPACE_ID: preview.env.PREVIEW_API_KEYS_NAMESPACE_ID,
         PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: 'wrong-namespace',
         PREVIEW_AGENT_DELIVERY_BUCKET: preview.env.PREVIEW_AGENT_DELIVERY_BUCKET,
       },

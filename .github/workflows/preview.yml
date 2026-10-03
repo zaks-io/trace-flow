@@ -21,6 +21,7 @@ env:
   PREVIEW_COLLECTOR_URL: https://collector.preview.trace-flow.dev
   PREVIEW_ANALYST_SANDBOX_URL: https://analyst-sandbox.preview.trace-flow.dev
   PREVIEW_MCP_URL: https://mcp.preview.trace-flow.dev
+  PREVIEW_API_KEYS_NAMESPACE_ID: 30c9a31ff3af4b408b4d64b8ecfa98a5
   PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: 422b54e456c7446ea5ba4f9ef9a8c84e
   PREVIEW_AGENT_DELIVERY_BUCKET: trace-flow-agent-deliveries-dev
 
@@ -89,14 +90,18 @@ jobs:
         run: |
           bun -e '
             import agentIngestConfig from "./apps/agent-ingest/wrangler.jsonc";
+            const proxyConfig = Bun.TOML.parse(await Bun.file("./apps/proxy/wrangler.toml").text());
+            const expectedApiKeysNamespace = process.env.PREVIEW_API_KEYS_NAMESPACE_ID;
             const expectedNamespace = process.env.PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID;
             const expectedDeliveryBucket = process.env.PREVIEW_AGENT_DELIVERY_BUCKET;
-            if (!expectedNamespace || !expectedDeliveryBucket) throw new Error("Trusted Preview resources are required");
+            if (!expectedApiKeysNamespace || !expectedNamespace || !expectedDeliveryBucket) throw new Error("Trusted Preview resources are required");
 
             const findBinding = (items, name) => items?.find((item) => item.binding === name);
             const ingestNamespace = findBinding(agentIngestConfig.env?.preview?.kv_namespaces, "COLLECTOR_CREDS")?.id;
             const deliveryBucket = findBinding(agentIngestConfig.env?.preview?.r2_buckets, "AGENT_DELIVERIES")?.bucket_name;
 
+            const apiKeysNamespace = findBinding(proxyConfig.env?.preview?.kv_namespaces, "API_KEYS")?.id;
+            if (apiKeysNamespace !== expectedApiKeysNamespace) throw new Error("Proxy Preview namespace mismatch");
             if (ingestNamespace !== expectedNamespace) throw new Error("Agent Ingest Preview namespace mismatch");
             if (deliveryBucket !== expectedDeliveryBucket) throw new Error("Agent delivery Preview bucket mismatch");
           '
@@ -137,6 +142,13 @@ jobs:
           )
           bunx convex env set --preview-name "$BRANCH_NAME" TINYBIRD_WORKSPACE_ID "$tinybird_workspace_id"
           bunx convex env set --preview-name "$BRANCH_NAME" TINYBIRD_API_URL "$TB_HOST"
+          bunx convex env set --preview-name "$BRANCH_NAME" CLOUDFLARE_KV_NAMESPACE_ID "$PREVIEW_API_KEYS_NAMESPACE_ID"
+          bunx convex env set --preview-name "$BRANCH_NAME" CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID "$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID"
+          for name in AUTH0_CLIENT_SECRET CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN AGENT_INGEST_SHARED_SECRET ANALYST_SANDBOX_SHARED_SECRET; do
+            value="${!name}"
+            test -n "$value"
+            printf '%s' "$value" | bunx convex env set --preview-name "$BRANCH_NAME" "$name"
+          done
           printf '%s' "$TB_TOKEN" |
             bunx convex env set --preview-name "$BRANCH_NAME" TINYBIRD_ADMIN_TOKEN
           bunx convex env set --preview-name "$BRANCH_NAME" AUTH0_DOMAIN "$AUTH0_DOMAIN"
@@ -159,6 +171,11 @@ jobs:
           BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}
           AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
           AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
+          AUTH0_CLIENT_SECRET: ${{ secrets.AUTH0_CLIENT_SECRET }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          AGENT_INGEST_SHARED_SECRET: ${{ secrets.AGENT_INGEST_SHARED_SECRET }}
+          ANALYST_SANDBOX_SHARED_SECRET: ${{ secrets.ANALYST_SANDBOX_SHARED_SECRET }}
           TB_TOKEN: ${{ secrets.TINYBIRD_DEV_TOKEN_MANAGER_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
           BRANCH_NAME: ${{ needs.prepare.outputs.head_ref }}
@@ -265,6 +282,7 @@ jobs:
           test -n "$PIPES_API_SHARED_SECRET"
           test -n "$BODY_ACCESS_JWT_SECRET"
           test -n "$AGENT_DELIVERY_ENCRYPTION_ROOT_KEY"
+          test -n "$AGENT_INGEST_SHARED_SECRET"
           test -n "$TB_TOKEN"
           printf 'PIPES_API_SHARED_SECRET=%s\n' "$PIPES_API_SHARED_SECRET" > "$pipes_secrets_file"
           printf 'BODY_ACCESS_JWT_SECRET=%s\n' "$BODY_ACCESS_JWT_SECRET" > "$api_secrets_file"
@@ -272,6 +290,7 @@ jobs:
           unset TB_TOKEN
           printf 'BODY_ENCRYPTION_ROOT_KEY=%s\n' "$AGENT_DELIVERY_ENCRYPTION_ROOT_KEY" >> "$agent_consumer_secrets_file"
           printf 'BODY_ENCRYPTION_ROOT_KEY=%s\n' "$AGENT_DELIVERY_ENCRYPTION_ROOT_KEY" > "$agent_ingest_secrets_file"
+          printf 'AGENT_INGEST_SHARED_SECRET=%s\n' "$AGENT_INGEST_SHARED_SECRET" >> "$agent_ingest_secrets_file"
           for attempt in 1 2 3; do
             if (
               cd apps/proxy && bunx wrangler deploy --env preview --var CONVEX_SITE_URL:"$CONVEX_SITE_URL"
@@ -310,6 +329,7 @@ jobs:
           PIPES_API_SHARED_SECRET: ${{ secrets.PIPES_API_SHARED_SECRET }}
           BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}
           AGENT_DELIVERY_ENCRYPTION_ROOT_KEY: ${{ secrets.AGENT_DELIVERY_ENCRYPTION_ROOT_KEY }}
+          AGENT_INGEST_SHARED_SECRET: ${{ secrets.AGENT_INGEST_SHARED_SECRET }}
           TB_TOKEN: ${{ secrets.TINYBIRD_DEV_TOKEN_MANAGER_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
           CONVEX_URL: ${{ needs.deploy-convex.outputs.convex_url }}
@@ -370,6 +390,27 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Configure Analyst Preview authentication
+        run: |
+          test -n "$ANALYST_SANDBOX_SHARED_SECRET"
+          test -n "$OPENROUTER_API_KEY"
+          (
+            cd apps/analyst-sandbox
+            printf '%s' "$ANALYST_SANDBOX_SHARED_SECRET" |
+              bunx wrangler secret put ANALYST_SANDBOX_SHARED_SECRET --env preview
+            printf '%s' "$OPENROUTER_API_KEY" |
+              bunx wrangler secret put OPENROUTER_API_KEY --env preview
+          )
+          printf '%s' "$OPENROUTER_API_KEY" |
+            bunx convex env set --preview-name "$BRANCH_NAME" OPENROUTER_API_KEY
+        env:
+          ANALYST_SANDBOX_SHARED_SECRET: ${{ secrets.ANALYST_SANDBOX_SHARED_SECRET }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          BRANCH_NAME: ${{ needs.prepare.outputs.head_ref }}
 
   comment:
     name: Comment Preview URLs
