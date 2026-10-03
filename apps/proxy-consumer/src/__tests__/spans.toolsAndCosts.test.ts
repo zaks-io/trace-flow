@@ -234,6 +234,50 @@ describe('buildSpans tools, non-streaming responses, and costs', () => {
       expect(rootSpan.SpanAttributes['gen_ai.cost.total']).toBe('0.0105');
     });
 
+    it.each(['openai', 'groq'])('should count %s reasoning once in cost attributes', (provider) => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        request: { ...baseQueueMessage.request, provider },
+        tokens: { promptTokens: 1000, completionTokens: 500, reasoningTokens: 200 },
+      };
+
+      const rootSpan = buildSpans(message, samplePricing)[0]!;
+
+      expect(rootSpan.SpanAttributes['gen_ai.cost.reasoning']).toBe('0.003');
+      // (500 - 200) * 15M / 1M = 4500 microdollars; completion already includes reasoning.
+      expect(rootSpan.SpanAttributes['gen_ai.cost.output']).toBe('0.0045');
+      expect(rootSpan.SpanAttributes['gen_ai.cost.total']).toBe('0.0105');
+    });
+
+    it('should keep the thinking estimate for an interrupted Anthropic stream', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        targetUrl: 'https://api.anthropic.com/v1/messages',
+        request: { ...baseQueueMessage.request, provider: 'anthropic' },
+        response: { ...baseQueueMessage.response, provider: 'anthropic' },
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1150,
+              messageStop: 1480,
+              events: [{ type: 'message_start', timestamp: 1150, data: '{}' }],
+              contentBlocks: [{ index: 0, type: 'thinking', startTimestamp: 1200 }],
+            },
+          ],
+        },
+        // Usage still holds message_start's output of 1; reasoning is the thinkingChars/4 estimate.
+        tokens: { promptTokens: 1000, completionTokens: 1, reasoningTokens: 2000 },
+      };
+
+      const rootSpan = buildSpans(message, samplePricing)[0]!;
+
+      expect(rootSpan.SpanAttributes['gen_ai.streaming']).toBe('true');
+      expect(rootSpan.SpanAttributes['gen_ai.cost.output']).toBe('0');
+      // 2000 * 15M / 1M = 30000 microdollars
+      expect(rootSpan.SpanAttributes['gen_ai.cost.reasoning']).toBe('0.03');
+      expect(rootSpan.SpanAttributes['gen_ai.cost.total']).toBe('0.033');
+    });
+
     it('should not include cache_read when cost is 0', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,

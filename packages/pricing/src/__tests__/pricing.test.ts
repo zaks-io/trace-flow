@@ -138,13 +138,14 @@ describe('pricing', () => {
 
       // Uncached input: 1000 * 3M / 1M = 3000
       expect(result.inputCostMicrodollars).toBe(3000);
-      expect(result.outputCostMicrodollars).toBe(7500); // 500 * 15M / 1M
+      // Completion includes the 200 reasoning tokens: (500 - 200) * 15M / 1M
+      expect(result.outputCostMicrodollars).toBe(4500);
       expect(result.cacheReadCostMicrodollars).toBe(600); // 2000 * 300K / 1M
       expect(result.cacheWriteCostMicrodollars).toBe(375); // 100 * 3.75M / 1M
       expect(result.reasoningCostMicrodollars).toBe(3000); // 200 * 15M / 1M
       expect(result.promptBaselineCostMicrodollars).toBe(9300); // 3100 * 3M / 1M
       expect(result.cacheImpactCostMicrodollars).toBe(5325); // 9300 - (3000 + 600 + 375)
-      expect(result.totalCostMicrodollars).toBe(14475);
+      expect(result.totalCostMicrodollars).toBe(11475);
     });
 
     it('should handle missing optional tokens as zero', () => {
@@ -187,8 +188,11 @@ describe('pricing', () => {
 
       const result = calculateCost(tokens, basePricing);
 
-      // Should use completion pricing ($15 per million)
+      // Should use completion pricing ($15 per million); reasoning beyond completion leaves no
+      // non-reasoning output to charge.
       expect(result.reasoningCostMicrodollars).toBe(15000);
+      expect(result.outputCostMicrodollars).toBe(0);
+      expect(result.totalCostMicrodollars).toBe(15000);
     });
 
     it('should count OpenRouter reasoning once when completion tokens include it', () => {

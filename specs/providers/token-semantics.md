@@ -9,7 +9,7 @@ All provider parsers normalize to `LLMTokenUsage` where:
 - **`completionTokens`** = output tokens
 - **`cacheReadTokens`** = subset of promptTokens served from cache
 - **`cacheCreationTokens`** = tokens written to cache
-- **`reasoningTokens`** = reasoning/thinking tokens (subset of completion)
+- **`reasoningTokens`** = reasoning/thinking tokens (subset of completion, except Google, where `candidatesTokenCount` excludes `thoughtsTokenCount`)
 - **`upstreamCost`** = provider-reported cost (OpenRouter only)
 
 ## Provider-Specific Semantics
@@ -86,6 +86,8 @@ uncachedInputTokens = max(0, promptTokens - cacheReadTokens - cacheCreationToken
 ```
 
 With the normalization fix, this correctly deducts cache-served and cache-written tokens for all providers. Before the fix, Anthropic's `input_tokens` (which excluded cache reads and cache writes) was treated like total prompt tokens, making cache rates and prompt-side costs inconsistent.
+
+Reasoning is priced once. For every provider except Google, `calculateCost()` prices reasoning at the reasoning rate and only `max(0, completionTokens - reasoningTokens)` at the completion rate, so an Anthropic thinking estimate larger than the final output count is still charged in full. Google's candidates and thoughts are disjoint, so both are priced in full.
 
 ## Cache Hit Rate
 
