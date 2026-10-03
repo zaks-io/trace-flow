@@ -75,6 +75,18 @@ function estimateAttributes(
   return attributes;
 }
 
+async function resolveImportedPricing(
+  kv: PricingStore,
+  provider: string,
+  model: string,
+): Promise<ResolvedPricing | null> {
+  const resolved = await resolvePricing(kv, provider, model);
+  if (resolved) return resolved;
+  const catalogProvider =
+    provider === 'codex' ? 'openai' : provider === 'claude' ? 'anthropic' : null;
+  return catalogProvider ? resolvePricing(kv, catalogProvider, model) : null;
+}
+
 export async function priceImportedTraces(
   traces: TinybirdTrace[],
   kv: PricingStore,
@@ -99,7 +111,7 @@ export async function priceImportedTraces(
       let resolved: ResolvedPricing | null = null;
       if (model) {
         const lookup = JSON.stringify([provider, model]);
-        if (!catalog.has(lookup)) catalog.set(lookup, resolvePricing(kv, provider, model));
+        if (!catalog.has(lookup)) catalog.set(lookup, resolveImportedPricing(kv, provider, model));
         resolved = await catalog.get(lookup)!;
       }
       const cost = model
