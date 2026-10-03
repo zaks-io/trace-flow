@@ -27,6 +27,7 @@ SQL >
         DurationNano / 1000000. AS duration_ms
     FROM llm_request_facts
     WHERE ReceivedAt >= start_ns
+        AND Source = 'proxy'
         AND ReceivedAt <= end_ns
         AND (
             ApiKey IN splitByChar(',', {{ String(api_keys, '') }})

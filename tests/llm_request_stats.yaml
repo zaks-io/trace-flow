@@ -30,3 +30,10 @@
   expected_http_status: 200
   parameters: api_keys=sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953&api_key_filter=sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953&baggage_operation=does_not_exist&retention_days=3650
   expected_result: ''
+
+- name: request_distribution_excludes_imported_executions
+  description: a same-hour imported execution does not join the proxy request distribution
+  expected_http_status: 200
+  parameters: api_keys=sha256:d18399fc37cc1ba6a2c870dbd5f8cccaa118fa738eadcfd3c0590e10629e67fc&start_time_ns=1790812800000000000&end_time_ns=1790899200000000000&retention_days=3650
+  expected_result: |
+    {"request_count":1,"total_cost_usd":0,"cost_p50":0,"cost_p25":0,"cost_p75":0,"cost_p95":0,"cost_p99":0,"cost_min":0,"cost_max":0,"duration_p50":100,"duration_p25":100,"duration_p75":100,"duration_p95":100,"duration_p99":100,"duration_min":100,"duration_max":100,"cost_bucket_lo":[0],"cost_bucket_hi":[0],"cost_bucket_count":[1],"cost_bucket_sum":[0],"gini":0,"half_spend_request_count":0,"lorenz_request_pct":[0,1],"lorenz_cost_pct":[0,0]}

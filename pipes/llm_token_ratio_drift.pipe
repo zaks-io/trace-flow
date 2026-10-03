@@ -27,6 +27,7 @@ SQL >
         sum(OutputTokens) AS output_tokens
     FROM llm_request_facts
     WHERE ReceivedAt >= start_ns
+        AND Source = 'proxy'
         AND ReceivedAt <= end_ns
         AND (
             ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
@@ -88,6 +89,7 @@ SQL >
         sum(OutputTokens) AS baseline_output_tokens
     FROM llm_request_facts
     WHERE ReceivedAt >= baseline_start_ns
+        AND Source = 'proxy'
         AND ReceivedAt <= baseline_end_ns
         AND (
             ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
