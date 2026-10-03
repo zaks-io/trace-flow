@@ -150,6 +150,7 @@ jobs:
               - 'tsconfig.json'
             workflows:
               - 'scripts/ci/configure-agent-tinybird-tokens*'
+              - 'scripts/ci/configure-proxy-tinybird-token*'
               - 'scripts/ci/provision-agent-delivery*'
               - 'scripts/ci/resolve-agent-tinybird-current-ref*'
               - 'scripts/ci/workflow-permissions.test.mjs'
@@ -186,6 +187,9 @@ jobs:
         with:
           fetch-depth: 2
       - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
       - name: Test workflow helpers
         run: |
           bun test \
@@ -193,6 +197,7 @@ jobs:
             scripts/ci/provision-agent-delivery.test.mjs \
             scripts/ci/resolve-agent-tinybird-current-ref.test.mjs \
             scripts/ci/workflow-permissions.test.mjs
+          node --test scripts/ci/configure-proxy-tinybird-token.test.mjs
           python3 scripts/ci/ubuntu_https_sources_test.py
       - uses: devops-actions/actionlint@v0.1.12
 

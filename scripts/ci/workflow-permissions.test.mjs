@@ -160,6 +160,167 @@ describe('preview credential boundary', () => {
     expect(deployWorkers.env).not.toHaveProperty('TINYBIRD_AGENT_SNAPSHOT_TOKEN');
   });
 
+  test('binds Convex JWT signing to the approved dev Tinybird workspace', async () => {
+    const configure = preview.jobs['deploy-convex'].steps.find(
+      (step) => step.name === 'Configure Convex query tracing',
+    );
+    expect(configure.env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_DEV_TOKEN_MANAGER_TOKEN }}');
+    expect(configure.env.TB_HOST).toBe('https://api.us-west-2.aws.tinybird.co');
+    const source = configure.run.match(/node --input-type=module <<'NODE'\n([\s\S]*?)\nNODE/)[1];
+    const lookup = new Function('process', 'fetch', `return (async () => { ${source} })()`);
+    const output = [];
+    const workspaceId = '11111111-2222-3333-4444-555555555555';
+    const context = {
+      env: { TB_HOST: configure.env.TB_HOST, TB_TOKEN: 'dummy-dev-admin-token' },
+      stdout: { write: (value) => output.push(value) },
+    };
+    await lookup(context, async (url, init) => {
+      expect(String(url)).toBe(`${context.env.TB_HOST}/v1/workspace`);
+      expect(init.headers.Authorization).toBe(`Bearer ${context.env.TB_TOKEN}`);
+      return Response.json({ name: 'trace_flow_dev', id: workspaceId });
+    });
+    expect(output).toEqual([workspaceId]);
+    for (const workspace of [
+      { name: 'trace_flow_prod', id: workspaceId },
+      { name: 'trace_flow_dev', id: 'test' },
+    ]) {
+      await expect(lookup(context, async () => Response.json(workspace))).rejects.toThrow(
+        'Preview requires the trace_flow_dev Tinybird workspace',
+      );
+    }
+    await expect(lookup(context, async () => new Response('', { status: 403 }))).rejects.toThrow(
+      'Tinybird workspace lookup failed: HTTP 403',
+    );
+    expect(output).toEqual([workspaceId]);
+    const push = configure.run.indexOf('convex deploy --preview-name "$BRANCH_NAME"');
+    for (const name of ['TINYBIRD_WORKSPACE_ID', 'TINYBIRD_API_URL', 'TINYBIRD_ADMIN_TOKEN']) {
+      const set = configure.run.indexOf(`convex env set --preview-name "$BRANCH_NAME" ${name}`);
+      expect(set).toBeGreaterThan(0);
+      expect(set).toBeLessThan(push);
+    }
+    expect(configure.run).toContain(`printf '%s' "$TB_TOKEN" |`);
+  });
+
+  test('aligns Collector, key sync, and Analyst Preview authentication without production resources', () => {
+    const configure = preview.jobs['deploy-convex'].steps.find(
+      (step) => step.name === 'Configure Convex query tracing',
+    );
+    for (const name of [
+      'AUTH0_CLIENT_SECRET',
+      'CLOUDFLARE_ACCOUNT_ID',
+      'CLOUDFLARE_API_TOKEN',
+      'AGENT_INGEST_SHARED_SECRET',
+      'ANALYST_SANDBOX_SHARED_SECRET',
+      'USAGE_SYNC_SECRET',
+    ]) {
+      expect(configure.env[name]).toBe(`\${{ secrets.${name} }}`);
+      expect(configure.run).toContain(name);
+    }
+    expect(configure.run).toContain('test -n "$value"');
+    expect(configure.run).toContain(
+      `printf '%s' "$value" | bunx convex env set --preview-name "$BRANCH_NAME" "$name"`,
+    );
+    expect(configure.run).toContain('CLOUDFLARE_KV_NAMESPACE_ID "$PREVIEW_API_KEYS_NAMESPACE_ID"');
+    expect(configure.run).toContain(
+      'CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID "$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID"',
+    );
+    const workers = preview.jobs.preview.steps.find(
+      (step) => step.name === 'Deploy Convex-backed Preview Workers',
+    );
+    expect(workers.env.AGENT_INGEST_SHARED_SECRET).toBe(configure.env.AGENT_INGEST_SHARED_SECRET);
+    expect(workers.run).toContain(
+      `printf 'AGENT_INGEST_SHARED_SECRET=%s\\n' "$AGENT_INGEST_SHARED_SECRET" >> "$agent_ingest_secrets_file"`,
+    );
+    const analyst = preview.jobs.preview.steps.find(
+      (step) => step.name === 'Configure Analyst Preview authentication',
+    );
+    expect(analyst.env.ANALYST_SANDBOX_SHARED_SECRET).toBe(
+      configure.env.ANALYST_SANDBOX_SHARED_SECRET,
+    );
+    expect(analyst.env.OPENROUTER_API_KEY).toBe('${{ secrets.OPENROUTER_API_KEY }}');
+    expect(analyst.run).toContain('test -n "$OPENROUTER_API_KEY"');
+    expect(analyst.run).toContain('wrangler secret put OPENROUTER_API_KEY --env preview');
+    expect(analyst.run).toContain(
+      'convex env set --preview-name "$BRANCH_NAME" OPENROUTER_API_KEY',
+    );
+    expect(analyst.run).toContain('cd apps/analyst-sandbox');
+    expect(analyst.run).not.toContain('--cwd');
+    expect(analyst.run).not.toContain('--prod');
+  });
+
+  test('protects the Proxy token helper with its native Node tests in CI', () => {
+    const filters = YAML.parse(
+      ci.jobs.changes.steps.find((step) => step.id === 'filter').with.filters,
+    );
+    expect(filters.workflows).toContain('scripts/ci/configure-proxy-tinybird-token*');
+    const steps = ci.jobs.actionlint.steps;
+    const testIndex = steps.findIndex((step) => step.name === 'Test workflow helpers');
+    expect(steps[testIndex].run).toContain(
+      'node --test scripts/ci/configure-proxy-tinybird-token.test.mjs',
+    );
+    expect(
+      steps
+        .slice(0, testIndex)
+        .some(
+          (step) =>
+            step.uses?.startsWith('actions/setup-node@') && step.with?.['node-version'] === 24,
+        ),
+    ).toBe(true);
+  });
+
+  test('provisions Gateway usage auth and a scoped Proxy Consumer trace append token', () => {
+    const configure = preview.jobs['deploy-convex'].steps.find(
+      (step) => step.name === 'Configure Convex query tracing',
+    );
+    const workers = preview.jobs.preview.steps.find(
+      (step) => step.name === 'Deploy Convex-backed Preview Workers',
+    );
+    expect(workers.env.USAGE_SYNC_SECRET).toBe(configure.env.USAGE_SYNC_SECRET);
+    expect(workers.env.BODY_ENCRYPTION_ROOT_KEY).toBe('${{ secrets.BODY_ENCRYPTION_ROOT_KEY }}');
+    expect(workers.run).toContain(
+      'cd apps/proxy && bunx wrangler deploy --env preview --secrets-file "$proxy_secrets_file"',
+    );
+    expect(workers.run).toContain(
+      'cd apps/proxy-consumer && bunx wrangler deploy --env preview --secrets-file "$proxy_consumer_secrets_file"',
+    );
+    expect(workers.run).toContain(
+      'node scripts/ci/configure-proxy-tinybird-token.mjs "$proxy_consumer_secrets_file"',
+    );
+    expect(workers.run).toContain(
+      `printf 'BODY_ACCESS_JWT_SECRET=%s\\nBODY_ENCRYPTION_ROOT_KEY=%s\\n' "$BODY_ACCESS_JWT_SECRET" "$BODY_ENCRYPTION_ROOT_KEY" > "$api_secrets_file"`,
+    );
+    expect(workers.run).not.toContain(
+      '"$BODY_ENCRYPTION_ROOT_KEY" >> "$proxy_consumer_secrets_file"',
+    );
+  });
+
+  test('aligns Preview Web runtime authentication with the configured Auth0 application', () => {
+    const steps = preview.jobs.preview.steps;
+    const configure = steps.find((step) => step.name === 'Configure Web Preview authentication');
+    expect(configure.env.AUTH0_CLIENT_ID).toBe('${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}');
+    expect(configure.env.AUTH0_DOMAIN).toBe('${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}');
+    const configureConvex = preview.jobs['deploy-convex'].steps.find(
+      (step) => step.name === 'Configure Convex query tracing',
+    );
+    expect(configureConvex.env.AUTH0_CLIENT_ID).toBe(configure.env.AUTH0_CLIENT_ID);
+    expect(configureConvex.env.AUTH0_DOMAIN).toBe(configure.env.AUTH0_DOMAIN);
+    for (const name of ['AUTH0_CLIENT_ID', 'AUTH0_DOMAIN']) {
+      const setCommand = `convex env set --preview-name "$BRANCH_NAME" ${name} "$${name}"`;
+      expect(configureConvex.run).toContain(setCommand);
+      expect(configureConvex.run.indexOf(setCommand)).toBeLessThan(
+        configureConvex.run.indexOf('convex deploy --preview-name "$BRANCH_NAME"'),
+      );
+    }
+    for (const name of ['AUTH0_CLIENT_SECRET', 'AUTH0_SECRET', 'BODY_ACCESS_JWT_SECRET']) {
+      expect(configure.env[name]).toBe(`\${{ secrets.${name} }}`);
+    }
+    expect(configure.run).toContain('if (!value) throw new Error');
+    expect(configure.run).toContain('wrangler secret bulk "$web_secrets_file" --env preview');
+    expect(steps.indexOf(configure)).toBeLessThan(
+      steps.findIndex((step) => step.name === 'Deploy Web Preview'),
+    );
+  });
+
   test('resolves an open same-repository PR to its immutable head', async () => {
     const outputs = {};
     const failures = [];
@@ -270,6 +431,7 @@ describe('preview credential boundary', () => {
       cwd: new URL('../..', import.meta.url).pathname,
       env: {
         ...process.env,
+        PREVIEW_API_KEYS_NAMESPACE_ID: preview.env.PREVIEW_API_KEYS_NAMESPACE_ID,
         PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: preview.env.PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID,
         PREVIEW_AGENT_DELIVERY_BUCKET: preview.env.PREVIEW_AGENT_DELIVERY_BUCKET,
       },
@@ -278,6 +440,26 @@ describe('preview credential boundary', () => {
     });
 
     expect(result.exitCode).toBe(0);
+  });
+
+  test('fails before deploying when Preview proxy keys target another namespace', () => {
+    const verify = preview.jobs['deploy-convex'].steps.find(
+      (step) => step.name === 'Verify Preview resource isolation',
+    );
+    const result = Bun.spawnSync({
+      cmd: ['bash', '-euo', 'pipefail', '-c', verify.run],
+      cwd: new URL('../..', import.meta.url).pathname,
+      env: {
+        ...process.env,
+        PREVIEW_API_KEYS_NAMESPACE_ID: 'wrong-namespace',
+        PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: preview.env.PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID,
+        PREVIEW_AGENT_DELIVERY_BUCKET: preview.env.PREVIEW_AGENT_DELIVERY_BUCKET,
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr.toString()).toContain('Proxy Preview namespace mismatch');
   });
 
   test('fails the Preview resource isolation check on a trusted resource mismatch', () => {
@@ -289,6 +471,7 @@ describe('preview credential boundary', () => {
       cwd: new URL('../..', import.meta.url).pathname,
       env: {
         ...process.env,
+        PREVIEW_API_KEYS_NAMESPACE_ID: preview.env.PREVIEW_API_KEYS_NAMESPACE_ID,
         PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: 'wrong-namespace',
         PREVIEW_AGENT_DELIVERY_BUCKET: preview.env.PREVIEW_AGENT_DELIVERY_BUCKET,
       },

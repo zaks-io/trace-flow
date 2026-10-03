@@ -28,3 +28,5 @@ ENGINE "MergeTree"
 ENGINE_SORTING_KEY "ApiKey, ReceivedAt, TraceId, SpanId"
 ENGINE_PARTITION_KEY "toYYYYMMDD(toDateTime(ReceivedAt / 1000000000))"
 ENGINE_TTL "toDateTime(RetentionExpiresAt / 1000000000) + toIntervalDay(0)"
+
+TOKEN trace_flow_proxy_spans_append APPEND
