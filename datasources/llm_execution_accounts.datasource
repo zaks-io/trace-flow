@@ -1,0 +1,20 @@
+DESCRIPTION >
+    Upstream account and time-to-first-token for each imported CLIProxyAPI execution, keyed by the
+    same ApiKey/TraceId/SpanId as llm_request_facts. Kept as its own datasource so the phased deploy
+    can create it alongside the endpoint that reads it, without altering llm_request_facts.
+
+SCHEMA >
+    `ReceivedAt` Int64,
+    `TraceId` String,
+    `SpanId` String,
+    `ApiKey` LowCardinality(String),
+    `AccountKey` String,
+    `TtftNano` Int64,
+    `TtftPresent` UInt8,
+    `TierAtIngestion` LowCardinality(String),
+    `RetentionExpiresAt` Int64
+
+ENGINE "MergeTree"
+ENGINE_SORTING_KEY "ApiKey, ReceivedAt, AccountKey, TraceId, SpanId"
+ENGINE_PARTITION_KEY "toYYYYMMDD(toDateTime(ReceivedAt / 1000000000))"
+ENGINE_TTL "toDateTime(RetentionExpiresAt / 1000000000) + toIntervalDay(0)"

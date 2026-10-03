@@ -17,6 +17,7 @@ import { AlertIndicator } from '@/components/alerts';
 import { ModelPill } from '@/components/traces/spans-table/ModelPill';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { readAlertSummary } from './metadata';
+import { accountColumns } from './accountColumns';
 
 export type RequestRow = Pick<
   TraceSpanRow,
@@ -28,6 +29,7 @@ export type RequestRow = Pick<
   | 'Duration'
   | 'StatusCode'
   | 'SpanAttributes'
+  | 'AccountKey'
 > & {
   ReceivedAt: number;
   BaggageOperation: string;
@@ -119,6 +121,7 @@ export const allColumns: ColumnDef<RequestRow>[] = [
     },
     meta: { category: 'standard', label: 'Operation' },
   },
+  ...accountColumns,
   {
     id: 'duration',
     accessorKey: 'Duration',
@@ -353,4 +356,6 @@ export const defaultColumnVisibility: VisibilityState = {
   spanName: false,
   serviceName: false,
   totalTokens: false,
+  source: true,
+  upstreamAccount: false,
 };

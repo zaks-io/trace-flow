@@ -10,6 +10,7 @@ import { useTableFilters } from '@/hooks/useTableFilters';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
 import { useAnalyticsKeyFilter } from '@/hooks/useAnalyticsKeyFilter';
+import { useUpstreamAccountOptions } from '@/hooks/useUpstreamAccountOptions';
 import { PageToolbar } from '@/components/shared/PageToolbar';
 import { SetupCallout } from '@/components/onboarding/SetupCallout';
 import type { ColumnDef } from '@tanstack/react-table';
@@ -46,6 +47,7 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
   );
 
   const { filters, setFilter, clearFilters, hasActiveFilters } = useTableFilters();
+  const accountOptions = useUpstreamAccountOptions(filters.account);
   const { options: filterOptions, loading: filterOptionsLoading } = useFilterOptions();
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
   const apiKeyMap = useApiKeyMap(apiKeys);
@@ -72,6 +74,7 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
       params.search = filters.search;
     }
     if (filters.apiKey) params.api_key_filter = apiKeyFilter ?? '__PENDING_ANALYTICS_KEY__';
+    if (filters.account) params.account = filters.account;
     if (isLiveMode && latestReceivedAt !== null) {
       params.after_received_at = latestReceivedAt;
     }
@@ -174,7 +177,11 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
             Operations: [
               ...new Set([...(existing.Operations ?? []), ...(newGroup.Operations ?? [])]),
             ],
-            TotalCost: existing.TotalCost + newGroup.TotalCost,
+            // Matches traces_grouped: sum the costs that were reported, null only when none were.
+            TotalCost:
+              existing.TotalCost === null && newGroup.TotalCost === null
+                ? null
+                : (existing.TotalCost ?? 0) + (newGroup.TotalCost ?? 0),
           });
         } else {
           existingMap.set(newGroup.TraceId, newGroup);
@@ -289,6 +296,7 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
           onLiveModeToggle={handleLiveModeToggle}
           apiKeyOptions={apiKeyOptions}
           apiKeyMap={apiKeyMap}
+          accountOptions={accountOptions}
         />
       </div>
 
@@ -328,6 +336,7 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
           }
           apiKeyOptions={apiKeyOptions}
           apiKeyMap={apiKeyMap}
+          accountOptions={accountOptions}
           hideToolbar
           rowClassName={getRowClassName}
         />

@@ -16,7 +16,18 @@ SQL >
         Duration,
         StatusCode,
         SpanAttributes,
-        BaggageOperation
+        BaggageOperation,
+        -- Must match AccountKey in materialize_llm_execution_accounts so account drilldowns reconcile.
+        if(
+            JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution',
+            concat(
+                lower(JSONExtractString(ResourceAttributes, 'cliproxyapi.installation.id')), '/',
+                JSONExtractString(SpanAttributes, 'gen_ai.system'), '/',
+                JSONExtractString(SpanAttributes, 'cliproxyapi.account.coverage'), '/',
+                JSONExtractString(SpanAttributes, 'cliproxyapi.account.ref')
+            ),
+            ''
+        ) AS AccountKey
     FROM otel_genai_spans
     WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') IN ('proxy', 'imported_execution')
         AND (
@@ -44,6 +55,9 @@ SQL >
             ApiKey = {{ String(api_key_filter) }}
             OR if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) = if(match({{ String(api_key_filter) }}, '^sha256:[0-9a-f]{64}$'), {{ String(api_key_filter) }}, concat('sha256:', lower(hex(SHA256({{ String(api_key_filter) }})))))
         )
+        {% end %}
+        {% if defined(account) %}
+        AND AccountKey = {{ String(account) }}
         {% end %}
         {% if defined(after_received_at) %}
         AND ReceivedAt > {{ Int64(after_received_at) }}

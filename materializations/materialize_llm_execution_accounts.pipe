@@ -1,0 +1,28 @@
+DESCRIPTION >
+    Extracts the installation-scoped upstream account key and TTFT for imported executions.
+
+NODE extract
+SQL >
+    SELECT
+        ReceivedAt,
+        TraceId,
+        SpanId,
+        ApiKey,
+        -- Installation scopes the key so equal refs from different installations never merge; transform
+        -- preserves resource casing, so lowercase here to keep one installation one key.
+        -- traces_list and traces_grouped build the same key; keep them in sync.
+        concat(
+            lower(JSONExtractString(ResourceAttributes, 'cliproxyapi.installation.id')), '/',
+            JSONExtractString(SpanAttributes, 'gen_ai.system'), '/',
+            JSONExtractString(SpanAttributes, 'cliproxyapi.account.coverage'), '/',
+            JSONExtractString(SpanAttributes, 'cliproxyapi.account.ref')
+        ) AS AccountKey,
+        toInt64(round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.server.time_to_first_token')) * 1000000)) AS TtftNano,
+        toUInt8(JSONHas(SpanAttributes, 'gen_ai.server.time_to_first_token')) AS TtftPresent,
+        TierAtIngestion,
+        RetentionExpiresAt
+    FROM otel_trace_spans
+    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution'
+
+TYPE MATERIALIZED
+DATASOURCE llm_execution_accounts

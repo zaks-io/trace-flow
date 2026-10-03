@@ -213,6 +213,30 @@ export interface ApiKeyRow extends CostBreakdownRow, LatencyRow {
   total_tokens: number;
 }
 
+export interface UpstreamAccountRow {
+  account_key: string;
+  request_count: number;
+  error_count: number;
+  input_tokens: number;
+  uncached_input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+  reasoning_tokens: number;
+  unclassified_tokens: number;
+  total_tokens: number;
+  usage_missing_count: number;
+  total_cost_usd: number;
+  cost_priced_count: number;
+  cost_partial_count: number;
+  cost_unpriced_count: number;
+  cost_unassessed_count: number;
+  cost_proxy_count: number;
+  cost_priced_tokens: number;
+  cost_coverage_ratio: number | null;
+  avg_ttft_ms: number | null;
+}
+
 export interface TinybirdResponse<T> {
   data: T[];
 }

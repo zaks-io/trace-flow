@@ -4,4 +4,19 @@
   expected_http_status: 200
   parameters: api_keys=sha256:ea89ad73ab4059786d1e6b3a16ebab8d79bd6c4d0b7ed720c6f2007d4c1355e2&search=aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaa3&retention_days=3650
   expected_result: |
-    {"TraceId":"aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaa3","ChildSpanCount":1,"FirstTimestamp":1760000004000000000,"LastTimestamp":1760000004000000000,"LatestReceivedAt":1790856000000000000,"TotalDuration":600000000,"AvgDuration":600000000,"MaxDuration":600000000,"ErrorCount":0,"Models":["openai\/gpt-5"],"Operations":[""],"TotalTokens":17,"PromptTokens":0,"CompletionTokens":0,"MaxTTFT":0,"TotalCost":0}
+    {"TraceId":"aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaa3","ChildSpanCount":1,"FirstTimestamp":1760000004000000000,"LastTimestamp":1760000004000000000,"LatestReceivedAt":1790856000000000000,"TotalDuration":600000000,"AvgDuration":600000000,"MaxDuration":600000000,"ErrorCount":0,"Models":["openai\/gpt-5"],"Operations":[""],"TotalTokens":17,"PromptTokens":0,"CompletionTokens":0,"MaxTTFT":null,"TotalCost":null,"UsageMissingCount":0}
+
+- name: account_filter_counts_failures
+  description: grouped account requests count STATUS_CODE_ERROR failures and keep their known usage
+  expected_http_status: 200
+  parameters: api_keys=sha256:09e95dfe420655dbf37e14bac70996bdada1906b315a760233310ef6291b6367&account=abcdef01-0000-4000-8000-000000000001%2Fopenai%2Fprovider-account%2Fdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd&retention_days=3650
+  expected_result: |
+    {"TraceId":"dddddddddddd4ddd8ddddddddddd0002","ChildSpanCount":1,"FirstTimestamp":1760000000000000002,"LastTimestamp":1760000000000000002,"LatestReceivedAt":1790856002000000000,"TotalDuration":1000000000,"AvgDuration":1000000000,"MaxDuration":1000000000,"ErrorCount":1,"Models":["openai\/gpt-5"],"Operations":[""],"TotalTokens":40,"PromptTokens":40,"CompletionTokens":0,"MaxTTFT":null,"TotalCost":0.002,"UsageMissingCount":0}
+    {"TraceId":"dddddddddddd4ddd8ddddddddddd0001","ChildSpanCount":1,"FirstTimestamp":1760000000000000001,"LastTimestamp":1760000000000000001,"LatestReceivedAt":1790856001000000000,"TotalDuration":1000000000,"AvgDuration":1000000000,"MaxDuration":1000000000,"ErrorCount":0,"Models":["openai\/gpt-5"],"Operations":[""],"TotalTokens":150,"PromptTokens":100,"CompletionTokens":50,"MaxTTFT":200,"TotalCost":0.01,"UsageMissingCount":0}
+
+- name: missing_usage_stays_null
+  description: a trace whose execution reported no usage returns null tokens, cost, and TTFT with its missing count
+  expected_http_status: 200
+  parameters: api_keys=sha256:09e95dfe420655dbf37e14bac70996bdada1906b315a760233310ef6291b6367&account=abcdef01-0000-4000-8000-000000000001%2Fopenai%2Funknown%2F&retention_days=3650
+  expected_result: |
+    {"TraceId":"dddddddddddd4ddd8ddddddddddd0004","ChildSpanCount":1,"FirstTimestamp":1760000000000000004,"LastTimestamp":1760000000000000004,"LatestReceivedAt":1790856004000000000,"TotalDuration":1000000000,"AvgDuration":1000000000,"MaxDuration":1000000000,"ErrorCount":0,"Models":["openai\/gpt-5"],"Operations":[""],"TotalTokens":null,"PromptTokens":null,"CompletionTokens":null,"MaxTTFT":null,"TotalCost":null,"UsageMissingCount":1}

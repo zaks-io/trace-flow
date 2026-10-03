@@ -14,6 +14,7 @@ import { useAnalyticsKeyFilter } from '@/hooks/useAnalyticsKeyFilter';
 import { PageToolbar } from '@/components/shared/PageToolbar';
 import { SetupCallout } from '@/components/onboarding/SetupCallout';
 import { RequestDetailSidePanel } from '@/components/requests/RequestDetailSidePanel';
+import { useUpstreamAccountOptions } from '@/hooks/useUpstreamAccountOptions';
 import {
   DataTable,
   allColumns,
@@ -56,6 +57,7 @@ export default function Requests({ preloadedAlerts, preloadedApiKeys }: Requests
   const { identifier: apiKeyFilter, error: apiKeyFilterError } = useAnalyticsKeyFilter(
     filters.apiKey,
   );
+  const accountOptions = useUpstreamAccountOptions(filters.account);
   const alerts = usePreloadedQuery(preloadedAlerts);
 
   useEffect(() => {
@@ -77,6 +79,7 @@ export default function Requests({ preloadedAlerts, preloadedApiKeys }: Requests
       params.search = filters.search;
     }
     if (filters.apiKey) params.api_key_filter = apiKeyFilter ?? '__PENDING_ANALYTICS_KEY__';
+    if (filters.account) params.account = filters.account;
     if (isLiveMode && latestReceivedAt !== null) {
       params.after_received_at = latestReceivedAt;
     }
@@ -263,6 +266,7 @@ export default function Requests({ preloadedAlerts, preloadedApiKeys }: Requests
         }
         apiKeyOptions={apiKeyOptions}
         apiKeyMap={apiKeyMap}
+        accountOptions={accountOptions}
       />
 
       <RequestDetailSidePanel

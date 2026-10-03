@@ -57,6 +57,7 @@ export const WEB_TINYBIRD_PIPES = [
   'llm_usage_by_provider',
   'operations_leaderboard',
   'llm_usage_by_api_key',
+  'llm_usage_by_account',
   'llm_cost_forecast',
   'llm_cost_tail_risk',
   'llm_token_ratio_drift',
@@ -234,6 +235,7 @@ export const LLM_API_KEY_DATASOURCES = [
   'otel_trace_spans',
   'otel_genai_spans',
   'llm_request_facts',
+  'llm_execution_accounts',
   'llm_usage_hourly',
   'llm_usage_daily',
   'llm_usage_monthly',
@@ -505,7 +507,7 @@ export const deleteOrgTraces = internalAction({
 
 /**
  * Extends retention for existing traces when a user upgrades from hobby to pro.
- * Updates RetentionExpiresAt and TierAtIngestion in all three datasources.
+ * Updates RetentionExpiresAt and TierAtIngestion in every retention-scoped LLM datasource.
  *
  * Only extends data that hasn't already expired (RetentionExpiresAt > now).
  */
@@ -541,7 +543,12 @@ export const extendRetention = internalAction({
     const analyticsKeyIdsInClause = analyticsKeyIds.map(sqlStringLiteral).join(',');
 
     // Datasources to update
-    const datasources = ['otel_trace_spans', 'otel_genai_spans', 'llm_request_facts'];
+    const datasources = [
+      'otel_trace_spans',
+      'otel_genai_spans',
+      'llm_request_facts',
+      'llm_execution_accounts',
+    ];
 
     const results: Record<string, { success: boolean; error?: string }> = {};
 

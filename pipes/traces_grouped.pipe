@@ -40,6 +40,19 @@ SQL >
             OR if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) = if(match({{ String(api_key_filter) }}, '^sha256:[0-9a-f]{64}$'), {{ String(api_key_filter) }}, concat('sha256:', lower(hex(SHA256({{ String(api_key_filter) }})))))
         )
         {% end %}
+        {% if defined(account) %}
+        -- Must match AccountKey in materialize_llm_execution_accounts so account drilldowns reconcile.
+        AND if(
+                JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution',
+                concat(
+                    lower(JSONExtractString(ResourceAttributes, 'cliproxyapi.installation.id')), '/',
+                    JSONExtractString(SpanAttributes, 'gen_ai.system'), '/',
+                    JSONExtractString(SpanAttributes, 'cliproxyapi.account.coverage'), '/',
+                    JSONExtractString(SpanAttributes, 'cliproxyapi.account.ref')
+                ),
+                ''
+            ) = {{ String(account) }}
+        {% end %}
     ORDER BY TraceId DESC
     LIMIT {{ Int32(limit, 100) * 10 }}
 
@@ -59,7 +72,7 @@ SQL >
         sum(Duration) as TotalDuration,
         avg(Duration) as AvgDuration,
         max(Duration) as MaxDuration,
-        countIf(StatusCode = 'ERROR') as ErrorCount,
+        countIf(StatusCode = 'STATUS_CODE_ERROR') as ErrorCount,
         groupArray(DISTINCT
           if(JSONExtractString(SpanAttributes, 'gen_ai.system') != '',
             concat(JSONExtractString(SpanAttributes, 'gen_ai.system'), '/',
@@ -70,13 +83,19 @@ SQL >
             JSONExtractString(SpanAttributes, 'gen_ai.request.model'))
         ) as Models,
         groupArray(DISTINCT JSONExtractString(SpanAttributes, 'baggage.operation')) as Operations,
-        sum(if(JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution', toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.total_tokens')), toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens')) + toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.output_tokens')))) as TotalTokens,
-        sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens'))) as PromptTokens,
-        sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.output_tokens'))) as CompletionTokens,
-        max(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.server.time_to_first_token'))) as MaxTTFT,
-        sum(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.total'))) as TotalCost
+        -- NULL when no span in the trace reported the metric, so missing usage never reads as zero.
+        if(
+            countIf(JSONHas(SpanAttributes, 'gen_ai.usage.total_tokens') OR JSONHas(SpanAttributes, 'gen_ai.usage.input_tokens') OR JSONHas(SpanAttributes, 'gen_ai.usage.output_tokens')) = 0,
+            NULL,
+            sum(if(JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution', toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.total_tokens')), toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens')) + toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.output_tokens'))))
+        ) as TotalTokens,
+        if(countIf(JSONHas(SpanAttributes, 'gen_ai.usage.input_tokens')) = 0, NULL, sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens')))) as PromptTokens,
+        if(countIf(JSONHas(SpanAttributes, 'gen_ai.usage.output_tokens')) = 0, NULL, sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.output_tokens')))) as CompletionTokens,
+        if(countIf(JSONHas(SpanAttributes, 'gen_ai.server.time_to_first_token')) = 0, NULL, max(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.server.time_to_first_token')))) as MaxTTFT,
+        if(countIf(JSONHas(SpanAttributes, 'gen_ai.cost.total')) = 0, NULL, sum(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.total')))) as TotalCost,
+        countIf(JSONExtractString(SpanAttributes, 'gen_ai.usage.missing') = 'true') as UsageMissingCount
     FROM otel_trace_spans
-    WHERE {% if defined(provider) or defined(model) or defined(status) or defined(operation) or defined(search) or defined(api_key_filter) %}
+    WHERE {% if defined(provider) or defined(model) or defined(status) or defined(operation) or defined(search) or defined(api_key_filter) or defined(account) %}
         TraceId IN (SELECT TraceId FROM filter_traces)
         AND {% end %}
         JSONExtractString(SpanAttributes, 'trace_flow.source') IN ('proxy', 'imported_execution')
@@ -85,7 +104,20 @@ SQL >
             OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
         )
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
-        {% if not (defined(provider) or defined(model) or defined(status) or defined(operation) or defined(search) or defined(api_key_filter)) and defined(after_received_at) %}
+        {% if defined(account) %}
+        -- Must match AccountKey in materialize_llm_execution_accounts so account drilldowns reconcile.
+        AND if(
+                JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution',
+                concat(
+                    lower(JSONExtractString(ResourceAttributes, 'cliproxyapi.installation.id')), '/',
+                    JSONExtractString(SpanAttributes, 'gen_ai.system'), '/',
+                    JSONExtractString(SpanAttributes, 'cliproxyapi.account.coverage'), '/',
+                    JSONExtractString(SpanAttributes, 'cliproxyapi.account.ref')
+                ),
+                ''
+            ) = {{ String(account) }}
+        {% end %}
+        {% if not (defined(provider) or defined(model) or defined(status) or defined(operation) or defined(search) or defined(api_key_filter) or defined(account)) and defined(after_received_at) %}
         AND ReceivedAt > {{ Int64(after_received_at) }}
         {% end %}
     GROUP BY TraceId

@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
 import { sortFilterOptions } from '@/lib/sortFilterOptions';
 import type { TableFilters } from '@/hooks/useTableFilters';
 import type { FilterOptions } from '@/hooks/useFilterOptions';
+import type { UpstreamAccountOptions } from '@/hooks/useUpstreamAccountOptions';
 import type { Alert } from '@/types/alerts';
 import type { Table, ColumnDef, VisibilityState } from '@tanstack/react-table';
 import { readTraceColumnMeta } from './metadata';
@@ -278,6 +279,7 @@ interface TableToolbarProps<TData> {
   onLiveModeToggle?: () => void;
   apiKeyOptions?: string[];
   apiKeyMap?: Map<string, string>;
+  accountOptions?: UpstreamAccountOptions;
 }
 
 export function TableToolbar<TData>({
@@ -298,6 +300,7 @@ export function TableToolbar<TData>({
   onLiveModeToggle,
   apiKeyOptions,
   apiKeyMap,
+  accountOptions,
 }: TableToolbarProps<TData>) {
   const [searchValue, setSearchValue] = useState(filters?.search ?? '');
 
@@ -402,6 +405,18 @@ export function TableToolbar<TData>({
               onChange={(value) => onFilterChange('apiKey', value)}
               labelMap={apiKeyMap}
             />
+            {accountOptions && (accountOptions.options.length > 0 || filters.account) && (
+              <FilterDropdown
+                label="Account"
+                value={filters.account}
+                options={accountOptions.options}
+                onChange={(value) => onFilterChange('account', value)}
+                labelMap={accountOptions.labelMap}
+              />
+            )}
+            {accountOptions?.error && (
+              <span className="text-xs text-destructive">Account filter failed to load</span>
+            )}
           </>
         )}
         {showAlertFilter && (

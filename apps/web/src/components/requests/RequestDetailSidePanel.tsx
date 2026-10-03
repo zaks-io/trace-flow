@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { parseSpanAttributes } from '@trace-flow/spans';
-import { GEN_AI, HTTP } from '@trace-flow/otel-conventions';
+import { GEN_AI, HTTP, SOURCE_IMPORTED_EXECUTION, TRACE_FLOW } from '@trace-flow/otel-conventions';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Sheet,
@@ -23,6 +23,9 @@ import {
   Link2,
   FileJson,
   ExternalLink,
+  Waypoints,
+  UserRound,
+  DollarSign,
 } from 'lucide-react';
 import { mergeSSEEvents, type FormattedBody, type ParsedSSEEvent } from '@trace-flow/utils';
 import { useAction, useQuery } from 'convex/react';
@@ -31,6 +34,13 @@ import { AlertBadge, AlertList } from '@/components/alerts';
 import { fetchStoredBodies, formatStoredBodiesForDisplay, getBodyAccessToken } from '@/lib/bodies';
 import { evaluateAlertsForTraces, getHighestSeverity } from '@/lib/alerts';
 import { formatModelDisplay } from '@/lib/format';
+import {
+  accountOptionLabel,
+  requestSourceLabel,
+  tryParseAccountKey,
+  UNRECOGNIZED_ACCOUNT_LABEL,
+} from '@/lib/upstreamAccount';
+import { importedCostStatusLabel } from '@/components/usage/costCoverage';
 import type { AlertSeverity } from '@/types/alerts';
 import type { RequestRow } from '@/components/requests/data-table';
 
@@ -38,6 +48,11 @@ interface RequestDetailSidePanelProps {
   request: RequestRow | null;
   isOpen: boolean;
   onClose: () => void;
+}
+
+function accountCardLabel(key: string): string {
+  const account = tryParseAccountKey(key);
+  return account ? accountOptionLabel(account) : `${UNRECOGNIZED_ACCOUNT_LABEL} (${key})`;
 }
 
 interface AttributeCardProps {
@@ -103,6 +118,10 @@ export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDeta
   const targetUrl = parsedAttributes[HTTP.URL] ?? '';
   const statusCode = parsedAttributes[HTTP.RESPONSE_STATUS_CODE] ?? '';
   const responseId = parsedAttributes[GEN_AI.RESPONSE_ID] ?? '';
+  const rawSource = parsedAttributes[TRACE_FLOW.SOURCE];
+  const sourceLabel = requestSourceLabel(rawSource);
+  const isImported = rawSource === SOURCE_IMPORTED_EXECUTION;
+  const accountKey = request?.AccountKey;
 
   const remainingAttributes = useMemo(() => {
     const displayedKeys = new Set<string>([
@@ -113,6 +132,8 @@ export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDeta
       GEN_AI.RESPONSE_ID,
       GEN_AI.REQUEST_ID,
       'service.name',
+      TRACE_FLOW.SOURCE,
+      TRACE_FLOW.COST_STATUS,
     ]);
     return Object.entries(parsedAttributes).filter(([key]) => !displayedKeys.has(key));
   }, [parsedAttributes]);
@@ -346,7 +367,31 @@ export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDeta
                   label="Timestamp"
                   value={formatTimestamp(request.Timestamp)}
                 />
+                {sourceLabel && (
+                  <AttributeCard
+                    icon={<Waypoints className="h-3.5 w-3.5" />}
+                    label="Source"
+                    value={sourceLabel}
+                  />
+                )}
+                {isImported && (
+                  <AttributeCard
+                    icon={<DollarSign className="h-3.5 w-3.5" />}
+                    label="Cost Estimate"
+                    value={importedCostStatusLabel(parsedAttributes[TRACE_FLOW.COST_STATUS])}
+                  />
+                )}
               </div>
+
+              {accountKey && (
+                <div className="grid grid-cols-1 gap-2">
+                  <AttributeCard
+                    icon={<UserRound className="h-3.5 w-3.5" />}
+                    label="Account"
+                    value={accountCardLabel(accountKey)}
+                  />
+                </div>
+              )}
 
               {targetUrl && (
                 <div className="grid grid-cols-1 gap-2">
