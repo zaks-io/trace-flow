@@ -6,7 +6,7 @@ The instrumentation scope is `cliproxyapi.execution` at version `2`. A different
 
 `cliproxyapi.execution.id` is a globally unique UUID of one execution attempt. Remove its hyphens for the 32-character OTel `traceId`; use the final 16 hex characters for `spanId`. Keep these values unchanged on every retry, including after exporter restart. `cliproxyapi.request.id` is CLIProxyAPI's short inbound TraceID, when available. It is display metadata and can repeat across several execution attempts. `cliproxyapi.installation.id` is a stable UUID in resource attributes. Trace Flow combines the authenticated Organization, installation UUID, and execution UUID to identify an imported execution. The API key and inbound request ID are not part of that identity.
 
-The other resource attributes allowed are `service.name` (required), `service.version`, `service.instance.id`, and `telemetry.sdk.name`, `.language`, and `.version`. The span allows requested and reported model, provider, model alias, requested and reported service tier, streaming flag, time to first token in milliseconds, HTTP failure status, source-visible session IDs, and account coverage. `cliproxyapi.account.coverage` is `provider-account`, `credential`, or `unknown`. The first two require a lowercase 64-character `cliproxyapi.account.ref` that the exporter derives as an HMAC of `coverage + "\0" + id` with a per-installation secret. Unknown coverage forbids the reference. Do not send raw email addresses, tokens, provider API keys, arbitrary headers, prompt or response text, or failure bodies in any field.
+The other resource attributes allowed are `service.name` (required), `service.version`, `service.instance.id`, and `telemetry.sdk.name`, `.language`, and `.version`. The span allows requested and reported model, provider, model alias, requested and reported service tier, streaming flag, time to first token in milliseconds, HTTP failure status, source-visible session IDs, and account coverage. `cliproxyapi.account.coverage` is `provider-account`, `credential`, or `unknown`. The first two require a lowercase 64-character `cliproxyapi.account.ref` that the exporter derives as an HMAC of `coverage + "\0" + id` with a per-installation secret, following [Upstream account identity](#upstream-account-identity). Unknown coverage forbids the reference. Do not send raw email addresses, tokens, provider API keys, arbitrary headers, prompt or response text, or failure bodies in any field.
 
 Usage follows CLIProxyAPI `TokenBreakdown` schema version 2. A present block sends `gen_ai.usage.schema_version=2`, quality (`complete`, `inconsistent`, or `unclassified`), and every count below. A missing block sends only `gen_ai.usage.missing=true`. Explicit zero is a known zero; absence is not zero.
 
@@ -44,6 +44,54 @@ Both JSON and protobuf uploads receive the existing JSON response, `{ "partialSu
 HTTP 200 alone never authorizes deletion. An absent or different contract marker fails closed: retain the local outbox records and report an incompatible receiver. There is no bypass setting. A caller-supplied marker is never copied into the response. Generic OTLP, malformed or invalid imports, unsupported or mixed scopes, authentication failures, recording denial, rate limits, and persistence failures omit the marker.
 
 Recording-policy denial preserves `X-Trace-Flow-Recording: false` with full span rejection. Import validation failures reject the whole request before persistence with sanitized rule codes. Persistence failure returns retryable HTTP 503 with `Retry-After`; retain the outbox records. General OTLP partial success is not automatically retried and does not satisfy imported acceptance.
+
+## Upstream account identity
+
+The exporter derives `cliproxyapi.account.ref` locally. Trace Flow validates only its coverage and shape; it never receives the identity inputs, discovers accounts, or recomputes a reference.
+
+The reference is lowercase hexadecimal HMAC-SHA256. The key is the raw bytes of the installation's secret. The message is the UTF-8 coverage value, one `0x00` byte, then the UTF-8 bytes of `id`. `id` is the compact JSON serialization of exactly one of these string arrays, in this order:
+
+| Coverage           | Applies to                    | `id` array                                                              |
+| ------------------ | ----------------------------- | ----------------------------------------------------------------------- |
+| `provider-account` | Codex                         | `["provider-account/1", "codex", workspace_account_id, member_user_id]` |
+| `provider-account` | Claude                        | `["provider-account/1", "claude", organization_uuid, account_uuid]`     |
+| `credential`       | Any executor                  | `["credential/1", family, provider_key, auth_id]`                       |
+| `unknown`          | Anything without the evidence | No `id` and no reference                                                |
+
+Every element is a non-empty, valid UTF-8 string copied verbatim. Do not trim, change case, Unicode-normalize, or reformat opaque IDs. An empty, absent, or non-string value counts as missing. There are no optional elements.
+
+Serialize as `JSON.stringify` does for well-formed strings: no whitespace between tokens, `"` and `\` escaped with a backslash, `\b`, `\f`, `\n`, `\r`, and `\t` in short form, other characters below U+0020 as `\u00xx` with lowercase hex, and every other character, including `<`, `>`, `&`, U+007F, U+2028, and U+2029, written as raw UTF-8. Go's `encoding/json` differs: it escapes `<`, `>`, and `&` unless HTML escaping is disabled, always escapes U+2028 and U+2029, and before Go 1.22 writes `\b` and `\f` as `\u0008` and `\u000c`. A Go exporter needs its own string encoder or a post-pass that matches these bytes.
+
+### Choosing coverage
+
+Resolve each execution attempt once, in this order:
+
+1. Use a `provider-account` tuple when the attempt's selected credential belongs to a provider listed above and supplies both of its IDs. A Codex workspace ID alone never forms a provider account, because members of one workspace share it.
+2. Otherwise use `credential` when `family`, `provider_key`, and `auth_id` are all present. `family` is the executor's fixed family, and an OpenAI compatibility executor uses `openai-compatibility`. `provider_key` is the executor identifier, including the configured compatibility provider key. `auth_id` is CLIProxyAPI's ID for the selected credential. Including `provider_key` keeps two compatible providers apart even when they share credential material.
+3. Otherwise send `unknown` with no reference.
+
+Missing provider identity therefore downgrades to `credential` only when the fallback evidence is complete, and to `unknown` otherwise. No other provider may send `provider-account` until this guide publishes a versioned tuple for it; until then it uses the credential fallback.
+
+### Evidence
+
+Snapshot the identity inputs from the credential the attempt actually used, before any asynchronous dispatch or retry hands the attempt to another goroutine.
+
+- Codex `workspace_account_id` is `chatgpt_account_id` and `member_user_id` is `chatgpt_user_id`, both read from the `https://api.openai.com/auth` claim object of the one stored `id_token` that CLIProxyAPI obtained through its own OAuth exchange or refresh. Do not substitute `user_id`, `sub`, the stored `account_id` field, or a claim from another token. Decoding those claims is not signature verification. They are operator-trusted credential metadata for attribution, never authorization evidence.
+- Claude `organization_uuid` and `account_uuid` come from the selected credential's stored OAuth metadata, as returned by Anthropic's token exchange or OAuth profile. CLIProxyAPI stores a derived stable `account_uuid` for setup tokens and when the profile lookup fails or returns no account. That derived value is not provider evidence. When the exporter cannot show that both UUIDs came from Anthropic, it uses the credential fallback.
+- Inbound JWTs, arbitrary request headers, plugin or SDK record fields, and email addresses never establish provider-account evidence.
+- Timestamps, access tokens, refresh tokens, email addresses, display names, mutable labels, and live account lookups never enter an `id`.
+
+Raw `id` inputs stay on the exporter's machine. They do not appear in outbox or wire payloads, the v2 request fixture, Requests labels, or Agent analytics.
+
+### Stability limits
+
+A provider-account reference survives access-token refresh, re-login of the same member, and credential file relocation. A credential reference is weaker and does not identify a verified account. Key rotation, credential file relocation, and edits to the proxy URL, prefix, or headers can change `auth_id`. IDs that CLIProxyAPI generates from configuration with duplicate-ID suffixes can depend on configuration order. Requests and Usage keep labeling credential coverage as a credential, never as a verified account.
+
+References are scoped to one installation secret, so the same account produces different references in two installations. Enabling provider-account coverage for an installation that previously sent credential coverage starts a new grouping for later executions. The exporter never rewrites references it has already committed, and Trace Flow keeps historical rows unchanged.
+
+### Shared vectors
+
+[The identity vectors](../../fixtures/cliproxyapi-account-identity-v1.json) use fabricated secrets and IDs. Each case lists its evidence, the expected coverage, the exact `id` string, and the reference. They cover two members of one Codex workspace, token refresh and credential relocation for one member, the same member under a second installation, Claude organization and account pairs, missing member, account, and fallback inputs, an unversioned provider identity, two compatible providers sharing an `auth_id`, and JSON escaping of control characters, line separators, HTML-sensitive characters, and literal backslash text. `apps/proxy/src/otlp/__tests__/imported.accountIdentity.test.ts` recomputes every `id` and reference and sends each coverage through the v2 validator. The exporter's tests must produce identical `id` bytes and references from the same file.
 
 ## Server-side cost estimates
 
