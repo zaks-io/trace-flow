@@ -33,13 +33,13 @@
   description: deleted excluded
   expected_http_status: 200
   parameters: org_id=org_native&start_time_ms=1790899200000&end_time_ms=1790985600000&retention_days=3650&session_pk=deleted-pk
-  expected_result: 'Provide exactly one session lookup mode'
+  expected_result: ''
 
 - name: source_mismatch
   description: source mismatch
   expected_http_status: 200
   parameters: org_id=org_native&start_time_ms=1790899200000&end_time_ms=1790985600000&retention_days=3650&native_source=claude&native_session_id=child-thread-6
-  expected_result: 'Provide exactly one session lookup mode'
+  expected_result: ''
 
 - name: other_org_same_native
   description: other org same native
