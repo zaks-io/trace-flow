@@ -35,6 +35,7 @@ import { OperationTable } from './OperationTable';
 import { ModelComparisonTable } from './ModelComparisonTable';
 import { ProviderBreakdownChart } from './ProviderBreakdownChart';
 import { ApiKeyBreakdownTable } from './ApiKeyBreakdownTable';
+import { UpstreamAccountSection } from './UpstreamAccountSection';
 import { FilterDropdown } from './FilterDropdown';
 import { CostTailRiskTable } from './CostTailRiskTable';
 import { TokenRatioDriftTable } from './TokenRatioDriftTable';
@@ -492,6 +493,16 @@ export function UsageAnalytics({
               <ApiKeyBreakdownTable data={apiKeyRows} apiKeyMap={apiKeyMap} />
             </div>
           </div>
+
+          <UpstreamAccountSection
+            params={filterParams}
+            drilldownFilters={{
+              provider: providerFilter,
+              model: modelFilter,
+              operation: operationFilter,
+              apiKey: apiKeyFilter,
+            }}
+          />
         </div>
       )}
     </div>

@@ -72,7 +72,21 @@ SQL >
         JSONExtractString(SpanAttributes, 'gen_ai.usage.quality') AS UsageQuality,
         toUInt8(JSONExtractString(SpanAttributes, 'gen_ai.usage.missing') = 'true') AS UsageMissing,
         if(JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution', JSONExtractString(SpanAttributes, 'trace_flow.cost.status'), '') AS CostStatus,
-        if(JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution', toUInt64OrZero(JSONExtractString(SpanAttributes, 'trace_flow.cost.priced_tokens')), toUInt64(0)) AS CostPricedTokens
+        if(JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution', toUInt64OrZero(JSONExtractString(SpanAttributes, 'trace_flow.cost.priced_tokens')), toUInt64(0)) AS CostPricedTokens,
+        -- Installation scopes the key so equal refs from different installations never merge; transform
+        -- preserves resource casing, so lowercase here to keep one installation one key.
+        if(
+            JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution',
+            concat(
+                lower(JSONExtractString(ResourceAttributes, 'cliproxyapi.installation.id')), '/',
+                JSONExtractString(SpanAttributes, 'gen_ai.system'), '/',
+                JSONExtractString(SpanAttributes, 'cliproxyapi.account.coverage'), '/',
+                JSONExtractString(SpanAttributes, 'cliproxyapi.account.ref')
+            ),
+            ''
+        ) AS AccountKey,
+        toInt64(round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.server.time_to_first_token')) * 1000000)) AS TtftNano,
+        toUInt8(JSONHas(SpanAttributes, 'gen_ai.server.time_to_first_token')) AS TtftPresent
     FROM otel_trace_spans
     WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') IN ('proxy', 'imported_execution')
 

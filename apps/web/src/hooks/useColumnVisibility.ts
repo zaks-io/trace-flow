@@ -14,13 +14,14 @@ export function useColumnVisibility(
     const stored = localStorage.getItem(storageKey);
     if (stored) {
       try {
-        setVisibility(JSON.parse(stored) as VisibilityState);
+        // Columns added after the preference was saved start at their defaults.
+        setVisibility({ ...defaultVisibility, ...(JSON.parse(stored) as VisibilityState) });
       } catch {
         // Ignore parse errors, use defaults
       }
     }
     setIsHydrated(true);
-  }, [storageKey]);
+  }, [defaultVisibility, storageKey]);
 
   const updateVisibility = useCallback(
     (updater: VisibilityState | ((prev: VisibilityState) => VisibilityState)) => {

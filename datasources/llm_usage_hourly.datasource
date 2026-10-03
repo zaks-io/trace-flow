@@ -41,46 +41,10 @@ SCHEMA >
     `CostPricedTokens` AggregateFunction(sum, UInt64),
     `CostProxyCount` AggregateFunction(sum, UInt64)
 
-# Imported ingestion was introduced on October 2; October 1 conservatively bounds its earliest use.
+# Pin history across upstream llm_request_facts rebuilds; re-running the MV from facts would drop
+# buckets older than the facts retention.
 FORWARD_QUERY >
-    SELECT
-        `BucketStart`,
-        `ApiKey`,
-        `Provider`,
-        `Model`,
-        `OperationName`,
-        `BaggageOperation`,
-        `BaggageUserId`,
-        `StatusCode`,
-        `RequestCount`,
-        `InputTokens`,
-        `OutputTokens`,
-        `CacheReadInputTokens`,
-        `CacheCreationInputTokens`,
-        `ReasoningTokens`,
-        `UncachedInputTokens`,
-        `InputCostMicrodollars`,
-        `OutputCostMicrodollars`,
-        `CacheReadCostMicrodollars`,
-        `CacheCreationCostMicrodollars`,
-        `ReasoningCostMicrodollars`,
-        `PromptBaselineCostMicrodollars`,
-        `CacheImpactCostMicrodollars`,
-        `UpstreamCostMicrodollars`,
-        `TotalCostMicrodollars`,
-        `AvgDurationNano`,
-        `MaxDurationNano`,
-        `P95DurationNano`,
-        `UnclassifiedTokens`,
-        `UsageCompleteCount`,
-        `UsageInconsistentCount`,
-        `UsageUnclassifiedCount`,
-        `UsageMissingCount`,
-        arrayReduce('sumState', [toUInt64(0)]) AS CostPricedCount,
-        arrayReduce('sumState', [toUInt64(0)]) AS CostPartialCount,
-        arrayReduce('sumState', [toUInt64(0)]) AS CostUnpricedCount,
-        arrayReduce('sumState', [toUInt64(0)]) AS CostPricedTokens,
-        arrayReduce('sumState', [toUInt64(if(BucketStart + INTERVAL 1 HOUR <= toDateTime('2026-10-01 00:00:00', 'UTC'), finalizeAggregation(RequestCount), 0))]) AS CostProxyCount
+    SELECT *
 
 ENGINE "AggregatingMergeTree"
 ENGINE_SORTING_KEY "ApiKey, BucketStart, Provider, Model, OperationName, BaggageOperation, StatusCode, BaggageUserId"

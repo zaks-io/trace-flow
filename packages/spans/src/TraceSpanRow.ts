@@ -32,6 +32,8 @@ export interface TraceSpanRow {
 
   /** Computed column some pipes denormalize from SpanAttributes for filtering. */
   BaggageOperation?: string;
+  /** Upstream account of an imported execution; empty for Trace Flow proxy spans. */
+  AccountKey?: string;
 }
 
 export const TraceSpanRowSchema = z.object({
@@ -55,4 +57,5 @@ export const TraceSpanRowSchema = z.object({
   'Events.Attributes': z.array(z.string()).optional(),
 
   BaggageOperation: z.string().optional(),
+  AccountKey: z.string().optional(),
 }) satisfies z.ZodType<TraceSpanRow>;

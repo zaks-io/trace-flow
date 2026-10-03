@@ -10,6 +10,7 @@ import {
 } from '@tanstack/react-table';
 import { cn } from '@/lib/utils';
 import { TableToolbar, type AlertFilterValue } from './table-toolbar';
+import type { UpstreamAccountOptions } from '@/hooks/useUpstreamAccountOptions';
 import type { TraceAlertSummary, Alert } from '@/types/alerts';
 import type { TableFilters } from '@/hooks/useTableFilters';
 import type { FilterOptions } from '@/hooks/useFilterOptions';
@@ -61,6 +62,7 @@ interface DataTableProps<TData> {
   emptyMessage?: React.ReactNode;
   apiKeyOptions?: string[];
   apiKeyMap?: Map<string, string>;
+  accountOptions?: UpstreamAccountOptions;
   hideToolbar?: boolean;
   rowClassName?: (row: TData) => string | undefined;
 }
@@ -89,6 +91,7 @@ export function DataTable<TData>({
   emptyMessage = 'No results found',
   apiKeyOptions,
   apiKeyMap,
+  accountOptions,
   hideToolbar,
   rowClassName,
 }: DataTableProps<TData>) {
@@ -176,6 +179,7 @@ export function DataTable<TData>({
           onLiveModeToggle={onLiveModeToggle}
           apiKeyOptions={apiKeyOptions}
           apiKeyMap={apiKeyMap}
+          accountOptions={accountOptions}
         />
       )}
 

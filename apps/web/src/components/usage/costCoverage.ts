@@ -82,3 +82,15 @@ export function costCoverageLabels(summary: CostCoverage) {
       : []),
   ];
 }
+
+const COST_STATUS_LABELS: Record<string, string> = {
+  priced: 'Priced',
+  partial: 'Partial',
+  unpriced: 'Unpriced',
+};
+
+/** Imported executions carry a pricing status; a missing one means pricing never ran. */
+export function importedCostStatusLabel(status: string | undefined): string {
+  if (!status) return 'Not Assessed';
+  return COST_STATUS_LABELS[status] ?? status;
+}

@@ -3,6 +3,7 @@ import {
   canCompareCosts,
   costCoverageLabels,
   isCostIncomplete,
+  importedCostStatusLabel,
   isCostUnknown,
 } from '../costCoverage';
 
@@ -69,5 +70,11 @@ describe('cost coverage', () => {
   it('compares fully assessed imports and proxy usage, including priced zero', () => {
     expect(isCostIncomplete(complete)).toBe(false);
     expect(canCompareCosts(complete, { ...complete, cost_proxy_count: 2 })).toBe(true);
+  });
+
+  it('labels imported pricing status without hiding unassessed executions', () => {
+    expect(importedCostStatusLabel('priced')).toBe('Priced');
+    expect(importedCostStatusLabel('partial')).toBe('Partial');
+    expect(importedCostStatusLabel(undefined)).toBe('Not Assessed');
   });
 });

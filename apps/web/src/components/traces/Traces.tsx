@@ -72,6 +72,7 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
       params.search = filters.search;
     }
     if (filters.apiKey) params.api_key_filter = apiKeyFilter ?? '__PENDING_ANALYTICS_KEY__';
+    if (filters.account) params.account = filters.account;
     if (isLiveMode && latestReceivedAt !== null) {
       params.after_received_at = latestReceivedAt;
     }

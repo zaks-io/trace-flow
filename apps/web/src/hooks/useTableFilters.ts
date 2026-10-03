@@ -10,6 +10,7 @@ export interface TableFilters {
   operation: string | null;
   search: string | null;
   apiKey: string | null;
+  account: string | null;
 }
 
 interface UseTableFiltersResult {
@@ -26,6 +27,7 @@ const FILTER_KEYS: (keyof TableFilters)[] = [
   'operation',
   'search',
   'apiKey',
+  'account',
 ];
 
 export function useTableFilters(): UseTableFiltersResult {
@@ -41,6 +43,7 @@ export function useTableFilters(): UseTableFiltersResult {
       operation: searchParams.get('operation'),
       search: searchParams.get('search'),
       apiKey: searchParams.get('apiKey'),
+      account: searchParams.get('account'),
     };
   }, [searchParams]);
 
