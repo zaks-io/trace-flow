@@ -3,13 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { parseSpanAttributes } from '@trace-flow/spans';
-import {
-  CLI_PROXY,
-  GEN_AI,
-  HTTP,
-  SOURCE_IMPORTED_EXECUTION,
-  TRACE_FLOW,
-} from '@trace-flow/otel-conventions';
+import { GEN_AI, HTTP, SOURCE_IMPORTED_EXECUTION, TRACE_FLOW } from '@trace-flow/otel-conventions';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Sheet,
@@ -139,8 +133,6 @@ export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDeta
       GEN_AI.REQUEST_ID,
       'service.name',
       TRACE_FLOW.SOURCE,
-      CLI_PROXY.ACCOUNT_COVERAGE,
-      CLI_PROXY.ACCOUNT_REF,
       TRACE_FLOW.COST_STATUS,
     ]);
     return Object.entries(parsedAttributes).filter(([key]) => !displayedKeys.has(key));

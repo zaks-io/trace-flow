@@ -16,7 +16,8 @@ SQL >
         if(start_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now() - toIntervalDay(7), 9)), start_ns_raw) AS start_ns,
         {{ Int64(end_time_ns, 0) }} AS end_ns_raw,
         if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns
-    SELECT ApiKey, TraceId, SpanId, AccountKey, TtftNano, TtftPresent
+    -- One row per execution even if a span was inserted twice, so the join cannot multiply facts.
+    SELECT ApiKey, TraceId, SpanId, AccountKey, any(TtftNano) AS ttft_nano, max(TtftPresent) AS ttft_present
     FROM llm_execution_accounts
     WHERE ReceivedAt >= start_ns
         AND ReceivedAt <= end_ns
@@ -35,6 +36,7 @@ SQL >
         {% if defined(account) %}
         AND AccountKey = {{ String(account) }}
         {% end %}
+    GROUP BY ApiKey, TraceId, SpanId, AccountKey
 
 NODE scoped_facts
 DESCRIPTION >
@@ -106,8 +108,8 @@ SQL >
         sum(CostPricedTokens) AS cost_priced_tokens,
         avg(DurationNano) / 1000000 AS avg_duration_ms,
         quantile(0.95)(DurationNano) / 1000000 AS p95_duration_ms,
-        countIf(TtftPresent = 1) AS ttft_count,
-        if(ttft_count = 0, NULL, avgIf(TtftNano, TtftPresent = 1) / 1000000) AS avg_ttft_ms
+        countIf(a.ttft_present = 1) AS ttft_count,
+        if(ttft_count = 0, NULL, avgIf(a.ttft_nano, a.ttft_present = 1) / 1000000) AS avg_ttft_ms
     FROM scoped_facts AS f
     INNER JOIN scoped_accounts AS a
         ON f.ApiKey = a.ApiKey AND f.TraceId = a.TraceId AND f.SpanId = a.SpanId

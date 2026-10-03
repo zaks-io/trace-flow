@@ -177,7 +177,11 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
             Operations: [
               ...new Set([...(existing.Operations ?? []), ...(newGroup.Operations ?? [])]),
             ],
-            TotalCost: existing.TotalCost + newGroup.TotalCost,
+            // Matches traces_grouped: sum the costs that were reported, null only when none were.
+            TotalCost:
+              existing.TotalCost === null && newGroup.TotalCost === null
+                ? null
+                : (existing.TotalCost ?? 0) + (newGroup.TotalCost ?? 0),
           });
         } else {
           existingMap.set(newGroup.TraceId, newGroup);

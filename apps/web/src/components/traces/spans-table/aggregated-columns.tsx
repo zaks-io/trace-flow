@@ -20,11 +20,11 @@ export interface SpanGroupRow {
   ErrorCount: number;
   Models: string[];
   Operations: string[];
-  TotalTokens: number;
-  PromptTokens: number;
-  CompletionTokens: number;
-  MaxTTFT: number;
-  TotalCost: number;
+  TotalTokens: number | null;
+  PromptTokens: number | null;
+  CompletionTokens: number | null;
+  MaxTTFT: number | null;
+  TotalCost: number | null;
 }
 
 function formatTimestamp(nanoseconds: number) {

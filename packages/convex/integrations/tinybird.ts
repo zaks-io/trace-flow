@@ -507,7 +507,7 @@ export const deleteOrgTraces = internalAction({
 
 /**
  * Extends retention for existing traces when a user upgrades from hobby to pro.
- * Updates RetentionExpiresAt and TierAtIngestion in all three datasources.
+ * Updates RetentionExpiresAt and TierAtIngestion in every retention-scoped LLM datasource.
  *
  * Only extends data that hasn't already expired (RetentionExpiresAt > now).
  */

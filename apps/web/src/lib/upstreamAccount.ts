@@ -26,7 +26,10 @@ function isAccountCoverage(value: string): value is AccountCoverage {
   return (IMPORTED_ACCOUNT_COVERAGE as readonly string[]).includes(value);
 }
 
-/** Parses the installation/provider/coverage/ref key built in materialize_llm_request_facts. */
+/**
+ * Parses the installation/provider/coverage/ref key built in materialize_llm_execution_accounts
+ * (and mirrored in traces_list and traces_grouped).
+ */
 export function parseAccountKey(key: string): UpstreamAccount {
   const parts = key.split('/');
   const [installationId, provider, coverage, ref] = parts;
