@@ -97,19 +97,23 @@ beforeEach(() => vi.clearAllMocks());
 
 describe('imported pricing through durable consumer staging', () => {
   it.each([
-    ['openai', 'gpt-5', '1'],
-    ['anthropic', 'claude', '2'],
-    ['google', 'gemini', '3'],
+    ['openai', 'openai', 'gpt-5', '1'],
+    ['anthropic', 'anthropic', 'claude', '2'],
+    ['google', 'google', 'gemini', '3'],
+    ['codex', 'openai', 'gpt-6.1-sol', 'e'],
+    ['claude', 'anthropic', 'claude-opus-5-5', 'f'],
   ])(
     'prices %s known buckets once and stores USD provenance',
-    async (provider, model, identity) => {
-      await env.MODEL_PRICING.put(`pricing:${provider}:${model}`, serializeModelPricing(pricing));
+    async (provider, catalogProvider, model, identity) => {
+      await env.MODEL_PRICING.put(
+        `pricing:${catalogProvider}:${model}`,
+        serializeModelPricing(pricing),
+      );
       const trace = importedPricingTrace(identity, provider, model, tokens);
       const stored = await deliver(trace, `price-${provider}`);
       expect(stored.rows).toHaveLength(1);
       expect(stored.rows[0]!.SpanAttributes).toMatchObject({
-        [GEN_AI.REQUEST_MODEL]: 'requested-alias',
-        [GEN_AI.RESPONSE_MODEL]: model,
+        ...trace.SpanAttributes,
         [GEN_AI_COST.INPUT]: '0.003',
         [GEN_AI_COST.OUTPUT]: '0.0045',
         [GEN_AI_COST.CACHE_READ]: '0.00006',
@@ -120,15 +124,16 @@ describe('imported pricing through durable consumer staging', () => {
         [TRACE_FLOW.COST_PRICED_TOKENS]: '1650',
         [TRACE_FLOW.COST_CATALOG_VERSION]: 'manual@123',
         [TRACE_FLOW.COST_UNIT]: 'USD',
-        [TRACE_FLOW.COST_CATALOG_KEY]: `pricing:${provider}:${model}`,
+        [TRACE_FLOW.COST_CATALOG_KEY]: `pricing:${catalogProvider}:${model}`,
       });
     },
   );
 
   it('keeps first accepted prices after separate delivery, catalog change, and durable restart', async () => {
     await env.MODEL_PRICING.put('pricing:openai:replay-model', serializeModelPricing(pricing));
-    const trace = importedPricingTrace('4', 'openai', 'replay-model', tokens);
+    const trace = importedPricingTrace('4', 'codex', 'replay-model', tokens);
     const initial = await deliver(trace, 'price-first');
+    expect(initial.rows[0]!.SpanAttributes[GEN_AI_COST.TOTAL]).toBe('0.008685');
     await env.MODEL_PRICING.put(
       'pricing:openai:replay-model',
       serializeModelPricing({ ...pricing, promptCostPerMillion: 100_000_000, updatedAt: 999 }),
