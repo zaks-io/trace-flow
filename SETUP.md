@@ -180,15 +180,18 @@ an experiment.
 ## Preview Deployment
 
 The repository owner dispatches `.github/workflows/preview.yml` for an open same-repository PR.
-The workflow deploys the PR head to the shared Preview Workers and comments their URLs on the PR.
+Update the target PR branch from `main` before dispatching so its routes and CORS settings match
+the workflow. The workflow deploys the PR head to the shared Preview Workers and comments their URLs
+on the PR.
 The canonical Web URL is `https://preview.trace-flow.dev`; API and Collector endpoints are listed
 in [CONTEXT.md](CONTEXT.md#concrete-endpoints-canonical--stop-rediscovering-these).
 
 Each Preview Worker declares an exact [Cloudflare Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/).
 Cloudflare creates DNS records and certificates, including nested subdomains, without a separate
 Advanced Certificate Manager subscription. The Preview deployment token needs zone permissions for
-Custom Domains, and the hostnames must have no conflicting CNAME records. Existing `workers.dev`
-URLs remain available during rollout.
+Custom Domains, and the hostnames must have no conflicting CNAME records. Existing API, MCP, and
+Collector `workers.dev` URLs remain available during rollout. Web sign-in uses the canonical
+`https://preview.trace-flow.dev` origin.
 
 Configure the Preview Auth0 application's allowed callback URLs with
 `https://preview.trace-flow.dev/auth/callback`, and add `https://preview.trace-flow.dev` to its

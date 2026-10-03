@@ -218,8 +218,9 @@ Cloudflare's 404.
 | MCP server                                                                            | `https://trace-flow-mcp-dev.isaac-a46.workers.dev`                       | `https://mcp.preview.trace-flow.dev`                             | `https://mcp.trace-flow.dev`                                                                             |
 
 Preview Custom Domains are declared in each Worker's `env.preview` config. Cloudflare provisions
-DNS and TLS for the exact hosts, including nested subdomains. Preview retains its `workers.dev`
-URLs during rollout and shares the existing non-production data resources. MCP Preview uses the
+DNS and TLS for the exact hosts, including nested subdomains. API, MCP, and Collector `workers.dev`
+URLs remain available during rollout; Web sign-in uses `https://preview.trace-flow.dev`. Preview
+shares the existing non-production data resources. MCP Preview uses the
 production Connect backend; authorizing the new MCP resource host requires an approved production
 Connect deployment.
 
