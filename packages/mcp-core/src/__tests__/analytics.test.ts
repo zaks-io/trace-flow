@@ -41,6 +41,8 @@ describe('analytics MCP helpers', () => {
             cost_partial_count: 3,
             cost_unpriced_count: 2,
             cost_priced_tokens: 800,
+            cost_proxy_count: 4,
+            cost_unassessed_count: 1,
             cost_coverage_ratio: null,
             total_cost_usd: 1.5,
             input_cost_usd: 0.4,
@@ -82,6 +84,8 @@ describe('analytics MCP helpers', () => {
     expect(payload.summary.cost_partial_count).toBe(3);
     expect(payload.summary.cost_unpriced_count).toBe(2);
     expect(payload.summary.cost_priced_tokens).toBe(800);
+    expect(payload.summary.cost_proxy_count).toBe(4);
+    expect(payload.summary.cost_unassessed_count).toBe(1);
     expect(payload.summary.cost_coverage_ratio).toBeUndefined();
     expect(payload.summary.duration_ms.p95).toBe(900);
   });

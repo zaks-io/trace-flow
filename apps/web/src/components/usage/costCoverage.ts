@@ -3,7 +3,9 @@ import type { SummaryRow } from './types';
 
 type CostCoverage = Pick<
   SummaryRow,
-  | 'request_count'
+  | 'total_cost_usd'
+  | 'cost_proxy_count'
+  | 'cost_unassessed_count'
   | 'cost_priced_count'
   | 'cost_partial_count'
   | 'cost_unpriced_count'
@@ -12,13 +14,25 @@ type CostCoverage = Pick<
 >;
 
 export function isCostUnknown(summary: CostCoverage): boolean {
-  return summary.cost_unpriced_count > 0 && summary.cost_unpriced_count === summary.request_count;
+  const known = summary.cost_priced_count + summary.cost_partial_count + summary.cost_proxy_count;
+  const unknown = summary.cost_unpriced_count + summary.cost_unassessed_count;
+  return unknown > 0 && known === 0 && summary.total_cost_usd === 0;
+}
+
+export function isCostIncomplete(summary: CostCoverage): boolean {
+  return (
+    summary.cost_partial_count + summary.cost_unpriced_count + summary.cost_unassessed_count > 0
+  );
+}
+
+export function canCompareCosts(current: CostCoverage, previous: CostCoverage): boolean {
+  return !isCostIncomplete(current) && !isCostIncomplete(previous);
 }
 
 export function costCoverageLabels(summary: CostCoverage) {
   const imported =
     summary.cost_priced_count + summary.cost_partial_count + summary.cost_unpriced_count;
-  if (imported === 0) return [];
+  if (imported + summary.cost_unassessed_count === 0) return [];
   return [
     {
       label: 'Priced',
@@ -39,6 +53,15 @@ export function costCoverageLabels(summary: CostCoverage) {
           {
             label: 'Unpriced',
             value: formatNumber(summary.cost_unpriced_count),
+            color: 'var(--color-chart-6)',
+          },
+        ]
+      : []),
+    ...(summary.cost_unassessed_count > 0
+      ? [
+          {
+            label: 'Not Assessed',
+            value: formatNumber(summary.cost_unassessed_count),
             color: 'var(--color-chart-6)',
           },
         ]

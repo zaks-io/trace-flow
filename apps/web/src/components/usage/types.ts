@@ -105,6 +105,8 @@ export interface SummaryRow extends CostBreakdownRow, LatencyRow {
   cost_partial_count: number;
   cost_unpriced_count: number;
   cost_priced_tokens: number;
+  cost_proxy_count: number;
+  cost_unassessed_count: number;
   cost_coverage_ratio: number | null;
   error_count: number;
   input_tokens: number;

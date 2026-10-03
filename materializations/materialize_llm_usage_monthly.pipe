@@ -39,7 +39,8 @@ SQL >
         sumState(toUInt64(CostStatus = 'priced')) AS CostPricedCount,
         sumState(toUInt64(CostStatus = 'partial')) AS CostPartialCount,
         sumState(toUInt64(CostStatus = 'unpriced')) AS CostUnpricedCount,
-        sumState(CostPricedTokens) AS CostPricedTokens
+        sumState(CostPricedTokens) AS CostPricedTokens,
+        sumState(toUInt64(Source = 'proxy')) AS CostProxyCount
     FROM llm_request_facts
     GROUP BY BucketStart, ApiKey, Provider, Model, OperationName, BaggageOperation, BaggageUserId, StatusCode
 

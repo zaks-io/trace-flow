@@ -4,7 +4,12 @@ import { BarCard, formatCostCompact } from '@/components/shared/BarCard';
 import { formatNumber, formatCurrency, formatDuration, formatPercent } from '@/lib/format';
 import { formatCacheHitRate, getPromptCacheMetrics } from '@/lib/cacheMetrics';
 import { ProjectedCostCard } from './ProjectedCostCard';
-import { costCoverageLabels, isCostUnknown } from './costCoverage';
+import {
+  canCompareCosts,
+  costCoverageLabels,
+  isCostIncomplete,
+  isCostUnknown,
+} from './costCoverage';
 import type { SummaryRow, RequestStatsRow, CostForecastRow } from './types';
 
 interface SummaryCardsProps {
@@ -21,11 +26,12 @@ function computeDelta(current: number | undefined, previous: number | undefined)
 
 export function SummaryCards({ summary, prevSummary, requestStats, forecast }: SummaryCardsProps) {
   const costUnknown = summary ? isCostUnknown(summary) : false;
-  const costIncomplete = summary
-    ? summary.cost_partial_count + summary.cost_unpriced_count > 0
-    : false;
+  const costIncomplete = summary ? isCostIncomplete(summary) : false;
   const requestDelta = computeDelta(summary?.request_count, prevSummary?.request_count);
-  const costDelta = computeDelta(summary?.total_cost_usd, prevSummary?.total_cost_usd);
+  const costDelta =
+    summary && prevSummary && canCompareCosts(summary, prevSummary)
+      ? computeDelta(summary.total_cost_usd, prevSummary.total_cost_usd)
+      : undefined;
 
   const errorCount = summary?.error_count ?? 0;
   const successCount = summary ? Math.max(0, summary.request_count - errorCount) : 0;

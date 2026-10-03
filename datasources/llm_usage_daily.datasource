@@ -38,8 +38,10 @@ SCHEMA >
     `CostPricedCount` AggregateFunction(sum, UInt64),
     `CostPartialCount` AggregateFunction(sum, UInt64),
     `CostUnpricedCount` AggregateFunction(sum, UInt64),
-    `CostPricedTokens` AggregateFunction(sum, UInt64)
+    `CostPricedTokens` AggregateFunction(sum, UInt64),
+    `CostProxyCount` AggregateFunction(sum, UInt64)
 
+# Imported ingestion was introduced on October 2; October 1 conservatively bounds its earliest use.
 FORWARD_QUERY >
     SELECT
         `BucketStart`,
@@ -77,7 +79,8 @@ FORWARD_QUERY >
         arrayReduce('sumState', [toUInt64(0)]) AS CostPricedCount,
         arrayReduce('sumState', [toUInt64(0)]) AS CostPartialCount,
         arrayReduce('sumState', [toUInt64(0)]) AS CostUnpricedCount,
-        arrayReduce('sumState', [toUInt64(0)]) AS CostPricedTokens
+        arrayReduce('sumState', [toUInt64(0)]) AS CostPricedTokens,
+        arrayReduce('sumState', [toUInt64(if(toDateTime(BucketStart) + INTERVAL 1 DAY <= toDateTime('2026-10-01 00:00:00', 'UTC'), finalizeAggregation(RequestCount), 0))]) AS CostProxyCount
 
 ENGINE "AggregatingMergeTree"
 ENGINE_SORTING_KEY "ApiKey, BucketStart, Provider, Model, OperationName, BaggageOperation, StatusCode, BaggageUserId"
