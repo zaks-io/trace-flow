@@ -29,11 +29,7 @@ async function requireAdminAction(ctx: ActionCtx) {
 
 type ModelPricingWrite = Omit<Infer<typeof modelPricingDoc>, '_id' | '_creationTime' | 'updatedAt'>;
 
-async function writeModelPricing(
-  ctx: MutationCtx,
-  args: ModelPricingWrite,
-  preserveServiceTiers = false,
-) {
+async function writeModelPricing(ctx: MutationCtx, args: ModelPricingWrite) {
   const existing = await ctx.db
     .query('modelPricing')
     .withIndex('by_provider_model', (q) => q.eq('provider', args.provider).eq('model', args.model))
@@ -45,8 +41,7 @@ async function writeModelPricing(
     model,
     ...parseModelPricing({
       ...rates,
-      serviceTiers:
-        args.serviceTiers ?? (preserveServiceTiers ? existing?.serviceTiers : undefined),
+      serviceTiers: args.serviceTiers ?? existing?.serviceTiers,
       updatedAt: Date.now(),
     }),
   };
@@ -133,7 +128,7 @@ export const upsertInternal = internalMutation({
   args: pricingUpsertArgs,
   returns: v.id('modelPricing'),
   handler: async (ctx, args) => {
-    return writeModelPricing(ctx, args, true);
+    return writeModelPricing(ctx, args);
   },
 });
 
@@ -329,20 +324,16 @@ export const repairGroqGptOss120bDefaultInternal = internalMutation({
     const updated = !preservedOverride && !matchesDefault;
 
     if (updated) {
-      await writeModelPricing(
-        ctx,
-        {
-          provider,
-          model,
-          promptCostPerMillion: pricing.promptCostPerMillion,
-          completionCostPerMillion: pricing.completionCostPerMillion,
-          cacheReadCostPerMillion: pricing.cacheReadCostPerMillion,
-          cacheWriteCostPerMillion: pricing.cacheWriteCostPerMillion,
-          cacheWrite1hCostPerMillion: pricing.cacheWrite1hCostPerMillion,
-          source: 'default',
-        },
-        true,
-      );
+      await writeModelPricing(ctx, {
+        provider,
+        model,
+        promptCostPerMillion: pricing.promptCostPerMillion,
+        completionCostPerMillion: pricing.completionCostPerMillion,
+        cacheReadCostPerMillion: pricing.cacheReadCostPerMillion,
+        cacheWriteCostPerMillion: pricing.cacheWriteCostPerMillion,
+        cacheWrite1hCostPerMillion: pricing.cacheWrite1hCostPerMillion,
+        source: 'default',
+      });
     }
 
     return { updated, preservedOverride };

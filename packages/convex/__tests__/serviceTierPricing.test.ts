@@ -86,7 +86,7 @@ describe('service tier pricing storage', () => {
     expect(publicList[0]?.serviceTiers?.flex).toEqual(flex);
   });
 
-  it('clears omitted tiers on the public admin upsert', async () => {
+  it('preserves omitted tiers during admin edits and clears explicitly empty tiers', async () => {
     vi.useFakeTimers();
     const t = initConvexTest();
     await t.mutation(internal.billing.modelPricing.upsertInternal, {
@@ -111,8 +111,24 @@ describe('service tier pricing storage', () => {
           model: pricing.model,
         })
       )?.serviceTiers,
-    ).toBeUndefined();
+    ).toEqual({ flex });
     await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0]?.[1]?.body as string).serviceTiers).toEqual({
+      flex,
+    });
+
+    await admin.mutation(api.billing.modelPricing.upsert, { ...pricing, serviceTiers: {} });
+    expect(
+      (
+        await admin.query(api.billing.modelPricing.get, {
+          provider: pricing.provider,
+          model: pricing.model,
+        })
+      )?.serviceTiers,
+    ).toEqual({});
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    const calls = vi.mocked(fetch).mock.calls;
+    expect(JSON.parse(calls[calls.length - 1]?.[1]?.body as string).serviceTiers).toEqual({});
   });
 
   it('rejects invalid rates and undocumented tiers before writing', async () => {
