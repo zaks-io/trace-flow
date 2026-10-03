@@ -17,6 +17,7 @@ function hasReservedAttribute(attributes: OTLPKeyValue[] | undefined): boolean {
     ({ key, value }) =>
       reservedKeys.has(key) ||
       key.startsWith('trace_flow.import.') ||
+      key.startsWith('trace_flow.cost.') ||
       (key === TRACE_FLOW.SOURCE && value.stringValue === SOURCE_IMPORTED_EXECUTION),
   );
 }

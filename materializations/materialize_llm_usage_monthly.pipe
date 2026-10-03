@@ -35,7 +35,12 @@ SQL >
         sumState(toUInt64(UsageQuality = 'complete')) AS UsageCompleteCount,
         sumState(toUInt64(UsageQuality = 'inconsistent')) AS UsageInconsistentCount,
         sumState(toUInt64(UsageQuality = 'unclassified')) AS UsageUnclassifiedCount,
-        sumState(toUInt64(UsageMissing)) AS UsageMissingCount
+        sumState(toUInt64(UsageMissing)) AS UsageMissingCount,
+        sumState(toUInt64(CostStatus = 'priced')) AS CostPricedCount,
+        sumState(toUInt64(CostStatus = 'partial')) AS CostPartialCount,
+        sumState(toUInt64(CostStatus = 'unpriced')) AS CostUnpricedCount,
+        sumState(CostPricedTokens) AS CostPricedTokens,
+        sumState(toUInt64(Source = 'proxy')) AS CostProxyCount
     FROM llm_request_facts
     GROUP BY BucketStart, ApiKey, Provider, Model, OperationName, BaggageOperation, BaggageUserId, StatusCode
 

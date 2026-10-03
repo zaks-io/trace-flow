@@ -1,4 +1,5 @@
 import { internalAction } from '../_generated/server';
+import { serializeModelPricing } from '@trace-flow/pricing';
 import { v } from 'convex/values';
 import { internal } from '../_generated/api';
 
@@ -69,7 +70,7 @@ export const syncToKV = internalAction({
 
     if (!pricing) return null;
 
-    const value = JSON.stringify({
+    const value = serializeModelPricing({
       promptCostPerMillion: pricing.promptCostPerMillion,
       completionCostPerMillion: pricing.completionCostPerMillion,
       cacheReadCostPerMillion: pricing.cacheReadCostPerMillion,
@@ -79,6 +80,7 @@ export const syncToKV = internalAction({
       // The consumer's `@trace-flow/pricing` reads `contextTier` to swap in tier rates above the
       // threshold; dropping it here would silently undercount gpt-5.5 / large-context messages.
       contextTier: pricing.contextTier,
+      serviceTiers: pricing.serviceTiers,
       updatedAt: pricing.updatedAt,
       source: pricing.source,
     });

@@ -1,3 +1,4 @@
+import { parseModelPricing } from './catalog';
 import type { LLMTokenUsage } from '@trace-flow/types';
 
 /**
@@ -20,7 +21,7 @@ export interface ContextTierPricing {
   reasoningCostPerMillion?: number;
 }
 
-export interface ModelPricing {
+export interface ModelRates {
   promptCostPerMillion: number;
   completionCostPerMillion: number;
   cacheReadCostPerMillion?: number;
@@ -34,6 +35,15 @@ export interface ModelPricing {
    * one message (any tier rate left unset falls back to the matching base rate).
    */
   contextTier?: ContextTierPricing;
+}
+
+export interface ServiceTierPricing extends ModelRates {
+  /** Provider documentation for this explicit rate set. No inferred multipliers. */
+  referenceUrl: string;
+}
+
+export interface ModelPricing extends ModelRates {
+  serviceTiers?: Partial<Record<'flex' | 'priority' | 'batch', ServiceTierPricing>>;
   updatedAt: number;
   source: 'manual' | 'openrouter' | 'default' | 'models.dev';
 }
@@ -62,16 +72,21 @@ function extractModelPrefix(model: string): string | null {
   return match?.[1] ?? null;
 }
 
-export async function getPricing(
+export interface ResolvedPricing {
+  key: string;
+  pricing: ModelPricing;
+}
+
+async function lookupPricing(
   kv: PricingStore,
   provider: string,
   model: string,
-): Promise<ModelPricing | null> {
+): Promise<ResolvedPricing | null> {
   // Try exact match first
   const exactKey = `pricing:${provider}:${model}`;
   const exactMatch = await kv.get<ModelPricing>(exactKey, 'json');
   if (exactMatch) {
-    return exactMatch;
+    return { key: exactKey, pricing: exactMatch };
   }
 
   // Fall back to prefix match (without date suffix)
@@ -80,11 +95,28 @@ export async function getPricing(
     const prefixKey = `pricing:${provider}:${prefix}`;
     const prefixMatch = await kv.get<ModelPricing>(prefixKey, 'json');
     if (prefixMatch) {
-      return prefixMatch;
+      return { key: prefixKey, pricing: prefixMatch };
     }
   }
 
   return null;
+}
+
+export async function resolvePricing(
+  kv: PricingStore,
+  provider: string,
+  model: string,
+): Promise<ResolvedPricing | null> {
+  const resolved = await lookupPricing(kv, provider, model);
+  return resolved ? { key: resolved.key, pricing: parseModelPricing(resolved.pricing) } : null;
+}
+
+export async function getPricing(
+  kv: PricingStore,
+  provider: string,
+  model: string,
+): Promise<ModelPricing | null> {
+  return (await lookupPricing(kv, provider, model))?.pricing ?? null;
 }
 
 /**

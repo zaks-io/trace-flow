@@ -47,6 +47,13 @@ interface BaseUsageRow {
 
 interface UsageSummaryRow extends BaseUsageRow {
   error_count: number;
+  cost_priced_count: number;
+  cost_partial_count: number;
+  cost_unpriced_count: number;
+  cost_priced_tokens: number;
+  cost_proxy_count: number;
+  cost_unassessed_count: number;
+  cost_coverage_ratio: number | null;
 }
 
 interface OperationUsageRow extends BaseUsageRow {
@@ -150,6 +157,13 @@ export async function getUsageSummary(
           tokens: buildTokens(row),
           ...buildUsageCounts(row),
           cost_usd: buildCosts(row),
+          cost_priced_count: row.cost_priced_count,
+          cost_partial_count: row.cost_partial_count,
+          cost_unpriced_count: row.cost_unpriced_count,
+          cost_priced_tokens: row.cost_priced_tokens,
+          cost_proxy_count: row.cost_proxy_count,
+          cost_unassessed_count: row.cost_unassessed_count,
+          cost_coverage_ratio: row.cost_coverage_ratio,
           duration_ms: buildDurations(row),
         }
       : undefined,

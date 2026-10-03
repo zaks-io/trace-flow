@@ -71,6 +71,8 @@ describe('imported scope selection', () => {
   it('rejects forged server stamps on the generic path', () => {
     const generic = body();
     const span = generic.resourceSpans[0]!.scopeSpans[0]!.spans[0]!;
+    span.attributes = [{ key: TRACE_FLOW.COST_STATUS, value: { stringValue: 'priced' } }];
+    expect(selectImportedScope(generic)).toEqual({ kind: 'invalid', reason: 'reserved_attribute' });
     span.attributes = [{ key: TRACE_FLOW.IMPORT_IDENTITY, value: { stringValue: 'forged' } }];
     expect(selectImportedScope(generic)).toEqual({ kind: 'invalid', reason: 'reserved_attribute' });
     span.attributes = [

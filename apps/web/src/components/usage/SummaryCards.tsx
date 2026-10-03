@@ -4,6 +4,12 @@ import { BarCard, formatCostCompact } from '@/components/shared/BarCard';
 import { formatNumber, formatCurrency, formatDuration, formatPercent } from '@/lib/format';
 import { formatCacheHitRate, getPromptCacheMetrics } from '@/lib/cacheMetrics';
 import { ProjectedCostCard } from './ProjectedCostCard';
+import {
+  canCompareCosts,
+  costCoverageLabels,
+  isCostIncomplete,
+  isCostUnknown,
+} from './costCoverage';
 import type { SummaryRow, RequestStatsRow, CostForecastRow } from './types';
 
 interface SummaryCardsProps {
@@ -19,8 +25,13 @@ function computeDelta(current: number | undefined, previous: number | undefined)
 }
 
 export function SummaryCards({ summary, prevSummary, requestStats, forecast }: SummaryCardsProps) {
+  const costUnknown = summary ? isCostUnknown(summary) : false;
+  const costIncomplete = summary ? isCostIncomplete(summary) : false;
   const requestDelta = computeDelta(summary?.request_count, prevSummary?.request_count);
-  const costDelta = computeDelta(summary?.total_cost_usd, prevSummary?.total_cost_usd);
+  const costDelta =
+    summary && prevSummary && canCompareCosts(summary, prevSummary)
+      ? computeDelta(summary.total_cost_usd, prevSummary.total_cost_usd)
+      : undefined;
 
   const errorCount = summary?.error_count ?? 0;
   const successCount = summary ? Math.max(0, summary.request_count - errorCount) : 0;
@@ -28,7 +39,9 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
     summary && summary.request_count > 0 ? (errorCount / summary.request_count) * 100 : 0;
 
   const costPerRequest =
-    summary && summary.request_count > 0 ? summary.total_cost_usd / summary.request_count : null;
+    summary && !costUnknown && summary.request_count > 0
+      ? summary.total_cost_usd / summary.request_count
+      : null;
 
   const cacheMetrics = summary
     ? getPromptCacheMetrics({
@@ -92,8 +105,8 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
 
       {/* Total Cost */}
       <BarCard
-        label="Total Cost"
-        value={summary ? formatCurrency(summary.total_cost_usd) : '-'}
+        label="Estimated Cost"
+        value={summary && !costUnknown ? formatCurrency(summary.total_cost_usd) : '-'}
         accent="from-chart-4/20 to-chart-4/5"
         segments={
           summary
@@ -150,11 +163,14 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
                       },
                     ]
                   : []),
+                ...costCoverageLabels(summary),
               ]
             : undefined
         }
         delta={
-          costDelta !== undefined ? { percent: costDelta, label: 'vs prior period' } : undefined
+          !costUnknown && costDelta !== undefined
+            ? { percent: costDelta, label: 'vs prior period' }
+            : undefined
         }
         invertDelta
       />
@@ -171,7 +187,7 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
         total={0}
         formatter={formatCostCompact}
         inlineLabels={
-          requestStats
+          requestStats && !costUnknown
             ? [
                 {
                   label: 'Median',
@@ -282,7 +298,7 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
                       },
                     ]
                   : []),
-                ...(cacheMetrics.cacheImpactCostUsd !== null
+                ...(!costIncomplete && cacheMetrics.cacheImpactCostUsd !== null
                   ? [
                       {
                         label: 'Cache Impact',
@@ -294,7 +310,7 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
                       },
                     ]
                   : []),
-                ...(cacheMetrics.promptBaselineCostUsd !== null
+                ...(!costIncomplete && cacheMetrics.promptBaselineCostUsd !== null
                   ? [
                       {
                         label: 'Prompt Baseline',
@@ -305,12 +321,12 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
                   : []),
                 {
                   label: 'Read Cost',
-                  value: formatCurrency(summary.cache_read_cost_usd),
+                  value: costIncomplete ? '-' : formatCurrency(summary.cache_read_cost_usd),
                   color: 'var(--color-chart-4)',
                 },
                 {
                   label: 'Write Cost',
-                  value: formatCurrency(summary.cache_creation_cost_usd),
+                  value: costIncomplete ? '-' : formatCurrency(summary.cache_creation_cost_usd),
                   color: 'var(--color-chart-5)',
                 },
               ]

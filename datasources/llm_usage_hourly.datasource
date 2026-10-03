@@ -34,8 +34,14 @@ SCHEMA >
     `UsageCompleteCount` AggregateFunction(sum, UInt64),
     `UsageInconsistentCount` AggregateFunction(sum, UInt64),
     `UsageUnclassifiedCount` AggregateFunction(sum, UInt64),
-    `UsageMissingCount` AggregateFunction(sum, UInt64)
+    `UsageMissingCount` AggregateFunction(sum, UInt64),
+    `CostPricedCount` AggregateFunction(sum, UInt64),
+    `CostPartialCount` AggregateFunction(sum, UInt64),
+    `CostUnpricedCount` AggregateFunction(sum, UInt64),
+    `CostPricedTokens` AggregateFunction(sum, UInt64),
+    `CostProxyCount` AggregateFunction(sum, UInt64)
 
+# Imported ingestion was introduced on October 2; October 1 conservatively bounds its earliest use.
 FORWARD_QUERY >
     SELECT
         `BucketStart`,
@@ -65,11 +71,16 @@ FORWARD_QUERY >
         `AvgDurationNano`,
         `MaxDurationNano`,
         `P95DurationNano`,
-        arrayReduce('sumState', [toUInt64(0)]) AS UnclassifiedTokens,
-        arrayReduce('sumState', [toUInt64(0)]) AS UsageCompleteCount,
-        arrayReduce('sumState', [toUInt64(0)]) AS UsageInconsistentCount,
-        arrayReduce('sumState', [toUInt64(0)]) AS UsageUnclassifiedCount,
-        arrayReduce('sumState', [toUInt64(0)]) AS UsageMissingCount
+        `UnclassifiedTokens`,
+        `UsageCompleteCount`,
+        `UsageInconsistentCount`,
+        `UsageUnclassifiedCount`,
+        `UsageMissingCount`,
+        arrayReduce('sumState', [toUInt64(0)]) AS CostPricedCount,
+        arrayReduce('sumState', [toUInt64(0)]) AS CostPartialCount,
+        arrayReduce('sumState', [toUInt64(0)]) AS CostUnpricedCount,
+        arrayReduce('sumState', [toUInt64(0)]) AS CostPricedTokens,
+        arrayReduce('sumState', [toUInt64(if(BucketStart + INTERVAL 1 HOUR <= toDateTime('2026-10-01 00:00:00', 'UTC'), finalizeAggregation(RequestCount), 0))]) AS CostProxyCount
 
 ENGINE "AggregatingMergeTree"
 ENGINE_SORTING_KEY "ApiKey, BucketStart, Provider, Model, OperationName, BaggageOperation, StatusCode, BaggageUserId"

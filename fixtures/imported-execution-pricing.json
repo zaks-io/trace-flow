@@ -1,0 +1,66 @@
+{
+  "provider": "openai",
+  "model": "gpt-6.1-sol",
+  "verifiedAt": "2026-10-02",
+  "referenceUrl": "https://developers.openai.com/api/docs/pricing",
+  "contextReferenceUrl": "https://models.dev/api.json",
+  "pricing": {
+    "promptCostPerMillion": 2000000,
+    "completionCostPerMillion": 10000000,
+    "cacheReadCostPerMillion": 100000,
+    "cacheWriteCostPerMillion": 2500000,
+    "contextTier": {
+      "thresholdTokens": 272000,
+      "promptCostPerMillion": 4000000,
+      "completionCostPerMillion": 15000000,
+      "cacheReadCostPerMillion": 200000,
+      "cacheWriteCostPerMillion": 5000000
+    },
+    "source": "manual",
+    "updatedAt": 1790985600000,
+    "serviceTiers": {
+      "flex": {
+        "promptCostPerMillion": 1000000,
+        "completionCostPerMillion": 5000000,
+        "cacheReadCostPerMillion": 50000,
+        "cacheWriteCostPerMillion": 1250000,
+        "referenceUrl": "https://developers.openai.com/api/docs/pricing",
+        "contextTier": {
+          "thresholdTokens": 272000,
+          "promptCostPerMillion": 2000000,
+          "completionCostPerMillion": 7500000,
+          "cacheReadCostPerMillion": 100000,
+          "cacheWriteCostPerMillion": 2500000
+        }
+      },
+      "priority": {
+        "promptCostPerMillion": 4000000,
+        "completionCostPerMillion": 20000000,
+        "cacheReadCostPerMillion": 200000,
+        "cacheWriteCostPerMillion": 5000000,
+        "referenceUrl": "https://developers.openai.com/api/docs/pricing",
+        "contextTier": {
+          "thresholdTokens": 272000,
+          "promptCostPerMillion": 8000000,
+          "completionCostPerMillion": 30000000,
+          "cacheReadCostPerMillion": 400000,
+          "cacheWriteCostPerMillion": 10000000
+        }
+      },
+      "batch": {
+        "promptCostPerMillion": 1000000,
+        "completionCostPerMillion": 5000000,
+        "cacheReadCostPerMillion": 50000,
+        "cacheWriteCostPerMillion": 1250000,
+        "referenceUrl": "https://developers.openai.com/api/docs/pricing",
+        "contextTier": {
+          "thresholdTokens": 272000,
+          "promptCostPerMillion": 2000000,
+          "completionCostPerMillion": 7500000,
+          "cacheReadCostPerMillion": 100000,
+          "cacheWriteCostPerMillion": 2500000
+        }
+      }
+    }
+  }
+}

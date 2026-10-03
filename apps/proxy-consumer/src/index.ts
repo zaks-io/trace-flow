@@ -25,6 +25,7 @@ import {
   type TraceBatcherStats,
 } from './batcher';
 import { buildSpans } from './spans';
+import { priceImportedTraces } from './importedExecutionCost';
 import { calculateShardId } from './sharding';
 import {
   IMPORTED_EXECUTION,
@@ -255,7 +256,8 @@ async function buildDeliveryTraces(
 ): Promise<TinybirdTrace[]> {
   const apiKey = await normalizeAnalyticsKey(payload.apiKey);
   if (payload.type === 'otlp') {
-    return payload.traces.map((trace) => ({ ...trace, ApiKey: apiKey }));
+    const traces = payload.traces.map((trace) => ({ ...trace, ApiKey: apiKey }));
+    return payload.importedExecution ? priceImportedTraces(traces, env.MODEL_PRICING) : traces;
   }
   return buildSpans({ ...payload, apiKey }, await getPricingForMessage(payload, env.MODEL_PRICING));
 }

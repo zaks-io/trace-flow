@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
+import { modelPricingFields } from './billing/pricingSchema';
 import {
   sandboxBackupHandle,
   sandboxRunEventFields,
@@ -88,36 +89,7 @@ export default defineSchema({
     .index('by_user_id', ['userId'])
     .index('by_org_id', ['orgId']),
 
-  modelPricing: defineTable({
-    provider: v.string(),
-    model: v.string(),
-    promptCostPerMillion: v.number(),
-    completionCostPerMillion: v.number(),
-    cacheReadCostPerMillion: v.optional(v.number()),
-    cacheWriteCostPerMillion: v.optional(v.number()),
-    cacheWrite1hCostPerMillion: v.optional(v.number()),
-    reasoningCostPerMillion: v.optional(v.number()),
-    // Context-tier override (e.g. gpt-5.5 prices ~2x above its 272k-token tier). Defined inline
-    // rather than imported to keep schema.ts free of any billing-module import cycle.
-    contextTier: v.optional(
-      v.object({
-        thresholdTokens: v.number(),
-        promptCostPerMillion: v.number(),
-        completionCostPerMillion: v.number(),
-        cacheReadCostPerMillion: v.optional(v.number()),
-        cacheWriteCostPerMillion: v.optional(v.number()),
-        cacheWrite1hCostPerMillion: v.optional(v.number()),
-        reasoningCostPerMillion: v.optional(v.number()),
-      }),
-    ),
-    source: v.union(
-      v.literal('manual'),
-      v.literal('openrouter'),
-      v.literal('default'),
-      v.literal('models.dev'),
-    ),
-    updatedAt: v.number(),
-  })
+  modelPricing: defineTable(modelPricingFields)
     .index('by_provider', ['provider'])
     .index('by_provider_model', ['provider', 'model']),
 

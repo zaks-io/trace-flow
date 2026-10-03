@@ -860,6 +860,62 @@ export type DataModel = {
       promptCostPerMillion: number;
       provider: string;
       reasoningCostPerMillion?: number;
+      serviceTiers?: {
+        batch?: {
+          cacheReadCostPerMillion?: number;
+          cacheWrite1hCostPerMillion?: number;
+          cacheWriteCostPerMillion?: number;
+          completionCostPerMillion: number;
+          contextTier?: {
+            cacheReadCostPerMillion?: number;
+            cacheWrite1hCostPerMillion?: number;
+            cacheWriteCostPerMillion?: number;
+            completionCostPerMillion: number;
+            promptCostPerMillion: number;
+            reasoningCostPerMillion?: number;
+            thresholdTokens: number;
+          };
+          promptCostPerMillion: number;
+          reasoningCostPerMillion?: number;
+          referenceUrl: string;
+        };
+        flex?: {
+          cacheReadCostPerMillion?: number;
+          cacheWrite1hCostPerMillion?: number;
+          cacheWriteCostPerMillion?: number;
+          completionCostPerMillion: number;
+          contextTier?: {
+            cacheReadCostPerMillion?: number;
+            cacheWrite1hCostPerMillion?: number;
+            cacheWriteCostPerMillion?: number;
+            completionCostPerMillion: number;
+            promptCostPerMillion: number;
+            reasoningCostPerMillion?: number;
+            thresholdTokens: number;
+          };
+          promptCostPerMillion: number;
+          reasoningCostPerMillion?: number;
+          referenceUrl: string;
+        };
+        priority?: {
+          cacheReadCostPerMillion?: number;
+          cacheWrite1hCostPerMillion?: number;
+          cacheWriteCostPerMillion?: number;
+          completionCostPerMillion: number;
+          contextTier?: {
+            cacheReadCostPerMillion?: number;
+            cacheWrite1hCostPerMillion?: number;
+            cacheWriteCostPerMillion?: number;
+            completionCostPerMillion: number;
+            promptCostPerMillion: number;
+            reasoningCostPerMillion?: number;
+            thresholdTokens: number;
+          };
+          promptCostPerMillion: number;
+          reasoningCostPerMillion?: number;
+          referenceUrl: string;
+        };
+      };
       source: "manual" | "openrouter" | "default" | "models.dev";
       updatedAt: number;
       _id: Id<"modelPricing">;
@@ -884,6 +940,55 @@ export type DataModel = {
       | "promptCostPerMillion"
       | "provider"
       | "reasoningCostPerMillion"
+      | "serviceTiers"
+      | "serviceTiers.batch"
+      | "serviceTiers.batch.cacheReadCostPerMillion"
+      | "serviceTiers.batch.cacheWrite1hCostPerMillion"
+      | "serviceTiers.batch.cacheWriteCostPerMillion"
+      | "serviceTiers.batch.completionCostPerMillion"
+      | "serviceTiers.batch.contextTier"
+      | "serviceTiers.batch.contextTier.cacheReadCostPerMillion"
+      | "serviceTiers.batch.contextTier.cacheWrite1hCostPerMillion"
+      | "serviceTiers.batch.contextTier.cacheWriteCostPerMillion"
+      | "serviceTiers.batch.contextTier.completionCostPerMillion"
+      | "serviceTiers.batch.contextTier.promptCostPerMillion"
+      | "serviceTiers.batch.contextTier.reasoningCostPerMillion"
+      | "serviceTiers.batch.contextTier.thresholdTokens"
+      | "serviceTiers.batch.promptCostPerMillion"
+      | "serviceTiers.batch.reasoningCostPerMillion"
+      | "serviceTiers.batch.referenceUrl"
+      | "serviceTiers.flex"
+      | "serviceTiers.flex.cacheReadCostPerMillion"
+      | "serviceTiers.flex.cacheWrite1hCostPerMillion"
+      | "serviceTiers.flex.cacheWriteCostPerMillion"
+      | "serviceTiers.flex.completionCostPerMillion"
+      | "serviceTiers.flex.contextTier"
+      | "serviceTiers.flex.contextTier.cacheReadCostPerMillion"
+      | "serviceTiers.flex.contextTier.cacheWrite1hCostPerMillion"
+      | "serviceTiers.flex.contextTier.cacheWriteCostPerMillion"
+      | "serviceTiers.flex.contextTier.completionCostPerMillion"
+      | "serviceTiers.flex.contextTier.promptCostPerMillion"
+      | "serviceTiers.flex.contextTier.reasoningCostPerMillion"
+      | "serviceTiers.flex.contextTier.thresholdTokens"
+      | "serviceTiers.flex.promptCostPerMillion"
+      | "serviceTiers.flex.reasoningCostPerMillion"
+      | "serviceTiers.flex.referenceUrl"
+      | "serviceTiers.priority"
+      | "serviceTiers.priority.cacheReadCostPerMillion"
+      | "serviceTiers.priority.cacheWrite1hCostPerMillion"
+      | "serviceTiers.priority.cacheWriteCostPerMillion"
+      | "serviceTiers.priority.completionCostPerMillion"
+      | "serviceTiers.priority.contextTier"
+      | "serviceTiers.priority.contextTier.cacheReadCostPerMillion"
+      | "serviceTiers.priority.contextTier.cacheWrite1hCostPerMillion"
+      | "serviceTiers.priority.contextTier.cacheWriteCostPerMillion"
+      | "serviceTiers.priority.contextTier.completionCostPerMillion"
+      | "serviceTiers.priority.contextTier.promptCostPerMillion"
+      | "serviceTiers.priority.contextTier.reasoningCostPerMillion"
+      | "serviceTiers.priority.contextTier.thresholdTokens"
+      | "serviceTiers.priority.promptCostPerMillion"
+      | "serviceTiers.priority.reasoningCostPerMillion"
+      | "serviceTiers.priority.referenceUrl"
       | "source"
       | "updatedAt";
     indexes: {
