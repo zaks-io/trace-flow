@@ -397,5 +397,6 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
 
   const response: OTLPExportTraceServiceResponse = { partialSuccess: {} };
   c.header('X-Trace-Flow-Recording', 'true');
+  if (imported?.valid) c.header('X-Trace-Flow-Contract', IMPORTED_EXECUTION.CONTRACT);
   return c.json(response, 200);
 }

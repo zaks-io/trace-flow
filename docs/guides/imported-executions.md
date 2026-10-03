@@ -30,6 +30,21 @@ The v2 path rejects fields outside this contract, duplicate attributes or execut
 
 For a development readback, send the fixture to the dev `/v1/traces` endpoint with a dev API key. Query Requests and Usage under that key. Expect five Requests, a failed request with seven reported tokens, one missing-usage request, and total tokens equal to input plus output plus unclassified for each reported block. Resend the same fixture as a new POST and after restarting the dev consumer; the counts must stay at five. Change one source token count while keeping an execution UUID and confirm that the Trace Shard exposes a repair while the original remains. Send two executions with one inbound request ID and confirm two Requests. Send the same installation and execution UUID through a second Organization's API key and confirm separate records. Collector Agent Message facts remain in their own datasets and do not join these proxy execution totals.
 
+## Durable acceptance acknowledgement
+
+The exporter may delete its local outbox records only when **all** of these response conditions hold:
+
+- HTTP status is exactly `200`.
+- `X-Trace-Flow-Contract` is exactly `cliproxyapi.execution/2`.
+- `X-Trace-Flow-Recording` is exactly `true`.
+- The JSON `ExportTraceServiceResponse` decodes successfully, `partialSuccess.rejectedSpans` is zero or absent, and `partialSuccess.errorMessage` is empty or absent.
+
+Both JSON and protobuf uploads receive the existing JSON response, `{ "partialSuccess": {} }`, on durable imported success. The contract marker is emitted only after the entire v2 export validates and its delivery envelope is persisted in R2. Queue publication can complete asynchronously after this gate; an exact replay receives the same marked acknowledgement while retaining the first accepted execution, token contribution, and estimate.
+
+HTTP 200 alone never authorizes deletion. An absent or different contract marker fails closed: retain the local outbox records and report an incompatible receiver. There is no bypass setting. A caller-supplied marker is never copied into the response. Generic OTLP, malformed or invalid imports, unsupported or mixed scopes, authentication failures, recording denial, rate limits, and persistence failures omit the marker.
+
+Recording-policy denial preserves `X-Trace-Flow-Recording: false` with full span rejection. Import validation failures reject the whole request before persistence with sanitized rule codes. Persistence failure returns retryable HTTP 503 with `Retry-After`; retain the outbox records. General OTLP partial success is not automatically retried and does not satisfy imported acceptance.
+
 ## Upstream account identity
 
 The exporter derives `cliproxyapi.account.ref` locally. Trace Flow validates only its coverage and shape; it never receives the identity inputs, discovers accounts, or recomputes a reference.

@@ -1,126 +1,20 @@
 import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ProxyEnv } from '../../context';
 import { analyticsKeyId } from '@trace-flow/utils';
 import { app } from '../../index';
 import { _clearUsageCache } from '../../usage';
 import type { OTLPExportTraceServiceRequest } from '../types';
-import { Writer, WIRE_LEN } from '../wire';
 import { GEN_AI_USAGE, SOURCE_IMPORTED_EXECUTION, TRACE_FLOW } from '@trace-flow/otel-conventions';
 import importedFixture from '../../../../../fixtures/cliproxyapi-execution-v2.json';
 
-const API_KEY = 'otlp-durable-test-key';
-
-function makeEnv(options?: { storageError?: Error; usageError?: Error }) {
-  let storedValue = '';
-  const queueSend = vi.fn().mockResolvedValue(undefined);
-  const storagePut = options?.storageError
-    ? vi.fn().mockRejectedValue(options.storageError)
-    : vi.fn(async (_key: string, value: string) => {
-        storedValue = value;
-        return { key: 'stored' };
-      });
-  const usageGet = vi.fn(() => ({
-    fetch: options?.usageError
-      ? vi.fn().mockRejectedValue(options.usageError)
-      : vi.fn().mockResolvedValue(Response.json({ allowed: true })),
-  }));
-  const env = {
-    REQUEST_QUEUE: { send: queueSend },
-    STORAGE: { put: storagePut },
-    API_KEYS: {
-      get: vi.fn(async (key: string) => {
-        if (key === API_KEY) {
-          return JSON.stringify({
-            expiresAt: Date.now() + 60_000,
-            createdAt: 1,
-            orgId: 'org-otlp',
-            analyticsKeyId: await analyticsKeyId(API_KEY),
-          });
-        }
-        if (key === 'sub:org-otlp') {
-          return JSON.stringify({ tier: 'pro', status: 'active', monthlyUnits: 1_000_000 });
-        }
-        return null;
-      }),
-    },
-    USAGE_TRACKER: {
-      idFromName: vi.fn(() => 'id'),
-      get: usageGet,
-    },
-    ORG_LIMITER: { limit: vi.fn().mockResolvedValue({ success: true }) },
-    IP_LIMITER: { limit: vi.fn().mockResolvedValue({ success: true }) },
-    ANALYTICS: { writeDataPoint: vi.fn() },
-    CONVEX_SITE_URL: 'https://example.convex.site',
-    USAGE_SYNC_SECRET: 'test',
-    TRACE_DELIVERY_NAMESPACE: 'dev',
-    BODY_ENCRYPTION_ROOT_KEY: 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=',
-  } as unknown as ProxyEnv;
-  return { env, queueSend, storagePut, usageGet, getStoredValue: () => storedValue };
-}
-
-function otlpBody(attributeValue = 'value'): OTLPExportTraceServiceRequest {
-  return {
-    resourceSpans: [
-      {
-        scopeSpans: [
-          {
-            spans: [
-              {
-                traceId: '0123456789abcdef0123456789abcdef',
-                spanId: '0123456789abcdef',
-                name: 'durable-test',
-                startTimeUnixNano: '1000000000',
-                endTimeUnixNano: '2000000000',
-                attributes: [{ key: 'large.value', value: { stringValue: attributeValue } }],
-              },
-            ],
-          },
-        ],
-      },
-    ],
-  };
-}
-
-async function postOTLP(env: ProxyEnv, body: unknown) {
-  return postRawOTLP(env, JSON.stringify(body), 'application/json');
-}
-
-async function postRawOTLP(
-  env: ProxyEnv,
-  body: BodyInit,
-  contentType: string,
-  contentEncoding?: string,
-) {
-  const ctx = createExecutionContext();
-  const response = await app.request(
-    '/v1/traces',
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': contentType,
-        'X-Trace-Flow-Api-Key': API_KEY,
-        ...(contentEncoding ? { 'Content-Encoding': contentEncoding } : {}),
-      },
-      body,
-    },
-    env,
-    ctx,
-  );
-  return { response, ctx };
-}
-
-function compactSpanFlood(): Uint8Array {
-  const top = new Writer();
-  top.tag(1, WIRE_LEN).message((resource) => {
-    resource.tag(2, WIRE_LEN).message((scope) => {
-      for (let index = 0; index < 5_001; index += 1) {
-        scope.tag(2, WIRE_LEN).message(() => undefined);
-      }
-    });
-  });
-  return top.toUint8Array();
-}
+import {
+  API_KEY,
+  makeEnv,
+  otlpBody,
+  postOTLP,
+  postRawOTLP,
+  compactSpanFlood,
+} from './durableFixtures';
 
 describe('OTLP durable acceptance', () => {
   beforeEach(() => {
@@ -147,6 +41,7 @@ describe('OTLP durable acceptance', () => {
     const { response, ctx } = await postOTLP(env, otlpBody());
 
     expect(response.status).toBe(503);
+    expect(response.headers.get('X-Trace-Flow-Contract')).toBeNull();
     expect(response.headers.get('Retry-After')).toBe('1');
     expect(queueSend).not.toHaveBeenCalled();
     await waitOnExecutionContext(ctx);
@@ -159,6 +54,7 @@ describe('OTLP durable acceptance', () => {
     const { response, ctx } = await postOTLP(env, otlpBody());
 
     expect(response.status).toBe(503);
+    expect(response.headers.get('X-Trace-Flow-Contract')).toBeNull();
     expect(response.headers.get('Retry-After')).toBe('1');
     expect(storagePut).not.toHaveBeenCalled();
     expect(queueSend).not.toHaveBeenCalled();
@@ -226,6 +122,7 @@ describe('OTLP durable acceptance', () => {
     const { response, ctx } = await postRawOTLP(env, `{"secret":"${canary}"`, 'application/json');
 
     expect(response.status).toBe(400);
+    expect(response.headers.get('X-Trace-Flow-Contract')).toBeNull();
     await waitOnExecutionContext(ctx);
     expect(warn.mock.calls.flat().join('\n')).not.toContain(canary);
   });
@@ -281,6 +178,7 @@ describe('OTLP durable acceptance', () => {
       ctx,
     );
     expect(response.status).toBe(401);
+    expect(response.headers.get('X-Trace-Flow-Contract')).toBeNull();
     expect(storagePut).not.toHaveBeenCalled();
     expect(queueSend).not.toHaveBeenCalled();
     await waitOnExecutionContext(ctx);
@@ -325,6 +223,7 @@ describe('OTLP durable acceptance', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { response, ctx } = await postOTLP(env, request);
     expect(response.status).toBe(400);
+    expect(response.headers.get('X-Trace-Flow-Contract')).toBeNull();
     expect(storagePut).not.toHaveBeenCalled();
     expect(queueSend).not.toHaveBeenCalled();
     await waitOnExecutionContext(ctx);
@@ -340,6 +239,7 @@ describe('OTLP durable acceptance', () => {
     );
     const { response, ctx } = await postOTLP(env, request);
     expect(response.status).toBe(200);
+    expect(response.headers.get('X-Trace-Flow-Contract')).toBeNull();
     const envelope = JSON.parse(getStoredValue());
     expect(envelope.message.importedExecution).toBeUndefined();
     expect(envelope.message.traces[0].SpanAttributes[GEN_AI_USAGE.INPUT_TOKENS]).toBe('7');
