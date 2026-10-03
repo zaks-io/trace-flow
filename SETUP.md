@@ -198,6 +198,18 @@ Configure the Preview Auth0 application's allowed callback URLs with
 allowed logout URLs and web origins. The workflow sets the branch's Convex `AGENT_INGEST_URL`,
 `ANALYST_SANDBOX_URL`, and `APP_URL` to the matching Preview hosts.
 
+Dev Tinybird must deploy the `trace_flow_proxy_spans_append` token declared in
+`datasources/otel_trace_spans.datasource` before Preview runs. The workflow verifies its exact
+`otel_trace_spans` append scope and gives it only to the Preview Proxy Consumer. Tinybird requires
+resource-scoped tokens to be managed through datafile deployments; the workflow does not create
+resource tokens through its API or migrate the shared dev schema.
+
+Collector device login also needs the current branch Convex site's `/mcp/callback` in the selected
+Auth0 application's callback allowlist. Convex recreates that site on a new Preview deployment, so
+verify the current site before requesting an additive allowlist change. Preview Convex needs an
+active Collector compatibility policy. Analyst execution additionally requires an active Pro
+subscription and the Preview `OPENROUTER_API_KEY`.
+
 Preview MCP uses production Connect. Its new resource URL, `https://mcp.preview.trace-flow.dev/mcp`,
 requires the updated Connect resource allowlist to reach production through a separately approved
 merge. Until then, use the existing MCP Preview `workers.dev` URL for OAuth.
