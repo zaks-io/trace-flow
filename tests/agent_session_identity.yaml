@@ -1,0 +1,94 @@
+# Native Agent identity reads canonical live version rows within one fixed organization.
+
+- name: by_session_pk
+  description: by session pk
+  expected_http_status: 200
+  parameters: org_id=org_native&start_time_ms=1790899200000&end_time_ms=1790985600000&retention_days=3650&session_pk=child-pk-6
+  expected_result: |
+    {"source":"codex","vendor_session_id":"child-thread-6","session_pk":"child-pk-6","parent_identity_status":"known","parent_vendor_session_id":"root-thread-6","parent_session_pk":"root-pk","agent_ids":[],"max_agent_depth":1,"first_event_ms":1790942400000,"last_event_ms":1790942400000}
+
+- name: by_native_session
+  description: by native session
+  expected_http_status: 200
+  parameters: org_id=org_native&start_time_ms=1790899200000&end_time_ms=1790985600000&retention_days=3650&native_source=codex&native_session_id=child-thread-6
+  expected_result: |
+    {"source":"codex","vendor_session_id":"child-thread-6","session_pk":"child-pk-6","parent_identity_status":"known","parent_vendor_session_id":"root-thread-6","parent_session_pk":"root-pk","agent_ids":[],"max_agent_depth":1,"first_event_ms":1790942400000,"last_event_ms":1790942400000}
+
+- name: by_parent_session
+  description: by parent session
+  expected_http_status: 200
+  parameters: org_id=org_native&start_time_ms=1790899200000&end_time_ms=1790985600000&retention_days=3650&native_source=codex&parent_session_pk=root-pk
+  expected_result: |
+    {"source":"codex","vendor_session_id":"child-thread-7","session_pk":"child-pk-7","parent_identity_status":"known","parent_vendor_session_id":"root-thread-6","parent_session_pk":"root-pk","agent_ids":[],"max_agent_depth":2,"first_event_ms":1790942401000,"last_event_ms":1790942401000}
+    {"source":"codex","vendor_session_id":"child-thread-6","session_pk":"child-pk-6","parent_identity_status":"known","parent_vendor_session_id":"root-thread-6","parent_session_pk":"root-pk","agent_ids":[],"max_agent_depth":1,"first_event_ms":1790942400000,"last_event_ms":1790942400000}
+
+- name: conflicting_parent
+  description: conflicting parent
+  expected_http_status: 200
+  parameters: org_id=org_native&start_time_ms=1790899200000&end_time_ms=1790985600000&retention_days=3650&session_pk=conflict-pk
+  expected_result: |
+    {"source":"codex","vendor_session_id":"conflict-thread","session_pk":"conflict-pk","parent_identity_status":"conflicting","parent_vendor_session_id":"","parent_session_pk":"","agent_ids":[],"max_agent_depth":1,"first_event_ms":1790942400000,"last_event_ms":1790942401000}
+
+- name: deleted_excluded
+  description: deleted excluded
+  expected_http_status: 200
+  parameters: org_id=org_native&start_time_ms=1790899200000&end_time_ms=1790985600000&retention_days=3650&session_pk=deleted-pk
+  expected_result: ''
+
+- name: source_mismatch
+  description: source mismatch
+  expected_http_status: 200
+  parameters: org_id=org_native&start_time_ms=1790899200000&end_time_ms=1790985600000&retention_days=3650&native_source=claude&native_session_id=child-thread-6
+  expected_result: ''
+
+- name: other_org_same_native
+  description: other org same native
+  expected_http_status: 200
+  parameters: org_id=org_other&start_time_ms=1790899200000&end_time_ms=1790985600000&retention_days=3650&native_source=codex&native_session_id=child-thread-6
+  expected_result: |
+    {"source":"codex","vendor_session_id":"child-thread-6","session_pk":"child-pk-6","parent_identity_status":"known","parent_vendor_session_id":"other-root","parent_session_pk":"other-pk","agent_ids":[],"max_agent_depth":1,"first_event_ms":1790942400000,"last_event_ms":1790942400000}
+
+- name: root_identity_is_unknown
+  description: a root with no explicit parent stays unknown
+  expected_http_status: 200
+  parameters: org_id=org_native&start_time_ms=1790899200000&end_time_ms=1790985600000&retention_days=3650&session_pk=root-pk
+  expected_result: |
+    {"source":"codex","vendor_session_id":"root-thread-6","session_pk":"root-pk","parent_identity_status":"unknown","parent_vendor_session_id":"","parent_session_pk":"","agent_ids":[],"max_agent_depth":0,"first_event_ms":1790942400000,"last_event_ms":1790942400000}
+
+- name: claude_agent_ids_share_session
+  description: Claude subagent identity shares a session key with the root
+  expected_http_status: 200
+  parameters: org_id=org_native&start_time_ms=1790899200000&end_time_ms=1790985600000&retention_days=3650&native_source=claude&native_session_id=claude-session-1
+  expected_result: |
+    {"source":"claude","vendor_session_id":"claude-session-1","session_pk":"claude-pk","parent_identity_status":"unknown","parent_vendor_session_id":"","parent_session_pk":"","agent_ids":["agent-1"],"max_agent_depth":1,"first_event_ms":1790942400000,"last_event_ms":1790942400000}
+
+- name: conflicting_parent_is_visible_in_child_lookup
+  description: a child lookup does not hide conflicting parent evidence
+  expected_http_status: 200
+  parameters: org_id=org_native&start_time_ms=1790899200000&end_time_ms=1790985600000&retention_days=3650&native_source=codex&parent_session_pk=root-a-pk
+  expected_result: |
+    {"source":"codex","vendor_session_id":"conflict-thread","session_pk":"conflict-pk","parent_identity_status":"conflicting","parent_vendor_session_id":"","parent_session_pk":"","agent_ids":[],"max_agent_depth":1,"first_event_ms":1790942400000,"last_event_ms":1790942401000}
+
+- name: missing_mode
+  description: incomplete or mixed lookup is rejected
+  expected_http_status: 400
+  parameters: org_id=org_native&start_time_ms=1790899200000&end_time_ms=1790985600000&retention_days=3650
+  expected_result: 'Provide exactly one session lookup mode'
+
+- name: missing_window
+  description: incomplete or mixed lookup is rejected
+  expected_http_status: 400
+  parameters: org_id=org_native&session_pk=child-pk-6&retention_days=3650
+  expected_result: 'A bounded time window is required'
+
+- name: mixed_modes
+  description: incomplete or mixed lookup is rejected
+  expected_http_status: 400
+  parameters: org_id=org_native&start_time_ms=1790899200000&end_time_ms=1790985600000&retention_days=3650&session_pk=child-pk-6&native_source=codex&native_session_id=child-thread-6
+  expected_result: 'Provide exactly one session lookup mode'
+
+- name: missing_source
+  description: incomplete or mixed lookup is rejected
+  expected_http_status: 400
+  parameters: org_id=org_native&start_time_ms=1790899200000&end_time_ms=1790985600000&retention_days=3650&native_session_id=child-thread-6
+  expected_result: 'Provide exactly one session lookup mode'

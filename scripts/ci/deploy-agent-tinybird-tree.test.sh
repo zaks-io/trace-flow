@@ -79,10 +79,10 @@ if [[ "$TEST_PHASE" == "expand" ]]; then
     assert_repo_file "$filter_options"
   fi
   assert_ref_file "$CURRENT_REF" pipes/agent_usage_summary.pipe
-  assert_ref_file_with_token \
-    "$CURRENT_REF" \
-    datasources/agent_message_facts.datasource \
-    "TOKEN trace_flow_agent_facts_append APPEND"
+  assert_repo_file datasources/agent_message_facts.datasource
+  assert_repo_file datasources/agent_message_fact_versions.datasource
+  assert_repo_file copies/repair_agent_messages_versions_baseline.pipe
+  assert_repo_file pipes/agent_session_identity.pipe
   if git -C "$TEST_ROOT" cat-file -e "$CURRENT_REF:pipes/agent_delivery_receipt.pipe" 2>/dev/null; then
     assert_ref_file_with_token \
       "$CURRENT_REF" \
@@ -99,6 +99,7 @@ if [[ "$TEST_PHASE" == "expand" ]]; then
 else
   assert_repo_file pipes/agent_usage_summary.pipe
   assert_repo_file datasources/agent_message_facts.datasource
+  assert_repo_file datasources/agent_message_fact_versions.datasource
 fi
 
 assert_repo_file pipes/agent_delivery_receipt.pipe
@@ -151,10 +152,41 @@ if [[ "$incomplete_exit_code" -eq 0 || "$incomplete_output" != *"does not contai
   exit 1
 fi
 
+run_expand_ref() {
+  local ref="$1"
+  local marker="$2"
+  local path
+  for path in datasources/agent_message_facts.datasource datasources/agent_message_fact_versions.datasource; do
+    if git cat-file -e "$ref:$path" 2>/dev/null &&
+      git show "$ref:$path" | grep -q 'parent_vendor_session_id' &&
+      ! cmp -s <(git show "$ref:$path") "$ROOT_DIR/$path"; then
+      local output
+      if output="$(
+        TB_TOKEN=test-only \
+          TB_SKIP_BUILD=1 \
+          TB_TARGET_WORKSPACE=trace_flow_prod \
+          TINYBIRD_DEPLOY_PHASE=expand \
+          TINYBIRD_CURRENT_REF="$ref" \
+          TINYBIRD_LEGACY_REF="$LEGACY_REF" \
+          bash "$ROOT_DIR/scripts/deploy-agent-tinybird.sh" --check 2>&1
+      )"; then
+        echo "Changed parent-bearing current datasource was accepted for $ref" >&2
+        exit 1
+      fi
+      [[ "$output" == *"current schema already has parent columns but differs from repo"* ]] || {
+        echo "Unexpected parent-bearing datasource rejection for $ref" >&2
+        exit 1
+      }
+      return
+    fi
+  done
+  run_phase expand "$ref" "$marker"
+}
+
 run_phase expand
 run_phase expand "$FAILED_CURRENT_REF" expand-failed-current-ref
-run_phase expand HEAD^ expand-head-parent
+run_expand_ref HEAD^ expand-head-parent
 run_phase switch
-run_phase expand HEAD expand-with-declared-tokens
+run_expand_ref HEAD expand-with-declared-tokens
 
-echo "Tinybird deploy tree preservation passed (844, c5, HEAD^, repeat HEAD, and switch)"
+echo "Tinybird deploy tree preservation passed (844, c5, guarded HEAD^, HEAD, and switch)"

@@ -186,6 +186,11 @@ has_legacy_copy_resource_name() {
   [[ "$name" == *_copy.* ]]
 }
 
+is_parent_overlay_path() {
+  [[ "$1" == "datasources/agent_message_facts.datasource" ||
+    "$1" == "datasources/agent_message_fact_versions.datasource" ]]
+}
+
 is_preservable_path() {
   local ref="$1"
   local path="$2"
@@ -244,6 +249,7 @@ verify_preserved_inventory() {
   local ref="$1"
   local overriding_ref="${2:-}"
   local repo_wins="${3:-0}"
+  local parent_overlay="${4:-0}"
   local expected_ref
   local expected_path
   local path
@@ -255,7 +261,9 @@ verify_preserved_inventory() {
     fi
     expected_ref="$ref"
     expected_path=""
-    if [[ -n "$overriding_ref" ]] && git cat-file -e "$overriding_ref:$path" 2>/dev/null &&
+    if [[ "$parent_overlay" == "1" ]] && is_parent_overlay_path "$path"; then
+      expected_path="$ROOT_DIR/$path"
+    elif [[ -n "$overriding_ref" ]] && git cat-file -e "$overriding_ref:$path" 2>/dev/null &&
       is_preservable_path "$overriding_ref" "$path"; then
       expected_ref="$overriding_ref"
     elif [[ "$repo_wins" == "1" && -f "$ROOT_DIR/$path" ]]; then
@@ -309,15 +317,23 @@ prepare_phase_project() {
   restore_preserved_ref "$phase" "$legacy_ref"
   if [[ -n "$current_ref" ]]; then
     restore_preserved_ref "$phase" "$current_ref"
+    if [[ "$phase" == "expand" ]]; then
+      node "$ROOT_DIR/scripts/ci/overlay-agent-message-parent-columns.mjs" \
+        "$ROOT_DIR" "$TMP_DIR" "$current_ref"
+    fi
   fi
 
   if [[ "$phase" == "expand" ]]; then
-    verify_preserved_inventory "$legacy_ref" "$current_ref"
+    verify_preserved_inventory "$legacy_ref" "$current_ref" 0 1
   else
     verify_preserved_inventory "$legacy_ref" "" 1
   fi
   if [[ -n "$current_ref" ]]; then
-    verify_preserved_inventory "$current_ref"
+    if [[ "$phase" == "expand" ]]; then
+      verify_preserved_inventory "$current_ref" "" 0 1
+    else
+      verify_preserved_inventory "$current_ref"
+    fi
   fi
 
   # Filter dimensions outlive their TTL-limited sources, so preserve the live aggregate states.

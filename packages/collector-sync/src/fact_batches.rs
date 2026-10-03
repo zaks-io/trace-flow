@@ -122,6 +122,7 @@ mod tests {
         AgentIngestFacts {
             messages: (0..count)
                 .map(|index| AgentMessageFact {
+                    parent_vendor_session_id: String::new(),
                     vendor_message_id: Some(format!("message-{index}")),
                     turn_index: index as i64,
                     ..message.clone()

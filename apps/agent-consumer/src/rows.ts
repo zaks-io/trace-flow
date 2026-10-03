@@ -67,9 +67,18 @@ function commonFields(ctx: BatchContext, fact: CommonFact) {
 }
 
 export function messageRow(ctx: BatchContext, fact: AgentMessageQueueFact, costUsd: number | null) {
+  if (fact.parent_vendor_session_id && !fact.parent_session_pk) {
+    throw new Error('Explicit parent identity is missing its derived session key');
+  }
   return {
     ...commonFields(ctx, fact),
     message_pk: fact.message_pk,
+    ...(fact.parent_vendor_session_id
+      ? {
+          parent_vendor_session_id: fact.parent_vendor_session_id,
+          parent_session_pk: fact.parent_session_pk,
+        }
+      : {}),
     VendorStartedAt: toClickhouseDateTime64(fact.vendor_started_at ?? 0),
     vendor_message_id: fact.vendor_message_id ?? '',
     turn_index: fact.turn_index,

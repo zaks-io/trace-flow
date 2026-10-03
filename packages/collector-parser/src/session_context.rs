@@ -31,6 +31,7 @@
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionContext {
     pub vendor_session_id: String,
+    pub parent_vendor_session_id: String,
     pub agent_id: String,
     pub normalized_git_remote: String,
     pub repo_path_fallback: String,

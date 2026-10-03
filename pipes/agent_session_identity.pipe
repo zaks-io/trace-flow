@@ -1,0 +1,70 @@
+DESCRIPTION >
+    Resolve a native Agent session or its explicit Codex children from current message facts.
+    The org_id parameter is enforced by JWT fixed_params.
+
+NODE endpoint
+SQL >
+    %
+    {% if not defined(start_time_ms) or not defined(end_time_ms) %}
+    {{ error('A bounded time window is required', 400) }}
+    {% end %}
+    {% if (defined(session_pk) and (defined(native_source) or defined(native_session_id) or defined(parent_session_pk))) or (defined(native_source) != (defined(native_session_id) or defined(parent_session_pk))) or (defined(native_session_id) and defined(parent_session_pk)) or (not defined(session_pk) and not defined(native_source)) %}
+    {{ error('Provide exactly one session lookup mode', 400) }}
+    {% end %}
+
+    SELECT
+        source,
+        vendor_session_id,
+        session_pk,
+        multiIf(malformed_parent_rows > 0, 'conflicting', length(parent_pairs) = 0, 'unknown', length(parent_pairs) = 1, 'known', 'conflicting') AS parent_identity_status,
+        if(malformed_parent_rows = 0 AND length(parent_pairs) = 1, tupleElement(parent_pairs[1], 1), '') AS parent_vendor_session_id,
+        if(malformed_parent_rows = 0 AND length(parent_pairs) = 1, tupleElement(parent_pairs[1], 2), '') AS parent_session_pk,
+        agent_ids,
+        max_agent_depth,
+        first_event_ms,
+        last_event_ms
+    FROM (
+        SELECT
+            source,
+            vendor_session_id,
+            session_pk,
+            groupUniqArrayIf(2)(tuple(parent_vendor_session_id, parent_session_pk), parent_vendor_session_id != '' OR parent_session_pk != '') AS parent_pairs,
+            countIf((parent_vendor_session_id = '') != (parent_session_pk = '')) AS malformed_parent_rows,
+            groupUniqArrayIf(100)(agent_id, agent_id != '') AS agent_ids,
+            max(agent_depth) AS max_agent_depth,
+            toUnixTimestamp64Milli(min(EventAt)) AS first_event_ms,
+            toUnixTimestamp64Milli(max(EventAt)) AS last_event_ms
+        FROM agent_message_fact_versions FINAL
+        WHERE IsDeleted = 0
+          AND OrgId = {{ String(org_id, '') }}
+          AND EventAt >= fromUnixTimestamp64Milli({{ Int64(start_time_ms) }})
+          AND EventAt < fromUnixTimestamp64Milli({{ Int64(end_time_ms) }})
+          AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+          {% if defined(session_pk) %}
+          AND session_pk = {{ String(session_pk) }}
+          {% end %}
+          {% if defined(native_source) %}
+          AND source = {{ String(native_source) }}
+          {% end %}
+          {% if defined(native_session_id) %}
+          AND vendor_session_id = {{ String(native_session_id) }}
+          {% end %}
+          {% if defined(parent_session_pk) %}
+          AND session_pk IN (
+              SELECT session_pk
+              FROM agent_message_fact_versions FINAL
+              WHERE IsDeleted = 0
+                AND OrgId = {{ String(org_id, '') }}
+                AND source = {{ String(native_source) }}
+                AND parent_session_pk = {{ String(parent_session_pk) }}
+                AND EventAt >= fromUnixTimestamp64Milli({{ Int64(start_time_ms) }})
+                AND EventAt < fromUnixTimestamp64Milli({{ Int64(end_time_ms) }})
+                AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+          )
+          {% end %}
+        GROUP BY source, vendor_session_id, session_pk
+    )
+    ORDER BY last_event_ms DESC, session_pk ASC
+    LIMIT 100
+
+TYPE ENDPOINT

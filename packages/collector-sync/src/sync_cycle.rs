@@ -507,6 +507,7 @@ mod tests {
 
     fn message_unit(path: &str, model: &str) -> SyncUnit {
         let mut ctx = SessionContext {
+            parent_vendor_session_id: String::new(),
             vendor_session_id: path.to_string(),
             vendor_started_at: Some(1_778_964_000_000),
             ..SessionContext::default()

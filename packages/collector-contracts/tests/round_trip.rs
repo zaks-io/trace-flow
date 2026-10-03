@@ -40,6 +40,12 @@ fn fixture_deserializes_and_round_trips_without_field_loss() {
         "a field was lost or renamed on the Rust round-trip"
     );
     assert_eq!(envelope, sample_envelope());
+    assert!(envelope.facts.messages[0]
+        .parent_vendor_session_id
+        .is_empty());
+    assert!(!serde_json::to_string(&envelope.facts.messages[0])
+        .unwrap()
+        .contains("parent_vendor_session_id"));
 }
 
 #[test]

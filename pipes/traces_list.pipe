@@ -6,6 +6,9 @@ DESCRIPTION >
 NODE endpoint
 SQL >
     %
+    {% if (defined(client_source) != (defined(client_session_id) or defined(client_parent_session_id))) or (defined(client_agent_id) and not (defined(client_source) and defined(client_session_id))) %}
+    {{ error('Client lookup requires paired source and session or parent', 400) }}
+    {% end %}
     SELECT
         ReceivedAt,
         Timestamp,
@@ -35,6 +38,32 @@ SQL >
             OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
         )
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
+        {% if defined(client_source) %}
+        AND JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution'
+        AND JSONExtractString(SpanAttributes, 'cliproxyapi.client.source') = {{ String(client_source) }}
+        {% end %}
+        {% if defined(client_session_id) %}
+        AND JSONExtractString(SpanAttributes, 'cliproxyapi.client.session.id') = {{ String(client_session_id) }}
+        {% end %}
+        {% if defined(client_agent_id) %}
+        AND JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution'
+        AND JSONExtractString(SpanAttributes, 'cliproxyapi.client.agent.id') = {{ String(client_agent_id) }}
+        {% end %}
+        {% if defined(client_parent_session_id) %}
+        AND JSONExtractString(SpanAttributes, 'cliproxyapi.client.session.parent_id') = {{ String(client_parent_session_id) }}
+        {% end %}
+        {% if defined(inbound_trace_id) %}
+        AND JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution'
+        AND JSONExtractString(SpanAttributes, 'cliproxyapi.inbound.trace_id') = {{ String(inbound_trace_id) }}
+        {% end %}
+        {% if defined(request_id) %}
+        AND JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution'
+        AND JSONExtractString(SpanAttributes, 'cliproxyapi.request.id') = {{ String(request_id) }}
+        {% end %}
+        {% if defined(execution_id) %}
+        AND JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution'
+        AND JSONExtractString(SpanAttributes, 'cliproxyapi.execution.id') = {{ String(execution_id) }}
+        {% end %}
         {% if defined(provider) %}
         AND Provider = {{ String(provider) }}
         {% end %}

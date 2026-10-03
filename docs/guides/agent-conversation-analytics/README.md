@@ -30,6 +30,14 @@ What does not exist today:
 - launch-level dashboard truth states for empty/setup/data flows
 - final release evidence that a normal user can sync local transcripts without operator setup
 
+## Native session identity and explicit lineage
+
+The Collector stores native `vendor_session_id` with each Agent Message fact. Its `session_pk` is a hash of `(source, vendor_session_id)`; every read still filters by Organization. Claude subagent messages share the parent session key and retain a separate `agent_id`. Codex subagent threads have their own session key. When a Codex transcript names a direct `parent_thread_id`, the Collector sends that exact `parent_vendor_session_id`, and Agent Ingest derives `parent_session_pk` from `(codex, parent_vendor_session_id)`. Missing parent metadata stays unknown. Forks and inferred nesting are not parent edges.
+
+`agent_session_identity` reads live `agent_message_fact_versions` after tombstones. It accepts one bounded lookup: `session_pk`, paired `native_source` and `native_session_id`, or paired `native_source` and `parent_session_pk`. The endpoint is available only to the Web read token with a fixed `org_id`; it returns native identity, unique Claude agent IDs, depth, and event bounds without money or token totals. A session with competing nonempty parent pairs reports `parent_identity_status = conflicting` and leaves the scalar parent fields empty. Older Codex facts are not backfilled; new syncs can add the edge. Proxy execution metadata is queried separately through `traces_list`; it does not join or deduplicate Agent facts.
+
+The Tinybird expand phase appends defaulted parent columns to both message datasources. Historical rows read as empty parents, while new rows retain the supplied values. Once production and dev both use these schemas, retire the temporary two-datasource expand guard.
+
 ## Production Definition
 
 The feature is production-ready only when a normal Trace Flow user can:

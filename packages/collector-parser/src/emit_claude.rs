@@ -93,6 +93,7 @@ fn assistant_fact(
     let u = usage.cloned().unwrap_or_default();
     let has_usage = usage.is_some();
     AgentMessageFact {
+        parent_vendor_session_id: String::new(),
         vendor_session_id: ctx.vendor_session_id.clone(),
         vendor_message_id: assistant_message_id(record).map(str::to_string),
         turn_index,
@@ -141,6 +142,7 @@ fn assistant_fact(
 
 fn user_fact(record: &Value, turn_index: i64, ctx: &SessionContext) -> AgentMessageFact {
     AgentMessageFact {
+        parent_vendor_session_id: String::new(),
         vendor_session_id: ctx.vendor_session_id.clone(),
         // A user turn has no model-assigned id; key it on the record `uuid` so the Worker's
         // `message_pk` is stable across re-parse (otherwise it falls back to the positional index).
@@ -231,6 +233,7 @@ mod tests {
 
     fn ctx() -> SessionContext {
         SessionContext {
+            parent_vendor_session_id: String::new(),
             vendor_session_id: "claude-sess-1".to_string(),
             agent_id: "agent-abc".to_string(),
             normalized_git_remote: "github.com/acme/trace-flow".to_string(),

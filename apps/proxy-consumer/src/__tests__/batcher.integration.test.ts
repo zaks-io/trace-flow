@@ -11,7 +11,7 @@ import {
 import { createImportedMockTrace, createMockTrace } from './fixtures';
 import { TinybirdInsertError, TinybirdRecoveryStore } from '@trace-flow/tinybird-client';
 import { analyticsKeyId } from '@trace-flow/utils';
-import { IMPORTED_EXECUTION, TRACE_FLOW } from '@trace-flow/otel-conventions';
+import { CLI_PROXY, IMPORTED_EXECUTION, TRACE_FLOW } from '@trace-flow/otel-conventions';
 import { insertIntoTinybirdWithRetry } from '../tinybird';
 
 const env = workerEnv as unknown as {
@@ -432,6 +432,8 @@ describe('TraceBatcher logic', () => {
   });
   it('dedupes an imported replay after a real Durable Object eviction', async () => {
     const original = createImportedMockTrace('1'.repeat(64), 'a'.repeat(64));
+    original.SpanAttributes[CLI_PROXY.CLIENT_SOURCE] = 'codex';
+    original.SpanAttributes[CLI_PROXY.CLIENT_SESSION_ID] = 'thread-a';
     await addTraces([
       { messageId: 'delivery-1', traces: [original], importedExecution: IMPORT_METADATA },
     ]);
@@ -458,11 +460,14 @@ describe('TraceBatcher logic', () => {
 
   it('records changed imported source content as one repair without a second row', async () => {
     const original = createImportedMockTrace('2'.repeat(64), 'a'.repeat(64));
+    original.SpanAttributes[CLI_PROXY.CLIENT_SOURCE] = 'codex';
+    original.SpanAttributes[CLI_PROXY.CLIENT_SESSION_ID] = 'thread-a';
     await addTraces([
       { messageId: 'delivery-1', traces: [original], importedExecution: IMPORT_METADATA },
     ]);
     const changed = createImportedMockTrace('2'.repeat(64), 'b'.repeat(64));
-    changed.SpanAttributes['gen_ai.usage.total_tokens'] = '24';
+    changed.SpanAttributes[CLI_PROXY.CLIENT_SOURCE] = 'codex';
+    changed.SpanAttributes[CLI_PROXY.CLIENT_SESSION_ID] = 'thread-b';
     await addTraces([
       { messageId: 'delivery-2', traces: [changed], importedExecution: IMPORT_METADATA },
     ]);

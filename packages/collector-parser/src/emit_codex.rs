@@ -94,6 +94,7 @@ fn message_fact(
     let usage = turn.usage.unwrap_or_default();
     let has_usage = turn.usage.is_some();
     AgentMessageFact {
+        parent_vendor_session_id: ctx.parent_vendor_session_id.clone(),
         vendor_session_id: ctx.vendor_session_id.clone(),
         // Codex emits no per-message vendor ID; the Worker's `message_pk` falls back to the positional
         // `turn_index` (ADR identity rule).
@@ -161,6 +162,7 @@ mod tests {
 
     fn ctx() -> SessionContext {
         SessionContext {
+            parent_vendor_session_id: String::new(),
             vendor_session_id: "codex-sess-1".to_string(),
             agent_id: "agent-abc".to_string(),
             normalized_git_remote: "github.com/acme/trace-flow".to_string(),
@@ -226,6 +228,21 @@ mod tests {
                 },
             },
         })
+    }
+
+    #[test]
+    fn emits_explicit_parent_only_for_child_context() {
+        let records = [
+            turn_context("gpt-5.5", "2026-05-16T20:53:00.000Z"),
+            assistant_message("2026-05-16T20:53:05.000Z"),
+        ];
+        let root = codex_message_facts(&records, &ctx());
+        assert!(root[0].parent_vendor_session_id.is_empty());
+        let mut child = ctx();
+        child.parent_vendor_session_id = "root-thread".to_string();
+        child.agent_depth = 1;
+        let facts = codex_message_facts(&records, &child);
+        assert_eq!(facts[0].parent_vendor_session_id, "root-thread");
     }
 
     #[test]

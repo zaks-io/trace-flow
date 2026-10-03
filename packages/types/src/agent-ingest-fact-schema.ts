@@ -53,6 +53,7 @@ export const BATCH_FIELDS: Record<string, FieldSpec> = {
 
 export const MESSAGE_FIELDS: Record<string, FieldSpec> = {
   vendor_session_id: id,
+  parent_vendor_session_id: stringField(AGENT_INGEST_LIMITS.maxIdentifierBytes, true),
   vendor_message_id: nullableStringField(AGENT_INGEST_LIMITS.maxIdentifierBytes),
   turn_index: uint32,
   role: enumField(MESSAGE_ROLES),
@@ -176,7 +177,12 @@ export const QUEUE_MESSAGE_FIELDS: Record<string, FieldSpec> = {
 };
 
 export const QUEUE_FACT_SCHEMAS: Record<string, Record<string, FieldSpec>> = {
-  messages: { ...MESSAGE_FIELDS, message_pk: id, ...queueIdentityFields },
+  messages: {
+    ...MESSAGE_FIELDS,
+    message_pk: id,
+    parent_session_pk: stringField(AGENT_INGEST_LIMITS.maxIdentifierBytes, true),
+    ...queueIdentityFields,
+  },
   tool_events: { ...TOOL_FIELDS, tool_use_pk: id, ...queueIdentityFields },
   file_events: { ...FILE_FIELDS, file_event_pk: id, ...queueIdentityFields },
   capability_snapshots: {

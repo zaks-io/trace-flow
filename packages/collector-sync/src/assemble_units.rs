@@ -115,9 +115,16 @@ async fn assemble_records(
     // whose payload embeds the id, cwd, and git remote/branch/sha directly. Using the Claude reader on
     // a Codex transcript left every Codex session with no cwd → no remote → a path-hash that read like
     // a commit. Branch on source so each gets the right extractor.
-    let (fields, meta, head_sha, codex_agent_depth) = match source {
+    let (fields, meta, head_sha, codex_agent_depth, parent_vendor_session_id) = match source {
         AgentSource::Codex => {
             let codex = codex_session_fields(&records);
+            if codex.parent_thread_id.as_deref() == Some(codex.fields.vendor_session_id.as_str()) {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "Codex session cannot parent itself",
+                ));
+            }
+            let parent_vendor_session_id = codex.parent_thread_id.clone().unwrap_or_default();
             let agent_depth = match (codex.agent_depth, codex.parent_thread_id.as_deref()) {
                 (Some(0), Some(_)) => {
                     return Err(Error::new(
@@ -150,6 +157,7 @@ async fn assemble_records(
                 meta,
                 codex.git_head_sha.unwrap_or_default(),
                 Some(agent_depth),
+                parent_vendor_session_id,
             )
         }
         AgentSource::Claude | AgentSource::Cursor => {
@@ -160,10 +168,11 @@ async fn assemble_records(
                 Some(cwd) => cache.resolve(cwd).await,
                 None => None,
             };
-            (fields, meta, String::new(), None)
+            (fields, meta, String::new(), None, String::new())
         }
     };
     let mut ctx = build_session_context(&fields, &file.path, meta.as_ref(), &head_sha);
+    ctx.parent_vendor_session_id = parent_vendor_session_id;
     if let Some(agent_depth) = codex_agent_depth {
         ctx.agent_depth = agent_depth;
     }
@@ -270,6 +279,7 @@ pub fn build_session_context(
     let agent_depth = agent_depth_from_transcript_path(transcript_path);
 
     SessionContext {
+        parent_vendor_session_id: String::new(),
         vendor_session_id: fields.vendor_session_id.clone(),
         agent_id: if agent_depth > 0 {
             fields.agent_id.clone()
@@ -673,6 +683,32 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(unit.ctx.agent_depth, 3);
+        assert_eq!(unit.ctx.parent_vendor_session_id, "unavailable-parent");
+    }
+
+    #[tokio::test]
+    async fn codex_rejects_self_parent() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let body = format!(
+            "{}\n",
+            json!({ "type": "session_meta", "payload": {
+                "id": "same-thread", "parent_thread_id": "same-thread",
+                "source": { "subagent": { "thread_spawn": { "depth": 1 } } }
+            } })
+        );
+        let path = dir.path().join("self.jsonl");
+        std::fs::write(&path, &body).unwrap();
+        let file = DiscoveredFile {
+            path: path.to_str().unwrap().to_string(),
+            mtime_ms: 1.0,
+            size_bytes: body.len() as u64,
+        };
+        let error =
+            match assemble_sync_unit(&file, AgentSource::Codex, &GitRemoteCache::new()).await {
+                Ok(_) => panic!("self-parent must fail before upload"),
+                Err(error) => error,
+            };
+        assert_eq!(error.kind(), ErrorKind::InvalidData);
     }
 
     #[tokio::test]
@@ -711,5 +747,6 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(unit.ctx.agent_depth, 1);
+        assert_eq!(unit.ctx.parent_vendor_session_id, "parent");
     }
 }

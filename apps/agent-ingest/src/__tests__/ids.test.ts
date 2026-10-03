@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import type { AgentIngestQueueFacts } from '@trace-flow/types';
+import { validateAgentIngestEnvelope, type AgentIngestQueueFacts } from '@trace-flow/types';
 import { assembleQueueFacts, hashToUuid, repoFingerprint } from '../ids';
-import { emptyFacts, facts, messageFact, toolEventFact } from './factories';
+import { emptyFacts, envelope, facts, messageFact, toolEventFact } from './factories';
 
 const UUID_V8 = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -276,5 +276,77 @@ describe('assembleQueueFacts', () => {
     const edge = firstReviewUnitAttribution(queueFacts);
     expect(edge.status).toBe('rejected');
     expect(edge.ambiguity_reason).toBe('missing_remote');
+  });
+});
+
+describe('Codex native parent identity', () => {
+  const child = () =>
+    messageFact({
+      vendor_session_id: 'child-thread',
+      parent_vendor_session_id: 'parent-thread',
+      agent_depth: 1,
+    });
+
+  it('derives the parent session key from source and raw parent ID', async () => {
+    const result = await assembleQueueFacts(facts({ messages: [child()] }), 'codex');
+    expect(result.queueFacts.messages[0]!.parent_session_pk).toBe(
+      await hashToUuid(['codex', 'parent-thread']),
+    );
+    expect(result.queueFacts.messages[0]!.parent_session_pk).not.toBe(
+      result.queueFacts.messages[0]!.session_pk,
+    );
+  });
+
+  it.each([
+    ['wrong source', 'claude', child()],
+    ['self parent', 'codex', messageFact({ ...child(), parent_vendor_session_id: 'child-thread' })],
+    ['root depth', 'codex', messageFact({ ...child(), agent_depth: 0 })],
+    [
+      'oversized parent',
+      'codex',
+      messageFact({ ...child(), parent_vendor_session_id: 'x'.repeat(513) }),
+    ],
+  ] as const)('rejects %s', (_label, source, message) => {
+    const candidate = envelope({
+      batch: { ...envelope().batch, source },
+      facts: facts({ messages: [message] }),
+    });
+    expect(validateAgentIngestEnvelope(candidate)).toContain('parent_vendor_session_id');
+  });
+
+  it('rejects conflicting known parent evidence in one session', () => {
+    const candidate = envelope({
+      batch: { ...envelope().batch, source: 'codex' },
+      facts: facts({
+        messages: [
+          child(),
+          messageFact({ ...child(), parent_vendor_session_id: 'different-parent' }),
+        ],
+      }),
+    });
+    expect(validateAgentIngestEnvelope(candidate)).toContain('parent_vendor_session_id');
+  });
+
+  it('accepts unknown parent evidence alongside a known parent', () => {
+    const unknown = child();
+    delete unknown.parent_vendor_session_id;
+    for (const messages of [
+      [child(), unknown],
+      [unknown, child()],
+    ]) {
+      const candidate = envelope({
+        batch: { ...envelope().batch, source: 'codex' },
+        facts: facts({ messages }),
+      });
+      expect(validateAgentIngestEnvelope(candidate)).toBeNull();
+    }
+  });
+
+  it('rejects a client-supplied parent session key', () => {
+    const candidate = envelope({
+      batch: { ...envelope().batch, source: 'codex' },
+      facts: facts({ messages: [{ ...child(), parent_session_pk: 'forged' }] as never }),
+    });
+    expect(validateAgentIngestEnvelope(candidate)).toContain('parent_session_pk');
   });
 });

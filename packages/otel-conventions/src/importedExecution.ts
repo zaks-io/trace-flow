@@ -9,3 +9,5 @@ export const IMPORTED_EXECUTION = {
 
 export const IMPORTED_ACCOUNT_COVERAGE = ['provider-account', 'credential', 'unknown'] as const;
 export const IMPORTED_USAGE_QUALITY = ['complete', 'inconsistent', 'unclassified'] as const;
+
+export const IMPORTED_CLIENT_SOURCES = ['claude', 'codex'] as const;

@@ -13,6 +13,7 @@ import type {
   OTLPResource,
   OTLPSpan,
 } from '../types';
+import { validateImportedClientIdentity } from './clientIdentity';
 import { validateImportedTokenUsage } from './tokenUsage';
 
 export interface ImportedExecutionInput {
@@ -29,6 +30,8 @@ export type ImportedValidation =
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const ACCOUNT_REF_PATTERN = /^[0-9a-f]{64}$/;
+const TRACE_ID_PATTERN = /^(?!0{32}$)[0-9a-f]{32}$/;
+const SPAN_ID_PATTERN = /^(?!0{16}$)[0-9a-f]{16}$/;
 const TOKEN_64_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
 const TOKEN_128_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const TOKEN_32_PATTERN = /^[A-Za-z0-9._:-]{1,32}$/;
@@ -61,6 +64,13 @@ const STRING_PATTERNS: Record<string, RegExp> = {
   [CLI_PROXY.RESPONSE_SERVICE_TIER]: TOKEN_32_PATTERN,
   [CLI_PROXY.ACCOUNT_REF]: ACCOUNT_REF_PATTERN,
   [CLI_PROXY.SESSION_ID]: TOKEN_128_PATTERN,
+  [CLI_PROXY.CLIENT_SOURCE]: /^(claude|codex)$/,
+  [CLI_PROXY.CLIENT_SESSION_ID]: TOKEN_128_PATTERN,
+  [CLI_PROXY.CLIENT_AGENT_ID]: TOKEN_128_PATTERN,
+  [CLI_PROXY.CLIENT_PARENT_SESSION_ID]: TOKEN_128_PATTERN,
+  [CLI_PROXY.CLIENT_ORIGIN_SESSION_ID]: TOKEN_128_PATTERN,
+  [CLI_PROXY.INBOUND_TRACE_ID]: TRACE_ID_PATTERN,
+  [CLI_PROXY.INBOUND_SPAN_ID]: SPAN_ID_PATTERN,
   [CLI_PROXY.PARENT_SESSION_ID]: TOKEN_128_PATTERN,
   [GEN_AI_USAGE.QUALITY]: /^(complete|inconsistent|unclassified)$/,
 };
@@ -237,6 +247,8 @@ function validateSpan(
   ) {
     return invalid('account_ref', spanIndex);
   }
+  const clientError = validateImportedClientIdentity(attributes);
+  if (clientError) return invalid(clientError, spanIndex);
   const usageError = validateImportedTokenUsage(attributes);
   if (usageError) return invalid(usageError, spanIndex);
   const ttft = attributes[GEN_AI.SERVER_TTFT];

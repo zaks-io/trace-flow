@@ -23,17 +23,21 @@ function requestWithFullMetadata() {
 }
 
 describe('CLIProxyAPI imported execution contract', () => {
-  it('accepts complete, unclassified, inconsistent, missing, and failed usage fixtures', () => {
+  it('accepts legacy and native-metadata imported execution fixtures', () => {
     const result = validateImportedExecutionRequest(body());
     expect(result.valid).toBe(true);
     if (!result.valid) return;
-    expect(result.executions).toHaveLength(5);
+    expect(result.executions).toHaveLength(6);
     expect(result.executions[0]!.attributes[GEN_AI_USAGE.TOTAL_TOKENS]).toBe('23');
     expect(result.executions[3]!.attributes[GEN_AI_USAGE.MISSING]).toBe('true');
     expect(result.executions[3]!.attributes[GEN_AI_USAGE.TOTAL_TOKENS]).toBeUndefined();
     expect(result.executions[4]!.span.status?.code).toBe(2);
     expect(result.executions[4]!.attributes[GEN_AI_USAGE.TOTAL_TOKENS]).toBe('7');
     expect(requestWithFullMetadata().attributes).toHaveLength(26);
+    expect(result.executions[5]!.span.attributes).toHaveLength(32);
+    expect(result.executions[5]!.span.parentSpanId).toBeUndefined();
+    expect(result.executions[5]!.span.links).toBeUndefined();
+    expect(result.executions[5]!.attributes[CLI_PROXY.CLIENT_SESSION_ID]).toBe('child-thread-6');
   });
 
   it.each(['9223372036854775808', '9223372036854775807'])(
@@ -159,6 +163,52 @@ describe('CLIProxyAPI imported execution contract', () => {
     expect(validateImportedExecutionRequest(request)).toMatchObject({
       valid: false,
       reason: 'otel_identity',
+    });
+  });
+
+  it('rejects malformed native and inbound identities while keeping the allowlist strict', () => {
+    const cases = [
+      [CLI_PROXY.CLIENT_SOURCE, 'cursor'],
+      [CLI_PROXY.CLIENT_SESSION_ID, 'bad value'],
+      [CLI_PROXY.INBOUND_TRACE_ID, '0'.repeat(32)],
+      [CLI_PROXY.INBOUND_SPAN_ID, 'A'.repeat(16)],
+    ] as const;
+    for (const [key, value] of cases) {
+      const request = body();
+      firstSpan(request).attributes!.push({ key, value: { stringValue: value } });
+      expect(validateImportedExecutionRequest(request)).toMatchObject({
+        valid: false,
+        reason: 'attribute_string',
+      });
+    }
+    const request = body();
+    firstSpan(request).attributes!.push({
+      key: 'cliproxyapi.client.unknown',
+      value: { stringValue: 'x' },
+    });
+    expect(validateImportedExecutionRequest(request)).toMatchObject({
+      valid: false,
+      reason: 'attribute_not_allowed',
+    });
+  });
+
+  it('holds the 32-attribute limit for Codex and rejects the next attribute', () => {
+    const request = body();
+    const span = request.resourceSpans[0]!.scopeSpans[0]!.spans[4]!;
+    span.attributes!.push(
+      { key: CLI_PROXY.CLIENT_SOURCE, value: { stringValue: 'codex' } },
+      { key: CLI_PROXY.CLIENT_SESSION_ID, value: { stringValue: 'thread-1' } },
+      { key: CLI_PROXY.CLIENT_PARENT_SESSION_ID, value: { stringValue: 'root-1' } },
+      { key: CLI_PROXY.CLIENT_ORIGIN_SESSION_ID, value: { stringValue: 'session-1' } },
+      { key: CLI_PROXY.INBOUND_TRACE_ID, value: { stringValue: '1'.repeat(32) } },
+      { key: CLI_PROXY.INBOUND_SPAN_ID, value: { stringValue: '2'.repeat(16) } },
+    );
+    expect(span.attributes).toHaveLength(32);
+    expect(validateImportedExecutionRequest(request).valid).toBe(true);
+    span.attributes!.push({ key: CLI_PROXY.CLIENT_AGENT_ID, value: { stringValue: 'agent-1' } });
+    expect(validateImportedExecutionRequest(request)).toMatchObject({
+      valid: false,
+      reason: 'attribute_count',
     });
   });
 

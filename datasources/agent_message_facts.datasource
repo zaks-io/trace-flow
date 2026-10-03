@@ -46,7 +46,9 @@ SCHEMA >
     `git_branch` String `json:$.git_branch`,
     `git_head_sha` String `json:$.git_head_sha`,
     `dropped_sensitive` UInt32 `json:$.dropped_sensitive`,
-    `cost_usd` Nullable(Float64) `json:$.cost_usd`
+    `cost_usd` Nullable(Float64) `json:$.cost_usd`,
+    `parent_vendor_session_id` String DEFAULT '' `json:$.parent_vendor_session_id`,
+    `parent_session_pk` String DEFAULT '' `json:$.parent_session_pk`
 
 ENGINE "MergeTree"
 ENGINE_SORTING_KEY "OrgId, session_pk, message_pk"
