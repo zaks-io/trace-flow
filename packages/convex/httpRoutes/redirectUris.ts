@@ -1,5 +1,6 @@
 const MCP_RESOURCE_HOSTS = new Set([
   'mcp.trace-flow.dev',
+  'mcp.preview.trace-flow.dev',
   'trace-flow-mcp-dev.isaac-a46.workers.dev',
   'trace-flow-mcp-preview.isaac-a46.workers.dev',
 ]);

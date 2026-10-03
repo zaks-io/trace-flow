@@ -14,6 +14,13 @@ concurrency:
 
 env:
   TURBO_LOG_VERBOSITY: 1
+  PREVIEW_WEB_URL: https://preview.trace-flow.dev
+  PREVIEW_GATEWAY_URL: https://gateway.preview.trace-flow.dev
+  PREVIEW_PIPES_API_URL: https://pipes.preview.trace-flow.dev
+  PREVIEW_RAW_API_URL: https://raw.preview.trace-flow.dev
+  PREVIEW_COLLECTOR_URL: https://collector.preview.trace-flow.dev
+  PREVIEW_ANALYST_SANDBOX_URL: https://analyst-sandbox.preview.trace-flow.dev
+  PREVIEW_MCP_URL: https://mcp.preview.trace-flow.dev
   PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: 422b54e456c7446ea5ba4f9ef9a8c84e
   PREVIEW_AGENT_DELIVERY_BUCKET: trace-flow-agent-deliveries-dev
 
@@ -120,7 +127,9 @@ jobs:
           printf '%s' "$BODY_ACCESS_JWT_SECRET" |
             bunx convex env set --preview-name "$BRANCH_NAME" BODY_ACCESS_JWT_SECRET
           bunx convex env set --preview-name "$BRANCH_NAME" SENTRY_ENVIRONMENT preview
-          bunx convex env set --preview-name "$BRANCH_NAME" AGENT_INGEST_URL https://trace-flow-agent-ingest-preview.isaac-a46.workers.dev
+          bunx convex env set --preview-name "$BRANCH_NAME" AGENT_INGEST_URL "$PREVIEW_COLLECTOR_URL"
+          bunx convex env set --preview-name "$BRANCH_NAME" ANALYST_SANDBOX_URL "$PREVIEW_ANALYST_SANDBOX_URL"
+          bunx convex env set --preview-name "$BRANCH_NAME" APP_URL "$PREVIEW_WEB_URL"
         env:
           SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
           PIPES_API_SHARED_SECRET: ${{ secrets.PIPES_API_SHARED_SECRET }}
@@ -281,16 +290,17 @@ jobs:
 
       # The proxy refuses every request with 503 when its secrets fail startup validation.
       # A bad BODY_ENCRYPTION_ROOT_KEY otherwise only surfaces as truncated response bodies.
+      # Custom Domain DNS and certificates can take a few minutes on the first deployment.
       - name: Verify Proxy Preview health
-        run: curl --fail --silent --show-error --retry 5 --retry-delay 5 https://trace-flow-proxy-preview.isaac-a46.workers.dev/healthz
+        run: curl --fail --silent --show-error --retry-all-errors --retry 20 --retry-delay 15 --retry-max-time 300 --connect-timeout 10 --max-time 30 "$PREVIEW_GATEWAY_URL/healthz"
 
       - name: Build Web Preview
         run: bunx turbo run build --filter=@trace-flow/web && cd apps/web && bunx opennextjs-cloudflare build
         env:
           NEXT_PUBLIC_CONVEX_URL: ${{ needs.deploy-convex.outputs.convex_url }}
-          NEXT_PUBLIC_API_URL: https://trace-flow-raw-api-preview.isaac-a46.workers.dev
-          NEXT_PUBLIC_PIPES_API_URL: https://trace-flow-pipes-api-preview.isaac-a46.workers.dev
-          NEXT_PUBLIC_RAW_API_URL: https://trace-flow-raw-api-preview.isaac-a46.workers.dev
+          NEXT_PUBLIC_API_URL: ${{ env.PREVIEW_RAW_API_URL }}
+          NEXT_PUBLIC_PIPES_API_URL: ${{ env.PREVIEW_PIPES_API_URL }}
+          NEXT_PUBLIC_RAW_API_URL: ${{ env.PREVIEW_RAW_API_URL }}
           NEXT_PUBLIC_AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
           NEXT_PUBLIC_AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
           NEXT_PUBLIC_TINYBIRD_API_URL: ${{ vars.NEXT_PUBLIC_TINYBIRD_API_URL }}
@@ -300,7 +310,7 @@ jobs:
           AUTH0_SECRET: ${{ secrets.AUTH0_SECRET }}
           AUTH0_CLIENT_SECRET: ${{ secrets.AUTH0_CLIENT_SECRET }}
           BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}
-          APP_BASE_URL: https://trace-flow-web-preview.isaac-a46.workers.dev
+          APP_BASE_URL: ${{ env.PREVIEW_WEB_URL }}
           NEXT_PUBLIC_DEPLOY_ID: ${{ needs.prepare.outputs.head_sha }}
 
       # Deploy web to Workers preview
@@ -329,12 +339,13 @@ jobs:
 
             | Service | URL |
             |---------|-----|
-            | Web | https://trace-flow-web-preview.isaac-a46.workers.dev |
-            | Pipes API | https://trace-flow-pipes-api-preview.isaac-a46.workers.dev |
-            | Raw API | https://trace-flow-raw-api-preview.isaac-a46.workers.dev |
-            | Proxy | https://trace-flow-proxy-preview.isaac-a46.workers.dev |
-            | Agent Ingest | https://trace-flow-agent-ingest-preview.isaac-a46.workers.dev |
-            | Analyst Sandbox | https://trace-flow-analyst-sandbox-preview.isaac-a46.workers.dev |
+            | Web | ${process.env.PREVIEW_WEB_URL} |
+            | Pipes API | ${process.env.PREVIEW_PIPES_API_URL} |
+            | Raw API | ${process.env.PREVIEW_RAW_API_URL} |
+            | Proxy | ${process.env.PREVIEW_GATEWAY_URL} |
+            | Agent Ingest | ${process.env.PREVIEW_COLLECTOR_URL} |
+            | Analyst Sandbox | ${process.env.PREVIEW_ANALYST_SANDBOX_URL} |
+            | MCP | ${process.env.PREVIEW_MCP_URL} |
             `;
 
             const { data: comments } = await github.rest.issues.listComments({

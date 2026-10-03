@@ -137,6 +137,11 @@ class_name = "UsageTracker"
 
 [env.preview]
 name = "trace-flow-proxy-preview"
+workers_dev = true
+
+[[env.preview.routes]]
+pattern = "gateway.preview.trace-flow.dev"
+custom_domain = true
 
 [[env.preview.migrations]]
 tag = "v1"
