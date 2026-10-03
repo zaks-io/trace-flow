@@ -41,7 +41,7 @@ SQL >
         )
         {% end %}
         {% if defined(account) %}
-        -- Must match AccountKey in materialize_llm_request_facts so account drilldowns reconcile.
+        -- Must match AccountKey in materialize_llm_execution_accounts so account drilldowns reconcile.
         AND if(
                 JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution',
                 concat(
@@ -105,7 +105,7 @@ SQL >
         )
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         {% if defined(account) %}
-        -- Must match AccountKey in materialize_llm_request_facts so account drilldowns reconcile.
+        -- Must match AccountKey in materialize_llm_execution_accounts so account drilldowns reconcile.
         AND if(
                 JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution',
                 concat(

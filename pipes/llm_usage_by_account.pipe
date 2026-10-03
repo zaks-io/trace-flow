@@ -3,10 +3,12 @@ DESCRIPTION >
     Reads only imported execution facts; Trace Flow proxy traffic and Agent Session usage are
     reported elsewhere. AccountKey is installation/provider/coverage/ref, so accounts never merge
     across installations or providers, and unknown coverage stays a separate unavailable bucket.
-    Reads request facts directly because rollups carry no account dimension.
+    Joins llm_execution_accounts to llm_request_facts; rollups carry no account dimension.
     The api_keys parameter is enforced via JWT fixed_params for security.
 
-NODE accounts
+NODE scoped_accounts
+DESCRIPTION >
+    Account rows for the authorized keys and range, filtered before the join.
 SQL >
     %
     WITH
@@ -14,8 +16,73 @@ SQL >
         if(start_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now() - toIntervalDay(7), 9)), start_ns_raw) AS start_ns,
         {{ Int64(end_time_ns, 0) }} AS end_ns_raw,
         if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns
+    SELECT ApiKey, TraceId, SpanId, AccountKey, TtftNano, TtftPresent
+    FROM llm_execution_accounts
+    WHERE ReceivedAt >= start_ns
+        AND ReceivedAt <= end_ns
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
+        AND (
+            ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+        )
+        AND ApiKey != ''
+        {% if defined(api_key_filter) %}
+        AND (
+            ApiKey = {{ String(api_key_filter) }}
+            OR if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) = if(match({{ String(api_key_filter) }}, '^sha256:[0-9a-f]{64}$'), {{ String(api_key_filter) }}, concat('sha256:', lower(hex(SHA256({{ String(api_key_filter) }})))))
+        )
+        {% end %}
+        {% if defined(account) %}
+        AND AccountKey = {{ String(account) }}
+        {% end %}
+
+NODE scoped_facts
+DESCRIPTION >
+    Imported execution facts for the same keys and range; tokens and cost stay defined in one place.
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ns, 0) }} AS start_ns_raw,
+        if(start_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now() - toIntervalDay(7), 9)), start_ns_raw) AS start_ns,
+        {{ Int64(end_time_ns, 0) }} AS end_ns_raw,
+        if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns
+    SELECT *
+    FROM llm_request_facts
+    WHERE Source = 'imported_execution'
+        AND ReceivedAt >= start_ns
+        AND ReceivedAt <= end_ns
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
+        AND (
+            ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+        )
+        AND ApiKey != ''
+        {% if defined(api_key_filter) %}
+        AND (
+            ApiKey = {{ String(api_key_filter) }}
+            OR if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) = if(match({{ String(api_key_filter) }}, '^sha256:[0-9a-f]{64}$'), {{ String(api_key_filter) }}, concat('sha256:', lower(hex(SHA256({{ String(api_key_filter) }})))))
+        )
+        {% end %}
+        {% if defined(provider) %}
+        AND Provider = {{ String(provider) }}
+        {% end %}
+        {% if defined(model) %}
+        AND Model = {{ String(model) }}
+        {% end %}
+        {% if defined(operation_name) %}
+        AND OperationName = {{ String(operation_name) }}
+        {% end %}
+        {% if defined(baggage_operation) %}
+        AND BaggageOperation = {{ String(baggage_operation) }}
+        {% end %}
+        {% if defined(status) %}
+        AND StatusCode = {{ String(status) }}
+        {% end %}
+
+NODE accounts
+SQL >
     SELECT
-        AccountKey AS account_key,
+        a.AccountKey AS account_key,
         count() AS request_count,
         countIf(StatusCode = 'STATUS_CODE_ERROR') AS error_count,
         sum(InputTokens) AS input_tokens,
@@ -41,41 +108,10 @@ SQL >
         quantile(0.95)(DurationNano) / 1000000 AS p95_duration_ms,
         countIf(TtftPresent = 1) AS ttft_count,
         if(ttft_count = 0, NULL, avgIf(TtftNano, TtftPresent = 1) / 1000000) AS avg_ttft_ms
-    FROM llm_request_facts
-    WHERE Source = 'imported_execution'
-        AND ReceivedAt >= start_ns
-        AND ReceivedAt <= end_ns
-        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
-        AND (
-            ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
-            OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
-        )
-        AND ApiKey != ''
-        {% if defined(provider) %}
-        AND Provider = {{ String(provider) }}
-        {% end %}
-        {% if defined(model) %}
-        AND Model = {{ String(model) }}
-        {% end %}
-        {% if defined(operation_name) %}
-        AND OperationName = {{ String(operation_name) }}
-        {% end %}
-        {% if defined(baggage_operation) %}
-        AND BaggageOperation = {{ String(baggage_operation) }}
-        {% end %}
-        {% if defined(status) %}
-        AND StatusCode = {{ String(status) }}
-        {% end %}
-        {% if defined(api_key_filter) %}
-        AND (
-            ApiKey = {{ String(api_key_filter) }}
-            OR if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) = if(match({{ String(api_key_filter) }}, '^sha256:[0-9a-f]{64}$'), {{ String(api_key_filter) }}, concat('sha256:', lower(hex(SHA256({{ String(api_key_filter) }})))))
-        )
-        {% end %}
-        {% if defined(account) %}
-        AND AccountKey = {{ String(account) }}
-        {% end %}
-    GROUP BY AccountKey
+    FROM scoped_facts AS f
+    INNER JOIN scoped_accounts AS a
+        ON f.ApiKey = a.ApiKey AND f.TraceId = a.TraceId AND f.SpanId = a.SpanId
+    GROUP BY a.AccountKey
 
 NODE endpoint
 SQL >

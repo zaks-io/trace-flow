@@ -235,6 +235,7 @@ export const LLM_API_KEY_DATASOURCES = [
   'otel_trace_spans',
   'otel_genai_spans',
   'llm_request_facts',
+  'llm_execution_accounts',
   'llm_usage_hourly',
   'llm_usage_daily',
   'llm_usage_monthly',
@@ -542,7 +543,12 @@ export const extendRetention = internalAction({
     const analyticsKeyIdsInClause = analyticsKeyIds.map(sqlStringLiteral).join(',');
 
     // Datasources to update
-    const datasources = ['otel_trace_spans', 'otel_genai_spans', 'llm_request_facts'];
+    const datasources = [
+      'otel_trace_spans',
+      'otel_genai_spans',
+      'llm_request_facts',
+      'llm_execution_accounts',
+    ];
 
     const results: Record<string, { success: boolean; error?: string }> = {};
 

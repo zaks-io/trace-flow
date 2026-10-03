@@ -39,10 +39,7 @@ SCHEMA >
     `UsageQuality` LowCardinality(String),
     `UsageMissing` UInt8,
     `CostStatus` LowCardinality(String),
-    `CostPricedTokens` UInt64,
-    `AccountKey` String,
-    `TtftNano` Int64,
-    `TtftPresent` UInt8
+    `CostPricedTokens` UInt64
 
 ENGINE "MergeTree"
 ENGINE_SORTING_KEY "ApiKey, ReceivedAt, Provider, Model, OperationName, BaggageOperation, StatusCode, BaggageUserId, TraceId, SpanId"
