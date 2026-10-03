@@ -1,6 +1,7 @@
 'use client';
 
 import { BarCard, formatCostCompact } from '@/components/shared/BarCard';
+import { TOKEN_TYPE_SERIES, buildTokenSegments } from '@/components/shared/tokenTypes';
 import { formatNumber, formatCurrency, formatDuration, formatPercent } from '@/lib/format';
 import { formatCacheHitRate, getPromptCacheMetrics } from '@/lib/cacheMetrics';
 import { ProjectedCostCard } from './ProjectedCostCard';
@@ -71,9 +72,14 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
                   key: 'success',
                   label: 'Success',
                   value: successCount,
-                  color: 'var(--color-chart-3)',
+                  color: 'var(--color-status-good)',
                 },
-                { key: 'error', label: 'Error', value: errorCount, color: 'var(--color-chart-6)' },
+                {
+                  key: 'error',
+                  label: 'Error',
+                  value: errorCount,
+                  color: 'var(--color-status-critical)',
+                },
               ]
             : []
         }
@@ -85,13 +91,17 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
                 {
                   label: 'Success',
                   value: formatNumber(successCount),
-                  color: 'var(--color-chart-3)',
+                  color: 'var(--color-status-good)',
                 },
-                { label: 'Error', value: formatNumber(errorCount), color: 'var(--color-chart-6)' },
+                {
+                  label: 'Error',
+                  value: formatNumber(errorCount),
+                  color: 'var(--color-status-critical)',
+                },
                 {
                   label: 'Error Rate',
                   value: formatPercent(errorRate),
-                  color: 'var(--color-chart-6)',
+                  color: 'var(--color-status-critical)',
                 },
               ]
             : undefined
@@ -110,38 +120,13 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
         accent="from-chart-4/20 to-chart-4/5"
         segments={
           summary
-            ? [
-                {
-                  key: 'input',
-                  label: 'Input',
-                  value: summary.input_cost_usd,
-                  color: 'var(--color-chart-1)',
-                },
-                {
-                  key: 'output',
-                  label: 'Output',
-                  value: summary.output_cost_usd,
-                  color: 'var(--color-chart-2)',
-                },
-                {
-                  key: 'cache_read',
-                  label: 'Cache Read',
-                  value: summary.cache_read_cost_usd,
-                  color: 'var(--color-chart-3)',
-                },
-                {
-                  key: 'cache_write',
-                  label: 'Cache Write',
-                  value: summary.cache_creation_cost_usd,
-                  color: 'var(--color-chart-4)',
-                },
-                {
-                  key: 'reasoning',
-                  label: 'Reasoning',
-                  value: summary.reasoning_cost_usd,
-                  color: 'var(--color-chart-5)',
-                },
-              ]
+            ? buildTokenSegments({
+                input: summary.input_cost_usd,
+                cacheRead: summary.cache_read_cost_usd,
+                cacheWrite: summary.cache_creation_cost_usd,
+                output: summary.output_cost_usd,
+                reasoning: summary.reasoning_cost_usd,
+              })
             : []
         }
         total={summary?.total_cost_usd ?? 0}
@@ -154,7 +139,7 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
                       {
                         label: 'Upstream',
                         value: formatCurrency(summary.upstream_cost_usd),
-                        color: 'var(--color-chart-6)',
+                        color: 'var(--color-chart-2)',
                       },
                       {
                         label: 'Delta',
@@ -202,12 +187,12 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
                 {
                   label: 'P95',
                   value: formatCurrency(requestStats.cost_p95),
-                  color: 'var(--color-chart-6)',
+                  color: 'var(--color-chart-7)',
                 },
                 {
                   label: 'Max',
                   value: formatCurrency(requestStats.cost_max),
-                  color: 'var(--color-chart-1)',
+                  color: 'var(--color-chart-5)',
                 },
               ]
             : undefined
@@ -238,12 +223,12 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
                 {
                   label: 'P95',
                   value: formatDuration(requestStats.duration_p95),
-                  color: 'var(--color-chart-6)',
+                  color: 'var(--color-chart-7)',
                 },
                 {
                   label: 'Max',
                   value: formatDuration(requestStats.duration_max),
-                  color: 'var(--color-chart-1)',
+                  color: 'var(--color-chart-5)',
                 },
               ]
             : undefined
@@ -263,22 +248,22 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
           cacheMetrics && cacheMetrics.promptTotalTokens > 0
             ? [
                 {
+                  key: 'uncached',
+                  label: 'Uncached',
+                  value: cacheMetrics.uncachedInputTokens,
+                  color: TOKEN_TYPE_SERIES.input.color,
+                },
+                {
                   key: 'cached',
                   label: 'Cached',
                   value: cacheMetrics.cacheReadTokens,
-                  color: 'var(--color-chart-3)',
+                  color: TOKEN_TYPE_SERIES.cacheRead.color,
                 },
                 {
                   key: 'warming',
                   label: 'Warmup',
                   value: cacheMetrics.cacheCreationTokens,
-                  color: 'var(--color-chart-4)',
-                },
-                {
-                  key: 'uncached',
-                  label: 'Uncached',
-                  value: cacheMetrics.uncachedInputTokens,
-                  color: 'var(--color-chart-8, var(--color-muted-foreground))',
+                  color: TOKEN_TYPE_SERIES.cacheWrite.color,
                 },
               ]
             : []
@@ -294,7 +279,7 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
                       {
                         label: 'Write Rate',
                         value: formatPercent(cacheMetrics.cacheWriteRate),
-                        color: 'var(--color-chart-4)',
+                        color: TOKEN_TYPE_SERIES.cacheWrite.color,
                       },
                     ]
                   : []),
@@ -305,8 +290,8 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
                         value: formatCurrency(cacheMetrics.cacheImpactCostUsd),
                         color:
                           cacheMetrics.cacheImpactCostUsd >= 0
-                            ? 'var(--color-chart-3)'
-                            : 'var(--color-chart-6)',
+                            ? 'var(--color-status-good)'
+                            : 'var(--color-status-critical)',
                       },
                     ]
                   : []),
@@ -322,12 +307,12 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
                 {
                   label: 'Read Cost',
                   value: costIncomplete ? '-' : formatCurrency(summary.cache_read_cost_usd),
-                  color: 'var(--color-chart-4)',
+                  color: TOKEN_TYPE_SERIES.cacheRead.color,
                 },
                 {
                   label: 'Write Cost',
                   value: costIncomplete ? '-' : formatCurrency(summary.cache_creation_cost_usd),
-                  color: 'var(--color-chart-5)',
+                  color: TOKEN_TYPE_SERIES.cacheWrite.color,
                 },
               ]
             : undefined

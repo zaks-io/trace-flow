@@ -1,4 +1,5 @@
 import type { ChartConfig } from '@/components/ui/chart';
+import { TOKEN_TYPE_SERIES } from '@/components/shared/tokenTypes';
 
 /** Canonical agent sources (the static Source filter options). */
 export const AGENT_SOURCES = ['claude', 'codex', 'cursor'] as const;
@@ -166,11 +167,11 @@ const agentCostChartConfig = {
 } satisfies ChartConfig;
 
 const agentTokensChartConfig = {
-  input_tokens: { label: 'Input', color: 'var(--color-chart-1)' },
-  output_tokens: { label: 'Output', color: 'var(--color-chart-2)' },
-  cache_read_tokens: { label: 'Cache Read', color: 'var(--color-chart-3)' },
-  cache_creation_tokens: { label: 'Cache Write', color: 'var(--color-chart-4)' },
-  reasoning_tokens: { label: 'Reasoning', color: 'var(--color-chart-5)' },
+  input_tokens: TOKEN_TYPE_SERIES.input,
+  cache_read_tokens: TOKEN_TYPE_SERIES.cacheRead,
+  cache_creation_tokens: TOKEN_TYPE_SERIES.cacheWrite,
+  output_tokens: TOKEN_TYPE_SERIES.output,
+  reasoning_tokens: TOKEN_TYPE_SERIES.reasoning,
 } satisfies ChartConfig;
 
 const agentMessagesChartConfig = {
@@ -182,19 +183,20 @@ const agentSessionsChartConfig = {
 } satisfies ChartConfig;
 
 const agentToolEventsChartConfig = {
-  tool_success_count: { label: 'Success', color: 'var(--color-chart-3)' },
-  tool_failure_count: { label: 'Failure', color: 'var(--color-chart-6)' },
-  tool_unknown_count: { label: 'Unknown', color: 'var(--color-chart-8)' },
+  tool_success_count: { label: 'Success', color: 'var(--color-status-good)' },
+  tool_failure_count: { label: 'Failure', color: 'var(--color-status-critical)' },
+  tool_unknown_count: { label: 'Unknown', color: 'var(--color-muted-foreground)' },
 } satisfies ChartConfig;
 
 /** dataKeys stacked for each metric, in render order. Drives the chart and its legend. */
 export const AGENT_METRIC_KEYS: Record<AgentMetric, readonly AgentMetricKey[]> = {
   cost: ['cost_usd'],
+  // Shared token-type order (TOKEN_TYPES); the color validation depends on it.
   tokens: [
     'input_tokens',
-    'output_tokens',
     'cache_read_tokens',
     'cache_creation_tokens',
+    'output_tokens',
     'reasoning_tokens',
   ],
   messages: ['message_count'],

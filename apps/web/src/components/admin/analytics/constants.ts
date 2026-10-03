@@ -12,13 +12,13 @@ export const EMPTY_VALUE = '__empty__';
 // Consistent color-to-metric mapping using chart CSS variables
 export const ACCENT = {
   requests: 'var(--chart-1)',
-  errors: 'var(--chart-6)',
+  errors: 'var(--status-critical)',
   latency: 'var(--chart-4)',
   tokens: 'var(--chart-3)',
   skipRate: 'var(--chart-2)',
   ttfb: 'var(--chart-7)',
   promptComp: 'var(--chart-5)',
-  bytes: 'var(--chart-8)',
+  bytes: 'var(--chart-1)',
 } as const;
 
 export const explorerDefaultVisibility = {
@@ -45,7 +45,7 @@ export const explorerDefaultVisibility = {
 export const chartConfig = {
   requestCount: { label: 'Requests', color: 'var(--chart-1)' },
   p95LatencyMs: { label: 'P95 Latency', color: 'var(--chart-4)' },
-  serverErrorRate: { label: 'Error Rate', color: 'var(--chart-6)' },
+  serverErrorRate: { label: 'Error Rate', color: 'var(--status-critical)' },
   totalTokens: { label: 'Tokens', color: 'var(--chart-3)' },
 };
 

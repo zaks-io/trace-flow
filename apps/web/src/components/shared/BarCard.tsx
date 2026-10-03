@@ -74,6 +74,7 @@ export function BarCard({
   const hoveredSeg = hoveredKey ? segments.find((s) => s.key === hoveredKey) : null;
 
   const hasBar = segments.length > 0 && total > 0;
+  const visibleSegments = segments.filter((seg) => seg.value > 0);
   const resolvedLabels =
     inlineLabels ??
     (hasBar
@@ -116,9 +117,13 @@ export function BarCard({
             </div>
           )}
           <div className="flex h-1.5 w-full overflow-hidden rounded-full">
-            {segments.map((seg) => {
+            {visibleSegments.map((seg, i) => {
               const pct = (seg.value / total) * 100;
               const isHovered = hoveredKey === seg.key;
+              // A gap at each color change is the bar's second identity channel: segments that
+              // meet once zero values drop out stay separable even when their hues are close
+              // under color-vision deficiency (ADR 0010).
+              const startsNewColor = i > 0 && visibleSegments[i - 1].color !== seg.color;
 
               return (
                 <div
@@ -126,7 +131,8 @@ export function BarCard({
                   className="h-full transition-opacity duration-150"
                   style={{
                     flexBasis: `${pct}%`,
-                    flexShrink: 0,
+                    flexShrink: 1,
+                    marginLeft: startsNewColor ? 2 : 0,
                     backgroundColor: seg.color,
                     opacity: hoveredKey && !isHovered ? 0.4 : 0.7,
                   }}

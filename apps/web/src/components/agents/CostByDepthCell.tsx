@@ -15,10 +15,10 @@ import {
 import type { AgentCostByDepthRow } from './types';
 
 const VERDICT_COLOR = {
-  declining: 'var(--color-chart-3)',
-  flat: 'var(--color-chart-3)',
-  linear: 'var(--color-chart-1)',
-  accelerating: '#fbbf24',
+  declining: 'var(--color-status-good)',
+  flat: 'var(--color-status-good)',
+  linear: 'var(--color-foreground)',
+  accelerating: 'var(--color-status-warning)',
 } as const;
 
 const CHART_CONFIG = {

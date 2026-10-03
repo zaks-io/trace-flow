@@ -9,6 +9,7 @@ import {
   formatCompact,
   formatCostCompact,
 } from '@/components/shared/BarCard';
+import { buildTokenSegments } from '@/components/shared/tokenTypes';
 import { formatModelDisplay } from '@/lib/format';
 
 type TraceSpan = Pick<TraceSpanRow, 'SpanAttributes' | 'Duration' | 'Timestamp'>;
@@ -38,18 +39,6 @@ interface AggregatedSummary {
   tpsSpans: { tps: number; outputTokens: number }[];
   models: string[];
 }
-
-const SEGMENT_CONFIG = {
-  input: { label: 'Input', color: 'var(--color-chart-4)' },
-  cacheRead: { label: 'Cache Read', color: 'var(--color-chart-3)' },
-  cacheWrite: { label: 'Cache Write', color: 'var(--color-chart-2)' },
-  output: { label: 'Output', color: 'var(--color-chart-1)' },
-  reasoning: { label: 'Reasoning', color: 'var(--color-chart-5)' },
-} as const;
-
-type SegmentKey = keyof typeof SEGMENT_CONFIG;
-
-const SEGMENT_ORDER: SegmentKey[] = ['input', 'cacheRead', 'cacheWrite', 'output', 'reasoning'];
 
 function aggregateSummary(spans: TraceSpan[]): AggregatedSummary {
   const summary: AggregatedSummary = {
@@ -141,15 +130,6 @@ function aggregateSummary(spans: TraceSpan[]): AggregatedSummary {
   return summary;
 }
 
-function buildSegments(values: Record<SegmentKey, number>): Segment[] {
-  return SEGMENT_ORDER.filter((key) => values[key] > 0).map((key) => ({
-    key,
-    label: SEGMENT_CONFIG[key].label,
-    value: values[key],
-    color: SEGMENT_CONFIG[key].color,
-  }));
-}
-
 function formatDuration(nanoseconds: number): string {
   const ms = nanoseconds / 1_000_000;
   if (ms < 1000) return `${ms.toFixed(0)}ms`;
@@ -167,16 +147,18 @@ function buildDurationSegments(ttftMs: number | null, totalDurationNs: number): 
   const genNs = Math.max(0, totalDurationNs - ttftNs);
   return [
     { key: 'ttft', label: 'TTFT', value: ttftNs, color: 'var(--color-chart-2)' },
-    { key: 'generation', label: 'Generation', value: genNs, color: 'var(--color-chart-8)' },
+    { key: 'generation', label: 'Generation', value: genNs, color: 'var(--color-chart-1)' },
   ];
 }
 
-// Below 1 stddev = slow (red), within 1 stddev = normal (ochre), above 1 stddev = fast (cerulean)
+const TPS_NORMAL_COLOR = 'var(--color-muted-foreground)';
+
+// Speed bands judge each span against the trace, so they wear status tokens, not series slots.
 function tpsColor(t: number, avg: number, stddev: number): string {
-  if (stddev === 0) return 'var(--color-chart-4)';
-  if (t < avg - stddev) return 'var(--color-chart-1)';
-  if (t > avg + stddev) return 'var(--color-chart-4)';
-  return 'var(--color-chart-2)';
+  if (stddev === 0) return TPS_NORMAL_COLOR;
+  if (t < avg - stddev) return 'var(--color-status-serious)';
+  if (t > avg + stddev) return 'var(--color-status-good)';
+  return TPS_NORMAL_COLOR;
 }
 
 function buildThroughputSegments(tpsSpans: { tps: number; outputTokens: number }[]): {
@@ -222,8 +204,8 @@ export function TokenSummaryCards({ spans }: TokenSummaryCardsProps) {
     () => Object.values(summary.cost).reduce((a, b) => a + b, 0),
     [summary.cost],
   );
-  const tokenSegments = useMemo(() => buildSegments(summary.tokens), [summary.tokens]);
-  const costSegments = useMemo(() => buildSegments(summary.cost), [summary.cost]);
+  const tokenSegments = useMemo(() => buildTokenSegments(summary.tokens), [summary.tokens]);
+  const costSegments = useMemo(() => buildTokenSegments(summary.cost), [summary.cost]);
   const durationSegments = useMemo(
     () => buildDurationSegments(summary.ttftMs, summary.totalDuration),
     [summary.ttftMs, summary.totalDuration],
@@ -281,7 +263,7 @@ export function TokenSummaryCards({ spans }: TokenSummaryCardsProps) {
                   {
                     label: 'Avg',
                     value: formatTokensPerSecond(throughput.avg),
-                    color: 'var(--color-chart-2)',
+                    color: TPS_NORMAL_COLOR,
                   },
                   {
                     label: 'Max',

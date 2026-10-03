@@ -3,32 +3,24 @@
 import { PieChart, Pie } from 'recharts';
 import { formatCurrency, formatPercent } from '@/lib/format';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
-import { PIE_COLORS, pieChartConfig } from './types';
+import { TOKEN_TYPES, TOKEN_TYPE_SERIES, type TokenType } from '@/components/shared/tokenTypes';
+import { pieChartConfig } from './types';
 import type { SummaryRow } from './types';
 
 export function CostBreakdownChart({ summary }: { summary: SummaryRow }) {
-  const entries = [
-    { key: 'input', label: 'Input', value: summary.input_cost_usd, color: PIE_COLORS[0] },
-    { key: 'output', label: 'Output', value: summary.output_cost_usd, color: PIE_COLORS[1] },
-    {
-      key: 'cache_read',
-      label: 'Cache Read',
-      value: summary.cache_read_cost_usd,
-      color: PIE_COLORS[2],
-    },
-    {
-      key: 'cache_write',
-      label: 'Cache Write',
-      value: summary.cache_creation_cost_usd,
-      color: PIE_COLORS[3],
-    },
-    {
-      key: 'reasoning',
-      label: 'Reasoning',
-      value: summary.reasoning_cost_usd,
-      color: PIE_COLORS[4],
-    },
-  ].filter((e) => e.value > 0);
+  const costs: Record<TokenType, number> = {
+    input: summary.input_cost_usd,
+    cacheRead: summary.cache_read_cost_usd,
+    cacheWrite: summary.cache_creation_cost_usd,
+    output: summary.output_cost_usd,
+    reasoning: summary.reasoning_cost_usd,
+  };
+  const entries = TOKEN_TYPES.map((type) => ({
+    key: type,
+    label: TOKEN_TYPE_SERIES[type].label,
+    value: costs[type],
+    color: TOKEN_TYPE_SERIES[type].color,
+  })).filter((e) => e.value > 0);
 
   if (entries.length === 0) {
     return <p className="text-sm text-muted-foreground">No cost data available</p>;

@@ -31,13 +31,9 @@ import {
   SheetDescription,
 } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
-import {
-  BarCard,
-  type Segment,
-  formatCompact,
-  formatCostCompact,
-} from '@/components/shared/BarCard';
+import { BarCard, formatCompact, formatCostCompact } from '@/components/shared/BarCard';
 import { AlertList } from '@/components/alerts';
+import { buildTokenSegments } from '@/components/shared/tokenTypes';
 import { ModelPill } from '@/components/traces/spans-table/ModelPill';
 import { fetchStoredBodies, formatStoredBodiesForDisplay, getBodyAccessToken } from '@/lib/bodies';
 import type { TriggeredAlert } from '@/types/alerts';
@@ -424,28 +420,6 @@ function BodyContent({
       )}
     </div>
   );
-}
-
-// ── Segment builder for single-span token data ──
-
-const SEGMENT_CONFIG = {
-  input: { label: 'Input', color: 'var(--color-chart-4)' },
-  cacheRead: { label: 'Cache Read', color: 'var(--color-chart-3)' },
-  cacheWrite: { label: 'Cache Write', color: 'var(--color-chart-2)' },
-  output: { label: 'Output', color: 'var(--color-chart-1)' },
-  reasoning: { label: 'Reasoning', color: 'var(--color-chart-5)' },
-} as const;
-
-type SegmentKey = keyof typeof SEGMENT_CONFIG;
-const SEGMENT_ORDER: SegmentKey[] = ['input', 'cacheRead', 'cacheWrite', 'output', 'reasoning'];
-
-function buildTokenSegments(values: Record<SegmentKey, number>): Segment[] {
-  return SEGMENT_ORDER.filter((key) => values[key] > 0).map((key) => ({
-    key,
-    label: SEGMENT_CONFIG[key].label,
-    value: values[key],
-    color: SEGMENT_CONFIG[key].color,
-  }));
 }
 
 // ── Copyable metadata value ──

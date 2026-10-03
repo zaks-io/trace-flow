@@ -1,6 +1,6 @@
 'use client';
 
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
 import {
   formatNumber,
   formatCurrency,
@@ -10,7 +10,9 @@ import {
   parseTinybirdDate,
 } from '@/lib/format';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
+import { TOKEN_TYPE_SERIES, tokenTypeDash } from '@/components/shared/tokenTypes';
 import {
+  COST_SERIES,
   costChartConfig,
   durationChartConfig,
   tokensChartConfig,
@@ -63,46 +65,24 @@ export function CostTimeseriesChart({
               />
             }
           />
-          <Area
-            type="monotone"
-            dataKey="input_cost_usd"
-            stackId="1"
-            fill="var(--color-input_cost_usd)"
-            stroke="var(--color-input_cost_usd)"
-            fillOpacity={0.6}
+          <Legend
+            wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+            iconType="plainline"
+            iconSize={14}
           />
-          <Area
-            type="monotone"
-            dataKey="output_cost_usd"
-            stackId="1"
-            fill="var(--color-output_cost_usd)"
-            stroke="var(--color-output_cost_usd)"
-            fillOpacity={0.6}
-          />
-          <Area
-            type="monotone"
-            dataKey="cache_read_cost_usd"
-            stackId="1"
-            fill="var(--color-cache_read_cost_usd)"
-            stroke="var(--color-cache_read_cost_usd)"
-            fillOpacity={0.6}
-          />
-          <Area
-            type="monotone"
-            dataKey="cache_creation_cost_usd"
-            stackId="1"
-            fill="var(--color-cache_creation_cost_usd)"
-            stroke="var(--color-cache_creation_cost_usd)"
-            fillOpacity={0.6}
-          />
-          <Area
-            type="monotone"
-            dataKey="reasoning_cost_usd"
-            stackId="1"
-            fill="var(--color-reasoning_cost_usd)"
-            stroke="var(--color-reasoning_cost_usd)"
-            fillOpacity={0.6}
-          />
+          {COST_SERIES.map(({ dataKey, type }) => (
+            <Area
+              key={dataKey}
+              type="monotone"
+              dataKey={dataKey}
+              name={TOKEN_TYPE_SERIES[type].label}
+              stackId="1"
+              fill={`var(--color-${dataKey})`}
+              stroke={`var(--color-${dataKey})`}
+              strokeDasharray={tokenTypeDash(type)}
+              fillOpacity={0.6}
+            />
+          ))}
         </AreaChart>
       </ChartContainer>
     );

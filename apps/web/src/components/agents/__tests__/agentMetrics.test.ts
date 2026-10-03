@@ -17,12 +17,12 @@ describe('agent hero-chart metric/stack behavior', () => {
     expect(AGENT_METRIC_VALUE_KIND.cost).toBe('currency');
   });
 
-  it('stacks tokens by the five token components', () => {
+  it('stacks tokens by the five token components in the shared token-type order', () => {
     expect(AGENT_METRIC_KEYS.tokens).toEqual([
       'input_tokens',
-      'output_tokens',
       'cache_read_tokens',
       'cache_creation_tokens',
+      'output_tokens',
       'reasoning_tokens',
     ]);
     expect(AGENT_METRIC_VALUE_KIND.tokens).toBe('count');

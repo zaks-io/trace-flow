@@ -141,7 +141,7 @@ export function AgentAnalyticsPreview() {
               <div className="text-[10px] text-muted-foreground">Notable changes</div>
               <div className="mt-3 space-y-3">
                 <Signal color="bg-chart-2" label="Context above 140k" value="7 sessions" />
-                <Signal color="bg-chart-4" label="Edit failures" value="11.2%" />
+                <Signal color="bg-status-warning" label="Edit failures" value="11.2%" />
                 <Signal color="bg-chart-3" label="Cost per review" value="$4.18" />
               </div>
             </div>
