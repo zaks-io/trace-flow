@@ -166,6 +166,8 @@ jobs:
               - 'tinybird.config.json'
               - 'scripts/ci/*tinybird-local-fixture-tests*'
               - 'scripts/ci/tinybird_baseline_version_fixtures.py'
+              - 'scripts/ci/deploy-agent-tinybird-tree.test.sh'
+              - 'scripts/ci/overlay-agent-message-parent-columns*'
               - 'scripts/deploy-agent-tinybird.sh'
               - 'scripts/tinybird-agent-signal-performance-report.sh'
               - 'scripts/verify-agent-signal-query-guardrails.mjs'
@@ -235,6 +237,7 @@ jobs:
         run: |
           bash scripts/verify-tinybird-cost-contract.sh
           node scripts/verify-agent-signal-query-guardrails.mjs
+          bun test scripts/ci/overlay-agent-message-parent-columns.test.mjs
           TB_TARGET_WORKSPACE=trace_flow_prod \
             TINYBIRD_DEPLOY_PHASE=expand \
             TINYBIRD_CURRENT_REF=HEAD^ \

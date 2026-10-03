@@ -36,6 +36,8 @@ The Collector stores native `vendor_session_id` with each Agent Message fact. It
 
 `agent_session_identity` reads live `agent_message_fact_versions` after tombstones. It accepts one bounded lookup: `session_pk`, paired `native_source` and `native_session_id`, or paired `native_source` and `parent_session_pk`. The endpoint is available only to the Web read token with a fixed `org_id`; it returns native identity, unique Claude agent IDs, depth, and event bounds without money or token totals. A session with competing nonempty parent pairs reports `parent_identity_status = conflicting` and leaves the scalar parent fields empty. Older Codex facts are not backfilled; new syncs can add the edge. Proxy execution metadata is queried separately through `traces_list`; it does not join or deduplicate Agent facts.
 
+The Tinybird expand phase appends defaulted parent columns to both message datasources. Historical rows read as empty parents, while new rows retain the supplied values. Once production and dev both use these schemas, retire the temporary two-datasource expand guard.
+
 ## Production Definition
 
 The feature is production-ready only when a normal Trace Flow user can:

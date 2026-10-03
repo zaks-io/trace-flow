@@ -27,8 +27,6 @@ SCHEMA >
     `IngestedAt` DateTime64(3) `json:$.IngestedAt`,
     `VendorStartedAt` DateTime64(3) `json:$.VendorStartedAt`,
     `vendor_session_id` String `json:$.vendor_session_id`,
-    `parent_vendor_session_id` String DEFAULT '' `json:$.parent_vendor_session_id`,
-    `parent_session_pk` String DEFAULT '' `json:$.parent_session_pk`,
     `vendor_message_id` String `json:$.vendor_message_id`,
     `turn_index` UInt32 `json:$.turn_index`,
     `role` LowCardinality(String) `json:$.role`,
@@ -51,7 +49,9 @@ SCHEMA >
     `git_branch` String `json:$.git_branch`,
     `git_head_sha` String `json:$.git_head_sha`,
     `dropped_sensitive` UInt32 `json:$.dropped_sensitive`,
-    `cost_usd` Nullable(Float64) `json:$.cost_usd`
+    `cost_usd` Nullable(Float64) `json:$.cost_usd`,
+    `parent_vendor_session_id` String DEFAULT '' `json:$.parent_vendor_session_id`,
+    `parent_session_pk` String DEFAULT '' `json:$.parent_session_pk`
 
 ENGINE "ReplacingMergeTree"
 ENGINE_SORTING_KEY "OrgId, toDate(EventAt), session_pk, message_pk"

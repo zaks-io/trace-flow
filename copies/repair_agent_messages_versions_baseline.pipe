@@ -23,8 +23,6 @@ SQL >
         `IngestedAt`,
         `VendorStartedAt`,
         `vendor_session_id`,
-        `parent_vendor_session_id`,
-        `parent_session_pk`,
         `vendor_message_id`,
         `turn_index`,
         `role`,
@@ -47,7 +45,9 @@ SQL >
         `git_branch`,
         `git_head_sha`,
         `dropped_sensitive`,
-        `cost_usd`
+        `cost_usd`,
+        `parent_vendor_session_id`,
+        `parent_session_pk`
     FROM agent_message_facts
     WHERE OrgId = {{ String(org_id) }}
       AND EventAt >= toDateTime({{ Date(start_day) }})
