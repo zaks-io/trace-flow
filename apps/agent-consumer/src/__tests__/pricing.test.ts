@@ -25,6 +25,14 @@ const TIERED: ModelPricing = {
   source: 'manual',
 };
 
+// $1/M output so per-component microdollar rounding never hides a reasoning double charge.
+const OUTPUT_ONLY: ModelPricing = {
+  promptCostPerMillion: 0,
+  completionCostPerMillion: 1_000_000,
+  updatedAt: 0,
+  source: 'manual',
+};
+
 describe('priceMessage', () => {
   it('prices a claude message via the anthropic catalog', async () => {
     const { kv } = makeKv({ 'pricing:anthropic:claude-opus-4-7': PRICING });
@@ -99,6 +107,30 @@ describe('priceMessage', () => {
     );
     // 200k × 200/M = 40 microdollars (tier rate kicks in at the 200k threshold).
     expect(cost).toBe(microdollarsToDollars(40));
+  });
+
+  it('prices codex reasoning once because output_tokens already includes it', async () => {
+    const { kv } = makeKv({ 'pricing:openai:gpt-5.5': OUTPUT_ONLY });
+    const cost = await priceMessage(
+      messageFact({ model: 'gpt-5.5', output_tokens: 1000, reasoning_tokens: 300 }),
+      'codex',
+      new PriceCache(kv),
+    );
+    // 700 non-reasoning + 300 reasoning at $1/M = 1000 microdollars, not 1300.
+    expect(cost).toBe(microdollarsToDollars(1000));
+  });
+
+  it.each([
+    ['claude', 'pricing:anthropic:claude-opus-4-7'],
+    ['cursor', 'pricing:cursor:claude-opus-4-7'],
+  ] as const)('prices %s output without reasoning unchanged', async (source, catalogKey) => {
+    const { kv } = makeKv({ [catalogKey]: OUTPUT_ONLY });
+    const cost = await priceMessage(
+      messageFact({ output_tokens: 1000 }),
+      source,
+      new PriceCache(kv),
+    );
+    expect(cost).toBe(microdollarsToDollars(1000));
   });
 });
 

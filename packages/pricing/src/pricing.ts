@@ -169,12 +169,16 @@ export function calculateCost(
     effective.cacheWriteCostPerMillion ?? effective.promptCostPerMillion;
   const reasoningCostPerMillion =
     effective.reasoningCostPerMillion ?? effective.completionCostPerMillion;
-  // OpenRouter reports reasoning as a subset of completion tokens. This follows the request
-  // provider because pricing source records catalog provenance and may be overridden manually.
+  // Gemini's candidatesTokenCount excludes thoughtsTokenCount, so its buckets are disjoint and each
+  // is priced in full. Every other provider (and the agent consumer, which passes none) counts
+  // reasoning inside completion, so only the remainder is output. Clamping at zero keeps the full
+  // Anthropic thinking estimate when a thinking-only or interrupted stream still reports
+  // message_start's output of 0 or 1. Keyed on the request provider, not pricing.source, because
+  // source records catalog provenance and may be overridden manually.
   const nonReasoningCompletionTokens =
-    requestProvider === 'openrouter'
-      ? Math.max(0, completionTokens - reasoningTokens)
-      : completionTokens;
+    requestProvider === 'google'
+      ? completionTokens
+      : Math.max(0, completionTokens - reasoningTokens);
 
   // Calculate costs in microdollars
   // Formula: (tokens * pricePerMillion) / 1_000_000
