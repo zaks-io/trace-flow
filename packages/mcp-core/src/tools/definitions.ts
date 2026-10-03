@@ -82,6 +82,11 @@ const AGENT_FILTERS_PROPERTY = {
   },
 } as const;
 
+const PROXY_SPEND_SCOPE =
+  'Totals cover Trace Flow proxy spend only. Local proxy executions are API-equivalent estimates, reported separately by upstream account, and are not included.';
+const ROW_TOTALS_NOTE =
+  'Rows also include Local proxy executions with estimated costs, so totals summed from these rows are not directly reconcilable with the aggregate tools.';
+
 const AGENT_DISCOVERY_DEFAULT_LIMIT = 25;
 const AGENT_DISCOVERY_MAX_LIMIT = 50;
 const AGENT_DEFAULT_LIMIT = 25;
@@ -135,8 +140,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: 'list_traces',
-    description:
-      'List recent LLM trace rows with optional filtering by provider, model, or status. Rows are span/model-call level, so a single trace_id may appear more than once. Each row status is ok, error, or unset (no status was recorded). Use this for row-level inspection; for cost, latency, or token totals prefer the aggregate tools (get_usage_summary, list_model_usage, list_operation_usage) instead of summing rows yourself.',
+    description: `List recent LLM trace rows with optional filtering by provider, model, or status. Rows are span/model-call level, so a single trace_id may appear more than once. Each row status is ok, error, or unset (no status was recorded). Use this for row-level inspection; for cost, latency, or token totals prefer the aggregate tools (get_usage_summary, list_model_usage, list_operation_usage) instead of summing rows yourself. ${
+      ROW_TOTALS_NOTE
+    }`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -327,8 +333,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: 'get_usage_summary',
-    description:
-      'Get aggregated usage, cost, latency, and error totals for a time range. Use this for top-level KPI checks before drilling into traces.',
+    description: `Get aggregated usage, cost, latency, and error totals for a time range. Use this for top-level KPI checks before drilling into traces. ${
+      PROXY_SPEND_SCOPE
+    }`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -338,8 +345,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: 'list_operation_usage',
-    description:
-      'List operation-level usage rollups for a time range. Use this for top cost, p95 latency, cache hit rate, and unique-user impact by workflow/operation.',
+    description: `List operation-level usage rollups for a time range. Use this for top cost, p95 latency, cache hit rate, and unique-user impact by workflow/operation. ${
+      PROXY_SPEND_SCOPE
+    }`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -349,8 +357,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: 'list_model_usage',
-    description:
-      'List model-level usage rollups for a time range. Use this for top cost, p95 latency, and cost efficiency by model.',
+    description: `List model-level usage rollups for a time range. Use this for top cost, p95 latency, and cost efficiency by model. ${
+      PROXY_SPEND_SCOPE
+    }`,
     inputSchema: {
       type: 'object',
       properties: {

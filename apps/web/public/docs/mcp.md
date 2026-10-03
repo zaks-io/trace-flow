@@ -134,6 +134,8 @@ Fetch aggregated usage, cost, latency, and error totals for a time range.
 
 Use this before drilling into traces when you want a quick KPI snapshot for a workflow, provider, or model.
 
+Totals cover Trace Flow proxy spend only. Local proxy executions are API-equivalent estimates, reported separately by upstream account, and are not included. The same applies to `list_operation_usage` and `list_model_usage`. `list_traces` rows include Local proxy executions, so totals summed from them are not directly reconcilable with these tools.
+
 Parameters:
 
 - `hours` (number): lookback window (default 168, max 4320)

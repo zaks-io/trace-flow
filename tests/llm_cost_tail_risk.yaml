@@ -22,3 +22,10 @@
   parameters: api_keys=key_proj&api_key_filter=key_proj&provider=anthropic&model=claude-opus-4-8&operation_name=chat&baggage_operation=chat&baggage_user_id=u1&start_time_ns=1779840000000000000&end_time_ns=1779840110000000000&retention_days=3650
   expected_result: |
     {"api_key":"sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953","provider":"anthropic","model":"claude-opus-4-8","operation_name":"chat","baggage_operation":"chat","baggage_user_id":"u1","request_count":4,"input_tokens":900,"output_tokens":450,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"reasoning_tokens":0,"uncached_input_tokens":900,"total_cost_usd":0.09,"avg_cost_usd":0.0225,"cost_p50_usd":0.02,"cost_p95_usd":0.05,"cost_p99_usd":0.05,"cost_max_usd":0.05,"max_cost_trace_id":"t4","max_cost_span_id":"s4","p99_p50_ratio":2.5}
+
+- name: cost_tail_risk_excludes_imported_executions
+  description: a same-hour imported execution does not join the proxy cost distribution
+  expected_http_status: 200
+  parameters: api_keys=sha256:d18399fc37cc1ba6a2c870dbd5f8cccaa118fa738eadcfd3c0590e10629e67fc&start_time_ns=1790812800000000000&end_time_ns=1790899200000000000&retention_days=3650
+  expected_result: |
+    {"api_key":"sha256:d18399fc37cc1ba6a2c870dbd5f8cccaa118fa738eadcfd3c0590e10629e67fc","provider":"openai","model":"gpt-5","operation_name":"","baggage_operation":"","baggage_user_id":"","request_count":1,"input_tokens":11,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"reasoning_tokens":0,"uncached_input_tokens":11,"total_cost_usd":0,"avg_cost_usd":0,"cost_p50_usd":0,"cost_p95_usd":0,"cost_p99_usd":0,"cost_max_usd":0,"max_cost_trace_id":"aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaae1","max_cost_span_id":"8aaaaaaaaaaaaae1","p99_p50_ratio":null}

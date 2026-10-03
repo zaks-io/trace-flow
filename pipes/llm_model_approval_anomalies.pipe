@@ -58,6 +58,7 @@ SQL >
         )
             AND ReceivedAt >= start_ns
             AND ReceivedAt < end_ns
+            AND Source = 'proxy'
             AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
             {% if defined(provider) %}
             AND Provider = {{ String(provider) }}

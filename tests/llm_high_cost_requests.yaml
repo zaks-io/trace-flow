@@ -34,3 +34,10 @@
   expected_http_status: 200
   parameters: api_keys=sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953&api_key_filter=sha256:8a876aaf86d3ee01b61c028863136830d26de5634c3831c905a8f0995bd98333&threshold_usd=0.001&start_time_ns=1779840000000000000&end_time_ns=1779840110000000000&retention_days=3650
   expected_result: ''
+
+- name: high_cost_requests_exclude_imported_executions
+  description: a same-hour imported execution above the threshold is not a Trace Flow request alert
+  expected_http_status: 200
+  parameters: api_keys=sha256:d18399fc37cc1ba6a2c870dbd5f8cccaa118fa738eadcfd3c0590e10629e67fc&threshold_usd=0&limit=5&start_time_ns=1790812800000000000&end_time_ns=1790899200000000000&retention_days=3650
+  expected_result: |
+    {"trace_id":"aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaae1","span_id":"8aaaaaaaaaaaaae1","timestamp_ns":1760000000000000000,"received_at_ns":1790856000000000000,"provider":"openai","model":"gpt-5","operation":"","baggage_operation":"","baggage_user_id":"","cost_usd":0,"input_tokens":11,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"reasoning_tokens":0,"uncached_input_tokens":11,"total_tokens":12,"total_cost_microdollars":0}

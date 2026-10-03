@@ -42,7 +42,9 @@ SQL >
         sumState(CostPricedTokens) AS CostPricedTokens,
         sumState(toUInt64(Source = 'proxy')) AS CostProxyCount
     FROM llm_request_facts
+    WHERE Source = 'proxy'
     GROUP BY BucketStart, ApiKey, Provider, Model, OperationName, BaggageOperation, BaggageUserId, StatusCode
 
 TYPE MATERIALIZED
 DATASOURCE llm_usage_daily
+DEPLOYMENT_METHOD alter

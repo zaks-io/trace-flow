@@ -28,7 +28,8 @@ export function UpstreamAccountSection({
         <h2 className="text-base font-medium text-foreground">By Upstream Account</h2>
       </div>
       <p className="mb-4 text-xs text-muted-foreground">
-        Local proxy executions, reported separately from agent sessions.
+        Estimated API-equivalent cost of Local proxy executions, kept separate from the totals above
+        and from agent sessions.
       </p>
       {error ? (
         <p className="text-sm text-destructive">Upstream account usage failed to load.</p>

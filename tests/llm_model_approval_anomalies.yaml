@@ -29,3 +29,10 @@
   expected_http_status: 200
   parameters: api_keys=sha256:45f21e550c2475fb60ba8224ac6c91d31cd2a047510faaa60ccab588dbd27c38&api_key_filter=sha256:45f21e550c2475fb60ba8224ac6c91d31cd2a047510faaa60ccab588dbd27c38&baggage_operation=model-guard&approved_provider_models=7129e9c18989d1089a9d8ca67a0bae38d6ba0852e824523ae81e09923e35325f&start_time_ns=1779840092500000000&end_time_ns=1779840093500000000&retention_days=3650
   expected_result: ''
+
+- name: model_approval_excludes_imported_executions
+  description: an imported execution's provider and model pair is not reported as an unapproved Trace Flow pair
+  expected_http_status: 200
+  parameters: api_keys=sha256:d18399fc37cc1ba6a2c870dbd5f8cccaa118fa738eadcfd3c0590e10629e67fc&start_time_ns=1790812800000000000&end_time_ns=1790899200000000000&retention_days=3650
+  expected_result: |
+    {"provider":"openai","model":"gpt-5","request_count":1,"token_count":12,"total_cost_usd":0,"unapproved_request_count":1,"unpriced_request_count":1,"first_seen_ns":1790856000000000000,"last_seen_ns":1790856000000000000,"sample_trace_id":"aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaae1","sample_span_id":"8aaaaaaaaaaaaae1"}
