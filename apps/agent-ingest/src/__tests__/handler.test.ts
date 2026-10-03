@@ -660,27 +660,35 @@ describe('POST /v1/ingest', () => {
     expect(queueSend).not.toHaveBeenCalled();
   });
 
-  it('503s without staging or registering when the snapshot gate is closed', async () => {
-    const canAcceptDeliveries = vi.fn(async () => false);
-    const deliveryPut = vi.fn();
-    const registerDelivery = vi.fn(async () => 1);
-    const { env, queueSend } = makeEnv({
-      creds: await validCredEntries(),
-      canAcceptDeliveries,
-      deliveryPut,
-      registerDelivery,
-    });
-    interceptAccepted();
+  it.each([
+    { stage: 'before the claim', openChecks: 0, claims: 0 },
+    { stage: 'after the claim', openChecks: 1, claims: 1 },
+  ])(
+    '503s with Retry-After and stages nothing when admission is closed $stage',
+    async ({ openChecks, claims }) => {
+      let checks = 0;
+      const canAcceptDeliveries = vi.fn(async () => checks++ < openChecks);
+      const deliveryPut = vi.fn();
+      const { env, queueSend } = makeEnv({
+        creds: await validCredEntries(),
+        canAcceptDeliveries,
+        deliveryPut,
+      });
+      interceptAccepted();
+      const claim = vi.fn(claimResponder!);
+      claimResponder = claim;
 
-    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+      const res = await post(env, JSON.stringify(envelope()), authHeaders);
 
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: 'enqueue_failed' });
-    expect(canAcceptDeliveries).toHaveBeenCalledWith('org-1');
-    expect(deliveryPut).not.toHaveBeenCalled();
-    expect(registerDelivery).not.toHaveBeenCalled();
-    expect(queueSend).not.toHaveBeenCalled();
-  });
+      expect(res.status).toBe(503);
+      expect(res.headers.get('Retry-After')).toBe('60');
+      expect(await res.json()).toEqual({ error: 'enqueue_failed' });
+      expect(canAcceptDeliveries).toHaveBeenCalledWith('org-1');
+      expect(claim).toHaveBeenCalledTimes(claims);
+      expect(deliveryPut).not.toHaveBeenCalled();
+      expect(queueSend).not.toHaveBeenCalled();
+    },
+  );
 
   it('persists, registers, then publishes a revisioned fact-free reference', async () => {
     const order: string[] = [];
@@ -763,12 +771,12 @@ describe('POST /v1/ingest', () => {
 
     expect(res.status).toBe(202);
     expect(queueSend).toHaveBeenCalledTimes(2);
-    expect(canAcceptDeliveries).toHaveBeenCalledTimes(2);
+    expect(canAcceptDeliveries).toHaveBeenCalledTimes(3);
     expect((queueSend.mock.calls[0]![0] as unknown[]).length).toBe(10);
     expect((queueSend.mock.calls[1]![0] as unknown[]).length).toBe(2);
     expect(actions.indexOf('queue')).toBeLessThan(actions.indexOf('put:11'));
-    const secondAdmission = actions.indexOf('admit', 1);
-    expect(actions[0]).toBe('admit');
+    const secondAdmission = actions.lastIndexOf('admit');
+    expect(actions.slice(0, 2)).toEqual(['admit', 'admit']);
     expect(actions.indexOf('queue')).toBeLessThan(secondAdmission);
     expect(secondAdmission).toBeLessThan(actions.indexOf('put:11'));
   });
