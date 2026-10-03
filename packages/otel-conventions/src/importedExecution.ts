@@ -8,6 +8,21 @@ export const IMPORTED_EXECUTION = {
 } as const;
 
 export const IMPORTED_ACCOUNT_COVERAGE = ['provider-account', 'credential', 'unknown'] as const;
+// Subscription tier the exporter read from the upstream account; a closed set so a typo or a new
+// tier fails validation instead of silently becoming an unpriced label.
+export const IMPORTED_ACCOUNT_PLANS = [
+  'claude_pro',
+  'claude_max_5x',
+  'claude_max_20x',
+  'chatgpt_free',
+  'chatgpt_plus',
+  'chatgpt_pro',
+  'chatgpt_team',
+  'chatgpt_enterprise',
+  'unknown',
+] as const;
+export type ImportedAccountPlan = (typeof IMPORTED_ACCOUNT_PLANS)[number];
+
 export const IMPORTED_USAGE_QUALITY = ['complete', 'inconsistent', 'unclassified'] as const;
 
 export const IMPORTED_CLIENT_SOURCES = ['claude', 'codex'] as const;

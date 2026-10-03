@@ -98,6 +98,7 @@ export const CLI_PROXY = {
   RESPONSE_SERVICE_TIER: 'cliproxyapi.response.service_tier',
   ACCOUNT_COVERAGE: 'cliproxyapi.account.coverage',
   ACCOUNT_REF: 'cliproxyapi.account.ref',
+  ACCOUNT_PLAN: 'cliproxyapi.account.plan',
   SESSION_ID: 'cliproxyapi.session.id',
   PARENT_SESSION_ID: 'cliproxyapi.session.parent_id',
 } as const;

@@ -4,6 +4,8 @@ DESCRIPTION >
     reported elsewhere. AccountKey is installation/provider/coverage/ref, so accounts never merge
     across installations or providers, and unknown coverage stays a separate unavailable bucket.
     Joins llm_execution_accounts to llm_request_facts; rollups carry no account dimension.
+    plan is the latest subscription plan the exporter reported for the account in the range,
+    ordered by execution time, or '' when none was reported.
     The api_keys parameter is enforced via JWT fixed_params for security.
 
 NODE scoped_accounts
@@ -37,6 +39,37 @@ SQL >
         AND AccountKey = {{ String(account) }}
         {% end %}
     GROUP BY ApiKey, TraceId, SpanId, AccountKey
+
+NODE scoped_plans
+DESCRIPTION >
+    Latest reported plan per account for the same keys and range.
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ns, 0) }} AS start_ns_raw,
+        if(start_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now() - toIntervalDay(7), 9)), start_ns_raw) AS start_ns,
+        {{ Int64(end_time_ns, 0) }} AS end_ns_raw,
+        if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns
+    SELECT AccountKey, argMax(Plan, (Timestamp, ReceivedAt)) AS plan
+    FROM llm_execution_account_plans
+    WHERE ReceivedAt >= start_ns
+        AND ReceivedAt <= end_ns
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
+        AND (
+            ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+        )
+        AND ApiKey != ''
+        {% if defined(api_key_filter) %}
+        AND (
+            ApiKey = {{ String(api_key_filter) }}
+            OR if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) = if(match({{ String(api_key_filter) }}, '^sha256:[0-9a-f]{64}$'), {{ String(api_key_filter) }}, concat('sha256:', lower(hex(SHA256({{ String(api_key_filter) }})))))
+        )
+        {% end %}
+        {% if defined(account) %}
+        AND AccountKey = {{ String(account) }}
+        {% end %}
+    GROUP BY AccountKey
 
 NODE scoped_facts
 DESCRIPTION >
@@ -109,7 +142,9 @@ SQL >
         avg(DurationNano) / 1000000 AS avg_duration_ms,
         quantile(0.95)(DurationNano) / 1000000 AS p95_duration_ms,
         countIf(a.ttft_present = 1) AS ttft_count,
-        if(ttft_count = 0, NULL, avgIf(a.ttft_nano, a.ttft_present = 1) / 1000000) AS avg_ttft_ms
+        if(ttft_count = 0, NULL, avgIf(a.ttft_nano, a.ttft_present = 1) / 1000000) AS avg_ttft_ms,
+        intDiv(min(f.ReceivedAt), 1000000) AS first_received_ms,
+        intDiv(max(f.ReceivedAt), 1000000) AS last_received_ms
     FROM scoped_facts AS f
     INNER JOIN scoped_accounts AS a
         ON f.ApiKey = a.ApiKey AND f.TraceId = a.TraceId AND f.SpanId = a.SpanId
@@ -118,9 +153,11 @@ SQL >
 NODE endpoint
 SQL >
     SELECT
-        *,
-        if(request_count = cost_priced_count + cost_partial_count + cost_unpriced_count AND total_tokens > 0, cost_priced_tokens / total_tokens, NULL) AS cost_coverage_ratio
-    FROM accounts
-    ORDER BY total_cost_usd DESC, request_count DESC, account_key
+        a.*,
+        if(a.request_count = a.cost_priced_count + a.cost_partial_count + a.cost_unpriced_count AND a.total_tokens > 0, a.cost_priced_tokens / a.total_tokens, NULL) AS cost_coverage_ratio,
+        ifNull(p.plan, '') AS plan
+    FROM accounts AS a
+    LEFT JOIN scoped_plans AS p ON p.AccountKey = a.account_key
+    ORDER BY a.total_cost_usd DESC, a.request_count DESC, a.account_key
 
 TYPE ENDPOINT

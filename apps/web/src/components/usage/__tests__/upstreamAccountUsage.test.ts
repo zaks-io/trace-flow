@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   costGapNote,
   estimatedCost,
+  planLabel,
   reasoningShare,
   tokenCell,
   usageGapNote,
@@ -30,6 +31,9 @@ const row: UpstreamAccountRow = {
   cost_priced_tokens: 190,
   cost_coverage_ratio: 1,
   avg_ttft_ms: 200,
+  first_received_ms: 1790856001000,
+  last_received_ms: 1790856002000,
+  plan: '',
 };
 
 const unavailable: UpstreamAccountRow = {
@@ -79,5 +83,13 @@ describe('upstream account usage display', () => {
     expect(costGapNote({ ...row, cost_partial_count: 1, cost_coverage_ratio: 0.5 })).toBe(
       '1 partial, 50% of tokens priced',
     );
+  });
+
+  it('labels a reported plan by product name and hides unknown or unrecognized plans', () => {
+    expect(planLabel({ plan: 'claude_max_20x' })).toBe('Claude Max 20x');
+    expect(planLabel({ plan: 'chatgpt_team' })).toBe('ChatGPT Business');
+    expect(planLabel(row)).toBeNull();
+    expect(planLabel({ plan: 'unknown' })).toBeNull();
+    expect(planLabel({ plan: 'claude_max_40x' })).toBeNull();
   });
 });

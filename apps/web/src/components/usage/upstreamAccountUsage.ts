@@ -1,3 +1,4 @@
+import { accountPlanPrice } from '@trace-flow/pricing';
 import { formatNumber, formatPercent } from '@/lib/format';
 import { isCostUnknown } from './costCoverage';
 import type { UpstreamAccountRow } from './types';
@@ -58,4 +59,10 @@ export function costGapNote(row: UpstreamAccountRow): string | null {
     parts.push(`${formatPercent(row.cost_coverage_ratio * 100)} of tokens priced`);
   }
   return parts.length > 0 ? parts.join(', ') : null;
+}
+
+/** An exporter that could not read the plan says unknown, which is not worth a label. */
+export function planLabel(row: Pick<UpstreamAccountRow, 'plan'>): string | null {
+  if (row.plan === 'unknown') return null;
+  return accountPlanPrice(row.plan)?.label ?? null;
 }

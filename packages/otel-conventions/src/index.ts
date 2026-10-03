@@ -47,6 +47,8 @@ export { createSpan, packEvents, type SpanBase, type SpanVariant } from './creat
 export {
   IMPORTED_EXECUTION,
   IMPORTED_ACCOUNT_COVERAGE,
+  IMPORTED_ACCOUNT_PLANS,
   IMPORTED_CLIENT_SOURCES,
   IMPORTED_USAGE_QUALITY,
+  type ImportedAccountPlan,
 } from './importedExecution';

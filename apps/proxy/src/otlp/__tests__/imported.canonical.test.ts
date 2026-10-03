@@ -15,7 +15,7 @@ const SPAN: OTLPSpan = {
 };
 
 describe('imported execution identity and source hash', () => {
-  it('keeps the five legacy hashes unchanged and hashes native identity into replay conflicts', async () => {
+  it('keeps the five legacy hashes unchanged and hashes native identity and plan into replay conflicts', async () => {
     const result = validateImportedExecutionRequest(structuredClone(fixture));
     expect(result.valid).toBe(true);
     if (!result.valid) return;
@@ -35,7 +35,7 @@ describe('imported execution identity and source hash', () => {
       '4bff5ac99125e285449297caf60826d4c0ee311fb7d79a39b91c22015c093679',
       '8301ab63245f80222b4d217cd24da38f7a687e2fee15238279e7adc76bd1b231',
       '801270db6dac1f067d213cf2feb92241bcf7ebe801652aa070cfef41d10af22e',
-      '9ef332ee7ffa9c6f7f5a3f4be3c5139f891bfc2d64c52116cdc799a985b7c8d0',
+      'd107735663d4d37f700ff9c77b5ccd8b1898a1d67707b7e857ea99d56582626f',
     ]);
     const native = result.executions[5]!;
     expect(
@@ -50,6 +50,12 @@ describe('imported execution identity and source hash', () => {
       await importedExecutionSourceHash(native.installationId, native.executionId, native.span, {
         ...native.attributes,
         [CLI_PROXY.CLIENT_SESSION_ID]: 'another-thread',
+      }),
+    ).not.toBe(hashes[5]);
+    expect(
+      await importedExecutionSourceHash(native.installationId, native.executionId, native.span, {
+        ...native.attributes,
+        [CLI_PROXY.ACCOUNT_PLAN]: 'chatgpt_plus',
       }),
     ).not.toBe(hashes[5]);
   });

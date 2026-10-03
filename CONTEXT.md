@@ -157,7 +157,11 @@ _Avoid_: confusing with `~/.claude/projects` (Claude Code's local per-workspace 
 
 **Subscription Tier**:
 `hobby` or `pro`. Drives `monthlyUnits`, overage pricing, **Retention Window**, and **Visibility Window**.
-_Avoid_: "plan".
+_Avoid_: "plan" (that names an **Upstream Account Plan**).
+
+**Upstream Account Plan**:
+The provider subscription, such as Claude Max 20x or ChatGPT Pro, that CLIProxyAPI reports for the upstream account behind a Local proxy execution. The exporter looks it up and Trace Flow prices it from public list prices kept in code; no user enters it. Unrelated to Trace Flow's own Subscription Tier.
+_Avoid_: "tier" (that is the Subscription Tier or a provider service tier).
 
 **Billing Status**:
 `active` / `grace` / `suspended` / `canceled`. Orthogonal to Subscription Tier.
