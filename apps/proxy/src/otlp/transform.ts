@@ -23,7 +23,7 @@ const SPAN_KIND_MAP: Record<number, string> = {
 };
 
 const STATUS_CODE_MAP: Record<number, string> = {
-  0: 'STATUS_CODE_UNSET',
+  0: STATUS_CODE.UNSET,
   1: STATUS_CODE.OK,
   2: STATUS_CODE.ERROR,
 };
@@ -112,7 +112,7 @@ export function transformSpan(
     ResourceAttributes: resourceAttrs,
     SpanAttributes: attributesToRecord(span.attributes),
     Duration: durationNano,
-    StatusCode: STATUS_CODE_MAP[span.status?.code ?? 0] ?? 'STATUS_CODE_UNSET',
+    StatusCode: STATUS_CODE_MAP[span.status?.code ?? 0] ?? STATUS_CODE.UNSET,
     StatusMessage: span.status?.message ?? '',
     ApiKey: apiKey,
     'Events.Timestamp': [],

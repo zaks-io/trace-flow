@@ -5,9 +5,10 @@ import {
   GEN_AI_COST,
   GEN_AI_USAGE,
   HTTP,
-  STATUS_CODE,
   SOURCE_IMPORTED_EXECUTION,
   TRACE_FLOW,
+  normalizeSpanStatus,
+  type SpanStatus,
 } from '@trace-flow/otel-conventions';
 
 export interface SpanRow {
@@ -29,7 +30,7 @@ export interface ParsedSpan {
   name: string;
   timestamp: string | undefined;
   duration_ms: number;
-  status: string;
+  status: SpanStatus;
   status_message: string | undefined;
   provider: string | undefined;
   model: string | undefined;
@@ -69,12 +70,6 @@ function parseTimestampIso(timestampNs: unknown): string | undefined {
 function parseDurationMs(durationNs: unknown): number {
   const duration = Number(durationNs);
   return Number.isFinite(duration) ? duration / 1_000_000 : 0;
-}
-
-function parseStatus(statusCode: unknown): string {
-  if (statusCode === STATUS_CODE.OK) return 'ok';
-  if (statusCode === STATUS_CODE.ERROR) return 'error';
-  return 'unset';
 }
 
 function optionalNumber(value: unknown): number | undefined {
@@ -149,7 +144,7 @@ export function parseSpanRow(row: SpanRow): ParsedSpan {
     name: row.SpanName as string,
     timestamp: parseTimestampIso(row.Timestamp),
     duration_ms: parseDurationMs(row.Duration),
-    status: parseStatus(row.StatusCode),
+    status: normalizeSpanStatus(row.StatusCode),
     status_message: row.StatusMessage as string | undefined,
     provider: attrs[GEN_AI.SYSTEM] as string | undefined,
     model: attrs[GEN_AI.REQUEST_MODEL] as string | undefined,

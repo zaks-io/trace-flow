@@ -4,7 +4,14 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAction } from 'convex/react';
 import { Clock, Hash, GitBranch, ChevronRight, ChevronDown, AlertTriangle } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { GEN_AI, GEN_AI_COST, GEN_AI_USAGE, BAGGAGE_PREFIX } from '@trace-flow/otel-conventions';
+import {
+  GEN_AI,
+  GEN_AI_COST,
+  GEN_AI_USAGE,
+  BAGGAGE_PREFIX,
+  normalizeSpanStatus,
+  statusLabel,
+} from '@trace-flow/otel-conventions';
 import { api } from '@trace-flow/convex/_generated/api';
 import {
   formatBodyForDisplay,
@@ -509,6 +516,7 @@ export function SpanDetailPanel({
   const provider = allAttributes[GEN_AI.SYSTEM] ?? '';
   const model = allAttributes[GEN_AI.REQUEST_MODEL] ?? '';
   const operation = allAttributes[`${BAGGAGE_PREFIX}operation`] ?? '';
+  const spanStatus = normalizeSpanStatus(span?.StatusCode);
 
   // Token data
   const promptTokens = parseInt(allAttributes[GEN_AI_USAGE.INPUT_TOKENS] ?? '0', 10);
@@ -674,9 +682,15 @@ export function SpanDetailPanel({
                   <span className="tabular-nums">{formatDuration(span.Duration)}</span>
                   <span className="text-border">·</span>
                   <span
-                    className={span.StatusCode === 'ERROR' ? 'text-red-400' : 'text-emerald-400'}
+                    className={
+                      spanStatus === 'error'
+                        ? 'text-red-400'
+                        : spanStatus === 'ok'
+                          ? 'text-emerald-400'
+                          : 'text-muted-foreground'
+                    }
                   >
-                    {span.StatusCode}
+                    {statusLabel(spanStatus)}
                   </span>
                   {operation && (
                     <>

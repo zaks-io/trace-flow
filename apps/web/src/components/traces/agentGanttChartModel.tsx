@@ -6,6 +6,7 @@ import {
   GEN_AI_USAGE,
   SPAN_NAME_PREFIXES,
   SPAN_NAMES,
+  isErrorStatus,
 } from '@trace-flow/otel-conventions';
 import { formatDuration as formatDurationMs } from '@/lib/format';
 import {
@@ -341,7 +342,7 @@ export function getTypeColor(
   span?: TraceSpan,
   depth?: number,
 ): string {
-  if (status === 'ERROR') return 'bg-red-500';
+  if (isErrorStatus(status)) return 'bg-red-500';
 
   const isRoot = depth === 0;
 

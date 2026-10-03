@@ -9,6 +9,8 @@ import {
   HTTP,
   SOURCE_IMPORTED_EXECUTION,
   TRACE_FLOW,
+  normalizeSpanStatus,
+  statusLabel,
 } from '@trace-flow/otel-conventions';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatNumber, formatRelativeTime } from '@/lib/format';
@@ -280,19 +282,19 @@ export const allColumns: ColumnDef<RequestRow>[] = [
     accessorKey: 'StatusCode',
     header: 'Status',
     cell: ({ getValue }) => {
-      const status = getValue<string>();
+      const status = normalizeSpanStatus(getValue<string>());
       return (
         <span
           className={cn(
             'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
-            status === 'OK' || status === 'UNSET'
-              ? 'bg-emerald-500/20 text-emerald-400'
-              : status === 'ERROR'
-                ? 'bg-destructive/20 text-destructive'
+            status === 'error'
+              ? 'bg-destructive/20 text-destructive'
+              : status === 'ok'
+                ? 'bg-emerald-500/20 text-emerald-400'
                 : 'bg-muted text-muted-foreground',
           )}
         >
-          {status}
+          {statusLabel(status)}
         </span>
       );
     },

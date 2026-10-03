@@ -1,5 +1,11 @@
 import { parseSpanAttributes, type TraceSpanRow } from '@trace-flow/spans';
-import { GEN_AI, GEN_AI_COST, GEN_AI_USAGE, HTTP } from '@trace-flow/otel-conventions';
+import {
+  GEN_AI,
+  GEN_AI_COST,
+  GEN_AI_USAGE,
+  HTTP,
+  isErrorStatus,
+} from '@trace-flow/otel-conventions';
 import type { RequestRow } from '@/components/requests/data-table/columns';
 import type {
   Alert,
@@ -76,7 +82,7 @@ function extractMetricValue(row: RequestRow, field: AlertField): number | string
     }
 
     case 'is_error':
-      return row.StatusCode === 'ERROR';
+      return isErrorStatus(row.StatusCode);
 
     case 'http_status_code': {
       const statusCode = attrs[HTTP.RESPONSE_STATUS_CODE];
