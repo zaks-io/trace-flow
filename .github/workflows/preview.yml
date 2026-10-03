@@ -134,6 +134,8 @@ jobs:
           bunx convex env set --preview-name "$BRANCH_NAME" AGENT_INGEST_URL "$PREVIEW_COLLECTOR_URL"
           bunx convex env set --preview-name "$BRANCH_NAME" ANALYST_SANDBOX_URL "$PREVIEW_ANALYST_SANDBOX_URL"
           bunx convex env set --preview-name "$BRANCH_NAME" APP_URL "$PREVIEW_WEB_URL"
+          # Auth configuration is evaluated when the deployment is pushed.
+          bunx convex deploy --preview-name "$BRANCH_NAME"
         env:
           SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
           PIPES_API_SHARED_SECRET: ${{ secrets.PIPES_API_SHARED_SECRET }}

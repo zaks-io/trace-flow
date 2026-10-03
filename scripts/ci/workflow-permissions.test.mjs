@@ -170,9 +170,13 @@ describe('preview credential boundary', () => {
     );
     expect(configureConvex.env.AUTH0_CLIENT_ID).toBe(configure.env.AUTH0_CLIENT_ID);
     expect(configureConvex.env.AUTH0_DOMAIN).toBe(configure.env.AUTH0_DOMAIN);
-    expect(configureConvex.run).toContain(
-      'convex env set --preview-name "$BRANCH_NAME" AUTH0_CLIENT_ID "$AUTH0_CLIENT_ID"',
-    );
+    for (const name of ['AUTH0_CLIENT_ID', 'AUTH0_DOMAIN']) {
+      const setCommand = `convex env set --preview-name "$BRANCH_NAME" ${name} "$${name}"`;
+      expect(configureConvex.run).toContain(setCommand);
+      expect(configureConvex.run.indexOf(setCommand)).toBeLessThan(
+        configureConvex.run.indexOf('convex deploy --preview-name "$BRANCH_NAME"'),
+      );
+    }
     for (const name of ['AUTH0_CLIENT_SECRET', 'AUTH0_SECRET', 'BODY_ACCESS_JWT_SECRET']) {
       expect(configure.env[name]).toBe('${{ secrets.' + name + ' }}');
     }
