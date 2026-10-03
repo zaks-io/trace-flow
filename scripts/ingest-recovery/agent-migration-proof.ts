@@ -180,6 +180,15 @@ export async function verifyBaseline(
   const { category } = proof;
   const target = FACT_VERSION_DATASOURCES[category];
   const projection = baselineProjection(category);
+  const hashProjection =
+    category === 'messages'
+      ? projection
+          .split(',')
+          .filter(
+            (column) => column !== '`parent_vendor_session_id`' && column !== '`parent_session_pk`',
+          )
+          .join(',')
+      : projection;
   const time = category === 'review_unit_attributions' ? 'DecidedAt' : 'EventAt';
   const identity = `concat(${ROW_IDENTITY_FIELDS[category].join(', char(31), ')})`;
   let verifiedSourceRows = 0;
@@ -203,7 +212,7 @@ export async function verifyBaseline(
         SELECT
           toUInt64((SELECT count() FROM source_rows)) AS source_rows,
           toUInt64((SELECT count() FROM target_rows)) AS target_rows,
-          toUInt64((SELECT countIf(DeliverySequence != 1 OR IsDeleted != 0 OR ContentHash != lower(hex(SHA256(toJSONString(tuple(${projection})))))) FROM target_rows)) AS invalid_metadata,
+          toUInt64((SELECT countIf(DeliverySequence != 1 OR IsDeleted != 0 OR ContentHash != lower(hex(SHA256(toJSONString(tuple(${hashProjection})))))) FROM target_rows)) AS invalid_metadata,
           toUInt8((SELECT count() FROM (
             SELECT * FROM (
               SELECT ${projection} FROM source_rows

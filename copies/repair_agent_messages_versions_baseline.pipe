@@ -23,6 +23,8 @@ SQL >
         `IngestedAt`,
         `VendorStartedAt`,
         `vendor_session_id`,
+        `parent_vendor_session_id`,
+        `parent_session_pk`,
         `vendor_message_id`,
         `turn_index`,
         `role`,

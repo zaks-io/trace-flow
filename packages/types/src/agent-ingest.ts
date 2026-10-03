@@ -107,6 +107,7 @@ export interface AgentIngestBatch {
  */
 export interface AgentMessageFact {
   vendor_session_id: string;
+  parent_vendor_session_id?: string;
   /** Claude/Cursor carry one; Codex does not (Worker falls back to positional `turn_index`). */
   vendor_message_id: string | null;
   /** Positional turn index; the Codex `message_pk` fallback component and stable ordering key. */
@@ -259,6 +260,7 @@ export interface AgentTenancy {
 }
 
 export interface AgentMessageQueueFact extends AgentMessageFact {
+  parent_session_pk?: string;
   session_pk: string;
   message_pk: string;
   repo_fingerprint: string;

@@ -14,6 +14,8 @@ use crate::enums::{
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentMessageFact {
     pub vendor_session_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub parent_vendor_session_id: String,
     pub vendor_message_id: Option<String>,
     pub turn_index: i64,
     pub role: AgentMessageRole,

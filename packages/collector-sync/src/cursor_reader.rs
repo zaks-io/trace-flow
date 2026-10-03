@@ -332,6 +332,7 @@ fn build_cursor_context(records: &[Value]) -> SessionContext {
     let normalized_git_remote = normalize_git_remote(&repo_root);
     let repo_path_fallback = basename(&repo_root).to_string();
     SessionContext {
+        parent_vendor_session_id: String::new(),
         vendor_session_id: fields.vendor_session_id,
         // Resolved server-side from the connected credential; the headless collector has none.
         agent_id: String::new(),

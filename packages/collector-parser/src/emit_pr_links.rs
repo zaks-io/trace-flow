@@ -433,6 +433,7 @@ mod tests {
 
     fn ctx() -> SessionContext {
         SessionContext {
+            parent_vendor_session_id: String::new(),
             vendor_session_id: "sess-1".to_string(),
             agent_id: "agent-abc".to_string(),
             normalized_git_remote: "github.com/zaks-io/trace-flow".to_string(),

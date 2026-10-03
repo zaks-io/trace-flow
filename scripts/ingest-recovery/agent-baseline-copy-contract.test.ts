@@ -18,7 +18,15 @@ describe('baseline Copy latest-row contracts', () => {
       expect([...(selected?.matchAll(/`([^`]+)`/g) ?? [])].map((match) => match[1])).toEqual(
         columns,
       );
-      expect([...(hashed?.matchAll(/`([^`]+)`/g) ?? [])].map((match) => match[1])).toEqual(columns);
+      const hashedColumns =
+        category === 'messages'
+          ? columns.filter(
+              (column) => !['parent_vendor_session_id', 'parent_session_pk'].includes(column),
+            )
+          : columns;
+      expect([...(hashed?.matchAll(/`([^`]+)`/g) ?? [])].map((match) => match[1])).toEqual(
+        hashedColumns,
+      );
       expect(copy).toContain(`tuple(${identity.join(', ')}, IngestedAt) IN (`);
       expect(copy).toContain(`SELECT ${identity.join(', ')}, max(IngestedAt) AS IngestedAt`);
       expect(copy).toContain(`GROUP BY ${identity.join(', ')}`);

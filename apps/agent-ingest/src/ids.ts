@@ -174,6 +174,9 @@ export async function assembleQueueFacts(
       return {
         ...m,
         session_pk: i.sessionPk,
+        ...(m.parent_vendor_session_id
+          ? { parent_session_pk: await sessionPk(source, m.parent_vendor_session_id) }
+          : {}),
         message_pk: await messagePk(source, m.vendor_session_id, m.vendor_message_id, m.turn_index),
         repo_fingerprint: i.fingerprint,
         repo_source: i.repoSource,

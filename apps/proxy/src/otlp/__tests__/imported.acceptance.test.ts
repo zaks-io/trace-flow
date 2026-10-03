@@ -2,11 +2,13 @@ import { waitOnExecutionContext } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { _clearUsageCache } from '../../usage';
 import { _clearAll } from '../../cache';
-import { TRACE_FLOW } from '@trace-flow/otel-conventions';
+import { CLI_PROXY, TRACE_FLOW } from '@trace-flow/otel-conventions';
 import type { OTLPExportTraceServiceRequest } from '../types';
 import importedFixture from '../../../../../fixtures/cliproxyapi-execution-v2.json';
 import { makeEnv, otlpBody, postOTLP, postRawOTLP } from './durableFixtures';
 import { encodeRequest } from './protobufFixtures';
+import nativeProtobufBase64 from '../../../../../fixtures/cliproxyapi-native-a6.otlp.base64?raw';
+import liveProtobufBase64 from '../../../../../fixtures/cliproxyapi-native-live.otlp.base64?raw';
 
 const marker = 'X-Trace-Flow-Contract';
 const contract = 'cliproxyapi.execution/2';
@@ -74,6 +76,55 @@ afterEach(() => {
 });
 
 describe('imported v2 durable acknowledgement', () => {
+  it('accepts Go-exported OTLP protobuf at the Worker endpoint and preserves native metadata', async () => {
+    const payload = Uint8Array.from(atob(nativeProtobufBase64.trim()), (char) =>
+      char.charCodeAt(0),
+    );
+    const { env, getStoredValue } = makeEnv();
+    const { response, ctx } = await postRawOTLP(env, payload, 'application/x-protobuf');
+    expect(response.status).toBe(200);
+    expect(response.headers.get(marker)).toBe(contract);
+    const envelope = JSON.parse(getStoredValue());
+    expect(envelope.message.traces).toHaveLength(1);
+    const trace = envelope.message.traces[0];
+    expect(trace.TraceId).toBe('aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaa6');
+    expect(trace.SpanId).toBe('8aaaaaaaaaaaaaa6');
+    expect(trace.ParentSpanId).toBe('');
+    expect(trace.Links).toBeUndefined();
+    expect(trace.SpanAttributes).toMatchObject({
+      [CLI_PROXY.CLIENT_SOURCE]: 'codex',
+      [CLI_PROXY.CLIENT_SESSION_ID]: 'child-thread-6',
+      [CLI_PROXY.CLIENT_PARENT_SESSION_ID]: 'root-thread-6',
+      [CLI_PROXY.CLIENT_ORIGIN_SESSION_ID]: 'origin-session-6',
+      [CLI_PROXY.INBOUND_TRACE_ID]: '0123456789abcdef0123456789abcdef',
+      [CLI_PROXY.INBOUND_SPAN_ID]: '0123456789abcdef',
+      [TRACE_FLOW.IMPORT_SOURCE_HASH]:
+        '08d6924e0f8b50ae158a5e2694f5712ede636b60701cad5086feaed2dfbeb50e',
+    });
+    await waitOnExecutionContext(ctx);
+  });
+  it('accepts a captured three-span proxy export with Claude and Codex native metadata', async () => {
+    const payload = Uint8Array.from(atob(liveProtobufBase64.trim()), (char) => char.charCodeAt(0));
+    const { env, getStoredValue } = makeEnv();
+    const { response, ctx } = await postRawOTLP(env, payload, 'application/x-protobuf');
+    expect(response.status).toBe(200);
+    expect(response.headers.get(marker)).toBe(contract);
+    const envelope = JSON.parse(getStoredValue());
+    expect(envelope.message.traces).toHaveLength(3);
+    const traces = envelope.message.traces as { SpanAttributes: Record<string, unknown> }[];
+    expect(traces.map((trace) => trace.SpanAttributes[CLI_PROXY.CLIENT_SOURCE])).toContain(
+      'claude',
+    );
+    expect(traces.map((trace) => trace.SpanAttributes[CLI_PROXY.CLIENT_SOURCE])).toContain('codex');
+    const codex = traces.find((trace) => trace.SpanAttributes[CLI_PROXY.CLIENT_SOURCE] === 'codex');
+    expect(codex?.SpanAttributes).toMatchObject({
+      [CLI_PROXY.CLIENT_SESSION_ID]: '22222222-2222-4222-8222-222222222222',
+      [CLI_PROXY.CLIENT_PARENT_SESSION_ID]: '11111111-1111-4111-8111-111111111111',
+      [CLI_PROXY.INBOUND_TRACE_ID]: '0123456789abcdef0123456789abcdef',
+    });
+    await waitOnExecutionContext(ctx);
+  });
+
   it.each(['json', 'protobuf'])('waits for R2 before marking %s success', async (encoding) => {
     const { env, storagePut, queueSend } = makeEnv();
     let startWrite!: () => void;
@@ -169,7 +220,7 @@ describe('imported v2 durable acknowledgement', () => {
       expect(response.headers.get('X-Trace-Flow-Recording')).toBe('false');
       expect(response.headers.get(marker)).toBeNull();
       expect(await response.json()).toMatchObject({
-        partialSuccess: { rejectedSpans: 5, errorMessage: expect.any(String) },
+        partialSuccess: { rejectedSpans: 6, errorMessage: expect.any(String) },
       });
       expect(storagePut).not.toHaveBeenCalled();
       expect(queueSend).not.toHaveBeenCalled();

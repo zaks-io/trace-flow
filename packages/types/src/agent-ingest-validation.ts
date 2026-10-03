@@ -188,6 +188,30 @@ export function validateAgentIngestEnvelope(value: unknown): string | null {
     pull_request_links: PULL_REQUEST_FIELDS,
   });
   if (factsError) return factsError;
+  const batch = value.batch as Record<string, unknown>;
+  const facts = value.facts as Record<string, unknown>;
+  const messages = facts.messages as Record<string, unknown>[];
+  const parents = new Map<string, string>();
+  for (const [index, message] of messages.entries()) {
+    const parent = message.parent_vendor_session_id;
+    const session = message.vendor_session_id as string;
+    if (
+      parent !== undefined &&
+      (batch.source !== 'codex' ||
+        parent === '' ||
+        parent === session ||
+        Number(message.agent_depth) < 1)
+    ) {
+      return `facts.messages[${index}].parent_vendor_session_id`;
+    }
+    if (parent !== undefined) {
+      const previous = parents.get(session);
+      if (previous !== undefined && previous !== parent) {
+        return `facts.messages[${index}].parent_vendor_session_id`;
+      }
+      parents.set(session, parent as string);
+    }
+  }
   if (hasOwn(value, 'raw_session_bundles')) {
     const legacyError = validateLegacyRawBundles(value.raw_session_bundles);
     if (legacyError) return legacyError;
@@ -224,6 +248,22 @@ export function validateAgentIngestQueueMessage(value: unknown): string | null {
     'review_unit_attributions',
   ]);
   if (factsError) return factsError;
+  const queueFacts = value.facts as Record<string, unknown>;
+  for (const [index, message] of (queueFacts.messages as Record<string, unknown>[]).entries()) {
+    const parent = message.parent_vendor_session_id;
+    const parentPk = message.parent_session_pk;
+    if (
+      (parent === undefined) !== (parentPk === undefined) ||
+      (parent !== undefined &&
+        (value.source !== 'codex' ||
+          parent === '' ||
+          parentPk === '' ||
+          parent === message.vendor_session_id ||
+          Number(message.agent_depth) < 1))
+    ) {
+      return `queue_message.facts.messages[${index}].parent_vendor_session_id`;
+    }
+  }
   if (hasOwn(value, 'sentry_trace_context')) {
     const traceError = validateTraceContext(value.sentry_trace_context);
     if (traceError) return traceError;

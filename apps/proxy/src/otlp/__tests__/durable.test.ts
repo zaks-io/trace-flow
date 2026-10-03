@@ -197,7 +197,7 @@ describe('OTLP durable acceptance', () => {
       contract: 'cliproxyapi.execution/2',
       orgId: 'org-otlp',
     });
-    expect(envelope.message.traces).toHaveLength(5);
+    expect(envelope.message.traces).toHaveLength(6);
     expect(envelope.message.traces[0].SpanAttributes).toMatchObject({
       [TRACE_FLOW.SOURCE]: SOURCE_IMPORTED_EXECUTION,
       [GEN_AI_USAGE.TOTAL_TOKENS]: '23',

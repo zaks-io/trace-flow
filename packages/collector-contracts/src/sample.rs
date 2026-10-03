@@ -25,6 +25,7 @@ pub fn sample_envelope() -> AgentIngestEnvelope {
         },
         facts: AgentIngestFacts {
             messages: vec![AgentMessageFact {
+                parent_vendor_session_id: String::new(),
                 vendor_session_id: "claude-sess-abc123".to_string(),
                 vendor_message_id: Some("msg_01ABCDEF".to_string()),
                 turn_index: 4,

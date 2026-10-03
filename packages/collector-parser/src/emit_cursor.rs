@@ -85,6 +85,7 @@ fn message_fact(record: &Value, turn_index: i64, ctx: &SessionContext) -> AgentM
     // a malformed/hand-built one) gets the empty label, which the server treats as unpriceable.
     let model = bubble_model(record).unwrap_or_default().to_string();
     AgentMessageFact {
+        parent_vendor_session_id: String::new(),
         // Prefer the bubble's own composer id; ctx carries the same value as the canonical fallback.
         vendor_session_id: composer_id(record)
             .unwrap_or(&ctx.vendor_session_id)
@@ -154,6 +155,7 @@ mod tests {
 
     fn ctx() -> SessionContext {
         SessionContext {
+            parent_vendor_session_id: String::new(),
             vendor_session_id: "comp-1".to_string(),
             agent_id: "agent-abc".to_string(),
             normalized_git_remote: "github.com/acme/trace-flow".to_string(),

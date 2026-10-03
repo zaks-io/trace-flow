@@ -68,6 +68,7 @@ export const WEB_TINYBIRD_PIPES = [
   'agent_session_cost_distribution',
   'agent_cost_by_depth',
   'agent_sessions_browser',
+  'agent_session_identity',
   'agent_notable_changes',
   'agent_context_health',
   'agent_failure_leaderboard',

@@ -27,6 +27,8 @@ SCHEMA >
     `IngestedAt` DateTime64(3) `json:$.IngestedAt`,
     `VendorStartedAt` DateTime64(3) `json:$.VendorStartedAt`,
     `vendor_session_id` String `json:$.vendor_session_id`,
+    `parent_vendor_session_id` String DEFAULT '' `json:$.parent_vendor_session_id`,
+    `parent_session_pk` String DEFAULT '' `json:$.parent_session_pk`,
     `vendor_message_id` String `json:$.vendor_message_id`,
     `turn_index` UInt32 `json:$.turn_index`,
     `role` LowCardinality(String) `json:$.role`,

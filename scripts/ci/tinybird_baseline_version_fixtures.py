@@ -141,6 +141,11 @@ def verify_baseline_versions(client, sources, query_rows, run_copy) -> None:
             Path(f"datasources/{table}.datasource").read_text(),
             re.M,
         )
+        if category == "messages":
+            columns = [
+                column for column in columns
+                if column not in ("parent_vendor_session_id", "parent_session_pk")
+            ]
         projection = ",".join(f"`{column}`" for column in columns)
 
         def canonical_rows() -> list[dict]:
