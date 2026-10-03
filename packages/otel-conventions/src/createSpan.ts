@@ -1,6 +1,7 @@
 import type { TinybirdTrace } from '@trace-flow/types';
 import { generateSpanId } from '@trace-flow/utils';
-import { STATUS_CODE, type SPAN_KIND } from './keys';
+import type { SPAN_KIND } from './keys';
+import { STATUS_CODE } from './status';
 import type { SpanEventInput } from './attributes/messages';
 
 const MS_TO_NS = 1_000_000;

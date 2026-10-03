@@ -3,7 +3,14 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { parseSpanAttributes } from '@trace-flow/spans';
-import { GEN_AI, HTTP, SOURCE_IMPORTED_EXECUTION, TRACE_FLOW } from '@trace-flow/otel-conventions';
+import {
+  GEN_AI,
+  HTTP,
+  SOURCE_IMPORTED_EXECUTION,
+  TRACE_FLOW,
+  normalizeSpanStatus,
+  statusLabel,
+} from '@trace-flow/otel-conventions';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Sheet,
@@ -117,6 +124,7 @@ export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDeta
   const model = parsedAttributes[GEN_AI.REQUEST_MODEL] ?? '';
   const targetUrl = parsedAttributes[HTTP.URL] ?? '';
   const statusCode = parsedAttributes[HTTP.RESPONSE_STATUS_CODE] ?? '';
+  const spanStatus = normalizeSpanStatus(request?.StatusCode);
   const responseId = parsedAttributes[GEN_AI.RESPONSE_ID] ?? '';
   const rawSource = parsedAttributes[TRACE_FLOW.SOURCE];
   const sourceLabel = requestSourceLabel(rawSource);
@@ -302,14 +310,14 @@ export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDeta
               <>
                 <span
                   className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${
-                    request.StatusCode === 'ERROR'
+                    spanStatus === 'error'
                       ? 'bg-red-500/15 text-red-400'
-                      : request.StatusCode === 'OK'
+                      : spanStatus === 'ok'
                         ? 'bg-emerald-500/15 text-emerald-400'
                         : 'bg-muted text-muted-foreground'
                   }`}
                 >
-                  {request.StatusCode}
+                  {statusLabel(spanStatus)}
                 </span>
                 <span className="font-mono text-sm tabular-nums text-muted-foreground">
                   {formatDuration(request.Duration)}

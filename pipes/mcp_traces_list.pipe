@@ -1,6 +1,8 @@
 DESCRIPTION >
     List traces with offset-based pagination for MCP tools.
     Returns formatted fields ready for API response.
+    status is ok for STATUS_CODE_OK, unset for STATUS_CODE_UNSET or an empty code, and error
+    for anything else, so an unrecognised code is surfaced rather than hidden as healthy.
     The api_keys parameter is enforced via JWT fixed_params for security.
 
 NODE endpoint
@@ -11,7 +13,7 @@ SQL >
         formatDateTime(toDateTime(ReceivedAt / 1000000000), '%Y-%m-%dT%H:%i:%S') || '.' ||
             lpad(toString(toInt64(ReceivedAt / 1000000) % 1000), 3, '0') || 'Z' as timestamp,
         Duration / 1000000 as duration_ms,
-        if(StatusCode = 'STATUS_CODE_OK', 'ok', 'error') as status,
+        multiIf(StatusCode = 'STATUS_CODE_OK', 'ok', StatusCode IN ('STATUS_CODE_UNSET', ''), 'unset', 'error') as status,
         JSONExtractString(SpanAttributes, 'gen_ai.system') as provider,
         JSONExtractString(SpanAttributes, 'gen_ai.request.model') as model,
         if(JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution', toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens')), JSONExtractInt(SpanAttributes, 'gen_ai.usage.input_tokens')) as prompt_tokens,

@@ -139,6 +139,11 @@ describe('parseSpanRow', () => {
     expect(result.status).toBe('unset');
   });
 
+  it('rejects unrecognised status codes', () => {
+    const row = { ...baseRow, StatusCode: 'STATUS_CODE_EROR' };
+    expect(() => parseSpanRow(row)).toThrow('STATUS_CODE_EROR');
+  });
+
   it('extracts baggage attributes', () => {
     const row = {
       ...baseRow,

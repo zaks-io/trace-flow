@@ -388,6 +388,7 @@ export function TableToolbar<TData>({
               options={filterOptions.statuses}
               loading={filterOptionsLoading}
               onChange={(value) => onFilterChange('status', value)}
+              labelMap={filterOptions.statusLabels}
             />
             {filterOptions.operations.length > 0 && (
               <FilterDropdown

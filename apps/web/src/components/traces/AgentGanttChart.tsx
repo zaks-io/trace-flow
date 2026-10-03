@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { parseSpanAttributes } from '@trace-flow/spans';
-import { GEN_AI, GEN_AI_USAGE } from '@trace-flow/otel-conventions';
+import { GEN_AI, GEN_AI_USAGE, STATUS_CODE, isErrorStatus } from '@trace-flow/otel-conventions';
 import { formatCurrency, formatNumber } from '@/lib/format';
 import { AlertCircle, ChevronDown, ChevronRight, ChevronsUpDown } from 'lucide-react';
 import type { AlertSeverity } from '@/types/alerts';
@@ -88,7 +88,7 @@ export function AgentGanttChart({
           SpanName: operation,
           ServiceName: childSpans[0].ServiceName,
           Duration: latestEnd - earliestStart,
-          StatusCode: 'OK',
+          StatusCode: STATUS_CODE.OK,
           SpanAttributes: JSON.stringify({
             synthetic: 'true',
             [GEN_AI.OPERATION_NAME]: operation,
@@ -163,7 +163,7 @@ export function AgentGanttChart({
       let cost = span ? (getSpanCost(attrs) ?? 0) : 0;
       const models = new Set<string>();
       const operations = new Set<string>();
-      let hasError = span?.StatusCode === 'ERROR';
+      let hasError = isErrorStatus(span?.StatusCode);
       const tpsSpans: { tps: number; outputTokens: number }[] = [];
 
       if (span) {
@@ -560,7 +560,7 @@ export function AgentGanttChart({
             ? alertSeverityStyles[alertSummary.highestSeverity]
             : null;
           const isError =
-            row.span.StatusCode === 'ERROR' ||
+            isErrorStatus(row.span.StatusCode) ||
             (hasChildren && !isExpanded && row.hasErrorDescendant);
 
           return (

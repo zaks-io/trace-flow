@@ -157,11 +157,6 @@ export const SPAN_KIND = {
   INTERNAL: 'SPAN_KIND_INTERNAL',
 } as const;
 
-export const STATUS_CODE = {
-  OK: 'STATUS_CODE_OK',
-  ERROR: 'STATUS_CODE_ERROR',
-} as const;
-
 /**
  * Every attribute key string the Trace Flow code base writes. Used by the
  * sqlConsistency test to find SQL extractions that lack a TS counterpart.

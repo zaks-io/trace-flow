@@ -1,6 +1,14 @@
 import { isLLMRequestSpan, parseSpanAttributes, type TraceSpan } from './spans';
 import { calculateCacheHitRate, calculateUncachedInputTokens } from './cacheMetrics';
-import { GEN_AI, GEN_AI_COST, GEN_AI_USAGE } from '@trace-flow/otel-conventions';
+import {
+  GEN_AI,
+  GEN_AI_COST,
+  GEN_AI_USAGE,
+  isErrorStatus,
+  normalizeSpanStatus,
+  statusLabel,
+  type SpanStatus,
+} from '@trace-flow/otel-conventions';
 
 interface TokenSummary {
   promptTokens: number;
@@ -29,7 +37,7 @@ interface LLMCall {
   newTokens: number;
   cost: number | null;
   duration: number;
-  status: string;
+  status: SpanStatus;
   startOffset: number;
   endOffset: number;
 }
@@ -131,7 +139,7 @@ function extractLLMCalls(spans: TraceSpan[], traceStart: number): LLMCall[] {
       ),
       cost,
       duration: span.Duration,
-      status: span.StatusCode,
+      status: normalizeSpanStatus(span.StatusCode),
       startOffset: span.Timestamp - traceStart,
       endOffset: span.Timestamp + span.Duration - traceStart,
     };
@@ -224,7 +232,7 @@ function renderGanttChart(llmCalls: LLMCall[], totalDuration: number): string {
     let bar = ' '.repeat(startPos) + '█'.repeat(barLength);
     bar = bar.padEnd(width - 2, ' ');
 
-    const statusMark = call.status === 'ERROR' ? ' ERR' : '';
+    const statusMark = call.status === 'error' ? ' ERR' : '';
     const label = `#${call.index} ${call.model}${statusMark}`;
     lines.push(`|${bar}| ${label}`);
 
@@ -286,7 +294,7 @@ function renderSpanTree(nodes: SpanNode[], traceStart: number, depth = 0): strin
     const attrs = parseSpanAttributes(span.SpanAttributes);
     const duration = formatDuration(span.Duration);
     const offset = formatOffset(span.Timestamp - traceStart);
-    const statusIcon = span.StatusCode === 'ERROR' ? ' ERROR' : '';
+    const statusIcon = isErrorStatus(span.StatusCode) ? ' ERROR' : '';
 
     const tokens =
       parseInt(attrs[GEN_AI_USAGE.INPUT_TOKENS] ?? '0', 10) +
@@ -412,7 +420,7 @@ export function generateTraceMarkdown(spans: TraceSpan[]): string {
     }
 
     // Errors
-    const errors = llmCalls.filter((c) => c.status === 'ERROR');
+    const errors = llmCalls.filter((c) => c.status === 'error');
     if (errors.length > 0) {
       highlights.push(`- **Errors:** ${errors.map((e) => `#${e.index}`).join(', ')}`);
     }
@@ -467,7 +475,7 @@ export function generateTraceMarkdown(spans: TraceSpan[]): string {
           ? `${formatNumber(call.promptTokens)}/${formatNumber(call.completionTokens)}`
           : '-';
       const costStr = call.cost !== null ? formatCost(call.cost) : '-';
-      const statusStr = call.status === 'ERROR' ? 'ERROR' : 'OK';
+      const statusStr = statusLabel(call.status);
 
       if (hasCache) {
         const cacheStr =

@@ -27,3 +27,10 @@
   parameters: api_keys=sha256:ea89ad73ab4059786d1e6b3a16ebab8d79bd6c4d0b7ed720c6f2007d4c1355e2&start_time_ns=1790812800000000000&retention_days=3650&sort_by=tokens&order=desc&limit=1&offset=1&status=STATUS_CODE_ERROR
   expected_result: |
     {"trace_id":"aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaa4","timestamp":"2026-10-01T12:00:00.000Z","duration_ms":200,"status":"error","provider":"openai","model":"gpt-5","prompt_tokens":0,"completion_tokens":0,"total_tokens":0,"cost_usd":0,"total_count":2}
+
+- name: unset_status
+  description: reports an unset span status as unset instead of error
+  expected_http_status: 200
+  parameters: api_keys=key_status_unset&start_time_ns=1790812800000000000&retention_days=3650&limit=1&offset=0
+  expected_result: |
+    {"trace_id":"aaaaaaaaaaaa4aaa8aaaaaaaaaaaaab1","timestamp":"2026-10-01T12:00:00.000Z","duration_ms":1000,"status":"unset","provider":"anthropic","model":"claude-opus-4-8","prompt_tokens":100,"completion_tokens":50,"total_tokens":150,"cost_usd":0.01,"total_count":1}

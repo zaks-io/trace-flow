@@ -10,13 +10,20 @@ export {
   SPAN_NAMES,
   SPAN_NAME_PREFIXES,
   SPAN_KIND,
-  STATUS_CODE,
   SOURCE_PROXY,
   SOURCE_IMPORTED_EXECUTION,
   ALL_ATTRIBUTE_KEYS,
   outputEventName,
   inputEventName,
 } from './keys';
+
+export {
+  STATUS_CODE,
+  normalizeSpanStatus,
+  isErrorStatus,
+  statusLabel,
+  type SpanStatus,
+} from './status';
 
 export type { CostBreakdown } from './attributes/types';
 
