@@ -37,7 +37,9 @@ SCHEMA >
     `Source` LowCardinality(String),
     `UnclassifiedTokens` UInt32,
     `UsageQuality` LowCardinality(String),
-    `UsageMissing` UInt8
+    `UsageMissing` UInt8,
+    `CostStatus` LowCardinality(String),
+    `CostPricedTokens` UInt64
 
 FORWARD_QUERY >
     SELECT
@@ -72,10 +74,12 @@ FORWARD_QUERY >
         `UpstreamTtfbNano`,
         `TierAtIngestion`,
         `RetentionExpiresAt`,
-        CAST('proxy', 'LowCardinality(String)') AS Source,
-        toUInt32(0) AS UnclassifiedTokens,
-        CAST('', 'LowCardinality(String)') AS UsageQuality,
-        toUInt8(0) AS UsageMissing
+        `Source`,
+        `UnclassifiedTokens`,
+        `UsageQuality`,
+        `UsageMissing`,
+        CAST('', 'LowCardinality(String)') AS CostStatus,
+        toUInt64(0) AS CostPricedTokens
 
 ENGINE "MergeTree"
 ENGINE_SORTING_KEY "ApiKey, ReceivedAt, Provider, Model, OperationName, BaggageOperation, StatusCode, BaggageUserId, TraceId, SpanId"

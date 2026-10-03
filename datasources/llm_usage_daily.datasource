@@ -34,7 +34,11 @@ SCHEMA >
     `UsageCompleteCount` AggregateFunction(sum, UInt64),
     `UsageInconsistentCount` AggregateFunction(sum, UInt64),
     `UsageUnclassifiedCount` AggregateFunction(sum, UInt64),
-    `UsageMissingCount` AggregateFunction(sum, UInt64)
+    `UsageMissingCount` AggregateFunction(sum, UInt64),
+    `CostPricedCount` AggregateFunction(sum, UInt64),
+    `CostPartialCount` AggregateFunction(sum, UInt64),
+    `CostUnpricedCount` AggregateFunction(sum, UInt64),
+    `CostPricedTokens` AggregateFunction(sum, UInt64)
 
 FORWARD_QUERY >
     SELECT
@@ -65,11 +69,15 @@ FORWARD_QUERY >
         `AvgDurationNano`,
         `MaxDurationNano`,
         `P95DurationNano`,
-        arrayReduce('sumState', [toUInt64(0)]) AS UnclassifiedTokens,
-        arrayReduce('sumState', [toUInt64(0)]) AS UsageCompleteCount,
-        arrayReduce('sumState', [toUInt64(0)]) AS UsageInconsistentCount,
-        arrayReduce('sumState', [toUInt64(0)]) AS UsageUnclassifiedCount,
-        arrayReduce('sumState', [toUInt64(0)]) AS UsageMissingCount
+        `UnclassifiedTokens`,
+        `UsageCompleteCount`,
+        `UsageInconsistentCount`,
+        `UsageUnclassifiedCount`,
+        `UsageMissingCount`,
+        arrayReduce('sumState', [toUInt64(0)]) AS CostPricedCount,
+        arrayReduce('sumState', [toUInt64(0)]) AS CostPartialCount,
+        arrayReduce('sumState', [toUInt64(0)]) AS CostUnpricedCount,
+        arrayReduce('sumState', [toUInt64(0)]) AS CostPricedTokens
 
 ENGINE "AggregatingMergeTree"
 ENGINE_SORTING_KEY "ApiKey, BucketStart, Provider, Model, OperationName, BaggageOperation, StatusCode, BaggageUserId"

@@ -835,6 +835,62 @@ export declare const api: {
           promptCostPerMillion: number;
           provider: string;
           reasoningCostPerMillion?: number;
+          serviceTiers?: {
+            batch?: {
+              cacheReadCostPerMillion?: number;
+              cacheWrite1hCostPerMillion?: number;
+              cacheWriteCostPerMillion?: number;
+              completionCostPerMillion: number;
+              contextTier?: {
+                cacheReadCostPerMillion?: number;
+                cacheWrite1hCostPerMillion?: number;
+                cacheWriteCostPerMillion?: number;
+                completionCostPerMillion: number;
+                promptCostPerMillion: number;
+                reasoningCostPerMillion?: number;
+                thresholdTokens: number;
+              };
+              promptCostPerMillion: number;
+              reasoningCostPerMillion?: number;
+              referenceUrl: string;
+            };
+            flex?: {
+              cacheReadCostPerMillion?: number;
+              cacheWrite1hCostPerMillion?: number;
+              cacheWriteCostPerMillion?: number;
+              completionCostPerMillion: number;
+              contextTier?: {
+                cacheReadCostPerMillion?: number;
+                cacheWrite1hCostPerMillion?: number;
+                cacheWriteCostPerMillion?: number;
+                completionCostPerMillion: number;
+                promptCostPerMillion: number;
+                reasoningCostPerMillion?: number;
+                thresholdTokens: number;
+              };
+              promptCostPerMillion: number;
+              reasoningCostPerMillion?: number;
+              referenceUrl: string;
+            };
+            priority?: {
+              cacheReadCostPerMillion?: number;
+              cacheWrite1hCostPerMillion?: number;
+              cacheWriteCostPerMillion?: number;
+              completionCostPerMillion: number;
+              contextTier?: {
+                cacheReadCostPerMillion?: number;
+                cacheWrite1hCostPerMillion?: number;
+                cacheWriteCostPerMillion?: number;
+                completionCostPerMillion: number;
+                promptCostPerMillion: number;
+                reasoningCostPerMillion?: number;
+                thresholdTokens: number;
+              };
+              promptCostPerMillion: number;
+              reasoningCostPerMillion?: number;
+              referenceUrl: string;
+            };
+          };
           source: "manual" | "openrouter" | "default" | "models.dev";
           updatedAt: number;
         } | null
@@ -875,6 +931,62 @@ export declare const api: {
           promptCostPerMillion: number;
           provider: string;
           reasoningCostPerMillion?: number;
+          serviceTiers?: {
+            batch?: {
+              cacheReadCostPerMillion?: number;
+              cacheWrite1hCostPerMillion?: number;
+              cacheWriteCostPerMillion?: number;
+              completionCostPerMillion: number;
+              contextTier?: {
+                cacheReadCostPerMillion?: number;
+                cacheWrite1hCostPerMillion?: number;
+                cacheWriteCostPerMillion?: number;
+                completionCostPerMillion: number;
+                promptCostPerMillion: number;
+                reasoningCostPerMillion?: number;
+                thresholdTokens: number;
+              };
+              promptCostPerMillion: number;
+              reasoningCostPerMillion?: number;
+              referenceUrl: string;
+            };
+            flex?: {
+              cacheReadCostPerMillion?: number;
+              cacheWrite1hCostPerMillion?: number;
+              cacheWriteCostPerMillion?: number;
+              completionCostPerMillion: number;
+              contextTier?: {
+                cacheReadCostPerMillion?: number;
+                cacheWrite1hCostPerMillion?: number;
+                cacheWriteCostPerMillion?: number;
+                completionCostPerMillion: number;
+                promptCostPerMillion: number;
+                reasoningCostPerMillion?: number;
+                thresholdTokens: number;
+              };
+              promptCostPerMillion: number;
+              reasoningCostPerMillion?: number;
+              referenceUrl: string;
+            };
+            priority?: {
+              cacheReadCostPerMillion?: number;
+              cacheWrite1hCostPerMillion?: number;
+              cacheWriteCostPerMillion?: number;
+              completionCostPerMillion: number;
+              contextTier?: {
+                cacheReadCostPerMillion?: number;
+                cacheWrite1hCostPerMillion?: number;
+                cacheWriteCostPerMillion?: number;
+                completionCostPerMillion: number;
+                promptCostPerMillion: number;
+                reasoningCostPerMillion?: number;
+                thresholdTokens: number;
+              };
+              promptCostPerMillion: number;
+              reasoningCostPerMillion?: number;
+              referenceUrl: string;
+            };
+          };
           source: "manual" | "openrouter" | "default" | "models.dev";
           updatedAt: number;
         }>
@@ -918,6 +1030,62 @@ export declare const api: {
           promptCostPerMillion: number;
           provider: string;
           reasoningCostPerMillion?: number;
+          serviceTiers?: {
+            batch?: {
+              cacheReadCostPerMillion?: number;
+              cacheWrite1hCostPerMillion?: number;
+              cacheWriteCostPerMillion?: number;
+              completionCostPerMillion: number;
+              contextTier?: {
+                cacheReadCostPerMillion?: number;
+                cacheWrite1hCostPerMillion?: number;
+                cacheWriteCostPerMillion?: number;
+                completionCostPerMillion: number;
+                promptCostPerMillion: number;
+                reasoningCostPerMillion?: number;
+                thresholdTokens: number;
+              };
+              promptCostPerMillion: number;
+              reasoningCostPerMillion?: number;
+              referenceUrl: string;
+            };
+            flex?: {
+              cacheReadCostPerMillion?: number;
+              cacheWrite1hCostPerMillion?: number;
+              cacheWriteCostPerMillion?: number;
+              completionCostPerMillion: number;
+              contextTier?: {
+                cacheReadCostPerMillion?: number;
+                cacheWrite1hCostPerMillion?: number;
+                cacheWriteCostPerMillion?: number;
+                completionCostPerMillion: number;
+                promptCostPerMillion: number;
+                reasoningCostPerMillion?: number;
+                thresholdTokens: number;
+              };
+              promptCostPerMillion: number;
+              reasoningCostPerMillion?: number;
+              referenceUrl: string;
+            };
+            priority?: {
+              cacheReadCostPerMillion?: number;
+              cacheWrite1hCostPerMillion?: number;
+              cacheWriteCostPerMillion?: number;
+              completionCostPerMillion: number;
+              contextTier?: {
+                cacheReadCostPerMillion?: number;
+                cacheWrite1hCostPerMillion?: number;
+                cacheWriteCostPerMillion?: number;
+                completionCostPerMillion: number;
+                promptCostPerMillion: number;
+                reasoningCostPerMillion?: number;
+                thresholdTokens: number;
+              };
+              promptCostPerMillion: number;
+              reasoningCostPerMillion?: number;
+              referenceUrl: string;
+            };
+          };
           source: "manual" | "openrouter" | "default" | "models.dev";
         },
         Id<"modelPricing">
@@ -2166,6 +2334,62 @@ export declare const internal: {
           promptCostPerMillion: number;
           provider: string;
           reasoningCostPerMillion?: number;
+          serviceTiers?: {
+            batch?: {
+              cacheReadCostPerMillion?: number;
+              cacheWrite1hCostPerMillion?: number;
+              cacheWriteCostPerMillion?: number;
+              completionCostPerMillion: number;
+              contextTier?: {
+                cacheReadCostPerMillion?: number;
+                cacheWrite1hCostPerMillion?: number;
+                cacheWriteCostPerMillion?: number;
+                completionCostPerMillion: number;
+                promptCostPerMillion: number;
+                reasoningCostPerMillion?: number;
+                thresholdTokens: number;
+              };
+              promptCostPerMillion: number;
+              reasoningCostPerMillion?: number;
+              referenceUrl: string;
+            };
+            flex?: {
+              cacheReadCostPerMillion?: number;
+              cacheWrite1hCostPerMillion?: number;
+              cacheWriteCostPerMillion?: number;
+              completionCostPerMillion: number;
+              contextTier?: {
+                cacheReadCostPerMillion?: number;
+                cacheWrite1hCostPerMillion?: number;
+                cacheWriteCostPerMillion?: number;
+                completionCostPerMillion: number;
+                promptCostPerMillion: number;
+                reasoningCostPerMillion?: number;
+                thresholdTokens: number;
+              };
+              promptCostPerMillion: number;
+              reasoningCostPerMillion?: number;
+              referenceUrl: string;
+            };
+            priority?: {
+              cacheReadCostPerMillion?: number;
+              cacheWrite1hCostPerMillion?: number;
+              cacheWriteCostPerMillion?: number;
+              completionCostPerMillion: number;
+              contextTier?: {
+                cacheReadCostPerMillion?: number;
+                cacheWrite1hCostPerMillion?: number;
+                cacheWriteCostPerMillion?: number;
+                completionCostPerMillion: number;
+                promptCostPerMillion: number;
+                reasoningCostPerMillion?: number;
+                thresholdTokens: number;
+              };
+              promptCostPerMillion: number;
+              reasoningCostPerMillion?: number;
+              referenceUrl: string;
+            };
+          };
           source: "manual" | "openrouter" | "default" | "models.dev";
           updatedAt: number;
         } | null
@@ -2206,6 +2430,62 @@ export declare const internal: {
           promptCostPerMillion: number;
           provider: string;
           reasoningCostPerMillion?: number;
+          serviceTiers?: {
+            batch?: {
+              cacheReadCostPerMillion?: number;
+              cacheWrite1hCostPerMillion?: number;
+              cacheWriteCostPerMillion?: number;
+              completionCostPerMillion: number;
+              contextTier?: {
+                cacheReadCostPerMillion?: number;
+                cacheWrite1hCostPerMillion?: number;
+                cacheWriteCostPerMillion?: number;
+                completionCostPerMillion: number;
+                promptCostPerMillion: number;
+                reasoningCostPerMillion?: number;
+                thresholdTokens: number;
+              };
+              promptCostPerMillion: number;
+              reasoningCostPerMillion?: number;
+              referenceUrl: string;
+            };
+            flex?: {
+              cacheReadCostPerMillion?: number;
+              cacheWrite1hCostPerMillion?: number;
+              cacheWriteCostPerMillion?: number;
+              completionCostPerMillion: number;
+              contextTier?: {
+                cacheReadCostPerMillion?: number;
+                cacheWrite1hCostPerMillion?: number;
+                cacheWriteCostPerMillion?: number;
+                completionCostPerMillion: number;
+                promptCostPerMillion: number;
+                reasoningCostPerMillion?: number;
+                thresholdTokens: number;
+              };
+              promptCostPerMillion: number;
+              reasoningCostPerMillion?: number;
+              referenceUrl: string;
+            };
+            priority?: {
+              cacheReadCostPerMillion?: number;
+              cacheWrite1hCostPerMillion?: number;
+              cacheWriteCostPerMillion?: number;
+              completionCostPerMillion: number;
+              contextTier?: {
+                cacheReadCostPerMillion?: number;
+                cacheWrite1hCostPerMillion?: number;
+                cacheWriteCostPerMillion?: number;
+                completionCostPerMillion: number;
+                promptCostPerMillion: number;
+                reasoningCostPerMillion?: number;
+                thresholdTokens: number;
+              };
+              promptCostPerMillion: number;
+              reasoningCostPerMillion?: number;
+              referenceUrl: string;
+            };
+          };
           source: "manual" | "openrouter" | "default" | "models.dev";
           updatedAt: number;
         }>
@@ -2243,6 +2523,62 @@ export declare const internal: {
           promptCostPerMillion: number;
           provider: string;
           reasoningCostPerMillion?: number;
+          serviceTiers?: {
+            batch?: {
+              cacheReadCostPerMillion?: number;
+              cacheWrite1hCostPerMillion?: number;
+              cacheWriteCostPerMillion?: number;
+              completionCostPerMillion: number;
+              contextTier?: {
+                cacheReadCostPerMillion?: number;
+                cacheWrite1hCostPerMillion?: number;
+                cacheWriteCostPerMillion?: number;
+                completionCostPerMillion: number;
+                promptCostPerMillion: number;
+                reasoningCostPerMillion?: number;
+                thresholdTokens: number;
+              };
+              promptCostPerMillion: number;
+              reasoningCostPerMillion?: number;
+              referenceUrl: string;
+            };
+            flex?: {
+              cacheReadCostPerMillion?: number;
+              cacheWrite1hCostPerMillion?: number;
+              cacheWriteCostPerMillion?: number;
+              completionCostPerMillion: number;
+              contextTier?: {
+                cacheReadCostPerMillion?: number;
+                cacheWrite1hCostPerMillion?: number;
+                cacheWriteCostPerMillion?: number;
+                completionCostPerMillion: number;
+                promptCostPerMillion: number;
+                reasoningCostPerMillion?: number;
+                thresholdTokens: number;
+              };
+              promptCostPerMillion: number;
+              reasoningCostPerMillion?: number;
+              referenceUrl: string;
+            };
+            priority?: {
+              cacheReadCostPerMillion?: number;
+              cacheWrite1hCostPerMillion?: number;
+              cacheWriteCostPerMillion?: number;
+              completionCostPerMillion: number;
+              contextTier?: {
+                cacheReadCostPerMillion?: number;
+                cacheWrite1hCostPerMillion?: number;
+                cacheWriteCostPerMillion?: number;
+                completionCostPerMillion: number;
+                promptCostPerMillion: number;
+                reasoningCostPerMillion?: number;
+                thresholdTokens: number;
+              };
+              promptCostPerMillion: number;
+              reasoningCostPerMillion?: number;
+              referenceUrl: string;
+            };
+          };
           source: "manual" | "openrouter" | "default" | "models.dev";
         },
         Id<"modelPricing">

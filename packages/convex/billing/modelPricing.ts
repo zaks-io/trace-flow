@@ -10,14 +10,16 @@ import {
 } from '../_generated/server';
 import {
   convertOpenRouterModelRates,
+  parseModelPricing,
   parseOpenRouterModelId,
   type OpenRouterModel,
 } from '@trace-flow/pricing';
-import { v } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import { requireAuthenticated } from '../auth/auth';
 import { requireAdmin, requireEnabledUser } from '../auth/users';
 import { internal } from '../_generated/api';
 import { DEFAULT_PRICING } from './defaultPricing';
+import { modelPricingDoc, pricingUpsertArgs } from './pricingSchema';
 
 async function requireAdminAction(ctx: ActionCtx) {
   await requireAuthenticated(ctx);
@@ -25,101 +27,32 @@ async function requireAdminAction(ctx: ActionCtx) {
   if (!isAdmin) throw new Error('Admin access required');
 }
 
-/** Tier rates that replace the base rates once a message's input context reaches `thresholdTokens`. */
-const contextTierValidator = v.object({
-  thresholdTokens: v.number(),
-  promptCostPerMillion: v.number(),
-  completionCostPerMillion: v.number(),
-  cacheReadCostPerMillion: v.optional(v.number()),
-  cacheWriteCostPerMillion: v.optional(v.number()),
-  cacheWrite1hCostPerMillion: v.optional(v.number()),
-  reasoningCostPerMillion: v.optional(v.number()),
-});
+type ModelPricingWrite = Omit<Infer<typeof modelPricingDoc>, '_id' | '_creationTime' | 'updatedAt'>;
 
-const pricingSourceValidator = v.union(
-  v.literal('manual'),
-  v.literal('openrouter'),
-  v.literal('default'),
-  v.literal('models.dev'),
-);
-
-type PricingSource = 'manual' | 'openrouter' | 'default' | 'models.dev';
-
-interface ContextTierPricing {
-  thresholdTokens: number;
-  promptCostPerMillion: number;
-  completionCostPerMillion: number;
-  cacheReadCostPerMillion?: number;
-  cacheWriteCostPerMillion?: number;
-  cacheWrite1hCostPerMillion?: number;
-  reasoningCostPerMillion?: number;
-}
-
-interface ModelPricingWrite {
-  provider: string;
-  model: string;
-  promptCostPerMillion: number;
-  completionCostPerMillion: number;
-  cacheReadCostPerMillion?: number;
-  cacheWriteCostPerMillion?: number;
-  cacheWrite1hCostPerMillion?: number;
-  reasoningCostPerMillion?: number;
-  contextTier?: ContextTierPricing;
-  source: PricingSource;
-}
-
-/** Shared upsert input — the writable pricing fields, reused by `upsert` and `upsertInternal`. */
-const pricingUpsertArgs = {
-  provider: v.string(),
-  model: v.string(),
-  promptCostPerMillion: v.number(),
-  completionCostPerMillion: v.number(),
-  cacheReadCostPerMillion: v.optional(v.number()),
-  cacheWriteCostPerMillion: v.optional(v.number()),
-  cacheWrite1hCostPerMillion: v.optional(v.number()),
-  reasoningCostPerMillion: v.optional(v.number()),
-  contextTier: v.optional(contextTierValidator),
-  source: pricingSourceValidator,
-};
-
-const modelPricingDoc = v.object({
-  _id: v.id('modelPricing'),
-  _creationTime: v.number(),
-  provider: v.string(),
-  model: v.string(),
-  promptCostPerMillion: v.number(),
-  completionCostPerMillion: v.number(),
-  cacheReadCostPerMillion: v.optional(v.number()),
-  cacheWriteCostPerMillion: v.optional(v.number()),
-  cacheWrite1hCostPerMillion: v.optional(v.number()),
-  reasoningCostPerMillion: v.optional(v.number()),
-  contextTier: v.optional(contextTierValidator),
-  source: pricingSourceValidator,
-  updatedAt: v.number(),
-});
-
-async function writeModelPricing(ctx: MutationCtx, args: ModelPricingWrite) {
+async function writeModelPricing(
+  ctx: MutationCtx,
+  args: ModelPricingWrite,
+  preserveServiceTiers = false,
+) {
   const existing = await ctx.db
     .query('modelPricing')
     .withIndex('by_provider_model', (q) => q.eq('provider', args.provider).eq('model', args.model))
     .first();
 
+  const { provider, model, ...rates } = args;
   const data = {
-    provider: args.provider,
-    model: args.model,
-    promptCostPerMillion: args.promptCostPerMillion,
-    completionCostPerMillion: args.completionCostPerMillion,
-    cacheReadCostPerMillion: args.cacheReadCostPerMillion,
-    cacheWriteCostPerMillion: args.cacheWriteCostPerMillion,
-    cacheWrite1hCostPerMillion: args.cacheWrite1hCostPerMillion,
-    reasoningCostPerMillion: args.reasoningCostPerMillion,
-    contextTier: args.contextTier,
-    source: args.source,
-    updatedAt: Date.now(),
+    provider,
+    model,
+    ...parseModelPricing({
+      ...rates,
+      serviceTiers:
+        args.serviceTiers ?? (preserveServiceTiers ? existing?.serviceTiers : undefined),
+      updatedAt: Date.now(),
+    }),
   };
 
   if (existing) {
-    await ctx.db.patch(existing._id, data);
+    await ctx.db.replace(existing._id, data);
     return existing._id;
   }
 
@@ -200,7 +133,7 @@ export const upsertInternal = internalMutation({
   args: pricingUpsertArgs,
   returns: v.id('modelPricing'),
   handler: async (ctx, args) => {
-    return writeModelPricing(ctx, args);
+    return writeModelPricing(ctx, args, true);
   },
 });
 
@@ -396,16 +329,20 @@ export const repairGroqGptOss120bDefaultInternal = internalMutation({
     const updated = !preservedOverride && !matchesDefault;
 
     if (updated) {
-      await writeModelPricing(ctx, {
-        provider,
-        model,
-        promptCostPerMillion: pricing.promptCostPerMillion,
-        completionCostPerMillion: pricing.completionCostPerMillion,
-        cacheReadCostPerMillion: pricing.cacheReadCostPerMillion,
-        cacheWriteCostPerMillion: pricing.cacheWriteCostPerMillion,
-        cacheWrite1hCostPerMillion: pricing.cacheWrite1hCostPerMillion,
-        source: 'default',
-      });
+      await writeModelPricing(
+        ctx,
+        {
+          provider,
+          model,
+          promptCostPerMillion: pricing.promptCostPerMillion,
+          completionCostPerMillion: pricing.completionCostPerMillion,
+          cacheReadCostPerMillion: pricing.cacheReadCostPerMillion,
+          cacheWriteCostPerMillion: pricing.cacheWriteCostPerMillion,
+          cacheWrite1hCostPerMillion: pricing.cacheWrite1hCostPerMillion,
+          source: 'default',
+        },
+        true,
+      );
     }
 
     return { updated, preservedOverride };

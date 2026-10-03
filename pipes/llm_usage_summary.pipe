@@ -26,6 +26,10 @@ SQL >
         sumMerge(UsageInconsistentCount) AS usage_inconsistent_count,
         sumMerge(UsageUnclassifiedCount) AS usage_unclassified_count,
         sumMerge(UsageMissingCount) AS usage_missing_count,
+        sumMerge(CostPricedCount) AS cost_priced_count,
+        sumMerge(CostPartialCount) AS cost_partial_count,
+        sumMerge(CostUnpricedCount) AS cost_unpriced_count,
+        sumMerge(CostPricedTokens) AS cost_priced_tokens,
         sumMerge(TotalCostMicrodollars) / 1000000 AS total_cost_usd,
         sumMerge(InputCostMicrodollars) / 1000000 AS input_cost_usd,
         sumMerge(OutputCostMicrodollars) / 1000000 AS output_cost_usd,
@@ -55,6 +59,10 @@ SQL >
             UsageInconsistentCount,
             UsageUnclassifiedCount,
             UsageMissingCount,
+            CostPricedCount,
+            CostPartialCount,
+            CostUnpricedCount,
+            CostPricedTokens,
             TotalCostMicrodollars,
             InputCostMicrodollars,
             OutputCostMicrodollars,
@@ -112,6 +120,10 @@ SQL >
             UsageInconsistentCount,
             UsageUnclassifiedCount,
             UsageMissingCount,
+            CostPricedCount,
+            CostPartialCount,
+            CostUnpricedCount,
+            CostPricedTokens,
             TotalCostMicrodollars,
             InputCostMicrodollars,
             OutputCostMicrodollars,
@@ -170,6 +182,10 @@ SQL >
             UsageInconsistentCount,
             UsageUnclassifiedCount,
             UsageMissingCount,
+            CostPricedCount,
+            CostPartialCount,
+            CostUnpricedCount,
+            CostPricedTokens,
             TotalCostMicrodollars,
             InputCostMicrodollars,
             OutputCostMicrodollars,
@@ -216,6 +232,9 @@ SQL >
 
 NODE endpoint
 SQL >
-    SELECT * FROM all_statuses
+    SELECT
+        *,
+        if(request_count = cost_priced_count + cost_partial_count + cost_unpriced_count AND total_tokens > 0, cost_priced_tokens / total_tokens, NULL) AS cost_coverage_ratio
+    FROM all_statuses
 
 TYPE ENDPOINT

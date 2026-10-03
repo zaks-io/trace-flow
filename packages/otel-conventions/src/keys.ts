@@ -72,6 +72,14 @@ export const TRACE_FLOW = {
   UPSTREAM_TTFB_MS: 'trace_flow.upstream_ttfb_ms',
   IMPORT_IDENTITY: 'trace_flow.import.identity',
   IMPORT_SOURCE_HASH: 'trace_flow.import.source_hash',
+  COST_STATUS: 'trace_flow.cost.status',
+  COST_METHOD: 'trace_flow.cost.method',
+  COST_REASONS: 'trace_flow.cost.reasons',
+  COST_CATALOG_KEY: 'trace_flow.cost.catalog_key',
+  COST_CATALOG_VERSION: 'trace_flow.cost.catalog_version',
+  COST_RATES: 'trace_flow.cost.rates',
+  COST_PRICED_TOKENS: 'trace_flow.cost.priced_tokens',
+  COST_UNIT: 'trace_flow.cost.unit',
 } as const;
 
 export const CLI_PROXY = {
