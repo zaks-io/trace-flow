@@ -160,6 +160,29 @@ describe('preview credential boundary', () => {
     expect(deployWorkers.env).not.toHaveProperty('TINYBIRD_AGENT_SNAPSHOT_TOKEN');
   });
 
+  test('aligns Preview Web runtime authentication with the configured Auth0 application', () => {
+    const steps = preview.jobs.preview.steps;
+    const configure = steps.find((step) => step.name === 'Configure Web Preview authentication');
+    expect(configure.env.AUTH0_CLIENT_ID).toBe('${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}');
+    expect(configure.env.AUTH0_DOMAIN).toBe('${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}');
+    const configureConvex = preview.jobs['deploy-convex'].steps.find(
+      (step) => step.name === 'Configure Convex query tracing',
+    );
+    expect(configureConvex.env.AUTH0_CLIENT_ID).toBe(configure.env.AUTH0_CLIENT_ID);
+    expect(configureConvex.env.AUTH0_DOMAIN).toBe(configure.env.AUTH0_DOMAIN);
+    expect(configureConvex.run).toContain(
+      'convex env set --preview-name "$BRANCH_NAME" AUTH0_CLIENT_ID "$AUTH0_CLIENT_ID"',
+    );
+    for (const name of ['AUTH0_CLIENT_SECRET', 'AUTH0_SECRET', 'BODY_ACCESS_JWT_SECRET']) {
+      expect(configure.env[name]).toBe('${{ secrets.' + name + ' }}');
+    }
+    expect(configure.run).toContain('if (!value) throw new Error');
+    expect(configure.run).toContain('wrangler secret bulk "$web_secrets_file" --env preview');
+    expect(steps.indexOf(configure)).toBeLessThan(
+      steps.findIndex((step) => step.name === 'Deploy Web Preview'),
+    );
+  });
+
   test('resolves an open same-repository PR to its immutable head', async () => {
     const outputs = {};
     const failures = [];
