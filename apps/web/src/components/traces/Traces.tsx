@@ -10,6 +10,7 @@ import { useTableFilters } from '@/hooks/useTableFilters';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
 import { useAnalyticsKeyFilter } from '@/hooks/useAnalyticsKeyFilter';
+import { useUpstreamAccountOptions } from '@/hooks/useUpstreamAccountOptions';
 import { PageToolbar } from '@/components/shared/PageToolbar';
 import { SetupCallout } from '@/components/onboarding/SetupCallout';
 import type { ColumnDef } from '@tanstack/react-table';
@@ -46,6 +47,7 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
   );
 
   const { filters, setFilter, clearFilters, hasActiveFilters } = useTableFilters();
+  const accountOptions = useUpstreamAccountOptions(filters.account);
   const { options: filterOptions, loading: filterOptionsLoading } = useFilterOptions();
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
   const apiKeyMap = useApiKeyMap(apiKeys);
@@ -290,6 +292,7 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
           onLiveModeToggle={handleLiveModeToggle}
           apiKeyOptions={apiKeyOptions}
           apiKeyMap={apiKeyMap}
+          accountOptions={accountOptions}
         />
       </div>
 
@@ -329,6 +332,7 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
           }
           apiKeyOptions={apiKeyOptions}
           apiKeyMap={apiKeyMap}
+          accountOptions={accountOptions}
           hideToolbar
           rowClassName={getRowClassName}
         />
