@@ -4,6 +4,7 @@ import { type Preloaded, usePreloadedQuery, useMutation } from 'convex/react';
 import { api } from '@trace-flow/convex/_generated/api';
 import { useState } from 'react';
 import type { Id, Doc } from '@trace-flow/convex/_generated/dataModel';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { PageToolbar } from '@/components/shared/PageToolbar';
 import {
   Dialog,
@@ -126,6 +127,7 @@ export default function Alerts({
   const [formData, setFormData] = useState<AlertFormData>(DEFAULT_FORM_DATA);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<Id<'alerts'> | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Alert | null>(null);
   const [togglingId, setTogglingId] = useState<Id<'alerts'> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -341,15 +343,7 @@ export default function Alerts({
                         Edit
                       </button>
                       <button
-                        onClick={() => {
-                          if (
-                            confirm(
-                              `Are you sure you want to delete "${alert.name}"?\n\nThis action cannot be undone.`,
-                            )
-                          ) {
-                            void handleDelete(alert._id);
-                          }
-                        }}
+                        onClick={() => setPendingDelete(alert)}
                         disabled={deletingId === alert._id}
                         className="font-medium text-destructive transition-colors hover:text-destructive/80 disabled:cursor-not-allowed disabled:opacity-50"
                       >
@@ -472,6 +466,15 @@ export default function Alerts({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        target={pendingDelete}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={(alert) => void handleDelete(alert._id)}
+        title={(alert) => `Delete "${alert.name}"?`}
+        description={() => 'This action cannot be undone.'}
+        confirmLabel="Delete"
+      />
     </div>
   );
 }

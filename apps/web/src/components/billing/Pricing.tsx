@@ -4,6 +4,7 @@ import { type Preloaded, usePreloadedQuery, useMutation, useAction } from 'conve
 import { api } from '@trace-flow/convex/_generated/api';
 import { useState } from 'react';
 import type { Id, Doc } from '@trace-flow/convex/_generated/dataModel';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { PageToolbar } from '@/components/shared/PageToolbar';
 
 type ModelPricing = Doc<'modelPricing'>;
@@ -57,6 +58,7 @@ export default function Pricing({
   const [isSyncing, setIsSyncing] = useState(false);
   const [isSyncingDefaults, setIsSyncingDefaults] = useState(false);
   const [deletingId, setDeletingId] = useState<Id<'modelPricing'> | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<ModelPricing | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -505,15 +507,7 @@ export default function Pricing({
                         Edit
                       </button>
                       <button
-                        onClick={() => {
-                          if (
-                            confirm(
-                              `Delete pricing for ${item.provider}/${item.model}?\n\nThis action cannot be undone.`,
-                            )
-                          ) {
-                            void handleDelete(item._id);
-                          }
-                        }}
+                        onClick={() => setPendingDelete(item)}
                         disabled={deletingId === item._id}
                         className="font-medium text-destructive transition-colors hover:text-destructive/80 disabled:cursor-not-allowed disabled:opacity-50"
                       >
@@ -532,6 +526,15 @@ export default function Pricing({
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        target={pendingDelete}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={(item) => void handleDelete(item._id)}
+        title={(item) => `Delete pricing for ${item.provider}/${item.model}?`}
+        description={() => 'This action cannot be undone.'}
+        confirmLabel="Delete"
+      />
     </div>
   );
 }
