@@ -28,7 +28,7 @@ export function ProjectedCostCard({ forecast }: { forecast: CostForecastRow | nu
   const currentMonthLabel = SHORT_MONTHS[new Date().getUTCMonth()];
   if (!forecast || forecast.insufficient_data) {
     return (
-      <div className="relative min-w-0 overflow-hidden rounded-xl bg-linear-to-br from-chart-6/20 to-chart-6/5 p-5">
+      <div className="relative min-w-0 overflow-hidden rounded-xl bg-linear-to-br from-chart-1/20 to-chart-1/5 p-5">
         <p className="text-xs font-medium tracking-wide text-muted-foreground">
           {currentMonthLabel} Projection
         </p>
@@ -47,7 +47,7 @@ export function ProjectedCostCard({ forecast }: { forecast: CostForecastRow | nu
       : 0;
 
   return (
-    <div className="relative min-w-0 overflow-hidden rounded-xl bg-linear-to-br from-chart-6/20 to-chart-6/5 p-5">
+    <div className="relative min-w-0 overflow-hidden rounded-xl bg-linear-to-br from-chart-1/20 to-chart-1/5 p-5">
       <div className="flex items-start justify-between">
         <div>
           <p className="text-xs font-medium tracking-wide text-muted-foreground">
@@ -80,7 +80,7 @@ export function ProjectedCostCard({ forecast }: { forecast: CostForecastRow | nu
       <div className="relative mt-3">
         <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-muted/30">
           <div
-            className="h-full rounded-full bg-chart-6/70 transition-all"
+            className="h-full rounded-full bg-chart-1/70 transition-all"
             style={{ width: `${mtdProgress}%` }}
           />
         </div>
@@ -89,7 +89,7 @@ export function ProjectedCostCard({ forecast }: { forecast: CostForecastRow | nu
       {/* Inline stats */}
       <div className="mt-1.5 flex flex-wrap gap-x-2 gap-y-0.5">
         <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-chart-6/70" />
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-chart-1/70" />
           <span className="font-mono tabular-nums">
             {formatCurrency(forecast.month_to_date_cost)}
           </span>

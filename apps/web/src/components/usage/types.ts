@@ -1,4 +1,5 @@
 import type { ChartConfig } from '@/components/ui/chart';
+import { TOKEN_TYPE_SERIES, type TokenType } from '@/components/shared/tokenTypes';
 
 export type TimeRange = 'this-month' | 'last-month' | '7d' | '30d' | '90d';
 
@@ -40,17 +41,22 @@ export const TIME_RANGES: TimeRangeConfig[] = [
 
 export type TimeseriesMetric = 'cost' | 'tokens' | 'requests' | 'duration';
 
-export const costChartConfig = {
-  input_cost_usd: { label: 'Input', color: 'var(--color-chart-1)' },
-  output_cost_usd: { label: 'Output', color: 'var(--color-chart-2)' },
-  cache_read_cost_usd: { label: 'Cache Read', color: 'var(--color-chart-3)' },
-  cache_creation_cost_usd: { label: 'Cache Write', color: 'var(--color-chart-4)' },
-  reasoning_cost_usd: { label: 'Reasoning', color: 'var(--color-chart-5)' },
-} satisfies ChartConfig;
+/** Stacked cost series, one per token type, in the shared token-type order. */
+export const COST_SERIES = [
+  { dataKey: 'input_cost_usd', type: 'input' },
+  { dataKey: 'cache_read_cost_usd', type: 'cacheRead' },
+  { dataKey: 'cache_creation_cost_usd', type: 'cacheWrite' },
+  { dataKey: 'output_cost_usd', type: 'output' },
+  { dataKey: 'reasoning_cost_usd', type: 'reasoning' },
+] as const satisfies readonly { dataKey: keyof TimeseriesRow; type: TokenType }[];
+
+export const costChartConfig: Record<string, { label: string; color: string }> = Object.fromEntries(
+  COST_SERIES.map(({ dataKey, type }) => [dataKey, TOKEN_TYPE_SERIES[type]]),
+);
 
 export const durationChartConfig = {
   avg_duration_ms: { label: 'Avg', color: 'var(--color-chart-3)' },
-  p95_duration_ms: { label: 'P95', color: 'var(--color-chart-6)' },
+  p95_duration_ms: { label: 'P95', color: 'var(--color-chart-7)' },
 } satisfies ChartConfig;
 
 export const tokensChartConfig = {
@@ -61,21 +67,13 @@ export const requestsChartConfig = {
   request_count: { label: 'Requests', color: 'var(--color-chart-1)' },
 } satisfies ChartConfig;
 
-export const PIE_COLORS = [
-  'var(--color-chart-1)',
-  'var(--color-chart-2)',
-  'var(--color-chart-3)',
-  'var(--color-chart-4)',
-  'var(--color-chart-5)',
-] as const;
-
 export const pieChartConfig = {
   value: { label: 'Cost' },
-  input: { label: 'Input', color: 'var(--color-chart-1)' },
-  output: { label: 'Output', color: 'var(--color-chart-2)' },
-  cache_read: { label: 'Cache Read', color: 'var(--color-chart-3)' },
-  cache_write: { label: 'Cache Write', color: 'var(--color-chart-4)' },
-  reasoning: { label: 'Reasoning', color: 'var(--color-chart-5)' },
+  input: TOKEN_TYPE_SERIES.input,
+  cacheRead: TOKEN_TYPE_SERIES.cacheRead,
+  cacheWrite: TOKEN_TYPE_SERIES.cacheWrite,
+  output: TOKEN_TYPE_SERIES.output,
+  reasoning: TOKEN_TYPE_SERIES.reasoning,
 } satisfies ChartConfig;
 
 export const providerChartConfig = {

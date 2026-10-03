@@ -15,6 +15,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from '@/components/ui/chart';
+import { seriesDash } from '@/components/shared/seriesDash';
 import { OTHER_GROUP, OTHER_LABEL, pivotByGroup } from './pivot';
 import {
   AGENT_GROUPED_METRIC_KEY,
@@ -43,6 +44,8 @@ interface Series {
   /** Raw group value used for click-to-filter (repo fingerprint, source, or model). */
   value: string;
   color: string;
+  /** Second identity channel beside color, so crossing lines stay distinguishable (ADR 0010). */
+  dash: string | undefined;
 }
 
 export function AgentUsageChart({
@@ -72,7 +75,12 @@ export function AgentUsageChart({
         id: `g${i}`,
         name: group === OTHER_GROUP ? OTHER_LABEL : (labelFor?.(group) ?? group),
         value: group,
-        color: AGENT_GROUP_COLORS[i % AGENT_GROUP_COLORS.length],
+        // Other folds many groups together, so it takes neutral ink instead of a series slot.
+        color:
+          group === OTHER_GROUP
+            ? 'var(--color-muted-foreground)'
+            : AGENT_GROUP_COLORS[i % AGENT_GROUP_COLORS.length],
+        dash: seriesDash(i),
       }));
       // Re-key the wide rows from raw group value -> synthetic series id so every dataKey is
       // a plain string (correct Y-axis domain + no dot-path issues).
@@ -88,11 +96,12 @@ export function AgentUsageChart({
     }
 
     const metricConfig = AGENT_METRIC_CONFIG[metric];
-    const s: Series[] = AGENT_METRIC_KEYS[metric].map((key) => ({
+    const s: Series[] = AGENT_METRIC_KEYS[metric].map((key, i) => ({
       id: key,
       name: String(metricConfig[key]?.label ?? key),
       value: key,
       color: metricConfig[key]?.color ?? 'var(--color-chart-1)',
+      dash: seriesDash(i),
     }));
     const rekeyed = data.map((row) => {
       const out: Record<string, string | number> = { bucket_start: row.bucket_start };
@@ -165,8 +174,8 @@ export function AgentUsageChart({
         />
         <Legend
           wrapperStyle={{ fontSize: 11, paddingTop: 8, cursor: clickable ? 'pointer' : undefined }}
-          iconType="circle"
-          iconSize={8}
+          iconType="plainline"
+          iconSize={14}
           onClick={
             clickable
               ? (entry) => {
@@ -185,6 +194,7 @@ export function AgentUsageChart({
             stackId={stacked ? 'stack' : undefined}
             fill={s.color}
             stroke={s.color}
+            strokeDasharray={s.dash}
             fillOpacity={stacked ? 0.55 : 0}
             strokeWidth={2}
             isAnimationActive={false}

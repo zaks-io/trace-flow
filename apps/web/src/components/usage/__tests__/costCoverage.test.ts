@@ -40,7 +40,7 @@ describe('cost coverage', () => {
     expect(costCoverageLabels(unassessed)).toContainEqual({
       label: 'Not Assessed',
       value: '1',
-      color: 'var(--color-chart-6)',
+      color: 'var(--color-status-critical)',
     });
   });
   it('does not pretend unknown token coverage is zero or add labels to proxy-only usage', () => {

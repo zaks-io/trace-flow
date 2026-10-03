@@ -37,14 +37,14 @@ export function costCoverageLabels(summary: CostCoverage) {
     {
       label: 'Priced',
       value: formatNumber(summary.cost_priced_count),
-      color: 'var(--color-chart-3)',
+      color: 'var(--color-status-good)',
     },
     ...(summary.cost_partial_count > 0
       ? [
           {
             label: 'Partial',
             value: formatNumber(summary.cost_partial_count),
-            color: 'var(--color-chart-4)',
+            color: 'var(--color-status-warning)',
           },
         ]
       : []),
@@ -53,7 +53,7 @@ export function costCoverageLabels(summary: CostCoverage) {
           {
             label: 'Unpriced',
             value: formatNumber(summary.cost_unpriced_count),
-            color: 'var(--color-chart-6)',
+            color: 'var(--color-status-critical)',
           },
         ]
       : []),
@@ -62,7 +62,7 @@ export function costCoverageLabels(summary: CostCoverage) {
           {
             label: 'Not Assessed',
             value: formatNumber(summary.cost_unassessed_count),
-            color: 'var(--color-chart-6)',
+            color: 'var(--color-status-critical)',
           },
         ]
       : []),

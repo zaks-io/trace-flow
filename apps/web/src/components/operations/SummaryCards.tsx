@@ -1,6 +1,7 @@
 'use client';
 
 import { BarCard, formatCostCompact } from '@/components/shared/BarCard';
+import { TOKEN_TYPE_SERIES, buildTokenSegments } from '@/components/shared/tokenTypes';
 import { type OperationLeaderboardRow } from '@/components/usage/types';
 import { formatCurrency, formatDuration, formatNumber } from '@/lib/format';
 import { getAggregateCacheHitRate, getCostPerRequest } from '@/lib/operations';
@@ -17,38 +18,13 @@ export function SummaryCards({ operation }: { operation: OperationLeaderboardRow
         value={formatCurrency(operation.total_cost_usd)}
         accent="from-chart-4/20 to-chart-4/5"
         compact
-        segments={[
-          {
-            key: 'input',
-            label: 'Input',
-            value: operation.input_cost_usd,
-            color: 'var(--color-chart-1)',
-          },
-          {
-            key: 'output',
-            label: 'Output',
-            value: operation.output_cost_usd,
-            color: 'var(--color-chart-2)',
-          },
-          {
-            key: 'cache_read',
-            label: 'Cache Read',
-            value: operation.cache_read_cost_usd,
-            color: 'var(--color-chart-3)',
-          },
-          {
-            key: 'cache_write',
-            label: 'Cache Write',
-            value: operation.cache_creation_cost_usd,
-            color: 'var(--color-chart-4)',
-          },
-          {
-            key: 'reasoning',
-            label: 'Reasoning',
-            value: operation.reasoning_cost_usd,
-            color: 'var(--color-chart-5)',
-          },
-        ]}
+        segments={buildTokenSegments({
+          input: operation.input_cost_usd,
+          cacheRead: operation.cache_read_cost_usd,
+          cacheWrite: operation.cache_creation_cost_usd,
+          output: operation.output_cost_usd,
+          reasoning: operation.reasoning_cost_usd,
+        })}
         total={operation.total_cost_usd}
         formatter={formatCostCompact}
         inlineLabels={[
@@ -84,22 +60,22 @@ export function SummaryCards({ operation }: { operation: OperationLeaderboardRow
           operation.input_tokens > 0
             ? [
                 {
+                  key: 'uncached',
+                  label: 'Uncached',
+                  value: operation.uncached_input_tokens,
+                  color: TOKEN_TYPE_SERIES.input.color,
+                },
+                {
                   key: 'cached',
                   label: 'Cached',
                   value: operation.cache_read_input_tokens,
-                  color: 'var(--color-chart-3)',
+                  color: TOKEN_TYPE_SERIES.cacheRead.color,
                 },
                 {
                   key: 'warmup',
                   label: 'Warmup',
                   value: operation.cache_creation_input_tokens,
-                  color: 'var(--color-chart-4)',
-                },
-                {
-                  key: 'uncached',
-                  label: 'Uncached',
-                  value: operation.uncached_input_tokens,
-                  color: 'var(--color-muted-foreground)',
+                  color: TOKEN_TYPE_SERIES.cacheWrite.color,
                 },
               ]
             : []
@@ -120,12 +96,12 @@ export function SummaryCards({ operation }: { operation: OperationLeaderboardRow
           {
             label: 'P95',
             value: formatDuration(operation.p95_duration_ms),
-            color: 'var(--color-chart-6)',
+            color: 'var(--color-chart-7)',
           },
           {
             label: 'Max',
             value: formatDuration(operation.max_duration_ms),
-            color: 'var(--color-chart-1)',
+            color: 'var(--color-chart-5)',
           },
         ]}
       />

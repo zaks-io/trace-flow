@@ -38,6 +38,11 @@
   --color-chart-7: var(--chart-7);
   --color-chart-8: var(--chart-8);
 
+  --color-status-good: var(--status-good);
+  --color-status-warning: var(--status-warning);
+  --color-status-serious: var(--status-serious);
+  --color-status-critical: var(--status-critical);
+
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -78,15 +83,22 @@
   --input: oklch(0.92 0.005 90);
   --ring: oklch(0.65 0.2 35);
 
-  /* 8-Color Data Palette */
-  --chart-1: oklch(0.65 0.2 35); /* Terracotta */
-  --chart-2: oklch(0.75 0.18 75); /* Ochre */
-  --chart-3: oklch(0.7 0.12 150); /* Sage */
-  --chart-4: oklch(0.65 0.15 240); /* Cerulean */
-  --chart-5: oklch(0.6 0.18 300); /* Amethyst */
-  --chart-6: oklch(0.68 0.2 15); /* Coral */
-  --chart-7: oklch(0.6 0.12 200); /* Teal */
-  --chart-8: oklch(0.55 0.15 50); /* Umber */
+  /* Categorical data palette. Slot order is the colorblind-safety mechanism (ADR 0010);
+     re-validate before reordering or re-stepping. */
+  --chart-1: #2a78d6; /* blue */
+  --chart-2: #eb6834; /* orange */
+  --chart-3: #1baf7a; /* aqua */
+  --chart-4: #eda100; /* yellow */
+  --chart-5: #e87ba4; /* magenta */
+  --chart-6: #008300; /* green */
+  --chart-7: #4a3aa7; /* violet */
+  --chart-8: #e34948; /* red */
+
+  /* Status is fixed across themes and never doubles as a series color (ADR 0010). */
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
 
   --sidebar: oklch(0.99 0.005 90);
   --sidebar-foreground: oklch(0.2 0.01 270);
@@ -127,15 +139,15 @@
   --input: oklch(0.24 0.005 270);
   --ring: oklch(0.65 0.2 35);
 
-  /* 8-Color Data Palette */
-  --chart-1: oklch(0.65 0.2 35); /* Terracotta */
-  --chart-2: oklch(0.75 0.18 75); /* Ochre */
-  --chart-3: oklch(0.7 0.12 150); /* Sage */
-  --chart-4: oklch(0.65 0.15 240); /* Cerulean */
-  --chart-5: oklch(0.6 0.18 300); /* Amethyst */
-  --chart-6: oklch(0.68 0.2 15); /* Coral */
-  --chart-7: oklch(0.6 0.12 200); /* Teal */
-  --chart-8: oklch(0.55 0.15 50); /* Umber */
+  /* Same hues and order as :root, stepped for the dark surface. */
+  --chart-1: #3987e5; /* blue */
+  --chart-2: #d95926; /* orange */
+  --chart-3: #199e70; /* aqua */
+  --chart-4: #c98500; /* yellow */
+  --chart-5: #d55181; /* magenta */
+  --chart-6: #008300; /* green */
+  --chart-7: #9085e9; /* violet */
+  --chart-8: #e66767; /* red */
 
   --sidebar: oklch(0.14 0.005 270);
   --sidebar-foreground: oklch(0.95 0.005 90);
