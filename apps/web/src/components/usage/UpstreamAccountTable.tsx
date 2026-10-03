@@ -14,6 +14,7 @@ import type { UpstreamAccountRow } from './types';
 import {
   costGapNote,
   estimatedCost,
+  planLabel,
   reasoningShare,
   tokenCell,
   usageGapNote,
@@ -62,6 +63,7 @@ export function UpstreamAccountTable({
             const label = account ? accountLabel(account) : UNRECOGNIZED_ACCOUNT_LABEL;
             const usageNote = usageGapNote(row);
             const costNote = costGapNote(row);
+            const plan = planLabel(row);
             return (
               <tr key={row.account_key} className="border-b border-border/50 align-top">
                 <td className="py-2">
@@ -76,6 +78,7 @@ export function UpstreamAccountTable({
                   >
                     {label}
                   </Link>
+                  {plan && <div className="text-xs text-foreground">{plan}</div>}
                   {account && account.coverage !== 'unknown' && (
                     <div className="text-[11px] text-muted-foreground">
                       {installationLabel(account)}

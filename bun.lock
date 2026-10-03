@@ -217,6 +217,7 @@
         "@trace-flow/logging": "workspace:*",
         "@trace-flow/mcp-core": "workspace:*",
         "@trace-flow/otel-conventions": "workspace:*",
+        "@trace-flow/pricing": "workspace:*",
         "@trace-flow/spans": "workspace:*",
         "@trace-flow/tinybird-client": "workspace:*",
         "@trace-flow/types": "workspace:*",
@@ -357,6 +358,7 @@
       "name": "@trace-flow/pricing",
       "version": "0.0.1",
       "dependencies": {
+        "@trace-flow/otel-conventions": "workspace:*",
         "@trace-flow/types": "workspace:*",
       },
       "devDependencies": {

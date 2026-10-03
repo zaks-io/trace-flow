@@ -1,0 +1,24 @@
+DESCRIPTION >
+    Extracts the reported subscription plan for imported executions that carry one.
+
+NODE extract
+SQL >
+    SELECT
+        ReceivedAt,
+        Timestamp,
+        ApiKey,
+        -- Must match AccountKey in materialize_llm_execution_accounts so plans join their account.
+        concat(
+            lower(JSONExtractString(ResourceAttributes, 'cliproxyapi.installation.id')), '/',
+            JSONExtractString(SpanAttributes, 'gen_ai.system'), '/',
+            JSONExtractString(SpanAttributes, 'cliproxyapi.account.coverage'), '/',
+            JSONExtractString(SpanAttributes, 'cliproxyapi.account.ref')
+        ) AS AccountKey,
+        JSONExtractString(SpanAttributes, 'cliproxyapi.account.plan') AS Plan,
+        RetentionExpiresAt
+    FROM otel_trace_spans
+    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'imported_execution'
+        AND JSONExtractString(SpanAttributes, 'cliproxyapi.account.plan') != ''
+
+TYPE MATERIALIZED
+DATASOURCE llm_execution_account_plans

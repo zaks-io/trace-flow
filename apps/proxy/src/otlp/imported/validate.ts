@@ -4,6 +4,7 @@ import {
   GEN_AI_USAGE,
   HTTP,
   IMPORTED_ACCOUNT_COVERAGE,
+  IMPORTED_ACCOUNT_PLANS,
   IMPORTED_EXECUTION,
 } from '@trace-flow/otel-conventions';
 import type {
@@ -41,7 +42,8 @@ const RESOURCE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}$/;
 const EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/;
 const SECRET_PATTERN =
   /(?:sk-(?:proj-)?[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|eyJ[A-Za-z0-9_-]{30,})/;
-const MAX_SPAN_ATTRIBUTES = 32;
+// A Codex span carrying every optional field, including the account plan, needs exactly 33.
+const MAX_SPAN_ATTRIBUTES = 33;
 const MAX_STORED_TIMESTAMP_NS = (1n << 63n) - 1n;
 
 const RESOURCE_KEYS = new Set<string>([
@@ -63,6 +65,7 @@ const STRING_PATTERNS: Record<string, RegExp> = {
   [CLI_PROXY.REQUEST_SERVICE_TIER]: TOKEN_32_PATTERN,
   [CLI_PROXY.RESPONSE_SERVICE_TIER]: TOKEN_32_PATTERN,
   [CLI_PROXY.ACCOUNT_REF]: ACCOUNT_REF_PATTERN,
+  [CLI_PROXY.ACCOUNT_PLAN]: new RegExp(`^(${IMPORTED_ACCOUNT_PLANS.join('|')})$`),
   [CLI_PROXY.SESSION_ID]: TOKEN_128_PATTERN,
   [CLI_PROXY.CLIENT_SOURCE]: /^(claude|codex)$/,
   [CLI_PROXY.CLIENT_SESSION_ID]: TOKEN_128_PATTERN,
@@ -246,6 +249,9 @@ function validateSpan(
       : !attributes[CLI_PROXY.ACCOUNT_REF]
   ) {
     return invalid('account_ref', spanIndex);
+  }
+  if (coverage === 'unknown' && attributes[CLI_PROXY.ACCOUNT_PLAN] !== undefined) {
+    return invalid('attribute_account_plan', spanIndex);
   }
   const clientError = validateImportedClientIdentity(attributes);
   if (clientError) return invalid(clientError, spanIndex);

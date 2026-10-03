@@ -13,6 +13,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@trace-flow/otel-conventions": "workspace:*",
     "@trace-flow/types": "workspace:*"
   },
   "devDependencies": {

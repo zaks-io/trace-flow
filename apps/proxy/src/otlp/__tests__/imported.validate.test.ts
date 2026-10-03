@@ -34,7 +34,8 @@ describe('CLIProxyAPI imported execution contract', () => {
     expect(result.executions[4]!.span.status?.code).toBe(2);
     expect(result.executions[4]!.attributes[GEN_AI_USAGE.TOTAL_TOKENS]).toBe('7');
     expect(requestWithFullMetadata().attributes).toHaveLength(26);
-    expect(result.executions[5]!.span.attributes).toHaveLength(32);
+    expect(result.executions[5]!.span.attributes).toHaveLength(33);
+    expect(result.executions[5]!.attributes[CLI_PROXY.ACCOUNT_PLAN]).toBe('chatgpt_pro');
     expect(result.executions[5]!.span.parentSpanId).toBeUndefined();
     expect(result.executions[5]!.span.links).toBeUndefined();
     expect(result.executions[5]!.attributes[CLI_PROXY.CLIENT_SESSION_ID]).toBe('child-thread-6');
@@ -192,7 +193,7 @@ describe('CLIProxyAPI imported execution contract', () => {
     });
   });
 
-  it('holds the 32-attribute limit for Codex and rejects the next attribute', () => {
+  it('holds the 33-attribute limit for Codex and rejects the next attribute', () => {
     const request = body();
     const span = request.resourceSpans[0]!.scopeSpans[0]!.spans[4]!;
     span.attributes!.push(
@@ -202,8 +203,9 @@ describe('CLIProxyAPI imported execution contract', () => {
       { key: CLI_PROXY.CLIENT_ORIGIN_SESSION_ID, value: { stringValue: 'session-1' } },
       { key: CLI_PROXY.INBOUND_TRACE_ID, value: { stringValue: '1'.repeat(32) } },
       { key: CLI_PROXY.INBOUND_SPAN_ID, value: { stringValue: '2'.repeat(16) } },
+      { key: CLI_PROXY.ACCOUNT_PLAN, value: { stringValue: 'chatgpt_pro' } },
     );
-    expect(span.attributes).toHaveLength(32);
+    expect(span.attributes).toHaveLength(33);
     expect(validateImportedExecutionRequest(request).valid).toBe(true);
     span.attributes!.push({ key: CLI_PROXY.CLIENT_AGENT_ID, value: { stringValue: 'agent-1' } });
     expect(validateImportedExecutionRequest(request)).toMatchObject({

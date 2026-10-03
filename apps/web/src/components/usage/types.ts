@@ -233,6 +233,10 @@ export interface UpstreamAccountRow {
   cost_priced_tokens: number;
   cost_coverage_ratio: number | null;
   avg_ttft_ms: number | null;
+  first_received_ms: number;
+  last_received_ms: number;
+  /** Latest plan the exporter reported in the range, '' when none was reported. */
+  plan: string;
 }
 
 export interface TinybirdResponse<T> {
