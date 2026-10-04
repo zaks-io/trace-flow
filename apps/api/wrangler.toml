@@ -8,7 +8,7 @@ logpush = true
 
 [observability.traces]
 enabled = true
-destinations = ["axiom-traces"]
+destinations = ["axiom-traces", "sentry-trace-flow-traces"]
 head_sampling_rate = 1
 
 [observability.logs]
