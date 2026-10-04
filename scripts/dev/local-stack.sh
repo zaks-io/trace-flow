@@ -566,6 +566,8 @@ cmd_down() {
     log "deleting local stack data"
     docker volume rm "$CONVEX_VOLUME" >/dev/null 2>&1 || true
     docker rm -f tinybird-local >/dev/null 2>&1 || true
+    # start.sh's compose project also owns a network.
+    docker compose --project-name trace-flow-tinybird down >/dev/null 2>&1 || true
     docker network rm "$DOCKER_NETWORK" >/dev/null 2>&1 || true
     # Tinybird Local writes its volume as root; delete it from inside a container.
     if [[ -d "$TRACE_FLOW_STATE_DIR/tinybird" ]]; then
