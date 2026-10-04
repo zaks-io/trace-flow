@@ -81,6 +81,77 @@ scripts/dev/verify.sh full
 scripts/dev/doctor.sh
 ```
 
+## Local Stack With Mock Sign-In
+
+`scripts/dev/local-stack.sh` runs a disposable **Self-Contained Local** stack you can sign in to
+without Auth0. Use it to evaluate the web app in a browser, take screenshots, or share a running
+build with a reviewer. Never point a deployed environment at it.
+
+```bash
+scripts/dev/local-stack.sh up                  # start everything and print URLs
+scripts/dev/local-stack.sh login-url [EMAIL]   # one-step sign-in URL (default dev@trace-flow.local)
+scripts/dev/local-stack.sh seed [EMAIL]        # load fixtures into that user's org (sign in first)
+scripts/dev/local-stack.sh status
+scripts/dev/local-stack.sh logs web            # oidc | workers | agent-ingest | pipes-api |
+                                               # raw-api | kv-bridge | web
+scripts/dev/local-stack.sh down [--purge]      # also stops Tinybird Local; --purge deletes Convex,
+                                               # Tinybird (shared with start.sh), and Worker state
+```
+
+What it runs:
+
+- `scripts/dev/mock-oidc.ts`: a mock OIDC issuer that takes Auth0's place. Its sign-in page accepts
+  any email, and `/auth/login?login_hint=<email>` signs in with no form. The same email always
+  maps to the same user.
+- A self-hosted Convex backend in Docker (`trace-flow-local-convex`), configured to trust the mock
+  issuer.
+- Tinybird Local, with the project deployed to the workspace named after the project path. This
+  holds regardless of the current git branch.
+- The Workers in four `wrangler dev` processes, plus the KV bridge below in a fifth, all sharing
+  state under `.trace-flow/local-stack/wrangler`. The proxy and its consumer share one process and
+  the agent ingest Worker and its consumer share another, because queues only connect Workers in the
+  same process. The Pipes API and Raw API have their own processes and ports.
+- `scripts/dev/kv-bridge.ts`: a Worker that stands in for Cloudflare's KV REST API. Convex syncs
+  API keys, subscriptions, Collector Credentials, and model pricing to KV over that API, so the
+  stack sets Convex's `CLOUDFLARE_API_BASE_URL` to this bridge. It writes to the same local KV
+  namespaces the Workers read.
+- Web via `next dev`, started from an empty environment plus the stack's values. Next never
+  overrides a variable that is already set, so every key in `apps/web`'s dotenv files is set
+  empty, and a linked `apps/web/.env.local` contributes no values.
+
+Public URLs use the machine's Tailscale name when one exists, so another tailnet device can open
+them. Set `TRACE_FLOW_LOCAL_STACK_HOST=127.0.0.1` to keep everything on loopback, and
+`TRACE_FLOW_LOCAL_STACK_*_PORT` to move a port; `up` fails when a port is already taken.
+Container names are fixed, so one stack runs per Docker engine, and `up` or `down` from another
+checkout refuses to touch a running stack. Generated secrets, logs, and the Convex CLI's
+working directory live in `.trace-flow/local-stack/`. The Convex CLI rewrites `.env.local` in its
+working directory, so it never runs from the repo root.
+
+`wrangler dev` passes `--env-file` only to the first config in a process. Every other Worker reads
+the `.dev.vars` beside its config, and worktrees may link those to cloud dev credentials. Each
+Worker therefore runs from a mirror of its app directory under `.trace-flow/local-stack/workers/`.
+The mirror links everything except dotenv files and adds a `.dev.vars` holding only the variables
+that Worker reads, so production's secret boundaries hold locally too. The KV namespace ids Convex
+writes to are pinned in `local-stack.sh`, which fails when an app's config stops binding them.
+
+The Convex container reaches Tinybird Local over a shared Docker network (`trace-flow-local`),
+because Tinybird publishes its port only on host loopback. It reaches the mock issuer and the KV
+bridge through the host. Rootless Docker's host gateway cannot reach host services, so there the
+script uses the host's default-route address instead.
+
+`seed` rewrites the committed `fixtures/*.ndjson` so they belong to the user's org and end an hour
+ago. It then publishes agent snapshots the same way the agent-consumer snapshot runner does. Seeding
+again appends duplicate rows; purge to start over. Proxy traffic is not part of the seed, but the
+onboarding key works against the local proxy, and captured requests reach local Tinybird after the
+consumer's one-minute flush. Live Collector uploads do not complete locally: the agent consumer's
+`TINYBIRD_AGENT_*` tokens are not configured, as in `start.sh`. Organization erasure does not run
+locally, because Convex requires an HTTPS agent ingest URL.
+
+The stack needs about 8 GiB of memory, half of it the Tinybird Local container that `start.sh`
+also uses, and about 2,000 processes and threads. ClickHouse inside Tinybird Local aborts when
+systemd limits Docker scopes to the default 15% of the task limit. Hosts that cap container tasks
+need `TasksMax=infinity` for `docker-*.scope` units.
+
 ## Convex Gotchas
 
 - **Run Convex commands from the repo root, never from `packages/convex/`.** The root `convex.json`

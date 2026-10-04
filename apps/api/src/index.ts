@@ -18,6 +18,8 @@ interface Env {
   AXIOM_DOMAIN?: string;
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
+  /** Comma-separated extra browser origins; only scripts/dev/local-stack.sh sets this. */
+  LOCAL_DEV_ORIGINS?: string;
   BODY_ENCRYPTION_ROOT_KEY?: string;
   BODY_ENCRYPTION_KEY_ID?: string;
   BODY_ACCESS_JWT_SECRET: string;
@@ -43,7 +45,12 @@ export const apiApp = new Hono<{ Bindings: Env; Variables: Variables }>();
 apiApp.use('*', async (c: Context<{ Bindings: Env; Variables: Variables }, string>, next) => {
   const isDev = c.env.SENTRY_ENVIRONMENT !== 'prod';
   const allowed = isDev
-    ? [...PRODUCTION_ORIGINS, ...NON_PROD_ORIGINS, ...DEV_ORIGINS]
+    ? [
+        ...PRODUCTION_ORIGINS,
+        ...NON_PROD_ORIGINS,
+        ...DEV_ORIGINS,
+        ...(c.env.LOCAL_DEV_ORIGINS?.split(',') ?? []),
+      ]
     : PRODUCTION_ORIGINS;
   const mw = cors({
     origin: (origin) => (allowed.includes(origin) ? origin : null),

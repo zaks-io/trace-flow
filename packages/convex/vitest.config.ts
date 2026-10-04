@@ -8,6 +8,9 @@ export default defineConfig({
     env: {
       TINYBIRD_ADMIN_TOKEN: 'test-admin-token',
       TINYBIRD_WORKSPACE_ID: 'test-workspace-id',
+      // Functions log to Axiom when a token is set; a developer's shell token
+      // must not ship test logs.
+      AXIOM_TOKEN: '',
     },
     server: {
       deps: {
