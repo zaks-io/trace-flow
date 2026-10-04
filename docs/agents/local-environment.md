@@ -107,10 +107,10 @@ What it runs:
   issuer.
 - Tinybird Local, with the project deployed to the workspace named after the project path. This
   holds regardless of the current git branch.
-- The Workers in four `wrangler dev` processes, plus the KV bridge below in a fifth, all sharing state under
-  `.trace-flow/local-stack/wrangler`. The proxy and its consumer share one process and the agent
-  ingest Worker and its consumer share another, because queues only connect Workers in the same
-  process. The Pipes API and Raw API have their own processes and ports.
+- The Workers in four `wrangler dev` processes, plus the KV bridge below in a fifth, all sharing
+  state under `.trace-flow/local-stack/wrangler`. The proxy and its consumer share one process and
+  the agent ingest Worker and its consumer share another, because queues only connect Workers in the
+  same process. The Pipes API and Raw API have their own processes and ports.
 - `scripts/dev/kv-bridge.ts`: a Worker that stands in for Cloudflare's KV REST API. Convex syncs
   API keys, subscriptions, Collector Credentials, and model pricing to KV over that API, so the
   stack sets Convex's `CLOUDFLARE_API_BASE_URL` to this bridge. It writes to the same local KV
@@ -131,8 +131,8 @@ working directory, so it never runs from the repo root.
 the `.dev.vars` beside its config, and worktrees may link those to cloud dev credentials. Each
 Worker therefore runs from a mirror of its app directory under `.trace-flow/local-stack/workers/`.
 The mirror links everything except dotenv files and adds a `.dev.vars` holding only the variables
-that Worker reads, so production's secret boundaries hold locally too. The KV namespace ids Convex writes to are pinned in `local-stack.sh`, which fails when an
-app's config stops binding them.
+that Worker reads, so production's secret boundaries hold locally too. The KV namespace ids Convex
+writes to are pinned in `local-stack.sh`, which fails when an app's config stops binding them.
 
 The Convex container reaches Tinybird Local over a shared Docker network (`trace-flow-local`),
 because Tinybird publishes its port only on host loopback. It reaches the mock issuer and the KV
@@ -140,11 +140,12 @@ bridge through the host. Rootless Docker's host gateway cannot reach host servic
 script uses the host's default-route address instead.
 
 `seed` rewrites the committed `fixtures/*.ndjson` so they belong to the user's org and end an hour
-ago. It then publishes agent snapshots the same way the agent-consumer snapshot runner does.
-Seeding again appends duplicate rows; purge to start over. Proxy traffic is not part of the seed,
-but the onboarding key works against the local proxy, and captured requests reach local Tinybird
-after the consumer's one-minute flush. Organization erasure does not run locally, because Convex
-requires an HTTPS agent ingest URL.
+ago. It then publishes agent snapshots the same way the agent-consumer snapshot runner does. Seeding
+again appends duplicate rows; purge to start over. Proxy traffic is not part of the seed, but the
+onboarding key works against the local proxy, and captured requests reach local Tinybird after the
+consumer's one-minute flush. Live Collector uploads do not complete locally: the agent consumer's
+`TINYBIRD_AGENT_*` tokens are not configured, as in `start.sh`. Organization erasure does not run
+locally, because Convex requires an HTTPS agent ingest URL.
 
 The stack needs about 8 GiB of memory, half of it the Tinybird Local container that `start.sh`
 also uses, and about 2,000 processes and threads. ClickHouse inside Tinybird Local aborts when

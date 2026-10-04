@@ -86,6 +86,9 @@ ensure_secret() {
 
 ensure_secrets() {
   mkdir -p "$STACK_DIR"
+  # Every generated secret file lives below this directory, so none is readable
+  # by other users even before its own chmod.
+  chmod 700 "$STACK_DIR"
   touch "$STACK_SECRETS"
   chmod 600 "$STACK_SECRETS"
   ensure_secret AUTH0_SECRET "$(random_hex 32)"
