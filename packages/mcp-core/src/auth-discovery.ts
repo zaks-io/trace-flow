@@ -30,7 +30,7 @@ export function buildProtectedResourceMetadata(
 
 export const AUTH_MD = `# Trace Flow auth.md
 
-This document is for AI agents and API clients connecting to the Trace Flow MCP service. Trace Flow uses OAuth 2.0 dynamic client registration followed by Authorization Code with PKCE. Registration starts without an identity assertion; a user signs in and approves access before Trace Flow issues a credential.
+This document is for AI agents and API clients connecting to the Trace Flow MCP service. Trace Flow supports permissioned API keys for headless clients, and OAuth 2.0 dynamic client registration followed by Authorization Code with PKCE for interactive clients. Registration starts without an identity assertion; a user signs in and approves access before Trace Flow issues a credential.
 
 ## Discover
 
@@ -40,6 +40,24 @@ This document is for AI agents and API clients connecting to the Trace Flow MCP 
 4. Use the endpoints and methods in that metadata. Do not probe registration with a test POST during passive discovery.
 
 Protected resource: \`${MCP_ENDPOINT_URL}\`
+
+## API keys for sandboxes
+
+Create a key on https://trace-flow.dev/app/api-keys with MCP read access enabled.
+New keys default to Send traces only; existing keys remain ingest-only. MCP read
+access reads the owner's organization traces, usage and coding-agent analytics.
+Access is fixed at creation. MCP currently has no write tools or write permission.
+
+Provide the key through the sandbox's TRACE_FLOW_API_KEY secret environment variable.
+Send Authorization: Bearer <api_key> on every MCP request. Codex supports
+bearer_token_env_var = "TRACE_FLOW_API_KEY"; Claude Code supports environment-variable
+expansion in the Authorization header of .mcp.json. Never write raw keys into
+checked-in configuration or command-line arguments. Detailed setup examples:
+https://trace-flow.dev/docs/mcp#api-keys-for-sandboxes
+
+Ingest-only keys receive HTTP 403 with an insufficient_scope challenge requiring
+mcp:read. Invalid or expired keys receive HTTP 401. Deleted keys, disabled accounts
+and inactive organization memberships fail on the next request. OAuth remains available.
 
 ## Register an OAuth client
 

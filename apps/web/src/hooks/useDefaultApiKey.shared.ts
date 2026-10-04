@@ -1,3 +1,5 @@
+import { hasApiKeyPermission, type ApiKeyPermission } from '@trace-flow/convex/apiKeyPermissions';
+
 export const DEFAULT_API_KEY_NAME = 'Default API Key';
 
 export type ApiKeyLike = {
@@ -6,6 +8,7 @@ export type ApiKeyLike = {
   expiresAt: number;
   key: string;
   name?: string;
+  permissions?: readonly ApiKeyPermission[];
 };
 
 export function isApiKeyActive(apiKey: Pick<ApiKeyLike, 'expiresAt'>, now = Date.now()): boolean {
@@ -26,6 +29,8 @@ export function sortApiKeys<T extends ApiKeyLike>(apiKeys: readonly T[]): T[] {
 }
 
 export function getPrimaryApiKey<T extends ApiKeyLike>(apiKeys: readonly T[]): T | null {
-  const sortedKeys = sortApiKeys(apiKeys).filter((apiKey) => isApiKeyActive(apiKey));
+  const sortedKeys = sortApiKeys(apiKeys).filter(
+    (apiKey) => isApiKeyActive(apiKey) && hasApiKeyPermission(apiKey, 'ingest'),
+  );
   return sortedKeys.find((apiKey) => apiKey.name === DEFAULT_API_KEY_NAME) ?? sortedKeys[0] ?? null;
 }

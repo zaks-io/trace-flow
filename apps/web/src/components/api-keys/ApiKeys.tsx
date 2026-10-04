@@ -3,6 +3,11 @@
 import Link from 'next/link';
 import { type Preloaded, usePreloadedQuery, useMutation, useAction, useQuery } from 'convex/react';
 import { api } from '@trace-flow/convex/_generated/api';
+import {
+  apiKeyPermissions,
+  hasApiKeyPermission,
+  type ApiKeyPermission,
+} from '@trace-flow/convex/apiKeyPermissions';
 import { useMemo, useState } from 'react';
 import type { Id } from '@trace-flow/convex/_generated/dataModel';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
@@ -10,6 +15,8 @@ import { PageToolbar } from '@/components/shared/PageToolbar';
 import { ApiKeyQuickStart } from '@/components/onboarding/ApiKeyQuickStart';
 import { SetupCallout } from '@/components/onboarding/SetupCallout';
 import { useDefaultApiKey } from '@/hooks/useDefaultApiKey';
+import { ApiKeyAccessFields } from './ApiKeyAccessFields';
+import { ApiKeyAccessBadges } from './ApiKeyAccessBadges';
 
 export default function ApiKeys({
   preloadedApiKeys,
@@ -46,10 +53,12 @@ export default function ApiKeys({
   const [isCreating, setIsCreating] = useState(false);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newKeyName, setNewKeyName] = useState('');
+  const [newKeyPermissions, setNewKeyPermissions] = useState<ApiKeyPermission[]>(['ingest']);
   const [editingKey, setEditingKey] = useState<{
     id: Id<'apiKeys'>;
     name: string;
     expiresAt: number;
+    permissions: readonly ApiKeyPermission[];
   } | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
   const [deletingId, setDeletingId] = useState<Id<'apiKeys'> | null>(null);
@@ -58,7 +67,16 @@ export default function ApiKeys({
   );
   const [syncingId, setSyncingId] = useState<Id<'apiKeys'> | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
+  const [success, setSuccess] = useState<{
+    message: string;
+    mcpReadAccess?: boolean;
+  } | null>(null);
+
+  const resetCreateDialog = (open: boolean) => {
+    setShowCreateDialog(open);
+    setNewKeyName('');
+    setNewKeyPermissions(['ingest']);
+  };
 
   const withGuard = async (setLoading: (v: boolean) => void, fn: () => Promise<void>) => {
     setLoading(true);
@@ -78,10 +96,13 @@ export default function ApiKeys({
       await createApiKey({
         expiresAt: Date.now() + 90 * 24 * 60 * 60 * 1000,
         name: newKeyName.trim() || undefined,
+        permissions: newKeyPermissions,
       });
-      setSuccess('API key created successfully');
-      setShowCreateDialog(false);
-      setNewKeyName('');
+      setSuccess({
+        message: 'API key created successfully',
+        mcpReadAccess: hasApiKeyPermission({ permissions: newKeyPermissions }, 'mcp:read'),
+      });
+      resetCreateDialog(false);
     });
 
   const handleDeleteKey = (id: Id<'apiKeys'>) => {
@@ -91,7 +112,7 @@ export default function ApiKeys({
       async () => {
         try {
           await deleteApiKey({ id });
-          setSuccess('API key deleted successfully');
+          setSuccess({ message: 'API key deleted successfully' });
         } finally {
           setDeletingId(null);
         }
@@ -106,7 +127,9 @@ export default function ApiKeys({
       async () => {
         try {
           const result = await syncToKV({ id });
-          setSuccess(result.existed ? 'API key already exists in KV' : 'API key synced to KV');
+          setSuccess({
+            message: result.existed ? 'API key already exists in KV' : 'API key synced to KV',
+          });
         } finally {
           setSyncingId(null);
         }
@@ -122,7 +145,7 @@ export default function ApiKeys({
         name: editingKey.name.trim() || undefined,
         expiresAt: editingKey.expiresAt,
       });
-      setSuccess('API key updated successfully');
+      setSuccess({ message: 'API key updated successfully' });
       setEditingKey(null);
     });
 
@@ -152,11 +175,11 @@ export default function ApiKeys({
     <div className="animate-fade-in">
       <PageToolbar>
         <p className="text-sm text-muted-foreground">
-          Manage your API keys for accessing the proxy service
+          Manage your API keys for sending traces and connecting coding agents.
         </p>
         <div className="flex-1" />
         <button
-          onClick={() => setShowCreateDialog(true)}
+          onClick={() => resetCreateDialog(true)}
           className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 hover:shadow-md hover:shadow-primary/20 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background"
         >
           Create API Key
@@ -183,19 +206,23 @@ export default function ApiKeys({
                 Give your key a name to help identify its purpose
               </p>
             </div>
+            <div className="mb-4">
+              <ApiKeyAccessFields
+                permissions={newKeyPermissions}
+                onChange={setNewKeyPermissions}
+                disabled={isCreating}
+              />
+            </div>
             <div className="flex justify-end gap-3">
               <button
-                onClick={() => {
-                  setShowCreateDialog(false);
-                  setNewKeyName('');
-                }}
+                onClick={() => resetCreateDialog(false)}
                 className="rounded-lg px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
               >
                 Cancel
               </button>
               <button
                 onClick={handleCreateKey}
-                disabled={isCreating}
+                disabled={isCreating || newKeyPermissions.length === 0}
                 className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isCreating ? (
@@ -216,6 +243,13 @@ export default function ApiKeys({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-lg">
             <h2 className="mb-4 text-lg font-semibold text-foreground">Edit API Key</h2>
+            <div className="mb-4 space-y-2">
+              <p className="text-sm font-medium text-foreground">Access</p>
+              <ApiKeyAccessBadges apiKey={editingKey} />
+              <p className="text-xs text-muted-foreground">
+                Create a new key for different access.
+              </p>
+            </div>
             <div className="mb-4">
               <label
                 htmlFor="editKeyName"
@@ -303,7 +337,15 @@ export default function ApiKeys({
 
       {success && (
         <div className="mb-4 rounded-xl border border-emerald-500/50 bg-emerald-500/10 p-4">
-          <p className="text-sm text-emerald-400">{success}</p>
+          <p className="text-sm text-emerald-400">{success.message}</p>
+          {success.mcpReadAccess && (
+            <Link
+              className="mt-2 inline-block text-sm text-primary hover:underline"
+              href="/docs/mcp"
+            >
+              Connect your coding agent with MCP
+            </Link>
+          )}
         </div>
       )}
 
@@ -351,6 +393,9 @@ export default function ApiKeys({
                     API Key
                   </th>
                   <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    Access
+                  </th>
+                  <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Created
                   </th>
                   <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -378,6 +423,9 @@ export default function ApiKeys({
                         <code className="rounded bg-muted/50 px-1.5 py-0.5 font-mono text-xs text-foreground">
                           {apiKey.key}
                         </code>
+                      </td>
+                      <td className="whitespace-nowrap px-6 py-4">
+                        <ApiKeyAccessBadges apiKey={apiKey} />
                       </td>
                       <td className="whitespace-nowrap px-6 py-4 text-sm text-foreground">
                         {new Date(apiKey._creationTime).toLocaleDateString()}
@@ -407,19 +455,22 @@ export default function ApiKeys({
                               id: apiKey._id,
                               name: apiKey.name ?? '',
                               expiresAt: apiKey.expiresAt,
+                              permissions: apiKeyPermissions(apiKey),
                             })
                           }
                           className="mr-3 font-medium text-primary transition-colors hover:text-primary/80"
                         >
                           Edit
                         </button>
-                        <button
-                          onClick={() => handleSyncKey(apiKey._id)}
-                          disabled={syncingId === apiKey._id}
-                          className="mr-3 font-medium text-primary transition-colors hover:text-primary/80 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {syncingId === apiKey._id ? 'Syncing...' : 'Sync'}
-                        </button>
+                        {hasApiKeyPermission(apiKey, 'ingest') && (
+                          <button
+                            onClick={() => handleSyncKey(apiKey._id)}
+                            disabled={syncingId === apiKey._id}
+                            className="mr-3 font-medium text-primary transition-colors hover:text-primary/80 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {syncingId === apiKey._id ? 'Syncing...' : 'Sync'}
+                          </button>
+                        )}
                         <button
                           onClick={() => setPendingDelete({ id: apiKey._id, key: apiKey.key })}
                           disabled={deletingId === apiKey._id}

@@ -28,7 +28,7 @@ import {
   type InitializeResult,
   type ToolCallParams,
 } from '@trace-flow/mcp-core';
-import { verifyAccessToken } from './auth';
+import { authenticate } from './authenticate';
 import { mintSessionToken, verifySessionToken } from './sessions';
 import { createWorkerBackend } from './backend';
 import { traceMcpInteraction } from './sentry';
@@ -127,22 +127,6 @@ function mcpResourceUrl(req: Request): string {
   return new URL('/mcp', req.url).toString();
 }
 
-function protectedResourceUrl(req: Request): string {
-  return new URL(PROTECTED_RESOURCE_METADATA_PATH, req.url).toString();
-}
-
-function bearerChallenge(req: Request, error?: string): string {
-  const params = [`resource_metadata="${protectedResourceUrl(req)}"`];
-  if (error) params.push(`error="${error}"`);
-  return `Bearer ${params.join(', ')}`;
-}
-
-function unauthorizedResponse(req: Request, message: string, error?: string): Response {
-  return jsonResponse({ error: message }, 401, {
-    'WWW-Authenticate': bearerChallenge(req, error),
-  });
-}
-
 async function proxyConnect(
   c: { req: { raw: Request }; env: Env },
   path: string,
@@ -187,37 +171,6 @@ async function proxyToken(c: { req: { raw: Request }; env: Env }): Promise<Respo
   if (!body.has('resource')) body.set('resource', mcpResourceUrl(c.req.raw));
   headers.set('content-type', 'application/x-www-form-urlencoded');
   return fetch(url, { method: 'POST', headers, body: body.toString() });
-}
-
-/** Bearer access-token auth shared by POST and DELETE. */
-async function authenticate(c: {
-  req: { raw: Request; header(name: string): string | undefined };
-  env: Env;
-  get(name: 'logger'): Logger;
-}): Promise<{ userId: string } | { error: Response }> {
-  const authHeader = c.req.header('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) {
-    return {
-      error: unauthorizedResponse(c.req.raw, 'Missing or invalid Authorization header'),
-    };
-  }
-  let payload;
-  try {
-    payload = await verifyAccessToken(
-      authHeader.slice(7),
-      c.env.CONNECT_BASE_URL,
-      mcpResourceUrl(c.req.raw),
-      c.get('logger'),
-    );
-  } catch {
-    return { error: jsonResponse({ error: 'Token verification temporarily unavailable' }, 503) };
-  }
-  if (!payload) {
-    return {
-      error: unauthorizedResponse(c.req.raw, 'Invalid or expired access token', 'invalid_token'),
-    };
-  }
-  return { userId: payload.userId };
 }
 
 function jsonResponse(body: unknown, status = 200, headers?: Record<string, string>): Response {
@@ -432,6 +385,9 @@ app.post('/mcp', async (c) => {
 // Stateless sessions self-expire via the session token's TTL, so termination is
 // a client-side discard. Ack so spec-compliant clients are satisfied.
 app.delete('/mcp', async (c) => {
+  const rateLimitError = await enforceMcpRateLimit(c);
+  if (rateLimitError) return rateLimitError;
+
   const auth = await authenticate(c);
   if ('error' in auth) return auth.error;
   return c.body(null, 204);

@@ -21,6 +21,10 @@ Endpoint: `https://mcp.trace-flow.dev/mcp`
 
 ## Configuration
 
+### OAuth
+
+Use OAuth for an interactive connection. Your assistant opens the sign-in flow when needed.
+
 ```json
 {
   "mcpServers": {
@@ -32,13 +36,63 @@ Endpoint: `https://mcp.trace-flow.dev/mcp`
 }
 ```
 
+### API keys for sandboxes
+
+Create a key on the [API Keys page](/app/api-keys) with **MCP read access** enabled.
+Provide its value through the sandbox's secret environment variable `TRACE_FLOW_API_KEY`.
+Your MCP client sends it as `Authorization: Bearer <key>` without an OAuth login.
+
+For [Codex](https://developers.openai.com/codex/mcp), configure:
+
+```toml
+[mcp_servers.trace-flow]
+url = "https://mcp.trace-flow.dev/mcp"
+bearer_token_env_var = "TRACE_FLOW_API_KEY"
+```
+
+For [Claude Code](https://code.claude.com/docs/en/mcp#environment-variable-expansion-in-mcpjson),
+use environment-variable expansion in `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "trace-flow": {
+      "type": "http",
+      "url": "https://mcp.trace-flow.dev/mcp",
+      "headers": {
+        "Authorization": "Bearer ${TRACE_FLOW_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+Environment-variable substitution is a client feature. Other clients must configure the
+Authorization header using their own secret/environment support. Keep the raw key out of
+checked-in configuration and command-line arguments.
+
+### Key permissions
+
+- **Send traces** allows proxied model API requests and OTLP export. New keys default to
+  this permission only, and existing keys remain ingest-only.
+- **MCP read access** allows reading the key owner's organization traces, usage, and
+  coding-agent analytics, with the same account and retention boundaries as OAuth.
+- A key may grant either permission or both. An MCP-only key cannot send model traffic.
+- Access is fixed at creation. Create a replacement key for different permissions.
+- MCP currently has no tools that change data, so there is no write permission to grant.
+
+An ingest-only key receives HTTP 403 from MCP with an `insufficient_scope` challenge.
+Expired, deleted, or otherwise invalid keys receive HTTP 401. API keys are checked against
+current account and organization membership on every MCP request, including requests in
+an existing session. OAuth connections continue to work without an API key.
+
 ## Available tools
 
 Every tool reads only the data on your own Trace Flow account. Pass `api_key_ids` (from `list_api_keys`) on any trace or usage tool to narrow results to one app.
 
 ### `list_api_keys`
 
-List the API keys available to your account. Returns key names and IDs, never raw key values.
+List the ingest-capable API keys available to your account for filtering trace data. Returns key names and IDs, never raw key values. MCP-only keys are not trace data sources.
 
 When another tool comes back empty, check this first: empty results usually mean the wrong key scope or too narrow a window rather than missing data.
 

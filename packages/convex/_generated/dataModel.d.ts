@@ -355,6 +355,7 @@ export type DataModel = {
       key: string;
       name?: string;
       orgId?: Id<"organizations">;
+      permissions?: Array<"ingest" | "mcp:read">;
       userId?: Id<"users">;
       _id: Id<"apiKeys">;
       _creationTime: number;
@@ -366,6 +367,7 @@ export type DataModel = {
       | "key"
       | "name"
       | "orgId"
+      | "permissions"
       | "userId";
     indexes: {
       by_id: ["_id"];

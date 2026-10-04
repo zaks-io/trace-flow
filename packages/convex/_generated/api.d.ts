@@ -568,7 +568,11 @@ export declare const api: {
     create: FunctionReference<
       "mutation",
       "public",
-      { expiresAt: number; name?: string },
+      {
+        expiresAt: number;
+        name?: string;
+        permissions?: Array<"ingest" | "mcp:read">;
+      },
       Id<"apiKeys">
     >;
     getByKey: FunctionReference<
@@ -582,6 +586,7 @@ export declare const api: {
         key: string;
         name?: string;
         orgId?: Id<"organizations">;
+        permissions?: Array<"ingest" | "mcp:read">;
         userId?: Id<"users">;
       }
     >;
@@ -596,6 +601,7 @@ export declare const api: {
         key: string;
         name?: string;
         orgId?: Id<"organizations">;
+        permissions?: Array<"ingest" | "mcp:read">;
         userId?: Id<"users">;
       }>
     >;
@@ -2156,6 +2162,7 @@ export declare const internal: {
         key: string;
         name?: string;
         orgId?: Id<"organizations">;
+        permissions?: Array<"ingest" | "mcp:read">;
         userId?: Id<"users">;
       }
     >;
@@ -2170,6 +2177,7 @@ export declare const internal: {
         key: string;
         name?: string;
         orgId?: Id<"organizations">;
+        permissions?: Array<"ingest" | "mcp:read">;
         userId?: Id<"users">;
       }>
     >;
@@ -2184,6 +2192,7 @@ export declare const internal: {
         key: string;
         name?: string;
         orgId?: Id<"organizations">;
+        permissions?: Array<"ingest" | "mcp:read">;
         userId?: Id<"users">;
       }>
     >;
@@ -2198,6 +2207,7 @@ export declare const internal: {
         key: string;
         name?: string;
         orgId?: Id<"organizations">;
+        permissions?: Array<"ingest" | "mcp:read">;
         userId?: Id<"users">;
       }>
     >;
@@ -3015,6 +3025,7 @@ export declare const internal: {
           key: string;
           name?: string;
           orgId?: Id<"organizations">;
+          permissions?: Array<"ingest" | "mcp:read">;
           userId?: Id<"users">;
         }>;
         channels: Array<{
@@ -3151,6 +3162,7 @@ export declare const internal: {
             key: string;
             name?: string;
             orgId?: Id<"organizations">;
+            permissions?: Array<"ingest" | "mcp:read">;
             userId?: Id<"users">;
           }>;
           collectorCredentials: Array<{

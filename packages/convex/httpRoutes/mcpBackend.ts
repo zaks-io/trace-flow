@@ -3,6 +3,8 @@ import type { ActionCtx } from '../_generated/server';
 import type { Id } from '../_generated/dataModel';
 import { BodySizeLimitError } from '@trace-flow/utils';
 import { createMcpBackend } from '../mcp/backend';
+import { internal } from '../_generated/api';
+import { hasApiKeyPermission } from '../apiKeyPermissions';
 import { getRequestLogger, hasValidBearerSecret, isJsonContentType } from './shared';
 import { readBoundedJson } from './requestBody';
 
@@ -30,10 +32,42 @@ async function readBackendJson(c: { req: { raw: Request } }): Promise<unknown> {
 }
 
 export function registerMcpBackendRoutes(app: HonoWithConvex<ActionCtx>): void {
-  // MCP backend: the dedicated MCP worker (mcp.trace-flow.dev) calls these
-  // shared-secret routes so raw API keys and the Tinybird admin token never
-  // leave Convex. The worker holds neither — it forwards a userId + key ids and
-  // receives only public metadata + a scoped, short-lived Tinybird JWT.
+  app.post('/mcp-backend/authorize-api-key', async (c) => {
+    if (
+      !hasValidBearerSecret(c.req.header('Authorization'), process.env.MCP_BACKEND_SHARED_SECRET)
+    ) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    if (!isJsonContentType(c.req.header('Content-Type'))) {
+      return c.json({ error: 'Content-Type must be application/json' }, 415);
+    }
+    const body = await readBackendJson(c);
+    if (body instanceof Response) return body;
+    if (!isRecord(body) || typeof body.key !== 'string' || body.key.length === 0) {
+      return c.json({ error: 'key is required' }, 400);
+    }
+    const key = await c.env.runQuery(internal.integrations.cloudflare.getApiKeySyncData, {
+      key: body.key,
+    });
+    const reason = !key
+      ? 'invalid'
+      : key.expiresAt <= Date.now()
+        ? 'expired'
+        : !hasApiKeyPermission(key, 'mcp:read')
+          ? 'forbidden'
+          : null;
+    if (reason) {
+      const logger = getRequestLogger(c.req.raw, { operation: 'mcp_api_key_authorization' });
+      logger.warn('convex.mcp_api_key_auth_rejected', { reason });
+      await logger.flush();
+      return c.json({ authorized: false, reason });
+    }
+    return c.json({ authorized: true, userId: key.userId });
+  });
+
+  // Read-side routes return metadata and scoped JWTs, never stored API keys or
+  // the Tinybird admin token. API-key authentication forwards only the presented credential.
+
   app.post('/mcp-backend/context', async (c) => {
     const ctx = c.env;
     const authHeader = c.req.header('Authorization');

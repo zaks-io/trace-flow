@@ -47,6 +47,75 @@ describe('convex/http.ts MCP backend routes', () => {
       vi.stubEnv('MCP_BACKEND_SHARED_SECRET', SECRET);
     });
 
+    async function authorizeKey(
+      headers: Record<string, string> = {},
+      body: unknown = { key: 'read-key' },
+    ) {
+      return createApp(deps).request(
+        'http://localhost/mcp-backend/authorize-api-key',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${SECRET}`,
+            ...headers,
+          },
+          body: JSON.stringify(body),
+        },
+        ctx,
+      );
+    }
+
+    it('protects API key authorization with the backend secret', async () => {
+      expect((await authorizeKey({ Authorization: 'Bearer wrong' })).status).toBe(401);
+      expect(ctx.runQuery).not.toHaveBeenCalled();
+    });
+
+    it('requires JSON and a presented key before querying', async () => {
+      expect((await authorizeKey({ 'Content-Type': 'text/plain' })).status).toBe(415);
+      expect((await authorizeKey({}, {})).status).toBe(400);
+      expect(ctx.runQuery).not.toHaveBeenCalled();
+    });
+
+    it('returns only the read key owner identity', async () => {
+      ctx.runQuery.mockResolvedValue({
+        userId: USER_ID,
+        orgId: 'org_1',
+        key: 'read-key',
+        permissions: ['mcp:read'],
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      });
+      const res = await authorizeKey();
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ authorized: true, userId: USER_ID });
+    });
+
+    it.each([undefined, ['ingest'], []])(
+      'denies a key without MCP read access %#',
+      async (permissions) => {
+        ctx.runQuery.mockResolvedValue({
+          userId: USER_ID,
+          permissions,
+          expiresAt: Number.MAX_SAFE_INTEGER,
+        });
+        expect(await (await authorizeKey()).json()).toEqual({
+          authorized: false,
+          reason: 'forbidden',
+        });
+      },
+    );
+
+    it('denies missing and expired keys', async () => {
+      ctx.runQuery.mockResolvedValue(null);
+      expect(await (await authorizeKey()).json()).toEqual({ authorized: false, reason: 'invalid' });
+      ctx.runQuery.mockResolvedValue({
+        userId: USER_ID,
+        permissions: ['mcp:read'],
+        expiresAt: Date.now() - 1,
+      });
+      expect(await (await authorizeKey()).json()).toEqual({ authorized: false, reason: 'expired' });
+    });
+
     it('rejects context without the shared secret', async () => {
       const app = createApp(deps);
       const res = await app.request(

@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
+import { apiKeyPermissionValidator } from './apiKeyPermissions';
 import { modelPricingFields } from './billing/pricingSchema';
 import {
   sandboxBackupHandle,
@@ -79,6 +80,7 @@ export default defineSchema({
   }).index('by_org_id_period', ['orgId', 'periodStart']),
 
   apiKeys: defineTable({
+    permissions: v.optional(v.array(apiKeyPermissionValidator)),
     key: v.string(),
     expiresAt: v.number(),
     userId: v.optional(v.id('users')),

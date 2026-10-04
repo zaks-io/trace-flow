@@ -80,6 +80,14 @@ integration does not need one.
 
 If the repo already has MCP server entries, add the `trace-flow` block alongside them rather than replacing the whole file.
 
+For a headless sandbox, create a separate key with **MCP read access** enabled on the API Keys
+page. Default keys only allow sending traces. Set the read key through the sandbox's secret
+`TRACE_FLOW_API_KEY` environment variable, then configure Codex's `bearer_token_env_var` or
+Claude Code's `Authorization: Bearer ${TRACE_FLOW_API_KEY}` header expansion. See the
+[MCP setup guide](https://trace-flow.dev/docs/mcp#api-keys-for-sandboxes). Never write the raw
+key into a committed config or a command-line argument. MCP access reads the owner's
+organization analytics; MCP tools currently have no write operations.
+
 ## Providers
 
 | Provider   | Path             |

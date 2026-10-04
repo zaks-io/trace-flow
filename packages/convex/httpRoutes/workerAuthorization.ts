@@ -2,6 +2,7 @@ import type { HonoWithConvex } from 'convex-helpers/server/hono';
 import type { ActionCtx } from '../_generated/server';
 import type { Id } from '../_generated/dataModel';
 import { internal } from '../_generated/api';
+import { hasApiKeyPermission } from '../apiKeyPermissions';
 import { verifyPipesAccessGrant } from '../pipesAccessGrant';
 import { hasValidBearerSecret, isConvexDocumentId, isJsonContentType } from './shared';
 
@@ -53,6 +54,9 @@ export function registerWorkerAuthorizationRoutes(app: HonoWithConvex<ActionCtx>
     }
     if (apiKey.expiresAt <= Date.now()) {
       return c.json({ authorized: false as const, reason: 'expired' });
+    }
+    if (!hasApiKeyPermission(apiKey, 'ingest')) {
+      return c.json({ authorized: false as const, reason: 'forbidden' });
     }
     return c.json({
       authorized: true as const,
