@@ -293,3 +293,16 @@ Original project code and documentation are licensed under the [Apache License, 
 See [NOTICE](./NOTICE) and [third-party notices](./THIRD_PARTY_NOTICES.md) for attribution.
 Third-party components retain their own licenses.
 The license does not grant rights to company or provider trademarks.
+
+## Sandbox worktrees
+
+When `sbx-runtime` is installed, `bun run dev:all` assigns stable named ports for
+the full stack, including Worker inspectors. Each worktree gets private state
+outside the checkout and its own Convex and Tinybird containers and volumes.
+Use `sbx-runtime list` to find URLs; explicit local-stack port overrides remain
+supported and fail if another worktree has reserved the port.
+
+Normal shutdown retains data. The explicit `--purge` option removes only the
+current worktree's stack data. Existing checkout data is retained; the first
+managed run starts a fresh database. Standalone development keeps its existing
+port and state defaults when the helper is absent.

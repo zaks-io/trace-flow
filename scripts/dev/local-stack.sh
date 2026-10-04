@@ -13,11 +13,12 @@
 # Docker backend, Tinybird Local holds analytics data, and a KV bridge Worker
 # (kv-bridge.ts) receives Convex's KV syncs. Every generated value lives under
 # .trace-flow/local-stack/; linked .env.local and .dev.vars files are never written,
-# and their values never reach the stack. Names and ports are fixed, so one stack
-# runs per Docker engine.
+# and their values never reach the stack. Sandbox ports, Docker resources and persistent data are
+# allocated per worktree by sbx-runtime when installed.
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/_runtime.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/_tinybird.sh"
 
 STACK_DIR="${TRACE_FLOW_LOCAL_STACK_DIR:-$TRACE_FLOW_STATE_DIR/local-stack}"
@@ -37,9 +38,9 @@ CONVEX_SITE_PORT="${TRACE_FLOW_LOCAL_STACK_CONVEX_SITE_PORT:-3211}"
 OIDC_PORT="${TRACE_FLOW_LOCAL_STACK_OIDC_PORT:-3230}"
 
 CONVEX_IMAGE="${TRACE_FLOW_LOCAL_STACK_CONVEX_IMAGE:-ghcr.io/get-convex/convex-backend:latest}"
-CONVEX_CONTAINER="trace-flow-local-convex"
-CONVEX_VOLUME="trace-flow-local-convex"
-DOCKER_NETWORK="trace-flow-local"
+CONVEX_CONTAINER="trace-flow-local-convex${SBX_WORKTREE_ID:+-$SBX_WORKTREE_ID}"
+CONVEX_VOLUME="$CONVEX_CONTAINER"
+DOCKER_NETWORK="trace-flow-local${SBX_WORKTREE_ID:+-$SBX_WORKTREE_ID}"
 OIDC_CLIENT_ID="trace-flow-local"
 DEFAULT_EMAIL="${TRACE_FLOW_LOCAL_STACK_EMAIL:-dev@trace-flow.local}"
 
@@ -175,15 +176,24 @@ resolve_tinybird_project_workspace() {
   local admin_token workspace_name workspace
   admin_token="$(curl -sf "$TRACE_FLOW_TINYBIRD_HOST/tokens" | json_expr "data.admin_token ?? ''")"
   workspace_name="Tinybird_Local_Build_$(printf '%s' "$TRACE_FLOW_ROOT" | sha256sum | cut -d' ' -f1)"
+  if [[ -n "${SBX_WORKTREE_ID:-}" ]]; then
+    # Each sandbox worktree owns its whole Tinybird instance and default workspace.
+    workspace_name="Tinybird_Local_Testing"
+  fi
   workspace="$(curl -sf "$TRACE_FLOW_TINYBIRD_HOST/v1/user/workspaces?with_organization=true&token=$admin_token" |
     json_expr "JSON.stringify(data.workspaces.find((w) => w.name === '$workspace_name') ?? {})")"
   local member_token
   member_token="$(printf '%s' "$workspace" | json_expr "data.token ?? ''")"
   TINYBIRD_WORKSPACE_ID="$(printf '%s' "$workspace" | json_expr "data.id ?? ''")"
+  [[ -n "$member_token" && -n "$TINYBIRD_WORKSPACE_ID" ]] || fail "Tinybird workspace $workspace_name was not found after deploy"
   # The listing returns the user's admin token; JWTs must be signed with the
   # token Tinybird names "workspace admin token".
+  if [[ -n "${SBX_WORKTREE_ID:-}" ]]; then
+    TINYBIRD_WORKSPACE_TOKEN="$(curl -sf "$TRACE_FLOW_TINYBIRD_HOST/tokens" | json_expr "data.workspace_admin_token ?? ''")"
+  else
   TINYBIRD_WORKSPACE_TOKEN="$(curl -sf -H "Authorization: Bearer $member_token" "$TRACE_FLOW_TINYBIRD_HOST/v0/tokens" |
     json_expr "data.tokens.find((t) => t.name === 'workspace admin token')?.token ?? ''")"
+  fi
   [[ -n "$TINYBIRD_WORKSPACE_TOKEN" && -n "$TINYBIRD_WORKSPACE_ID" ]] ||
     fail "Tinybird workspace $workspace_name was not found after deploy"
 }
@@ -196,7 +206,7 @@ start_tinybird() {
   log "deploying Tinybird project to Tinybird Local"
   local default_token
   default_token="$(curl -sf "$TRACE_FLOW_TINYBIRD_HOST/tokens" | json_expr "data.workspace_admin_token ?? ''")"
-  TB_VERSION_WARNING=0 tb --local --token "$default_token" deploy --wait --auto
+  TB_VERSION_WARNING=0 tb --local --host "$TRACE_FLOW_TINYBIRD_HOST" --token "$default_token" deploy --wait --auto
   resolve_tinybird_project_workspace
 }
 
@@ -223,10 +233,12 @@ docker_host_address() {
 start_convex() {
   # Tinybird Local publishes only on host loopback, so Convex reaches it by name.
   docker network inspect "$DOCKER_NETWORK" >/dev/null 2>&1 || docker network create "$DOCKER_NETWORK" >/dev/null
-  if ! docker inspect -f '{{json .NetworkSettings.Networks}}' tinybird-local | grep -q "\"$DOCKER_NETWORK\""; then
-    docker network connect "$DOCKER_NETWORK" tinybird-local
+  if ! docker inspect -f '{{json .NetworkSettings.Networks}}' "$TRACE_FLOW_TINYBIRD_CONTAINER" | grep -q "\"$DOCKER_NETWORK\""; then
+    docker network connect "$DOCKER_NETWORK" "$TRACE_FLOW_TINYBIRD_CONTAINER"
   fi
   if [[ -z "$(docker ps -q --filter "name=^${CONVEX_CONTAINER}$")" ]]; then
+    require_free_port convex "$CONVEX_PORT"
+    require_free_port "convex site" "$CONVEX_SITE_PORT"
     docker rm -f "$CONVEX_CONTAINER" >/dev/null 2>&1 || true
     log "starting Convex backend container"
     local host_address
@@ -258,6 +270,7 @@ start_convex() {
   # private directory instead of the repo root, whose .env.local may be a linked
   # secrets file.
   mkdir -p "$STACK_CONVEX_CLI_DIR"
+  ln -sfn "$TRACE_FLOW_ROOT/node_modules" "$STACK_CONVEX_CLI_DIR/node_modules"
   local functions_dir
   functions_dir="$(node -e "console.log(require('node:path').relative(process.argv[1], process.argv[2]))" \
     "$STACK_CONVEX_CLI_DIR" "$TRACE_FLOW_ROOT/packages/convex")"
@@ -428,12 +441,12 @@ start_workers() {
   # read Workers get their own ports because the proxy does not route to them.
   # Processes share persisted state, so each starts only after the previous one is
   # serving; concurrent SQLite recovery fails with SQLITE_BUSY.
-  start_wrangler workers "$PROXY_PORT" 9330 proxy proxy-consumer
-  start_wrangler agent-ingest "$AGENT_INGEST_PORT" 9333 agent-ingest agent-consumer
-  start_wrangler pipes-api "$PIPES_PORT" 9331 pipes-api
-  start_wrangler raw-api "$RAW_API_PORT" 9332 api
+  start_wrangler workers "$PROXY_PORT" "${TRACE_FLOW_LOCAL_STACK_WORKERS_INSPECTOR_PORT:-9330}" proxy proxy-consumer
+  start_wrangler agent-ingest "$AGENT_INGEST_PORT" "${TRACE_FLOW_LOCAL_STACK_AGENT_INGEST_INSPECTOR_PORT:-9333}" agent-ingest agent-consumer
+  start_wrangler pipes-api "$PIPES_PORT" "${TRACE_FLOW_LOCAL_STACK_PIPES_INSPECTOR_PORT:-9331}" pipes-api
+  start_wrangler raw-api "$RAW_API_PORT" "${TRACE_FLOW_LOCAL_STACK_RAW_API_INSPECTOR_PORT:-9332}" api
   # The Convex container reaches the bridge through the Docker host gateway.
-  start_wrangler kv-bridge "$KV_BRIDGE_PORT" 9334 kv-bridge
+  start_wrangler kv-bridge "$KV_BRIDGE_PORT" "${TRACE_FLOW_LOCAL_STACK_KV_BRIDGE_INSPECTOR_PORT:-9334}" kv-bridge
 }
 
 # Starts one `wrangler dev` process for the given apps; the first serves the port.
@@ -446,6 +459,7 @@ start_wrangler() {
     return 0
   fi
   require_free_port "$name" "$port"
+  require_free_port "$name inspector" "$inspector_port"
   for app in "$@"; do
     if [[ "$app" == kv-bridge ]]; then
       configs+=(-c "$(write_kv_bridge_config)")
@@ -558,14 +572,14 @@ cmd_down() {
     log "removing Convex backend container"
     docker rm -f "$CONVEX_CONTAINER" >/dev/null
   fi
-  if command_exists tb && tinybird_local_running; then
+  if command_exists docker && tinybird_local_running; then
     log "stopping Tinybird Local"
-    TB_VERSION_WARNING=0 tb local stop >/dev/null 2>&1 || warn "could not stop Tinybird Local"
+    docker stop "$TRACE_FLOW_TINYBIRD_CONTAINER" >/dev/null 2>&1 || warn "could not stop Tinybird Local"
   fi
   if ((purge)); then
     log "deleting local stack data"
     docker volume rm "$CONVEX_VOLUME" >/dev/null 2>&1 || true
-    docker rm -f tinybird-local >/dev/null 2>&1 || true
+    docker rm -f "$TRACE_FLOW_TINYBIRD_CONTAINER" >/dev/null 2>&1 || true
     docker network rm "$DOCKER_NETWORK" >/dev/null 2>&1 || true
     # Tinybird Local writes its volume as root; delete it from inside a container.
     if [[ -d "$TRACE_FLOW_STATE_DIR/tinybird" ]]; then
