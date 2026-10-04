@@ -4,11 +4,10 @@ import {
   getPrimaryApiKey,
   isApiKeyActive,
   sortApiKeys,
+  type ApiKeyLike,
 } from '../useDefaultApiKey.shared';
 
-function makeApiKey(
-  overrides: Partial<{ name?: string; key: string; _creationTime: number; expiresAt: number }> = {},
-) {
+function makeApiKey(overrides: Partial<ApiKeyLike> = {}) {
   return {
     _id: 'key-id',
     key: 'key-default',
@@ -53,6 +52,41 @@ describe('getPrimaryApiKey', () => {
     ]);
 
     expect(primary?.key).toBe('first');
+  });
+
+  it('ignores an MCP-only key even when it has the default name', () => {
+    const primary = getPrimaryApiKey([
+      makeApiKey({ key: 'mcp-default', name: DEFAULT_API_KEY_NAME, permissions: ['mcp:read'] }),
+      makeApiKey({ key: 'ingest-key', name: 'Production', permissions: ['ingest'] }),
+    ]);
+
+    expect(primary?.key).toBe('ingest-key');
+  });
+
+  it('keeps legacy keys without permissions eligible for sending traces', () => {
+    const primary = getPrimaryApiKey([
+      makeApiKey({ key: 'mcp-key', name: 'Agent', permissions: ['mcp:read'] }),
+      makeApiKey({ key: 'legacy-key', name: 'Production' }),
+    ]);
+
+    expect(primary?.key).toBe('legacy-key');
+  });
+
+  it('selects a default key with both ingest and MCP read access', () => {
+    const primary = getPrimaryApiKey([
+      makeApiKey({ key: 'ingest-key', name: 'Alpha', permissions: ['ingest'] }),
+      makeApiKey({
+        key: 'combined-default',
+        name: DEFAULT_API_KEY_NAME,
+        permissions: ['ingest', 'mcp:read'],
+      }),
+    ]);
+
+    expect(primary?.key).toBe('combined-default');
+  });
+
+  it('returns null when only MCP-only keys are available', () => {
+    expect(getPrimaryApiKey([makeApiKey({ permissions: ['mcp:read'] })])).toBeNull();
   });
 
   it('returns null when there are no keys', () => {

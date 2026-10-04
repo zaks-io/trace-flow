@@ -132,6 +132,24 @@ describe('validateApiKey', () => {
     }
   });
 
+  it('returns forbidden when a valid key cannot ingest traces', async () => {
+    const context = createMockContext(
+      { 'x-trace-flow-api-key': 'mcp-only-key' },
+      { authorized: false, reason: 'forbidden' },
+    );
+
+    const result = await validateApiKey(context);
+
+    expect(isAuthError(result)).toBe(true);
+    if (isAuthError(result)) {
+      expect(result.status).toBe(403);
+      await expect(result.json()).resolves.toEqual({
+        error: 'Insufficient API key permissions',
+        message: 'This API key does not allow sending traces',
+      });
+    }
+  });
+
   it('should return error when API key is already expired', async () => {
     const expiredKeyData = {
       authorized: false,

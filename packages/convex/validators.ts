@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { apiKeyPermissionValidator } from './apiKeyPermissions';
 
 export const userValidator = v.object({
   _id: v.id('users'),
@@ -56,6 +57,7 @@ export const organizationValidator = v.object({
 });
 
 export const apiKeyValidator = v.object({
+  permissions: v.optional(v.array(apiKeyPermissionValidator)),
   _id: v.id('apiKeys'),
   _creationTime: v.number(),
   key: v.string(),

@@ -62,7 +62,7 @@ async function parseJsonResponse(res: Response, malformedMessage: string): Promi
 
 /**
  * Worker-side `McpBackend`: forwards to the shared-secret `/mcp-backend/*`
- * routes on `connect.` so raw API keys and the Tinybird admin token stay in
+ * routes on `connect.` so stored API keys and the Tinybird admin token stay in
  * Convex. The per-user `/context` response is fetched once and reused across
  * listApiKeys/resolveKeyIds/getUserContext within a request; only `mintToken`
  * makes a second call (it needs scopes the context fetch doesn't know).

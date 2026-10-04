@@ -1,3 +1,4 @@
+import { hasApiKeyPermission } from '../apiKeyPermissions';
 import { internalAction, internalQuery, action } from '../_generated/server';
 import { v } from 'convex/values';
 import { axiomConfigFromEnv, createConvexLogger } from '@trace-flow/logging';
@@ -168,7 +169,7 @@ export const syncKeyToKV = internalAction({
     const current = await ctx.runQuery(internal.integrations.cloudflare.getApiKeySyncData, {
       key: args.key,
     });
-    if (!current) {
+    if (!current || !hasApiKeyPermission(current, 'ingest')) {
       await kvDelete(getCloudflareConfig(), args.key);
       return null;
     }

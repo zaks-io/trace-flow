@@ -13,7 +13,7 @@ export interface ApiKeyData {
 
 type ApiKeyAuthorization =
   | { authorized: true; expiresAt: number; createdAt: number; orgId: string }
-  | { authorized: false; reason: 'invalid' | 'expired' };
+  | { authorized: false; reason: 'invalid' | 'expired' | 'forbidden' };
 
 /** Why Convex could not answer; logged so a stall is distinguishable from a bad response. */
 interface AuthorizationUnavailable {
@@ -56,7 +56,7 @@ async function authorizeApiKey(
     if (
       body.authorized === false &&
       'reason' in body &&
-      (body.reason === 'invalid' || body.reason === 'expired')
+      (body.reason === 'invalid' || body.reason === 'expired' || body.reason === 'forbidden')
     ) {
       return { authorized: false, reason: body.reason };
     }
@@ -121,6 +121,17 @@ export async function validateApiKey<
       },
       503,
       { 'Retry-After': '1' },
+    );
+  }
+
+  if (!authorization.authorized && authorization.reason === 'forbidden') {
+    logger?.warn('proxy.auth_rejected', { reason: 'missing_ingest_permission', path: c.req.path });
+    return c.json(
+      {
+        error: 'Insufficient API key permissions',
+        message: 'This API key does not allow sending traces',
+      },
+      403,
     );
   }
 

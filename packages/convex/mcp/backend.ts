@@ -1,3 +1,4 @@
+import { hasApiKeyPermission } from '../apiKeyPermissions';
 import type { ActionCtx } from '../_generated/server';
 import type { Id } from '../_generated/dataModel';
 import { internal } from '../_generated/api';
@@ -29,7 +30,7 @@ export function createMcpBackend(ctx: ActionCtx, userId: Id<'users'>): McpBacken
   const unexpiredMeta = async (): Promise<McpApiKeyMeta[]> => {
     const now = Date.now();
     return (await getKeys())
-      .filter((k) => k.expiresAt > now)
+      .filter((k) => k.expiresAt > now && hasApiKeyPermission(k, 'ingest'))
       .map((k) => ({ id: k._id, name: k.name ?? null, expiresAt: k.expiresAt }));
   };
 
@@ -45,7 +46,9 @@ export function createMcpBackend(ctx: ActionCtx, userId: Id<'users'>): McpBacken
       const ids = new Set(apiKeyIds);
       const analyticsKeyIds = await Promise.all(
         keys
-          .filter((key) => ids.has(key._id) && key.expiresAt > now)
+          .filter(
+            (key) => ids.has(key._id) && key.expiresAt > now && hasApiKeyPermission(key, 'ingest'),
+          )
           .map((key) => analyticsKeyId(key.key)),
       );
       const user = await ctx.runQuery(internal.auth.users.getUserById, { id: userId });

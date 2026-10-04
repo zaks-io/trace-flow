@@ -9,6 +9,11 @@ import {
 } from './auth/users';
 import { requireEnabledActionUser } from './auth/actionUser';
 import { apiKeyValidator } from './validators';
+import {
+  apiKeyPermissionValidator,
+  hasApiKeyPermission,
+  type ApiKeyPermission,
+} from './apiKeyPermissions';
 import { rateLimiter } from './rateLimits';
 import { analyticsKeyId } from '@trace-flow/utils';
 import type { Doc } from './_generated/dataModel';
@@ -110,6 +115,7 @@ export const getByKey = query({
 
 export const create = mutation({
   args: {
+    permissions: v.optional(v.array(apiKeyPermissionValidator)),
     expiresAt: v.number(),
     name: v.optional(v.string()),
   },
@@ -120,9 +126,13 @@ export const create = mutation({
 
     await rateLimiter.limit(ctx, 'createApiKey', { key: user._id, throws: true });
 
+    const permissions = [...new Set<ApiKeyPermission>(args.permissions ?? ['ingest'])];
+    if (permissions.length === 0) throw new Error('Choose at least one API key permission');
+
     const key = crypto.randomUUID();
 
     const id = await ctx.db.insert('apiKeys', {
+      permissions,
       key,
       expiresAt: args.expiresAt,
       userId: user._id,
@@ -213,6 +223,10 @@ export const syncToKV = action({
     }
     if (!canManageApiKey(user, apiKey)) {
       throw new Error('You do not have permission to sync this API key');
+    }
+
+    if (!hasApiKeyPermission(apiKey, 'ingest')) {
+      throw new Error('Only keys that allow sending traces can be synced');
     }
 
     const existsInKV = await ctx.runAction(internal.integrations.cloudflare.checkKeyInKV, {
