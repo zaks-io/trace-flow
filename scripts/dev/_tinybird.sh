@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Tinybird Local helpers shared by start.sh (Self-Contained Local) and local-stack.sh.
 # Source after _common.sh.
+TRACE_FLOW_TINYBIRD_CONTAINER="${TRACE_FLOW_TINYBIRD_CONTAINER:-tinybird-local}"
+TRACE_FLOW_TINYBIRD_PROJECT="${TRACE_FLOW_TINYBIRD_PROJECT:-trace-flow-tinybird}"
 
 # `tb local status` exits 0 even when the container is down, so probe the API instead.
 tinybird_local_running() {
@@ -42,7 +44,12 @@ ensure_tinybird_tokens() {
   require_command tb
 
   local current_info
-  if current_info="$(TB_VERSION_WARNING=0 tb --output=json info 2>/dev/null)"; then
+  if [[ -n "${SBX_WORKTREE_ID:-}" ]]; then
+    # CLI global config can point at another worktree. Generate private local tokens.
+    if [[ -n "${TB_LOCAL_USER_TOKEN:-}" && -n "${TB_LOCAL_WORKSPACE_TOKEN:-}" ]]; then
+      return 0
+    fi
+  elif current_info="$(TB_VERSION_WARNING=0 tb --output=json info 2>/dev/null)"; then
     local current_user_token
     local current_workspace_token
     local current_api
@@ -100,26 +107,26 @@ EOF
 ensure_tinybird_local_container() {
   local volumes_path="$TRACE_FLOW_STATE_DIR/tinybird"
   local project data_mount running
-  if project="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' tinybird-local 2>/dev/null)"; then
-    data_mount="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/var/lib/clickhouse"}}{{.Source}}{{end}}{{end}}' tinybird-local)"
-    running="$(docker inspect -f '{{.State.Running}}' tinybird-local)"
+  if project="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$TRACE_FLOW_TINYBIRD_CONTAINER" 2>/dev/null)"; then
+    data_mount="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/var/lib/clickhouse"}}{{.Source}}{{end}}{{end}}' "$TRACE_FLOW_TINYBIRD_CONTAINER")"
+    running="$(docker inspect -f '{{.State.Running}}' "$TRACE_FLOW_TINYBIRD_CONTAINER")"
 
-    if [[ "$project" == "trace-flow-tinybird" && "$running" == "true" ]]; then
+    if [[ "$project" == "$TRACE_FLOW_TINYBIRD_PROJECT" && "$running" == "true" ]]; then
       log "Tinybird Local is already running"
       return 0
     fi
 
-    if [[ "$project" != "trace-flow-tinybird" ]]; then
+    if [[ "$project" != "$TRACE_FLOW_TINYBIRD_PROJECT" ]]; then
       if [[ "$data_mount" == "$volumes_path/data" ]]; then
         # `tb local start` created it without limits; its data persists in the volumes path.
         log "replacing Tinybird Local container that has no memory limit"
-        docker stop tinybird-local >/dev/null
-        docker rm tinybird-local >/dev/null
+        docker stop "$TRACE_FLOW_TINYBIRD_CONTAINER" >/dev/null
+        docker rm "$TRACE_FLOW_TINYBIRD_CONTAINER" >/dev/null
       elif [[ "$running" == "true" ]]; then
         warn "Tinybird Local was started outside scripts/dev and has no memory limit"
         return 0
       else
-        fail "a stopped tinybird-local container from outside scripts/dev is in the way; remove it with 'docker rm tinybird-local'"
+        fail "a stopped tinybird-local container from outside scripts/dev is in the way; remove it with 'docker rm "$TRACE_FLOW_TINYBIRD_CONTAINER"'"
       fi
     fi
   fi
@@ -148,6 +155,6 @@ start_tinybird_local() {
 
   if [[ "${TRACE_FLOW_SKIP_TB_BUILD:-0}" != "1" ]]; then
     log "building Tinybird project against local Tinybird"
-    TB_VERSION_WARNING=0 tb build
+    TB_VERSION_WARNING=0 tb --host "$TRACE_FLOW_TINYBIRD_HOST" build
   fi
 }
