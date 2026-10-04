@@ -2,6 +2,7 @@ import { internalAction } from '../_generated/server';
 import { serializeModelPricing } from '@trace-flow/pricing';
 import { v } from 'convex/values';
 import { internal } from '../_generated/api';
+import { cloudflareKvValuesUrl } from '../integrations/cloudflareApi';
 
 interface PricingKvConfig {
   apiToken: string;
@@ -26,7 +27,7 @@ function getPricingKvConfig(): PricingKvConfig {
 
   return {
     apiToken,
-    namespaceUrl: `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values`,
+    namespaceUrl: cloudflareKvValuesUrl(accountId, namespaceId),
   };
 }
 

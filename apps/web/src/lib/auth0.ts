@@ -1,7 +1,13 @@
 import { Auth0Client } from '@auth0/nextjs-auth0/server';
 
+// scripts/dev/local-stack.sh replaces Auth0 with a plain-HTTP mock issuer
+// (scripts/dev/mock-oidc.ts). Production builds never allow an insecure issuer.
+const allowInsecureIssuer =
+  process.env.NODE_ENV === 'development' && process.env.AUTH0_DOMAIN?.startsWith('http://');
+
 export const auth0 = new Auth0Client({
   appBaseUrl: process.env.APP_BASE_URL,
+  allowInsecureRequests: allowInsecureIssuer,
   httpTimeout: 15000,
   signInReturnToPath: '/app',
   logoutStrategy: 'v2',

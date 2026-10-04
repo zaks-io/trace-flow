@@ -13,6 +13,7 @@ import {
 } from '../validators';
 import { getActiveOrganizationMembership, isLiveOrganization } from '../auth/userHelpers';
 import type { Id } from '../_generated/dataModel';
+import { cloudflareKvValuesUrl } from './cloudflareApi';
 
 interface KvConfig {
   accountId: string;
@@ -49,7 +50,7 @@ function getCollectorCredsConfig(): KvConfig {
 }
 
 function kvValueUrl({ accountId, namespaceId }: KvConfig, key: string): string {
-  return `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/${encodeURIComponent(key)}`;
+  return `${cloudflareKvValuesUrl(accountId, namespaceId)}/${encodeURIComponent(key)}`;
 }
 
 export function cloudflareKvFailureMessage(
@@ -382,7 +383,7 @@ export const deleteUserOrgFromKV = internalAction({
       return null;
     }
     const { accountId, apiToken, namespaceId } = getCloudflareConfig();
-    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/user-org:${encodeURIComponent(args.sub)}`;
+    const url = `${cloudflareKvValuesUrl(accountId, namespaceId)}/user-org:${encodeURIComponent(args.sub)}`;
 
     const response = await fetch(url, {
       method: 'DELETE',
@@ -412,7 +413,7 @@ export const checkKeyInKV = internalAction({
   returns: v.boolean(),
   handler: async (_ctx, args): Promise<boolean> => {
     const { accountId, apiToken, namespaceId } = getCloudflareConfig();
-    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/${encodeURIComponent(args.key)}`;
+    const url = `${cloudflareKvValuesUrl(accountId, namespaceId)}/${encodeURIComponent(args.key)}`;
 
     const response = await fetch(url, {
       method: 'GET',

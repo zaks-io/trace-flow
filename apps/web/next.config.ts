@@ -17,8 +17,13 @@ void initOpenNextCloudflareForDev({ remoteBindings: false });
 
 const sentryAuthToken = process.env.SENTRY_AUTH_TOKEN;
 
+// Next blocks cross-origin dev assets by default. scripts/dev/local-stack.sh serves Web on
+// a tailnet hostname so reviewers can open it from another machine.
+const allowedDevOrigins = process.env.TRACE_FLOW_ALLOWED_DEV_ORIGINS?.split(',').filter(Boolean);
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  ...(allowedDevOrigins?.length ? { allowedDevOrigins } : {}),
   reactCompiler: true,
   transpilePackages: ['@trace-flow/convex', '@trace-flow/utils', '@trace-flow/emails'],
   experimental: {

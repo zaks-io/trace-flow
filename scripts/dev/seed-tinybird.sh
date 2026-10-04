@@ -2,6 +2,7 @@
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/_tinybird.sh"
 
 cd "$TRACE_FLOW_ROOT"
 require_command tb
@@ -10,7 +11,7 @@ if [[ "${TRACE_FLOW_SKIP_TINYBIRD:-0}" == "1" ]]; then
   fail "TRACE_FLOW_SKIP_TINYBIRD=1 is set; cannot seed Tinybird"
 fi
 
-TB_VERSION_WARNING=0 tb local status >/dev/null 2>&1 || "$TRACE_FLOW_DEV_DIR/start.sh"
+tinybird_local_running || "$TRACE_FLOW_DEV_DIR/start.sh"
 
 for fixture in fixtures/agent_message_facts.ndjson \
   fixtures/agent_tool_event_facts.ndjson \

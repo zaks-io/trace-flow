@@ -10,6 +10,7 @@ Run from the repo root. Use the package's name from its `package.json` for scope
 | --------------------------------- | -------------------------------------- |
 | Install dependencies              | `bun install --frozen-lockfile`        |
 | Start Web against dev             | `bun run dev:web`                      |
+| Disposable stack with mock login  | `scripts/dev/local-stack.sh up`        |
 | Lint / types                      | `bun run lint` / `bun run type-check`  |
 | Test all / watch                  | `bun run test` / `bun run test:watch`  |
 | Test one package                  | `bun run --filter <package-name> test` |
