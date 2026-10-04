@@ -34,6 +34,13 @@ env vars (`TRACE_FLOW_TINYBIRD_HOST` + `TINYBIRD_TOKEN`, `TRACE_FLOW_CONVEX_URL`
 - Installs workspace dependencies with Bun.
 - Starts Tinybird Local in Docker and builds the committed `datasources/`, `pipes/`, and `tests/`
   project files against it.
+- Runs Tinybird Local from `scripts/dev/tinybird-local.compose.yml` with a memory limit, one CSV
+  worker, and smaller ClickHouse caches and schedule pools, instead of `tb local start`. Unbounded,
+  the image sizes itself from host RAM and CPUs and idles near 4 GB. The container keeps the
+  `tinybird-local` name, ports, and `.trace-flow/tinybird` data, so `tb local status`/`stop` still
+  work. Restart with `start.sh`, not `tb local restart`, which recreates the container without
+  limits or data. Setup replaces an older `tb local start` container that uses the same data
+  directory. Requires Docker Compose v2.
 - Generates ignored local runtime files for Workers and web:
   - `apps/*/.dev.vars`
   - `apps/web/.env.local`
@@ -109,6 +116,11 @@ cloud workflows with explicit credentials and cleanup requirements.
 - `TRACE_FLOW_SKIP_TINYBIRD=1`: skip Tinybird Local and token discovery when only code checks are
   needed.
 - `TRACE_FLOW_SKIP_TB_BUILD=1`: start Tinybird Local without building the Tinybird project.
+- `TRACE_FLOW_TINYBIRD_MEMORY=4g`: Tinybird Local container memory limit. ClickHouse fails queries
+  at 90% of it. The build and fixture tests peak near 3.2 GB; 3g passes but fails background merges.
+- `TRACE_FLOW_TINYBIRD_CPU_COUNT=2`: CPU count Tinybird Local sizes its Python worker pools from.
+  `start.sh` leaves a running container alone, so to apply either Tinybird setting run
+  `tb local stop && docker rm tinybird-local` and rerun `start.sh`. Data persists in `.trace-flow/tinybird`.
 - `TRACE_FLOW_OVERWRITE_LOCAL_ENV=1`: regenerate ignored `.dev.vars` and `apps/web/.env.local`.
 - `TRACE_FLOW_VERIFY_SKIP_START=1`: run verification without preparing local infra first.
 - `TRACE_FLOW_SMOKE_START_WORKERS=0`: require an already-running Worker server for smoke tests.

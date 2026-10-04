@@ -1,0 +1,16 @@
+<!--
+  Self-Contained Local overrides for Tinybird Local's ClickHouse. The image defaults size caches for a
+  server (5 GiB mark cache) and start 512 schedule threads eagerly. background_pool_size stays at the
+  image default: lowering it below the MergeTree mutation thresholds breaks table creation.
+-->
+<clickhouse>
+    <mark_cache_size>268435456</mark_cache_size>
+    <uncompressed_cache_size>134217728</uncompressed_cache_size>
+    <background_schedule_pool_size>32</background_schedule_pool_size>
+    <background_buffer_flush_schedule_pool_size>4</background_buffer_flush_schedule_pool_size>
+    <background_message_broker_schedule_pool_size>4</background_message_broker_schedule_pool_size>
+    <background_distributed_schedule_pool_size>4</background_distributed_schedule_pool_size>
+    <background_move_pool_size>2</background_move_pool_size>
+    <background_fetches_pool_size>2</background_fetches_pool_size>
+    <background_common_pool_size>4</background_common_pool_size>
+</clickhouse>

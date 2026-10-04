@@ -25,6 +25,12 @@ else
   printf 'miss docker daemon\n'
 fi
 
+if command_exists docker && docker compose version >/dev/null 2>&1; then
+  printf 'ok   docker compose\n'
+else
+  printf 'miss docker compose\n'
+fi
+
 if [[ -f "$TRACE_FLOW_DEV_ENV" ]]; then
   printf 'ok   %s\n' "${TRACE_FLOW_DEV_ENV#$TRACE_FLOW_ROOT/}"
 else

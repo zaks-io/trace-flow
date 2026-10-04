@@ -1,0 +1,27 @@
+# Tinybird Local for Self-Contained Local, started by scripts/dev/start.sh.
+# `tb local start` cannot set limits, so an unbounded container sized itself from host RAM and CPUs
+# (~3.8 GB idle). Keep the container name, ports, and data layout identical to `tb local start` so
+# the tb CLI keeps working against it.
+name: trace-flow-tinybird
+
+services:
+  tinybird-local:
+    image: tinybirdco/tinybird-local:latest
+    container_name: tinybird-local
+    ports:
+      - '${TB_LOCAL_PORT:-7181}:7181'
+      - '${TB_LOCAL_CLICKHOUSE_INTERFACE_PORT:-7182}:7182'
+    environment:
+      TB_LOCAL_USER_TOKEN: ${TB_LOCAL_USER_TOKEN:?}
+      TB_LOCAL_WORKSPACE_TOKEN: ${TB_LOCAL_WORKSPACE_TOKEN:?}
+      # Tinybird starts ceil(cpus / 2) CSV worker processes of ~350 MB each, from host CPUs by default.
+      PYTHON_CPU_COUNT: ${TRACE_FLOW_TINYBIRD_CPU_COUNT:-2}
+    volumes:
+      # Docker must create these directories: ClickHouse refuses data owned by another user.
+      - ${TRACE_FLOW_TINYBIRD_VOLUMES:?}/data:/var/lib/clickhouse
+      - ${TRACE_FLOW_TINYBIRD_VOLUMES:?}/metadata:/redis-data
+      - ./tinybird-local-clickhouse.xml:/etc/clickhouse-server/config.d/trace-flow-dev.xml:ro
+    # ClickHouse caps itself at 90% of this limit, measured against the whole container's usage, so
+    # queries fail with MEMORY_LIMIT_EXCEEDED before the kernel OOM-kills a service.
+    mem_limit: ${TRACE_FLOW_TINYBIRD_MEMORY:-4g}
+    memswap_limit: ${TRACE_FLOW_TINYBIRD_MEMORY:-4g}
