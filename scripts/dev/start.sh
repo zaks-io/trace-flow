@@ -93,6 +93,39 @@ EOF
   chmod 600 "$TRACE_FLOW_DEV_ENV"
 }
 
+ensure_tinybird_local_container() {
+  local volumes_path="$TRACE_FLOW_STATE_DIR/tinybird"
+  local project data_mount running
+  if project="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' tinybird-local 2>/dev/null)"; then
+    data_mount="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/var/lib/clickhouse"}}{{.Source}}{{end}}{{end}}' tinybird-local)"
+    running="$(docker inspect -f '{{.State.Running}}' tinybird-local)"
+
+    if [[ "$project" == "trace-flow-tinybird" && "$running" == "true" ]]; then
+      log "Tinybird Local is already running"
+      return 0
+    fi
+
+    if [[ "$project" != "trace-flow-tinybird" ]]; then
+      if [[ "$data_mount" == "$volumes_path/data" ]]; then
+        # `tb local start` created it without limits; its data persists in the volumes path.
+        log "replacing Tinybird Local container that has no memory limit"
+        docker stop tinybird-local >/dev/null
+        docker rm tinybird-local >/dev/null
+      elif [[ "$running" == "true" ]]; then
+        warn "Tinybird Local was started outside scripts/dev/start.sh and has no memory limit"
+        return 0
+      else
+        fail "a stopped tinybird-local container from outside scripts/dev/start.sh is in the way; remove it with 'docker rm tinybird-local'"
+      fi
+    fi
+  fi
+
+  log "starting Tinybird Local (memory limit ${TRACE_FLOW_TINYBIRD_MEMORY:-4g})"
+  TRACE_FLOW_TINYBIRD_VOLUMES="$volumes_path" docker compose \
+    --file "$TRACE_FLOW_DEV_DIR/tinybird-local.compose.yml" \
+    up --detach --wait --wait-timeout 600
+}
+
 start_tinybird_local() {
   if [[ "${TRACE_FLOW_SKIP_TINYBIRD:-0}" == "1" ]]; then
     log "skipping Tinybird Local"
@@ -105,17 +138,9 @@ start_tinybird_local() {
   if ! start_docker_if_possible; then
     fail "Docker is not running; set TRACE_FLOW_SKIP_TINYBIRD=1 to skip Tinybird Local"
   fi
+  docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required for Tinybird Local"
 
-  if TB_VERSION_WARNING=0 tb local status >/dev/null 2>&1; then
-    log "Tinybird Local is already running"
-  else
-    log "starting Tinybird Local"
-    TB_VERSION_WARNING=0 tb local start \
-      --daemon \
-      --volumes-path "$TRACE_FLOW_STATE_DIR/tinybird" \
-      --user-token "$TB_LOCAL_USER_TOKEN" \
-      --workspace-token "$TB_LOCAL_WORKSPACE_TOKEN"
-  fi
+  ensure_tinybird_local_container
 
   if [[ "${TRACE_FLOW_SKIP_TB_BUILD:-0}" != "1" ]]; then
     log "building Tinybird project against local Tinybird"

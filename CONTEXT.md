@@ -194,7 +194,7 @@ The six non-Web Workers run as local `wrangler dev` processes via `bun run dev:a
 _Avoid_: assuming a local `wrangler dev` process shares state with the deployed `*-dev` Worker of the same name.
 
 **Self-Contained Local**:
-A fully local, no-cloud-credentials stack: **Local Workers** plus **Convex local** (`127.0.0.1:3210`) and **Tinybird Local** in Docker (`127.0.0.1:7181`). Built so isolated runtimes (Cursor Background Agents, CI) can run the whole stack without cloud access. This is what `scripts/dev/start.sh` provisions **by default** (`tb local start`, generated local tokens; see `docs/agents/local-environment.md`). Data is visible only locally, never in a cloud dashboard.
+A fully local, no-cloud-credentials stack: **Local Workers** plus **Convex local** (`127.0.0.1:3210`) and **Tinybird Local** in Docker (`127.0.0.1:7181`). Built so isolated runtimes (Cursor Background Agents, CI) can run the whole stack without cloud access. This is what `scripts/dev/start.sh` provisions **by default** (memory-limited Tinybird Local container, generated local tokens; see `docs/agents/local-environment.md`). Data is visible only locally, never in a cloud dashboard.
 _Avoid_: conflating with the **Dev Environment**; assuming agents on this stack can see Dev Environment data, or vice versa.
 
 **Control Plane** / **Data Plane**:
