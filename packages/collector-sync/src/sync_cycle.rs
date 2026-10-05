@@ -265,14 +265,24 @@ async fn drain<C: IngestClient>(
     let mut inflight = FuturesUnordered::new();
     let mut pending = BatchPreparer::new(meta, units, mint_batch_id, tuning);
     let mut rejected: Vec<Rejected> = Vec::new();
+    let mut held: Option<PreparedBatch> = None;
 
     loop {
-        // Refill every free slot: a split `400` batch can queue several retry groups at once.
+        // Refill every free slot: a split `400` batch can queue several retry groups at once. A batch
+        // ordered after the in-flight ones is held until they finish.
         while inflight.len() < concurrency {
-            match pending.next_batch(store)? {
-                Some(batch) => inflight.push(post_batch(client, batch, cancel)),
-                None => break,
+            let next = match held.take() {
+                Some(batch) => Some(batch),
+                None => pending.next_batch(store)?,
+            };
+            let Some(batch) = next else {
+                break;
+            };
+            if batch.after_inflight && !inflight.is_empty() {
+                held = Some(batch);
+                break;
             }
+            inflight.push(post_batch(client, batch, cancel));
         }
         let Some((batch, result)) = inflight.next().await else {
             break;

@@ -15,6 +15,10 @@
 //! "seen, nothing to send"), so it rides along; the Worker treats an all-empty envelope as an accepted
 //! no-op. Quarantined units are skipped. Retry groups requeued after a `400` are prepared before new
 //! units, so isolating a bad unit finishes inside the same cycle.
+//!
+//! A unit carrying a changed copy of a fact already in the open batch starts a new batch (see
+//! [`EnvelopeIdentities`]), and the batch after that deferral is held until the batches in flight
+//! finish, so the changed copy cannot be overtaken by the copy it replaces.
 
 use std::collections::VecDeque;
 
@@ -33,6 +37,9 @@ pub(crate) struct PreparedBatch {
     pub(crate) envelopes: Vec<AgentIngestEnvelope>,
     pub(crate) units: Vec<usize>,
     pub(crate) fact_cursors: Vec<FactCursor>,
+    /// Carries a changed copy of a fact an earlier batch sent, so it must not start until every batch
+    /// already in flight finishes. Arriving second makes it the Worker's latest revision.
+    pub(crate) after_inflight: bool,
 }
 
 struct AssembledUnit {
@@ -59,6 +66,8 @@ pub(crate) struct BatchPreparer<'a, M: FnMut() -> String> {
     max_sessions: usize,
     max_bytes: usize,
     retries: VecDeque<Vec<usize>>,
+    /// Set when a unit was deferred for a conflict; the next batch prepared waits for in-flight ones.
+    ordered: bool,
     pub(crate) skipped_quarantined: u32,
 }
 
@@ -77,6 +86,7 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
             max_sessions: tuning.max_sessions_per_batch.max(1),
             max_bytes: tuning.max_batch_bytes.max(1),
             retries: VecDeque::new(),
+            ordered: false,
             skipped_quarantined: 0,
         }
     }
@@ -106,12 +116,15 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
             // If adding this unit would overflow the open (non-empty) batch, or would send a changed
             // copy of a fact the batch already carries, close and return the batch now without
             // consuming `unit`, so it starts the next batch.
+            let conflicts = open.identities.conflicts(&assembled.fact_cursors);
             let must_close = !open.units.is_empty()
                 && (open.units.len() >= self.max_sessions
                     || open.bytes + assembled.bytes > self.max_bytes
-                    || open.identities.conflicts(&assembled.fact_cursors));
+                    || conflicts);
             if must_close {
-                return Ok(Some(self.close(open)));
+                let batch = self.close(open);
+                self.ordered |= conflicts;
+                return Ok(Some(batch));
             }
 
             let index = self.next_unit;
@@ -143,15 +156,19 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
             }
         }
         let mut open = OpenBatch::default();
+        let mut deferred = false;
         for index in group {
             let assembled = self.assemble(store, &self.units[index])?;
             if open.identities.conflicts(&assembled.fact_cursors) {
                 self.requeue(vec![index]);
+                deferred = true;
                 continue;
             }
             self.merge(&mut open, index, assembled)?;
         }
-        Ok(self.close(open))
+        let batch = self.close(open);
+        self.ordered |= deferred;
+        Ok(batch)
     }
 
     fn assemble(
@@ -207,6 +224,7 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
             envelopes,
             units: vec![index],
             fact_cursors: assembled.fact_cursors,
+            after_inflight: std::mem::take(&mut self.ordered),
         })
     }
 
@@ -219,6 +237,7 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
             )],
             units: open.units,
             fact_cursors: open.fact_cursors,
+            after_inflight: std::mem::take(&mut self.ordered),
         }
     }
 }

@@ -257,9 +257,35 @@ async fn duplicate_identities_across_units_are_sent_once_per_envelope() {
     assert_eq!(client.envelopes.borrow()[0].facts.messages.len(), 1);
 }
 
+/// Holds the first POST open across several polls, so a concurrent second POST could finish first.
+/// Records each POST's start and end by the model of its first message.
+#[derive(Default)]
+struct SlowFirstClient {
+    events: RefCell<Vec<String>>,
+}
+
+impl IngestClient for SlowFirstClient {
+    async fn ingest(
+        &self,
+        envelope: &AgentIngestEnvelope,
+        _cancel: Option<&CancellationToken>,
+    ) -> IngestResult {
+        let model = envelope.facts.messages[0].model.clone();
+        let first = self.events.borrow().is_empty();
+        self.events.borrow_mut().push(format!("start {model}"));
+        if first {
+            for _ in 0..10 {
+                tokio::task::yield_now().await;
+            }
+        }
+        self.events.borrow_mut().push(format!("end {model}"));
+        ok()
+    }
+}
+
 #[tokio::test]
-async fn a_changed_copy_of_a_batched_fact_is_sent_in_its_own_envelope() {
-    let client = MockClient::new([ok(), ok()]);
+async fn a_changed_copy_of_a_batched_fact_is_sent_after_the_copy_it_replaces() {
+    let client = SlowFirstClient::default();
     let store = CursorStore::open_in_memory("org").unwrap();
     let mut orch = syncing_orchestrator();
     let mut mint = counter();
@@ -280,14 +306,16 @@ async fn a_changed_copy_of_a_batched_fact_is_sent_in_its_own_envelope() {
     .await
     .unwrap();
 
-    // Dropping b's copy would commit its cursor for content the Worker never received.
-    assert_eq!(client.calls.get(), 2);
+    // Merged, b's copy would be dropped while its cursor advanced. Sent concurrently, it could land
+    // first and be overwritten by a's older copy.
     assert_eq!(report.advanced, 2);
-    let models: Vec<String> = client
-        .envelopes
-        .borrow()
-        .iter()
-        .flat_map(|envelope| envelope.facts.messages.iter().map(|m| m.model.clone()))
-        .collect();
-    assert_eq!(models, ["claude-opus-4-7", "claude-opus-4-8"]);
+    assert_eq!(
+        *client.events.borrow(),
+        [
+            "start claude-opus-4-7",
+            "end claude-opus-4-7",
+            "start claude-opus-4-8",
+            "end claude-opus-4-8",
+        ]
+    );
 }
