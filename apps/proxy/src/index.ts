@@ -1,3 +1,4 @@
+import { sentryRequestPrivacy } from '@trace-flow/utils/sentry-tracing';
 /**
  * LLM Proxy Worker — streams responses while capturing for observability.
  *
@@ -9,7 +10,11 @@
  * bounded buffer then supplies independent provider and capture bodies.
  */
 import * as Sentry from '@sentry/cloudflare';
+import { tracing } from 'cloudflare:workers';
+import { withNativeTrace } from '@trace-flow/utils/native-tracing';
+import { normalizeTraceRequest } from '@trace-flow/utils/ingress-tracing';
 import { OpenAPIHono } from '@hono/zod-openapi';
+import { HTTPException } from 'hono/http-exception';
 import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import { applySecurityHeaders } from '@trace-flow/utils';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
@@ -25,6 +30,7 @@ import { sweepTraceDeliveries } from './delivery';
 import {
   buildTransaction,
   buildUpstreamFailureTransaction,
+  createProxyFailureReporter,
   drainCapture,
   enqueuePersistedTransaction,
   persistTransaction,
@@ -33,6 +39,13 @@ import {
 export { UsageTracker } from './usage-tracker';
 
 export const app = new OpenAPIHono<{ Bindings: ProxyEnv }>();
+
+app.onError((error, c) => {
+  if (error instanceof HTTPException) return error.getResponse();
+  createProxyFailureReporter()(error, 'handler');
+  console.error('proxy.handler_failed');
+  return c.text('Internal Server Error', 500);
+});
 
 app.use('*', async (c, next) => {
   await next();
@@ -71,24 +84,33 @@ app.all('*', async (c) => {
   const { validated } = validateResult;
 
   const { decision, route, omitBody, logger } = validated;
+  const reportFailure = createProxyFailureReporter();
   const tier = validated.usageCheck.status !== 'error' ? validated.usageCheck.tier : undefined;
   let forwarded;
   try {
     forwarded = await forwardToUpstream(c, validated);
   } catch (err) {
-    logger.error('proxy.upstream_fetch_failed', err);
+    logger.error('proxy.upstream_fetch_failed');
+    reportFailure(err instanceof UpstreamFetchError ? err.cause : err, 'upstream_fetch');
     if (err instanceof UpstreamFetchError && decision.record) {
       try {
         const transaction = await buildUpstreamFailureTransaction(err);
+        if (transaction.requestCaptureError) {
+          reportFailure(transaction.requestCaptureError, 'request_capture');
+        }
         const persisted = await persistTransaction(c.env, transaction, {
           tier,
           route,
           omitBody,
           logger,
+          reportFailure,
         });
-        c.executionCtx.waitUntil(enqueuePersistedTransaction(c.env, persisted, logger));
+        c.executionCtx.waitUntil(
+          enqueuePersistedTransaction(c.env, persisted, logger, reportFailure),
+        );
       } catch (persistError) {
-        logger.error('proxy.failure_transaction_persist_failed', persistError);
+        logger.error('proxy.failure_transaction_persist_failed');
+        reportFailure(persistError, 'capture');
         await logger.flush();
       }
     } else if (err instanceof UpstreamFetchError) {
@@ -105,24 +127,30 @@ app.all('*', async (c) => {
     const durableCapture = async (): Promise<boolean> => {
       try {
         const drained = await drainCapture(attached);
-        const transaction = buildTransaction(drained, logger);
+        const transaction = buildTransaction(drained, logger, reportFailure);
         if (transaction.streamError) {
-          logger.error('proxy.response_stream_failed', transaction.streamError);
+          logger.error('proxy.response_stream_failed');
+          reportFailure(transaction.streamError, 'response_stream');
         }
         const persisted = await persistTransaction(c.env, transaction, {
           tier,
           route,
           omitBody,
           logger,
+          reportFailure,
         });
-        c.executionCtx.waitUntil(enqueuePersistedTransaction(c.env, persisted, logger));
+        c.executionCtx.waitUntil(
+          enqueuePersistedTransaction(c.env, persisted, logger, reportFailure),
+        );
         attached.capture.release();
       } catch (err) {
-        logger.error('proxy.capture_failed', err);
+        logger.error('proxy.capture_failed');
+        reportFailure(err, 'capture');
         if (attached.pipePromise) {
           attached.capture.fail(err);
           await attached.pipePromise.catch((streamError: unknown) => {
-            logger.error('proxy.response_stream_failed', streamError);
+            logger.error('proxy.response_stream_failed');
+            reportFailure(streamError, 'response_stream');
           });
         }
         c.executionCtx.waitUntil(logger.flush());
@@ -132,7 +160,8 @@ app.all('*', async (c) => {
       try {
         await attached.pipePromise;
       } catch (err) {
-        logger.error('proxy.response_stream_failed', err);
+        logger.error('proxy.response_stream_failed');
+        reportFailure(err, 'response_stream');
         c.executionCtx.waitUntil(logger.flush());
       }
       return true;
@@ -148,7 +177,9 @@ app.all('*', async (c) => {
       c.executionCtx.waitUntil(durableCapture());
     }
   } else {
-    c.executionCtx.waitUntil(recordSkippedExchange(c.env, attached, { decision, route, logger }));
+    c.executionCtx.waitUntil(
+      recordSkippedExchange(c.env, attached, { decision, route, logger, reportFailure }),
+    );
   }
 
   return respond(attached);
@@ -156,7 +187,7 @@ app.all('*', async (c) => {
 
 const handler = {
   fetch(request, env, ctx) {
-    return app.fetch(request, env, ctx);
+    return withNativeTrace(tracing, 'trace_flow.proxy_request', () => app.fetch(request, env, ctx));
   },
   async scheduled(controller, env) {
     const logger = createLogger({
@@ -182,13 +213,26 @@ const handler = {
   },
 } satisfies ExportedHandler<ProxyEnv>;
 
-export default Sentry.withSentry(
-  (env: ProxyEnv) => ({
+export function proxySentryOptions(env: ProxyEnv): Sentry.CloudflareOptions {
+  return {
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
     tracesSampleRate: 1.0,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
-  }),
-  handler,
-);
+    ...sentryRequestPrivacy(),
+  };
+}
+
+const instrumentedHandler = Sentry.withSentry(proxySentryOptions, handler);
+
+export default {
+  ...instrumentedHandler,
+  fetch(
+    request: Parameters<typeof instrumentedHandler.fetch>[0],
+    env: ProxyEnv,
+    ctx: ExecutionContext,
+  ) {
+    return instrumentedHandler.fetch(normalizeTraceRequest(request), env, ctx);
+  },
+} satisfies ExportedHandler<ProxyEnv>;

@@ -1,3 +1,4 @@
+import { internalTraceHeaders } from '@trace-flow/utils/sentry-tracing';
 import type { Logger } from '@trace-flow/logging';
 
 /** Compatibility policy served by 2a's `/agent-ingest/compatibility-policy` route. */
@@ -57,7 +58,7 @@ export async function getCompatibilityPolicy(
 
   try {
     const res = await fetch(`${env.CONVEX_SITE_URL}/agent-ingest/compatibility-policy`, {
-      headers: { Authorization: `Bearer ${env.AGENT_INGEST_SHARED_SECRET}` },
+      headers: internalTraceHeaders({ Authorization: `Bearer ${env.AGENT_INGEST_SHARED_SECRET}` }),
       signal: AbortSignal.timeout(POLICY_TIMEOUT_MS),
     });
     if (!res.ok) {

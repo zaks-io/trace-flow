@@ -27,6 +27,8 @@ describe('buildUpstreamHeaders', () => {
         'x-trace-flow-api-key': 'tf_key',
         'x-trace-flow-omit-body': 'true',
         traceparent: '00-abc-def-01',
+        tracestate: 'vendor=value',
+        'sentry-trace': '11111111111111111111111111111111-2222222222222222-1',
         baggage: 'a=b',
         host: 'proxy.example',
         'content-length': '10',

@@ -1,3 +1,4 @@
+import { internalTraceHeaders } from '@trace-flow/utils/sentry-tracing';
 import type { Context } from 'hono';
 import type { Logger } from '@trace-flow/logging';
 import type { SubscriptionKVData } from '@trace-flow/types';
@@ -35,10 +36,10 @@ async function authorizeApiKey(
   try {
     const response = await fetch(`${env.CONVEX_SITE_URL}/worker/authorize-api-key`, {
       method: 'POST',
-      headers: {
+      headers: internalTraceHeaders({
         Authorization: `Bearer ${env.USAGE_SYNC_SECRET}`,
         'Content-Type': 'application/json',
-      },
+      }),
       body: JSON.stringify({ key }),
       signal,
     });

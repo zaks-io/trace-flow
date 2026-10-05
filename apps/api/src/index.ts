@@ -1,5 +1,8 @@
+import { sentryRequestPrivacy } from '@trace-flow/utils/sentry-tracing';
 import * as Sentry from '@sentry/cloudflare';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
+import { normalizeTraceRequest } from '@trace-flow/utils/ingress-tracing';
+import { withNativeTrace } from '@trace-flow/utils/native-tracing';
 import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { axiomConfigFromEnv, createWorkerLogger, type Logger } from '@trace-flow/logging';
@@ -36,9 +39,20 @@ const NON_PROD_ORIGINS = [
 ];
 
 const DEV_ORIGINS = ['http://localhost:3000', 'http://localhost:8788'];
-const ALLOWED_BROWSER_HEADERS = ['Content-Type', 'Authorization', 'Baggage', 'Sentry-Trace'];
+const ALLOWED_BROWSER_HEADERS = [
+  'Content-Type',
+  'Authorization',
+  'Baggage',
+  'Sentry-Trace',
+  'Traceparent',
+  'Tracestate',
+];
 
 export const apiApp = new Hono<{ Bindings: Env; Variables: Variables }>();
+
+apiApp.use('*', (c, next) =>
+  withNativeTrace((c.executionCtx as ExecutionContext).tracing, 'trace_flow.raw_request', next),
+);
 
 apiApp.use('*', async (c: Context<{ Bindings: Env; Variables: Variables }, string>, next) => {
   const isDev = c.env.SENTRY_ENVIRONMENT !== 'prod';
@@ -171,13 +185,20 @@ apiApp.get('/bodies/:requestId', async (c) => {
 
 apiApp.notFound((c) => c.json({ error: 'Not found' }, 404));
 
-export default Sentry.withSentry(
+const instrumentedApi = Sentry.withSentry(
   (env: Env) => ({
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
     tracesSampleRate: 1.0,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
+    ...sentryRequestPrivacy(),
   }),
   apiApp,
 );
+
+export default {
+  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    return instrumentedApi.fetch(normalizeTraceRequest(request), env, ctx);
+  },
+};

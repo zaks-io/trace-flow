@@ -120,6 +120,11 @@ export function finishAgentSnapshot(
   return storage.transactionSync(() => {
     assertActiveSnapshotState(storage, generation);
     const clearedDirtyDays = countSnapshotDays(storage, generation);
+    storage.sql.exec(
+      `DELETE FROM snapshot_producer_traces
+       WHERE dirty_day IN (SELECT dirty_day FROM snapshot_days WHERE generation = ?)`,
+      generation,
+    );
     deleteCapturedDirtyDayLinks(storage, generation);
     storage.sql.exec(
       `DELETE FROM dirty_days

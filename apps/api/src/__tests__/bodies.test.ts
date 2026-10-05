@@ -2,12 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildStoredBodyKey } from '@trace-flow/types';
 import type { Logger } from '@trace-flow/logging';
 import { encryptStoredBodyPayload } from '@trace-flow/utils';
+import { captureException } from '@sentry/cloudflare';
 import {
   getStoredBodies,
   isBodyVisible,
   parseStoredBodiesPayload,
   resolveVisibilityWindowDays,
 } from '../bodies';
+
+vi.mock('@sentry/cloudflare', () => ({ captureException: vi.fn() }));
 
 const ROOT_KEY = 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
 const encryption = { rootKeyBase64: ROOT_KEY, keyId: 'v1' };
@@ -46,6 +49,25 @@ async function createEncryptedStoredBody(
 describe('bodies helpers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('captures unreadable bodies without sending stored content to Sentry', async () => {
+    const storage = {
+      get: vi
+        .fn()
+        .mockResolvedValue(createObjectBody('private-payload-invalid-json', '2026-10-04')),
+    } as unknown as R2Bucket;
+    expect(await getStoredBodies(storage, 'req_123', noopLogger, encryption)).toBeNull();
+    expect(captureException).toHaveBeenCalledOnce();
+    const [error, context] = vi.mocked(captureException).mock.calls[0]!;
+    expect((error as Error).message).toBe('Stored body payload could not be read');
+    expect(JSON.stringify(context)).not.toContain('private-payload');
+  });
+
+  it('does not capture an absent body object as an exception', async () => {
+    const storage = { get: vi.fn().mockResolvedValue(null) } as unknown as R2Bucket;
+    expect(await getStoredBodies(storage, 'req_123', noopLogger, encryption)).toBeNull();
+    expect(captureException).not.toHaveBeenCalled();
   });
 
   it('builds the new combined body key', () => {

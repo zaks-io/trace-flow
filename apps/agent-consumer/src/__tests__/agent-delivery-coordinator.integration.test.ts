@@ -1,4 +1,6 @@
 import { env as workerEnv } from 'cloudflare:workers';
+import * as Sentry from '@sentry/cloudflare';
+import { recordSnapshotProducer } from '../snapshot-tracing';
 import { runInDurableObject } from 'cloudflare:test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentConsumerEnv } from '../context';
@@ -21,6 +23,49 @@ const HASH_A = 'a'.repeat(64);
 const HASH_B = 'b'.repeat(64);
 
 describe('AgentDeliveryCoordinator', () => {
+  it('bounds snapshot contributor metadata and clears only completed captured days', async () => {
+    await completeOne('delivery-traced', ['2026-09-12']);
+    await withCoordinator((_coordinator, state) => {
+      for (let index = 1; index <= 35; index++) {
+        Sentry.continueTrace(
+          {
+            sentryTrace: `${index.toString(16).padStart(32, '0')}-1111111111111111-1`,
+            baggage: undefined,
+          },
+          () =>
+            Sentry.startSpan({ name: 'delivery completion' }, () =>
+              recordSnapshotProducer(state.storage, ['2026-09-12']),
+            ),
+        );
+      }
+      expect(
+        state.storage.sql
+          .exec('SELECT * FROM snapshot_producer_traces WHERE dirty_day = ?', '2026-09-12')
+          .toArray(),
+      ).toHaveLength(32);
+      state.storage.sql.exec(
+        'INSERT INTO snapshot_producer_traces VALUES (?, ?)',
+        '2026-09-13',
+        '22222222222222222222222222222222-1111111111111111-1',
+      );
+    });
+    await withCoordinator((coordinator, state) => {
+      coordinator.requestSnapshot({});
+      const snapshot = coordinator.beginSnapshot({ claimId: CLAIM_ID });
+      const progress = coordinator.getSnapshotProgress(
+        { generation: snapshot.generation, claimId: CLAIM_ID },
+        { includeTraceLinks: true },
+      );
+      expect('sentryTraceHeaders' in progress && progress.sentryTraceHeaders).toHaveLength(32);
+      finishSnapshotCopies(coordinator, snapshot.generation, CLAIM_ID);
+      expect(state.storage.sql.exec('SELECT * FROM snapshot_producer_traces').toArray()).toEqual([
+        {
+          dirty_day: '2026-09-13',
+          sentry_trace: '22222222222222222222222222222222-1111111111111111-1',
+        },
+      ]);
+    });
+  });
   let storageHost: DurableObjectStub<AgentDeliveryCoordinatorInstance>;
 
   beforeEach(() => {

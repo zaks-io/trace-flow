@@ -8,6 +8,7 @@ import {
 } from '@trace-flow/types';
 import type { Logger } from '@trace-flow/logging';
 import { decryptStoredBodyPayload } from '@trace-flow/utils';
+import { captureException } from '@sentry/cloudflare';
 
 const MS_PER_DAY = 86_400_000;
 
@@ -139,6 +140,11 @@ export async function getStoredBodies(
   } catch (error) {
     logger.error('api.stored_bodies_parse_failed', error, {
       requestId,
+    });
+    // JSON/decryption errors may contain stored customer content, so report a safe marker.
+    captureException(new Error('Stored body payload could not be read'), {
+      tags: { operation: 'api.stored_bodies_parse' },
+      extra: { requestId },
     });
     return null;
   }

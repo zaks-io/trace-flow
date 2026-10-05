@@ -14,9 +14,11 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@sentry/core": "10.73.0",
     "@trace-flow/utils": "workspace:*"
   },
   "devDependencies": {
+    "@sentry/cloudflare": "10.73.0",
     "@vitest/coverage-v8": "^4.1.11",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"

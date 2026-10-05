@@ -1,5 +1,10 @@
 import { env as workerEnv } from 'cloudflare:workers';
-import { runInDurableObject } from 'cloudflare:test';
+import * as Sentry from '@sentry/cloudflare';
+import {
+  createExecutionContext,
+  runInDurableObject,
+  waitOnExecutionContext,
+} from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentDeliveryCoordinatorInstance } from '../agent-delivery-coordinator';
 import type { AgentDeliveryCoordinatorStats } from '../agent-delivery-coordinator-contract';
@@ -111,5 +116,46 @@ describe('snapshot recovery alarm', () => {
     );
     expect(send).not.toHaveBeenCalled();
     expect(await withStorage((storage) => storage.getAlarm())).toBeNull();
+  });
+
+  it('publishes the dispatcher span context without baggage or an original delivery parent', async () => {
+    await withStorage((storage) => scheduleAgentSnapshot(storage, 'org-1'));
+    vi.setSystemTime(START + 60_000);
+    const traceId = '1'.repeat(32);
+    let dispatcherSpanId: string | undefined;
+    const ctx = createExecutionContext();
+    await withStorage(async (storage) => {
+      const dispatcher = Sentry.withSentry(
+        () => ({
+          dsn: 'https://public@example.test/1',
+          tracesSampleRate: 1,
+          skipOpenTelemetrySetup: true,
+          transport: () => ({ send: async () => ({ statusCode: 200 }), flush: async () => true }),
+        }),
+        {
+          async fetch(_request: Request, _env: object, _ctx: ExecutionContext) {
+            dispatcherSpanId = Sentry.getActiveSpan()!.spanContext().spanId;
+            await publishAgentSnapshot(storage, queue, stats({ gatePhase: 'open' }));
+            return new Response('ok');
+          },
+        },
+      );
+      await dispatcher.fetch(
+        new Request('https://snapshot.test', {
+          headers: {
+            'sentry-trace': `${traceId}-${'2'.repeat(16)}-1`,
+            baggage: 'customer=private',
+          },
+        }),
+        {},
+        ctx,
+      );
+    });
+    await waitOnExecutionContext(ctx);
+    expect(send).toHaveBeenCalledExactlyOnceWith({
+      type: 'agent-snapshot',
+      org_id: 'org-1',
+      sentry_trace_context: { 'sentry-trace': `${traceId}-${dispatcherSpanId}-1` },
+    });
   });
 });

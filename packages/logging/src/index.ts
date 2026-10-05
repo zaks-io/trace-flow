@@ -1,3 +1,4 @@
+import { getActiveSpan } from '@sentry/core';
 import {
   formatBaggage,
   formatTraceparent,
@@ -43,6 +44,8 @@ export interface LogRecord extends SerializedError {
   provider?: string;
   model?: string;
   trace_id?: string;
+  sentry_trace_id?: string;
+  sentry_span_id?: string;
   request_id?: string;
   workflow_id?: string;
   parent_span_id?: string;
@@ -109,6 +112,7 @@ export interface LoggerOptions {
   axiom?: AxiomConfig;
   emitToConsole?: boolean;
   console?: ConsoleLike;
+  sentrySpanContext?: () => { traceId: string; spanId: string } | undefined;
 }
 
 export interface WorkerLoggerOptions extends Omit<LoggerOptions, 'runtime' | 'context'> {
@@ -319,8 +323,10 @@ function buildRecord(
   context: LogContext,
   data?: Record<string, unknown>,
   error?: unknown,
+  explicitSpanContext?: LoggerOptions['sentrySpanContext'],
 ): LogRecord {
   const serializedError = error === undefined ? {} : serializeError(error);
+  const activeSpan = explicitSpanContext ? explicitSpanContext() : getActiveSpan()?.spanContext();
   const mergedData = compactRecord({
     ...(context.data ?? {}),
     ...(data ?? {}),
@@ -333,6 +339,9 @@ function buildRecord(
     service,
     runtime,
     ...contextToRecordFields(context),
+    // Domain trace_id remains compatible; operational identity follows the span at emission.
+    sentry_trace_id: activeSpan ? (validateTraceId(activeSpan.traceId) ?? undefined) : undefined,
+    sentry_span_id: activeSpan ? (validateSpanId(activeSpan.spanId) ?? undefined) : undefined,
     ...serializedError,
     data: Object.keys(mergedData).length > 0 ? mergedData : undefined,
   });
@@ -362,6 +371,7 @@ export function createLogger(options: LoggerOptions): Logger {
       context,
       data,
       error,
+      options.sentrySpanContext,
     );
     if (emitToConsole) {
       sink[consoleMethodForLevel(level)](JSON.stringify(record));

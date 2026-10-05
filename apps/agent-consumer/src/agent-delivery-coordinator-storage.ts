@@ -42,6 +42,11 @@ export function initializeCoordinatorSchema(storage: DurableObjectStorage): void
     CREATE TABLE IF NOT EXISTS dirty_days (
       dirty_day TEXT PRIMARY KEY
     );
+    CREATE TABLE IF NOT EXISTS snapshot_producer_traces (
+      dirty_day TEXT NOT NULL,
+      sentry_trace TEXT NOT NULL,
+      PRIMARY KEY (dirty_day, sentry_trace)
+    );
     CREATE TABLE IF NOT EXISTS incomplete_days (
       dirty_day TEXT PRIMARY KEY
     );
@@ -153,6 +158,11 @@ export function deleteReservation(storage: DurableObjectStorage, deliveryId: str
 
 export function pruneRetainedDayMetadata(storage: DurableObjectStorage, now: number): void {
   const { oldestDirtyDay, todayDirtyDay } = retainedDayBounds(now);
+  storage.sql.exec(
+    'DELETE FROM snapshot_producer_traces WHERE dirty_day < ? OR dirty_day > ?',
+    oldestDirtyDay,
+    todayDirtyDay,
+  );
   storage.sql.exec(
     `DELETE FROM dirty_day_links
      WHERE day_a < ? OR day_a > ? OR day_b < ? OR day_b > ?`,

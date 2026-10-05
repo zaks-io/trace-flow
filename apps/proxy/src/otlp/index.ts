@@ -1,7 +1,8 @@
 import type { Context } from 'hono';
+
 import type { OTLPQueueMessage, QueueMessageUnion } from '@trace-flow/types';
 import { BodySizeLimitError, getCurrentTimestamp, readBodyWithLimit } from '@trace-flow/utils';
-import { currentSentryTraceContext } from '@trace-flow/utils/sentry-tracing';
+import { captureSafeException, currentSentryTraceContext } from '@trace-flow/utils/sentry-tracing';
 import { axiomConfigFromEnv, createWorkerLogger, type Logger } from '@trace-flow/logging';
 import { validateApiKey, isAuthError } from '../auth';
 import type { ApiKeyData } from '../auth';
@@ -230,7 +231,11 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     if (failure.errorClass === 'client') {
       orgLogger.warn(failure.event, logData);
     } else {
-      orgLogger.error(failure.event, err, logData);
+      orgLogger.error(failure.event, undefined, logData);
+      captureSafeException(err, {
+        message: 'OTLP body processing failed',
+        operation: 'otlp.input',
+      });
     }
     c.executionCtx.waitUntil(orgLogger.flush());
     return c.json({ error: { code: failure.status, message: failure.message } }, failure.status);
@@ -326,7 +331,10 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
 
   if (!decision.record) {
     const rejection = otlpRejectionFor(decision.reason);
-    orgLogger.warn('otlp.reject', { reason: rejection.logReason, rejectedSpans: traces.length });
+    orgLogger.warn('otlp.reject', {
+      reason: rejection.logReason,
+      rejectedSpans: traces.length,
+    });
     if (decision.reason === 'internal_error') {
       c.executionCtx.waitUntil(orgLogger.flush());
       return c.json({ error: { code: 503, message: rejection.errorMessage } }, 503, {
@@ -367,7 +375,11 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
       c.env.TRACE_DELIVERY_NAMESPACE,
     );
   } catch (err) {
-    orgLogger.error('otlp.delivery_persist_failed', err, { traceCount: traces.length });
+    orgLogger.error('otlp.delivery_persist_failed', undefined, { traceCount: traces.length });
+    captureSafeException(err, {
+      message: 'OTLP delivery persistence failed',
+      operation: 'otlp.delivery_persist',
+    });
     c.executionCtx.waitUntil(orgLogger.flush());
     return c.json({ error: { code: 503, message: 'Trace persistence failed' } }, 503, {
       'Retry-After': '1',
@@ -385,9 +397,13 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
           deliveryKey,
         });
       } catch (err) {
-        orgLogger.error('otlp.enqueue_failed', err, {
+        orgLogger.error('otlp.enqueue_failed', undefined, {
           traceCount: traces.length,
           deliveryKey,
+        });
+        captureSafeException(err, {
+          message: 'OTLP queue publication failed',
+          operation: 'otlp.enqueue',
         });
       } finally {
         await orgLogger.flush();

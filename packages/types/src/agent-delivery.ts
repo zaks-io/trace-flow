@@ -1,5 +1,6 @@
 import type { AgentIngestQueueMessage } from './agent-ingest';
 import type { EncryptedStoredBodiesPayload } from './storage';
+import type { SentryTraceContext } from './sentry';
 
 /** Small Queue message pointing at one encrypted, durable analytics chunk in R2. */
 export interface AgentDeliveryReference {
@@ -31,4 +32,5 @@ export type AgentIngestQueuePayload = AgentIngestQueueMessage | AgentDeliveryRef
 export interface AgentSnapshotQueueMessage {
   type: 'agent-snapshot';
   org_id: string;
+  sentry_trace_context?: SentryTraceContext;
 }

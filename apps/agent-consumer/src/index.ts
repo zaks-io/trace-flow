@@ -1,3 +1,4 @@
+import { sentryRequestPrivacy } from '@trace-flow/utils/sentry-tracing';
 import type {
   BaselineCopyCheckpoint,
   BaselineMigrationWindow,
@@ -193,7 +194,7 @@ const handler = {
   },
 };
 
-export class AgentIngestion extends WorkerEntrypoint<AgentConsumerEnv> {
+class AgentIngestionEntrypoint extends WorkerEntrypoint<AgentConsumerEnv> {
   eraseOrganization(
     orgId: string,
     afterId?: number,
@@ -223,7 +224,7 @@ export class AgentIngestion extends WorkerEntrypoint<AgentConsumerEnv> {
   }
 }
 
-export class TraceRecovery extends WorkerEntrypoint<AgentConsumerEnv> {
+class TraceRecoveryEntrypoint extends WorkerEntrypoint<AgentConsumerEnv> {
   async #requireBaselineMutation(orgId: string) {
     const normalized = normalizeAgentShardId(orgId);
     const organization = this.env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${normalized}`);
@@ -536,14 +537,24 @@ function dlqBodyOrgId(value: unknown): string {
   return orgId;
 }
 
-export default Sentry.withSentry(
-  (env: AgentConsumerEnv) => ({
+function sentryOptions(env: AgentConsumerEnv) {
+  return {
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
     tracesSampleRate: 1.0,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
+    ...sentryRequestPrivacy(),
     enableRpcTracePropagation: true,
-  }),
-  handler,
-);
+    rpcTracePropagationBindings: [
+      'AGENT_FACT_BATCHER',
+      'AGENT_DELIVERY',
+      'AGENT_DELIVERY_COORDINATOR',
+      'AGENT_SNAPSHOT_CAPACITY',
+    ],
+  };
+}
+
+export const AgentIngestion = Sentry.withSentry(sentryOptions, AgentIngestionEntrypoint);
+export const TraceRecovery = Sentry.withSentry(sentryOptions, TraceRecoveryEntrypoint);
+export default Sentry.withSentry(sentryOptions, handler);

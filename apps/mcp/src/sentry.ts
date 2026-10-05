@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/cloudflare';
+import { captureSafeException } from '@trace-flow/utils/sentry-tracing';
 import {
   JsonRpcErrorCode,
   MCP_SERVER_INFO,
@@ -181,11 +182,9 @@ export async function traceMcpInteraction<T>(
         return result;
       } catch (error) {
         span.setStatus({ code: ERROR_STATUS_CODE, message: 'internal_error' });
-        Sentry.captureException(error, {
-          tags: {
-            operation: 'mcp.interaction',
-            mcp_method: message.method,
-          },
+        captureSafeException(error, {
+          message: 'MCP interaction failed',
+          operation: 'mcp.interaction',
         });
         throw error;
       }

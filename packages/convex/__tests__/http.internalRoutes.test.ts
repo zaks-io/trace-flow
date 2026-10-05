@@ -9,12 +9,14 @@ describe('convex/http.ts internal routes', () => {
 
   beforeEach(() => {
     vi.stubEnv('AUTH0_DOMAIN', 'test.auth0.com');
+    vi.stubEnv('AXIOM_TOKEN', '');
     ctx = createMockCtx();
     deps = createMockDeps();
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     vi.clearAllMocks();
   });
 
@@ -23,6 +25,10 @@ describe('convex/http.ts internal routes', () => {
 
     it('records usage when trace context is provided', async () => {
       vi.stubEnv('USAGE_SYNC_SECRET', 'sync-secret');
+      vi.stubEnv('SENTRY_DSN', 'https://public@example.test/1');
+      vi.stubEnv('SENTRY_ENVIRONMENT', 'test');
+      const transport = vi.fn(async () => new Response(null, { status: 200 }));
+      vi.stubGlobal('fetch', transport);
       const app = createApp(deps);
       ctx.runQuery.mockResolvedValue({ _id: ORG_ID });
       ctx.runMutation.mockResolvedValue(undefined);
@@ -52,6 +58,10 @@ describe('convex/http.ts internal routes', () => {
       );
 
       expect(res.status).toBe(200);
+      const envelope = String(
+        (transport.mock.calls[0] as unknown as [string, RequestInit])[1].body,
+      );
+      expect(envelope).toContain('0123456789abcdef0123456789abcdef');
       expect(ctx.runQuery).toHaveBeenCalledOnce();
       expect(ctx.runMutation).toHaveBeenCalledTimes(2);
       expect(ctx.runMutation.mock.calls[0]?.[1]).toMatchObject({

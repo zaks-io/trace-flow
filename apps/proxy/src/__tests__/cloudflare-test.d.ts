@@ -1,5 +1,10 @@
 declare module 'cloudflare:test' {
-  import type { ExecutionContext, KVNamespace, R2Bucket } from '@cloudflare/workers-types';
+  import type {
+    DurableObjectStub,
+    ExecutionContext,
+    KVNamespace,
+    R2Bucket,
+  } from '@cloudflare/workers-types';
 
   export const env: {
     API_KEYS: KVNamespace;
@@ -13,4 +18,5 @@ declare module 'cloudflare:test' {
 
   export function createExecutionContext(): ExecutionContext;
   export function waitOnExecutionContext(ctx: ExecutionContext): Promise<void>;
+  export function runDurableObjectAlarm(stub: DurableObjectStub): Promise<boolean>;
 }

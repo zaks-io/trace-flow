@@ -7,6 +7,7 @@ const USAGE_SECRET = 'test-usage-secret';
 const MCP_SECRET = 'test-mcp-backend-secret';
 
 beforeEach(() => {
+  vi.stubEnv('AXIOM_TOKEN', '');
   vi.stubEnv('USAGE_SYNC_SECRET', USAGE_SECRET);
   vi.stubEnv('MCP_BACKEND_SHARED_SECRET', MCP_SECRET);
 });

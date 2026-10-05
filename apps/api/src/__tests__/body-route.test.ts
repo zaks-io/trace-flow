@@ -14,6 +14,10 @@ const ROOT_KEY = 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
 
 function executionCtx() {
   return {
+    tracing: {
+      enterSpan: <T>(_name: string, callback: (span: Span) => T) =>
+        callback({ isTraced: false, setAttribute: vi.fn(), end: vi.fn() }),
+    },
     waitUntil: vi.fn(),
     passThroughOnException: vi.fn(),
   } as unknown as ExecutionContext;
@@ -126,13 +130,16 @@ describe('GET /bodies/:requestId', () => {
     expect(fetch).toHaveBeenCalledWith(
       'https://convex.test/worker/authorize-body-access',
       expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: `Bearer ${SECRET}` }),
         body: JSON.stringify({
           sub: 'auth0|user-1',
           userId: 'j57axc8sefsfp6k28nx6c481js806pwv',
           orgId: 'org_123',
         }),
       }),
+    );
+    const authorizationRequest = vi.mocked(fetch).mock.calls[0];
+    expect(new Headers(authorizationRequest?.[1]?.headers).get('authorization')).toBe(
+      `Bearer ${SECRET}`,
     );
     expect(JSON.stringify(vi.mocked(fetch).mock.calls)).not.toContain(token);
   });

@@ -16,6 +16,7 @@ import { registerMcpTokenRoutes } from './httpRoutes/mcpToken';
 import { registerStripeWebhookRoutes } from './httpRoutes/stripeWebhook';
 import { registerUsageRoutes } from './httpRoutes/usage';
 import { registerWorkerAuthorizationRoutes } from './httpRoutes/workerAuthorization';
+import { registerHttpTracing } from './httpRoutes/tracing';
 
 export type { HttpDeps };
 
@@ -35,6 +36,7 @@ export function createApp(
     }),
   );
 
+  registerHttpTracing(app);
   registerStripeWebhookRoutes(app);
   registerMcpDiscoveryRoutes(app);
   registerMcpAuthorizeRoutes(app, deps);

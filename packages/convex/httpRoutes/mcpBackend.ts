@@ -7,6 +7,7 @@ import { internal } from '../_generated/api';
 import { hasApiKeyPermission } from '../apiKeyPermissions';
 import { getRequestLogger, hasValidBearerSecret, isJsonContentType } from './shared';
 import { readBoundedJson } from './requestBody';
+import { getRequestSentryScope } from '../convexTracing';
 
 const BACKEND_REQUEST_MAX_BYTES = 64 * 1024;
 
@@ -84,7 +85,11 @@ export function registerMcpBackendRoutes(app: HonoWithConvex<ActionCtx>): void {
     if (!isRecord(body) || typeof body.userId !== 'string' || body.userId === '') {
       return c.json({ error: 'userId is required' }, 400);
     }
-    const backend = createMcpBackend(ctx, body.userId as Id<'users'>);
+    const backend = createMcpBackend(
+      ctx,
+      body.userId as Id<'users'>,
+      getRequestSentryScope(c.req.raw),
+    );
     const userContext = await backend.getUserContext();
     if (!userContext) {
       const logger = getRequestLogger(c.req.raw, { operation: 'mcp_backend_context' });
@@ -131,7 +136,7 @@ export function registerMcpBackendRoutes(app: HonoWithConvex<ActionCtx>): void {
     const logger = getRequestLogger(c.req.raw, { operation: 'mcp_backend_mint' });
 
     const userId = body.userId as Id<'users'>;
-    const backend = createMcpBackend(ctx, userId);
+    const backend = createMcpBackend(ctx, userId, getRequestSentryScope(c.req.raw));
 
     const userContext = await backend.getUserContext();
     if (!userContext) {

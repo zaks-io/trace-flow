@@ -12,6 +12,7 @@ import { AGENT_FACT_RPC_MAX_ROWS } from '../fact-rpc-batches';
 vi.mock('@sentry/cloudflare', () => ({
   captureException: vi.fn(),
   captureMessage: vi.fn(),
+  getActiveSpan: () => undefined,
   continueTrace: <T>(_context: unknown, callback: () => T): T => callback(),
   startSpan: <T>(_options: unknown, callback: () => T): T => callback(),
   SEMANTIC_ATTRIBUTE_SENTRY_ORIGIN: 'sentry.origin',

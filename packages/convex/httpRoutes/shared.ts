@@ -4,11 +4,14 @@ import {
   traceContextFromHeaders,
   type LogContext,
 } from '@trace-flow/logging';
+import { getConvexSentrySpan, getRequestSentryScope } from '../convexTracing';
 
 export function getRequestLogger(request: Request, context?: LogContext) {
+  const scope = getRequestSentryScope(request);
   return createConvexLogger({
     service: 'convex',
     convexFunction: 'http',
+    ...(scope ? { sentrySpanContext: () => getConvexSentrySpan(scope)?.spanContext() } : {}),
     axiom: axiomConfigFromEnv({
       AXIOM_TOKEN: process.env.AXIOM_TOKEN,
       AXIOM_DATASET: process.env.AXIOM_DATASET,

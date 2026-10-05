@@ -3354,7 +3354,12 @@ export declare const internal: {
       authorizePipesQuery: FunctionReference<
         "action",
         "internal",
-        { orgId: Id<"organizations">; pipe: string; userId: Id<"users"> },
+        {
+          orgId: Id<"organizations">;
+          pipe: string;
+          traceContext?: { sampled: boolean; spanId: string; traceId: string };
+          userId: Id<"users">;
+        },
         null | { expiresAt: number; token: string }
       >;
       deleteOrgTraces: FunctionReference<
@@ -3385,6 +3390,7 @@ export declare const internal: {
           orgId?: string;
           retentionDays?: number;
           scopes: Array<{ resource: string; type: string }>;
+          traceContext?: { sampled: boolean; spanId: string; traceId: string };
         },
         string
       >;

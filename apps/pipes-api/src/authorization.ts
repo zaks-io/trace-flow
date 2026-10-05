@@ -1,3 +1,4 @@
+import { internalTraceHeaders } from '@trace-flow/utils/sentry-tracing';
 export type PipesAuthorization =
   | { kind: 'allowed'; token: string; expiresAt: number }
   | { kind: 'denied' }
@@ -11,10 +12,10 @@ export async function authorizePipesQuery(
   try {
     const response = await fetch(`${env.CONVEX_SITE_URL}/worker/authorize-pipes-query`, {
       method: 'POST',
-      headers: {
+      headers: internalTraceHeaders({
         Authorization: `Bearer ${env.PIPES_API_SHARED_SECRET}`,
         'Content-Type': 'application/json',
-      },
+      }),
       body: JSON.stringify({ grant, pipe }),
     });
     if (!response.ok) return { kind: 'unavailable' };

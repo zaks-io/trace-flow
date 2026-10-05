@@ -48,7 +48,9 @@ Other scripts, bindings, and environment values belong in `package.json` and eac
   Tinybird Pipes. Never expose admin tokens to the frontend.
 - Queue tracing travels in `sentry_trace_context`. Match `enableRpcTracePropagation`
   on Worker and Durable Object RPC endpoints. Set `tracePropagationTargets` so
-  trace headers never reach providers, Tinybird, or Convex.
+  automatic trace headers never reach providers, Tinybird, or Convex. Authenticated
+  Convex endpoints we own receive explicit minimal context with receiver continuation;
+  never forward customer baggage there.
 - Test behavior, not HTML strings or component source. Verify UI changes in the
   running app. Use pure-function tests for parsers, reducers, and formatters.
 - Comments explain why. Keep code self-documenting.

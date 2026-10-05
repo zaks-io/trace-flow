@@ -1,3 +1,4 @@
+import { sentryRequestPrivacy } from '@trace-flow/utils/sentry-tracing';
 import * as Sentry from '@sentry/cloudflare';
 import type {
   QueueMessageUnion,
@@ -5,6 +6,7 @@ import type {
   TinybirdTrace,
   QueueMessage,
   TraceDeliveryPayload,
+  TraceDeliveryEnvelope,
 } from '@trace-flow/types';
 import {
   completeTraceDelivery,
@@ -15,8 +17,12 @@ import {
 import {
   TRACE_FLOW_PROPAGATION_TARGETS,
   continueQueueTrace,
+  currentSentryTraceContext,
+  durableSentryTraceHeader,
   groupBySentryTrace,
 } from '@trace-flow/utils/sentry-tracing';
+import { withNativeTrace } from '@trace-flow/utils/native-tracing';
+import { tracing } from 'cloudflare:workers';
 import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import {
   TraceBatcher,
@@ -199,6 +205,7 @@ interface ResolvedQueueItem {
   payload: TraceDeliveryPayload;
   messageId: string;
   deliveryKey?: string;
+  body?: TraceDeliveryEnvelope['body'];
 }
 
 async function resolveQueueItem(
@@ -215,17 +222,20 @@ async function resolveQueueItem(
 
   const envelope = await loadTraceDelivery(env.STORAGE, body.key);
   if (!envelope) return null;
-  if (envelope.body) {
-    await env.STORAGE.put(envelope.body.key, JSON.stringify(envelope.body.encryptedPayload), {
-      customMetadata: { orgId: envelope.body.orgId },
-    });
-  }
   return {
     payload: envelope.message,
+    body: envelope.body,
     messageId:
       envelope.message.type === 'otlp' ? `otlp:${body.key}` : `llm:${envelope.message.requestId}`,
     deliveryKey: body.key,
   };
+}
+
+async function copyDeliveryBody(resolved: ResolvedQueueItem, env: Env): Promise<void> {
+  if (!resolved.body) return;
+  await env.STORAGE.put(resolved.body.key, JSON.stringify(resolved.body.encryptedPayload), {
+    customMetadata: { orgId: resolved.body.orgId },
+  });
 }
 
 function isTracePayload(value: unknown): value is TraceDeliveryPayload {
@@ -296,14 +306,39 @@ async function stageSingleQueueBody(
 ): Promise<void> {
   const resolved = await resolveQueueItem(body, messageId, env);
   if (!resolved) throw new Error('Delivery envelope is missing; replay was not staged');
-  const traces = await buildDeliveryTraces(resolved.payload, env);
-  const importedExecution = importedMetadata(resolved.payload);
-  const result = await getTraceBatcher(
-    env,
-    calculateShardId(traceShardKey(resolved.payload), getNumShards(env)),
-  ).addMessageTraces([{ messageId: resolved.messageId, traces, importedExecution }]);
-  if (result[0]?.status === 'failed') throw new Error('trace batcher rejected replay');
-  if (resolved.deliveryKey) await completeTraceDelivery(env.STORAGE, resolved.deliveryKey);
+  const invokingSpan = Sentry.getActiveSpan();
+  await continueQueueTrace(
+    resolved.payload.sentry_trace_context,
+    {
+      queueName: 'trace-delivery-replay',
+      messageCount: 1,
+      links: invokingSpan ? [{ context: invokingSpan.spanContext() }] : undefined,
+    },
+    () =>
+      withNativeTrace(
+        tracing,
+        'trace delivery replay',
+        async () => {
+          await copyDeliveryBody(resolved, env);
+          const traces = await buildDeliveryTraces(resolved.payload, env);
+          const importedExecution = importedMetadata(resolved.payload);
+          const result = await getTraceBatcher(
+            env,
+            calculateShardId(traceShardKey(resolved.payload), getNumShards(env)),
+          ).addMessageTraces([{ messageId: resolved.messageId, traces, importedExecution }], {
+            sentryTraceHeaders: producerHeader(resolved.messageId),
+          });
+          if (result[0]?.status === 'failed') throw new Error('trace batcher rejected replay');
+          if (resolved.deliveryKey) await completeTraceDelivery(env.STORAGE, resolved.deliveryKey);
+        },
+        { deliveryId: resolved.messageId },
+      ),
+  );
+}
+
+function producerHeader(messageId: string): Record<string, string> {
+  const header = durableSentryTraceHeader(currentSentryTraceContext());
+  return header ? { [messageId]: header } : {};
 }
 
 const PROXY_DLQ_NAMES = new Set([
@@ -364,19 +399,20 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
         message: Message<QueueMessageUnion>;
         deliveryKey?: string;
         importedExecution?: OTLPQueueMessage['importedExecution'];
+        sentryTraceHeader: string | null;
       }[];
     }
   >();
 
   const failedMessages: Message<QueueMessageUnion>[] = [];
 
-  const processMessage = async (message: Message<QueueMessageUnion>): Promise<void> => {
+  interface ResolvedMessage {
+    message: Message<QueueMessageUnion>;
+    resolved: ResolvedQueueItem;
+  }
+  const processMessage = async ({ message, resolved }: ResolvedMessage): Promise<void> => {
     try {
-      const resolved = await resolveQueueItem(message.body, message.id, env);
-      if (!resolved) {
-        message.ack();
-        return;
-      }
+      await copyDeliveryBody(resolved, env);
       const traces = await buildDeliveryTraces(resolved.payload, env);
       // Keep pre-cutover queue retries on the shard that owns their message ledger.
       const shardId = calculateShardId(traceShardKey(resolved.payload), numShards);
@@ -392,26 +428,62 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
         message,
         deliveryKey: resolved.deliveryKey,
         importedExecution: importedMetadata(resolved.payload),
+        sentryTraceHeader: durableSentryTraceHeader(currentSentryTraceContext()),
       });
     } catch (error) {
       logger.error('consumer.message_process_failed', error, { messageId: message.id });
+      // Parser errors can include customer payload fragments in their messages.
+      Sentry.captureException(new Error('Trace delivery processing failed'), {
+        tags: { operation: 'consumer.message_process' },
+        extra: { messageId: message.id },
+      });
       failedMessages.push(message);
     }
   };
 
   try {
-    // One `queue.process` transaction per producing request, continuing the Proxy's trace, so the
-    // pricing + span-building work shows up under the LLM request that captured it. The Durable
-    // Object flush below is genuinely batch-level and stays under this batch's own transaction.
-    for (const group of groupBySentryTrace(batch.messages, (m) => m.body.sentry_trace_context)) {
+    // Resolve per envelope rather than pre-loading a batch to regroup by its stored context.
+    for (const message of batch.messages.filter((item) => isTraceDeliveryMessage(item.body))) {
+      try {
+        const resolved = await resolveQueueItem(message.body, message.id, env);
+        if (!resolved) {
+          message.ack();
+          continue;
+        }
+        await continueQueueTrace(
+          resolved.payload.sentry_trace_context,
+          { queueName: batch.queue, messageCount: 1 },
+          () =>
+            withNativeTrace(
+              tracing,
+              'trace delivery processing',
+              () => processMessage({ message, resolved }),
+              { deliveryId: resolved.messageId },
+            ),
+        );
+      } catch (error) {
+        logger.error('consumer.message_process_failed', error, { messageId: message.id });
+        Sentry.captureException(new Error('Trace delivery resolution failed'), {
+          tags: { operation: 'consumer.delivery_resolve' },
+          extra: { messageId: message.id },
+        });
+        failedMessages.push(message);
+      }
+    }
+    for (const group of groupBySentryTrace(
+      batch.messages.filter((item) => !isTraceDeliveryMessage(item.body)),
+      (message) => message.body.sentry_trace_context,
+    )) {
       await continueQueueTrace(
         group.traceContext,
         { queueName: batch.queue, messageCount: group.messages.length },
-        async () => {
-          for (const message of group.messages) {
-            await processMessage(message);
-          }
-        },
+        () =>
+          withNativeTrace(tracing, 'trace queue processing', async () => {
+            for (const message of group.messages) {
+              const resolved = await resolveQueueItem(message.body, message.id, env);
+              if (resolved) await processMessage({ message, resolved });
+            }
+          }),
       );
     }
 
@@ -425,6 +497,13 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
             traces: item.traces,
             importedExecution: item.importedExecution,
           })),
+          {
+            sentryTraceHeaders: Object.fromEntries(
+              shard.items
+                .filter((item) => item.sentryTraceHeader)
+                .map((item) => [item.messageId, item.sentryTraceHeader!]),
+            ),
+          },
         );
         const statusById = new Map(results.map((result) => [result.messageId, result.status]));
 
@@ -585,7 +664,7 @@ const handler = {
   },
 };
 
-export class TraceRecovery extends WorkerEntrypoint<Env> {
+class TraceRecoveryEntrypoint extends WorkerEntrypoint<Env> {
   private batcher(shardId: string): DurableObjectStub<TraceBatcherInstance> {
     if (!/^\d+$/.test(shardId)) throw new Error('proxy shardId must be a decimal integer');
     const value = Number(shardId);
@@ -628,14 +707,18 @@ export class TraceRecovery extends WorkerEntrypoint<Env> {
  * instrumented with, because the stub appends a trailing metadata argument that only an
  * RPC-instrumented DO strips back off.
  */
-export default Sentry.withSentry<Env, unknown, unknown, typeof handler>(
-  (env: Env) => ({
+function sentryOptions(env: Env) {
+  return {
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
     tracesSampleRate: 1.0,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
+    ...sentryRequestPrivacy(),
     enableRpcTracePropagation: true,
-  }),
-  handler,
-);
+    rpcTracePropagationBindings: ['TRACE_BATCHER'],
+  };
+}
+
+export const TraceRecovery = Sentry.withSentry(sentryOptions, TraceRecoveryEntrypoint);
+export default Sentry.withSentry<Env, unknown, unknown, typeof handler>(sentryOptions, handler);

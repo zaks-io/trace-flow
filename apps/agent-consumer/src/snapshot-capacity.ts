@@ -1,3 +1,4 @@
+import { sentryRequestPrivacy } from '@trace-flow/utils/sentry-tracing';
 import * as Sentry from '@sentry/cloudflare';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { DurableObject } from 'cloudflare:workers';
@@ -143,6 +144,7 @@ export const SnapshotCapacity = Sentry.instrumentDurableObjectWithSentry(
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
     tracesSampleRate: 1.0,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
+    ...sentryRequestPrivacy(),
     enableRpcTracePropagation: true,
   }),
   SnapshotCapacityBase,
