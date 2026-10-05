@@ -1,3 +1,4 @@
+import { captureException } from '@sentry/core';
 import type {
   JsonRpcRequest,
   JsonRpcResponse,
@@ -140,7 +141,14 @@ export async function dispatchToolCall(
     const args = params.arguments ?? {};
     const result = await handler(ctx, keyIds, args, retentionDays);
     return createSuccessResponse(id, result);
-  } catch (error) {
+  } catch {
+    // Upstream failures may contain private query data in their messages or causes.
+    const error = new Error('MCP tool execution failed');
+    if (sentryScope) {
+      sentryScope.captureException(error);
+    } else {
+      captureException(error);
+    }
     console.error('mcp.dispatch_tool_call_failed', { tool: params.name, error });
     return createErrorResponse(id, JsonRpcErrorCode.InternalError, 'Internal tool error');
   }

@@ -1,6 +1,9 @@
 import * as Sentry from '@sentry/cloudflare';
 import { axiomConfigFromEnv, createWorkerLogger } from '@trace-flow/logging';
-import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
+import {
+  sentryRequestPrivacy,
+  TRACE_FLOW_PROPAGATION_TARGETS,
+} from '@trace-flow/utils/sentry-tracing';
 
 // Re-export Durable Objects from OpenNext (required for Cloudflare)
 export { DOQueueHandler, DOShardedTagCache, BucketCachePurge } from '../.open-next/worker.js';
@@ -29,6 +32,7 @@ export default Sentry.withSentry(
     sendDefaultPii: false,
     enableLogs: true,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
+    ...sentryRequestPrivacy(),
     // OpenNext/Next already uses OpenTelemetry inside the same Worker bundle. Letting
     // @sentry/cloudflare replace the global OTEL provider recurses in routingHandler.
     skipOpenTelemetrySetup: true,

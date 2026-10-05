@@ -271,7 +271,7 @@ describe('buildTransaction', () => {
     expect(transaction.tokens?.totalTokens).toBe(15);
     expect(transaction.responseMetadata?.model).toBe('gpt-4o');
     expect(transaction.isTruncated).toBe(true);
-    expect(error).toHaveBeenCalledWith('proxy.request_capture_failed', expect.any(Error));
+    expect(error).toHaveBeenCalledWith('proxy.request_capture_failed');
   });
 
   it('does not synthesize completion for an interrupted partial SSE event', async () => {

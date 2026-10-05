@@ -2,6 +2,8 @@ import * as Sentry from '@sentry/cloudflare';
 import { isAgentIngestQueueMessage, type AgentIngestQueueMessage } from '@trace-flow/types';
 import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import { continueQueueTrace, groupBySentryTrace } from '@trace-flow/utils/sentry-tracing';
+import { withNativeTrace } from '@trace-flow/utils/native-tracing';
+import { tracing } from 'cloudflare:workers';
 import type { AgentConsumerEnv } from './context';
 import {
   CATEGORIES,
@@ -184,11 +186,12 @@ export async function processAgentBatch(
       await continueQueueTrace(
         group.traceContext,
         { queueName: batch.queue, messageCount: group.messages.length },
-        async () => {
-          for (const message of group.messages) {
-            await accumulate(message);
-          }
-        },
+        () =>
+          withNativeTrace(tracing, 'legacy agent queue processing', async () => {
+            for (const message of group.messages) {
+              await accumulate(message);
+            }
+          }),
       );
     }
 

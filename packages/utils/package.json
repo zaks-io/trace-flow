@@ -5,7 +5,9 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./sentry-tracing": "./src/sentry-tracing.ts"
+    "./sentry-tracing": "./src/sentry-tracing.ts",
+    "./native-tracing": "./src/native-tracing.ts",
+    "./ingress-tracing": "./src/ingress-tracing.ts"
   },
   "scripts": {
     "type-check": "tsc --noEmit",

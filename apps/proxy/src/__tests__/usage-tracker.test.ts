@@ -848,7 +848,7 @@ describe('UsageTracker Durable Object', () => {
 });
 
 describe('buildUsageSyncRequestInit', () => {
-  it('propagates trace context in headers and body', () => {
+  it('keeps workflow metadata in the body without inventing an execution trace', () => {
     const init = buildUsageSyncRequestInit('sync-secret', {
       orgId: 'org_123',
       periodStart: 1,
@@ -869,9 +869,9 @@ describe('buildUsageSyncRequestInit', () => {
     };
 
     expect(headers.get('Authorization')).toBe('Bearer sync-secret');
-    expect(headers.get('traceparent')).toContain('0123456789abcdef0123456789abcdef');
-    expect(headers.get('baggage')).toContain('request_id=req_123');
-    expect(headers.get('baggage')).toContain('workflow_id=usage%3Aorg_123%3A1%3A2');
+    expect(headers.has('traceparent')).toBe(false);
+    expect(headers.has('sentry-trace')).toBe(false);
+    expect(headers.has('baggage')).toBe(false);
     expect(body.traceContext).toMatchObject({
       traceId: '0123456789abcdef0123456789abcdef',
       requestId: 'req_123',

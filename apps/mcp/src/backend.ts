@@ -5,6 +5,7 @@ import {
   type McpUserContext,
   type TinybirdScope,
 } from '@trace-flow/mcp-core';
+import { internalTraceHeaders } from '@trace-flow/utils/sentry-tracing';
 
 export class McpBackendError extends Error {
   constructor(
@@ -81,10 +82,10 @@ export function createWorkerBackend(userId: string, config: WorkerBackendConfig)
     try {
       return await fetch(new URL(path, connectBaseUrl), {
         method: 'POST',
-        headers: {
+        headers: internalTraceHeaders({
           'Content-Type': 'application/json',
           Authorization: `Bearer ${sharedSecret}`,
-        },
+        }),
         body: JSON.stringify(body),
         signal: controller.signal,
       });

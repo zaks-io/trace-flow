@@ -1,3 +1,4 @@
+import { internalTraceHeaders } from '@trace-flow/utils/sentry-tracing';
 import type { VerifiedBodyAccessToken } from './body-access-token';
 
 export type BodyAuthorizationResult = 'authorized' | 'denied' | 'unavailable';
@@ -9,10 +10,10 @@ export async function authorizeBodyAccess(
   try {
     const response = await fetch(`${env.CONVEX_SITE_URL}/worker/authorize-body-access`, {
       method: 'POST',
-      headers: {
+      headers: internalTraceHeaders({
         Authorization: `Bearer ${env.BODY_ACCESS_JWT_SECRET}`,
         'Content-Type': 'application/json',
-      },
+      }),
       body: JSON.stringify({
         sub: claims.sub,
         userId: claims.userId,

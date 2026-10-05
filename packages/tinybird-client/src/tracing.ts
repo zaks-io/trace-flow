@@ -25,7 +25,6 @@ export function startTinybirdQuerySpan({
     name: pipe ? `tinybird.pipe ${pipe}` : 'tinybird.sql',
     op: 'db.query',
     scope: sentryScope,
-    ...(sentryScope ? { parentSpan: null } : {}),
     attributes: {
       'db.system': 'clickhouse',
       'server.address': hostname,

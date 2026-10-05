@@ -1,3 +1,4 @@
+import { internalTraceHeaders } from '@trace-flow/utils/sentry-tracing';
 import { McpBackendError } from './backend';
 
 export type McpApiKeyAuthorization =
@@ -14,10 +15,10 @@ export async function authorizeMcpApiKey(
   try {
     response = await fetch(new URL('/mcp-backend/authorize-api-key', config.connectBaseUrl), {
       method: 'POST',
-      headers: {
+      headers: internalTraceHeaders({
         'Content-Type': 'application/json',
         Authorization: `Bearer ${config.sharedSecret}`,
-      },
+      }),
       body: JSON.stringify({ key }),
       signal,
     });

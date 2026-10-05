@@ -248,6 +248,53 @@ describe('Queue Handler Integration', () => {
     expect(await batcher.getStats()).toMatchObject({ queuedTraces: 0 });
   });
 
+  it('copies the canonical encrypted body before completing an explicit DLQ replay', async () => {
+    const requestId = 'replayed-body';
+    const key = buildTraceDeliveryKey(requestId);
+    const bodyKey = `bodies/${requestId}`;
+    const payload = {
+      ...createMockQueueMessage(requestId, 'replayed-api-key'),
+      orgId: 'org-replay',
+    };
+    const envelope: TraceDeliveryEnvelope = {
+      version: 1,
+      message: payload,
+      body: {
+        key: bodyKey,
+        orgId: 'org-replay',
+        encryptedPayload: {
+          v: 1,
+          alg: 'AES-GCM',
+          kdf: 'HKDF-SHA-256',
+          kid: 'test',
+          orgId: 'org-replay',
+          iv: 'iv',
+          data: 'encrypted',
+        },
+      },
+    };
+    await env.STORAGE.put(key, JSON.stringify(envelope));
+    const shardId = calculateShardId(payload.apiKey, 2);
+    const batcher = env.TRACE_BATCHER.get(env.TRACE_BATCHER.idFromName(`batcher-${shardId}`));
+    const record = await batcher.preserveDlq(
+      JSON.stringify({ messageId: 'replayed-body', body: { type: 'delivery', key } }),
+      JSON.stringify({ reason: 'dead_letter_queue_delivery' }),
+      key,
+    );
+    const recovery = new TraceRecovery(createExecutionContext(), env);
+
+    await recovery.replayDlq(String(shardId), {
+      recoveryId: record.id,
+      reason: 'Verify durable replay body copy',
+    });
+
+    const storedBody = await env.STORAGE.get(bodyKey);
+    expect(storedBody?.customMetadata).toEqual({ orgId: 'org-replay' });
+    expect(await storedBody?.json()).toEqual(envelope.body?.encryptedPayload);
+    expect(await env.STORAGE.get(key)).toBeNull();
+    expect((await batcher.getRecovery(record.id)).state).toBe('resolved');
+  });
+
   it('keeps the delivery outbox when the canonical body copy fails', async () => {
     const requestId = 'delivery-copy-failure';
     const key = buildTraceDeliveryKey('delivery-copy-failure');

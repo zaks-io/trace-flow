@@ -33,6 +33,10 @@ function stubAuthorizedFetch(upstream: Response = okPipeResponse()) {
 
 function executionCtx() {
   return {
+    tracing: {
+      enterSpan: <T>(_name: string, callback: (span: Span) => T) =>
+        callback({ isTraced: false, setAttribute: vi.fn(), end: vi.fn() }),
+    },
     waitUntil: vi.fn(),
     passThroughOnException: vi.fn(),
   } as unknown as ExecutionContext;

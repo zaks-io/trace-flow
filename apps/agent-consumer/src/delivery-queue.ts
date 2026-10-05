@@ -1,5 +1,5 @@
-import * as Sentry from '@sentry/cloudflare';
 import { isAgentDeliveryReference } from '@trace-flow/utils';
+import { captureSafeException } from '@trace-flow/utils/sentry-tracing';
 import type { AgentConsumerEnv } from './context';
 
 const CONCURRENT_DELIVERIES = 6;
@@ -20,9 +20,10 @@ export async function processDeliveryReferences(
           else throw new Error('Invalid agent delivery result');
         } catch (error) {
           message.retry({ delaySeconds: 60 });
-          Sentry.captureException(error, {
-            tags: { operation: 'agent_delivery' },
-            extra: { messageId: message.id },
+          // Remote platform failures do not prove the receiver executed or captured an error.
+          captureSafeException(error, {
+            message: 'Agent delivery dispatch failed',
+            operation: 'agent_delivery.dispatch',
           });
         }
       }),

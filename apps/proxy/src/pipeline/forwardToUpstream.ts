@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { getCurrentTimestamp } from '@trace-flow/utils';
+import { getCurrentTimestamp, TRACE_CONTEXT_HEADERS } from '@trace-flow/utils';
 import type { ProxyEnv } from '../context';
 import type { ValidatedRequest } from './validateRequest';
 
@@ -30,9 +30,7 @@ export class UpstreamFetchError extends Error {
 const PROXY_ONLY_HEADERS = [
   'x-trace-flow-api-key',
   'x-trace-flow-omit-body',
-  'traceparent',
-  'tracestate',
-  'baggage',
+  ...TRACE_CONTEXT_HEADERS,
   'host',
   'content-length',
 ];

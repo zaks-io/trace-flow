@@ -1,3 +1,4 @@
+import { sentryRequestPrivacy } from '@trace-flow/utils/sentry-tracing';
 import {
   initializeSnapshotChecks,
   startSnapshotCheck,
@@ -44,6 +45,7 @@ import {
   completeIngestionMigration,
 } from './ingestion-migration';
 import * as Sentry from '@sentry/cloudflare';
+import { recordSnapshotProducer, snapshotProducerHeaders } from './snapshot-tracing';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { DurableObject } from 'cloudflare:workers';
 import type { AgentConsumerEnv } from './context';
@@ -336,6 +338,7 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
       const reservation = requireStoredReservation(this.ctx.storage, deliveryId, payloadSha256);
       const dirtyDays = readDeliveryDays(this.ctx.storage, deliveryId);
       markDirtyDays(this.ctx.storage, dirtyDays, false);
+      recordSnapshotProducer(this.ctx.storage, dirtyDays);
       deleteReservation(this.ctx.storage, deliveryId);
       pruneRetainedDayMetadata(this.ctx.storage, Date.now());
       return { deliverySequence: reservation.delivery_sequence, dirtyDays };
@@ -398,9 +401,26 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     return claimAgentSnapshot(this.ctx.storage, input.claimId, Date.now());
   }
 
-  getSnapshotProgress(input: { generation: number; claimId: string }) {
+  getSnapshotProgress(
+    input: { generation: number; claimId: string },
+    options: { includeTraceLinks?: boolean } = {},
+  ) {
+    assertExactKeys(
+      options,
+      options.includeTraceLinks === undefined ? [] : ['includeTraceLinks'],
+      'snapshot tracing options',
+    );
+    if (options.includeTraceLinks !== undefined && typeof options.includeTraceLinks !== 'boolean') {
+      throw new Error('Invalid snapshot tracing options');
+    }
     const { generation, claimId } = this.validateSnapshotClaim(input, 'get snapshot progress');
-    return assertAgentSnapshotClaim(this.ctx.storage, generation, claimId, Date.now());
+    const progress = assertAgentSnapshotClaim(this.ctx.storage, generation, claimId, Date.now());
+    return options.includeTraceLinks
+      ? {
+          ...progress,
+          sentryTraceHeaders: snapshotProducerHeaders(this.ctx.storage, generation),
+        }
+      : progress;
   }
 
   renewSnapshotClaim(input: { generation: number; claimId: string }) {
@@ -770,6 +790,7 @@ export const AgentDeliveryCoordinator = Sentry.instrumentDurableObjectWithSentry
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
     tracesSampleRate: 1.0,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
+    ...sentryRequestPrivacy(),
     // The calling Worker appends RPC trace metadata, which only an instrumented DO strips.
     enableRpcTracePropagation: true,
   }),

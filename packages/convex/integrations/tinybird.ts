@@ -17,6 +17,8 @@ import { analyticsKeyId } from '@trace-flow/utils';
 import { rateLimiter } from '../rateLimits';
 import { NORMALIZED_API_KEY_SQL, sanitizeAnalyticsKeyIds, sqlStringLiteral } from '../tinybirdSql';
 import { signPipesAccessGrant } from '../pipesAccessGrant';
+import { withConvexActionTracing } from '../convexTracing';
+import { convexTraceContextValidator } from '../traceContext';
 
 export { sanitizeAnalyticsKeyIds } from '../tinybirdSql';
 
@@ -394,27 +396,29 @@ export const authorizePipesQuery = internalAction({
     userId: v.id('users'),
     orgId: v.id('organizations'),
     pipe: v.string(),
+    traceContext: v.optional(convexTraceContextValidator),
   },
   returns: v.union(v.null(), v.object({ token: v.string(), expiresAt: v.number() })),
-  handler: async (ctx, args) => {
-    const [user, activeMembership] = await Promise.all([
-      ctx.runQuery(internal.auth.users.getUserById, { id: args.userId }),
-      ctx.runQuery(internal.auth.users.hasActiveOrganizationMembership, {
-        userId: args.userId,
-      }),
-    ]);
-    if (!user?.enabled || user.orgId !== args.orgId || !activeMembership) return null;
+  handler: async (ctx, args) =>
+    withConvexActionTracing('convex.authorizePipesQuery', args.traceContext, async () => {
+      const [user, activeMembership] = await Promise.all([
+        ctx.runQuery(internal.auth.users.getUserById, { id: args.userId }),
+        ctx.runQuery(internal.auth.users.hasActiveOrganizationMembership, {
+          userId: args.userId,
+        }),
+      ]);
+      if (!user?.enabled || user.orgId !== args.orgId || !activeMembership) return null;
 
-    const scopes = withRowSecurityParams(
-      buildWebReadScopes(args.pipe),
-      await getUserRowSecurityParams(ctx, user),
-    );
-    const result = await signTinybirdToken(scopes, {
-      ttlSeconds: PIPES_UPSTREAM_TOKEN_TTL_SECONDS,
-      name: `pipes_api_jwt_${Date.now()}`,
-    });
-    return { token: result.token, expiresAt: result.expiresAt };
-  },
+      const scopes = withRowSecurityParams(
+        buildWebReadScopes(args.pipe),
+        await getUserRowSecurityParams(ctx, user),
+      );
+      const result = await signTinybirdToken(scopes, {
+        ttlSeconds: PIPES_UPSTREAM_TOKEN_TTL_SECONDS,
+        name: `pipes_api_jwt_${Date.now()}`,
+      });
+      return { token: result.token, expiresAt: result.expiresAt };
+    }),
 });
 
 // Internal action for MCP. The backend resolves owned key ids to analytics ids.
@@ -424,26 +428,28 @@ export const generateTokenInternal = internalAction({
     analyticsKeyIds: v.array(v.string()),
     retentionDays: v.optional(v.number()),
     orgId: v.optional(v.string()),
+    traceContext: v.optional(convexTraceContextValidator),
   },
   returns: v.string(),
-  handler: async (_, args) => {
-    const analyticsKeyIds = sanitizeAnalyticsKeyIds(args.analyticsKeyIds);
+  handler: async (_, args) =>
+    withConvexActionTracing('convex.generateTokenInternal', args.traceContext, async () => {
+      const analyticsKeyIds = sanitizeAnalyticsKeyIds(args.analyticsKeyIds);
 
-    // Same fixed_param builder as the web token path: always emits org_id
-    // (sentinel when the caller has no org), so MCP cannot issue an agent JWT
-    // that is unscoped on org_id.
-    const scopesWithApiKeys = withRowSecurityParams(validateMcpTinybirdScopes(args.scopes), {
-      apiKeyString: analyticsKeyIds.join(','),
-      retentionDays: args.retentionDays ?? RETENTION_DAYS.hobby,
-      orgId: args.orgId ?? '',
-    });
+      // Same fixed_param builder as the web token path: always emits org_id
+      // (sentinel when the caller has no org), so MCP cannot issue an agent JWT
+      // that is unscoped on org_id.
+      const scopesWithApiKeys = withRowSecurityParams(validateMcpTinybirdScopes(args.scopes), {
+        apiKeyString: analyticsKeyIds.join(','),
+        retentionDays: args.retentionDays ?? RETENTION_DAYS.hobby,
+        orgId: args.orgId ?? '',
+      });
 
-    const result = await signTinybirdToken(scopesWithApiKeys, {
-      ttlSeconds: 600,
-      name: `mcp_jwt_${Date.now()}`,
-    });
-    return result.token;
-  },
+      const result = await signTinybirdToken(scopesWithApiKeys, {
+        ttlSeconds: 600,
+        name: `mcp_jwt_${Date.now()}`,
+      });
+      return result.token;
+    }),
 });
 
 /**

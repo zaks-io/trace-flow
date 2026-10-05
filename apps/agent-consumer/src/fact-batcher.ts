@@ -1,6 +1,6 @@
 import * as Sentry from '@sentry/cloudflare';
 import { sha256Hex } from '@trace-flow/utils';
-import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
+import * as sentryTracing from '@trace-flow/utils/sentry-tracing';
 import { DurableObject } from 'cloudflare:workers';
 import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import {
@@ -84,8 +84,7 @@ const BATCH_SIZE = 10_000;
 // Agent dashboards do not need sub-minute ingest visibility; fewer larger inserts reduce part churn.
 const FLUSH_INTERVAL_MS = 60_000;
 const CAPPED_FLUSH_RETRY_MS = 1_000;
-const MAX_SQL_PARAMS = 90;
-const MAX_INSERT_ROWS = Math.floor(MAX_SQL_PARAMS / 3);
+const MAX_INSERT_ROWS = 30;
 const MAX_FLUSH_CANDIDATES = 500;
 
 export const AGENT_FACT_BATCHER_FLUSH_INTERVAL_MS = FLUSH_INTERVAL_MS;
@@ -1056,9 +1055,9 @@ export const AgentFactBatcher = Sentry.instrumentDurableObjectWithSentry(
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
     tracesSampleRate: 1.0,
-    tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
-    // Must match the calling Worker: the stub appends a trailing metadata argument that only an
-    // RPC-instrumented Durable Object strips back off before the method sees its args.
+    tracePropagationTargets: sentryTracing.TRACE_FLOW_PROPAGATION_TARGETS,
+    ...sentryTracing.sentryRequestPrivacy(),
+    // Match the caller so RPC instrumentation strips metadata before invoking business methods.
     enableRpcTracePropagation: true,
   }),
   AgentFactBatcherBase,

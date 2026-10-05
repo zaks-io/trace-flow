@@ -1,0 +1,30 @@
+diff --git a/build/cjs/async.js b/build/cjs/async.js
+index bf50caf916b7c2b7a6ac2d0f46c24880d9aa87e3..996723f8e0b3b8cd1ebea8a5ec8e90f55adaa4b7 100644
+--- a/build/cjs/async.js
++++ b/build/cjs/async.js
+@@ -3,8 +3,9 @@ Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
+ const node_async_hooks = require('node:async_hooks');
+ const core = require('@sentry/core');
+ 
++const asyncStorage = new node_async_hooks.AsyncLocalStorage();
++
+ function setAsyncLocalStorageAsyncContextStrategy() {
+-  const asyncStorage = new node_async_hooks.AsyncLocalStorage();
+   function getScopes() {
+     const scopes = asyncStorage.getStore();
+     if (scopes) {
+diff --git a/build/esm/async.js b/build/esm/async.js
+index 17dbd65c111db6359161bff05a5d44291ee01229..59b8202910046e01bc23e554352f740326a59828 100644
+--- a/build/esm/async.js
++++ b/build/esm/async.js
+@@ -1,8 +1,9 @@
+ import { AsyncLocalStorage } from 'node:async_hooks';
+ import { setAsyncContextStrategy, _INTERNAL_createTracingChannelBinding, getDefaultIsolationScope, getDefaultCurrentScope } from '@sentry/core';
+ 
++const asyncStorage = new AsyncLocalStorage();
++
+ function setAsyncLocalStorageAsyncContextStrategy() {
+-  const asyncStorage = new AsyncLocalStorage();
+   function getScopes() {
+     const scopes = asyncStorage.getStore();
+     if (scopes) {

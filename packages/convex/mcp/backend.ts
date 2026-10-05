@@ -10,6 +10,8 @@ import {
 } from '@trace-flow/mcp-core';
 import { RETENTION_DAYS } from '@trace-flow/types';
 import { analyticsKeyId } from '@trace-flow/utils';
+import type { Scope } from '@sentry/core';
+import { serializeConvexTraceContext } from '../convexTracing';
 
 /**
  * Adapts the Convex action ctx to the host-agnostic `McpBackend` the dispatch
@@ -21,7 +23,11 @@ import { analyticsKeyId } from '@trace-flow/utils';
  * `/mcp-backend/*` routes the dedicated MCP worker calls use this same adapter,
  * so the row-security boundary is identical regardless of who dispatches.
  */
-export function createMcpBackend(ctx: ActionCtx, userId: Id<'users'>): McpBackend {
+export function createMcpBackend(
+  ctx: ActionCtx,
+  userId: Id<'users'>,
+  sentryScope?: Scope,
+): McpBackend {
   // One key fetch per request, shared across listApiKeys/resolveKeyIds/mintToken.
   let keysPromise: ReturnType<typeof loadKeys> | null = null;
   const loadKeys = () => ctx.runQuery(internal.apiKeys.listForUser, { userId });
@@ -57,6 +63,7 @@ export function createMcpBackend(ctx: ActionCtx, userId: Id<'users'>): McpBacken
         analyticsKeyIds,
         retentionDays,
         orgId: user?.orgId,
+        traceContext: serializeConvexTraceContext(sentryScope),
       });
     },
     listApiKeys: () => unexpiredMeta(),

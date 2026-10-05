@@ -1,4 +1,6 @@
 import type { Context } from 'hono';
+import { getActiveSpan } from '@sentry/cloudflare';
+import { getOriginalTraceparent } from '@trace-flow/utils/ingress-tracing';
 import { axiomConfigFromEnv, createWorkerLogger } from '@trace-flow/logging';
 import type { Logger } from '@trace-flow/logging';
 import {
@@ -187,9 +189,13 @@ export async function validateRequest(c: Context<{ Bindings: ProxyEnv }>): Promi
   const requestId = generateId();
 
   const traceparent = parseTraceparent(c.req.header('traceparent'));
-  const traceId = traceparent?.traceId ?? generateTraceId();
-  const parentSpanId = traceparent?.parentId ?? undefined;
-  const traceFlags = traceparent?.flags ?? 0x01;
+  const activeContext = getActiveSpan()?.spanContext();
+  const traceId = traceparent?.traceId ?? activeContext?.traceId ?? generateTraceId();
+  const originalParent = getOriginalTraceparent(c.req.raw);
+  const parentSpanId = originalParent?.traceId === traceId ? originalParent.parentId : undefined;
+  const traceFlags = activeContext
+    ? ((traceparent?.flags ?? 0) & ~1) | (activeContext.traceFlags & 1)
+    : (traceparent?.flags ?? 0x01);
   const traceState = c.req.header('tracestate') ?? '';
   const baggage = parseBaggage(c.req.header('baggage'));
   const omitBody = c.req.header('X-Trace-Flow-Omit-Body') === 'true';

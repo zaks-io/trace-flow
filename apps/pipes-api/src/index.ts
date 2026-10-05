@@ -1,6 +1,9 @@
+import { sentryRequestPrivacy } from '@trace-flow/utils/sentry-tracing';
 import { fetchFromTinybird } from './tinybird';
 import * as Sentry from '@sentry/cloudflare';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
+import { normalizeTraceRequest } from '@trace-flow/utils/ingress-tracing';
+import { withNativeTrace } from '@trace-flow/utils/native-tracing';
 import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { axiomConfigFromEnv, createWorkerLogger, type Logger } from '@trace-flow/logging';
@@ -34,7 +37,14 @@ const NON_PROD_ORIGINS = [
 ];
 
 const DEV_ORIGINS = ['http://localhost:3000', 'http://localhost:8788'];
-const ALLOWED_BROWSER_HEADERS = ['Content-Type', 'Authorization', 'Baggage', 'Sentry-Trace'];
+const ALLOWED_BROWSER_HEADERS = [
+  'Content-Type',
+  'Authorization',
+  'Baggage',
+  'Sentry-Trace',
+  'Traceparent',
+  'Tracestate',
+];
 const EXPOSED_BROWSER_HEADERS = [
   'X-Cache',
   'X-Trace-Flow-Pipe',
@@ -47,6 +57,10 @@ const PASSTHROUGH_STATUSES = new Set([400, 401, 403, 404, 429]);
 const UPSTREAM_ERROR_BODY_LIMIT = 2048;
 
 export const pipesApp = new Hono<{ Bindings: Env; Variables: Variables }>();
+
+pipesApp.use('*', (c, next) =>
+  withNativeTrace((c.executionCtx as ExecutionContext).tracing, 'trace_flow.pipes_request', next),
+);
 
 pipesApp.use('*', async (c: Context<{ Bindings: Env; Variables: Variables }, string>, next) => {
   const isDev = c.env.SENTRY_ENVIRONMENT !== 'prod';
@@ -265,13 +279,20 @@ function truncateAndRedact(value: string, limit: number): string {
   return `${redacted.slice(0, limit)}...[truncated ${redacted.length - limit} chars]`;
 }
 
-export default Sentry.withSentry(
+const instrumentedPipes = Sentry.withSentry(
   (env: Env) => ({
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
     tracesSampleRate: 1.0,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
+    ...sentryRequestPrivacy(),
   }),
   pipesApp,
 );
+
+export default {
+  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    return instrumentedPipes.fetch(normalizeTraceRequest(request), env, ctx);
+  },
+};

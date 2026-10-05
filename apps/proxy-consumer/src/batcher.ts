@@ -1,6 +1,12 @@
+import { sentryRequestPrivacy } from '@trace-flow/utils/sentry-tracing';
 import * as Sentry from '@sentry/cloudflare';
 import { normalizeAnalyticsKey } from '@trace-flow/utils';
-import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
+import {
+  durableSentryTraceHeader,
+  captureSafeException,
+  sentryTraceLinks,
+  TRACE_FLOW_PROPAGATION_TARGETS,
+} from '@trace-flow/utils/sentry-tracing';
 import { DurableObject } from 'cloudflare:workers';
 import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import type { OTLPQueueMessage, TinybirdTrace } from '@trace-flow/types';
@@ -30,8 +36,8 @@ const MAX_JITTER_MS = 1000;
 const STALE_FLUSH_THRESHOLD_MS = 60 * 60 * 1000;
 // Cloudflare DO SQLite limits bind params; stay well under the limit
 const MAX_SQL_PARAMS = 90;
-// INSERT uses 2 params per row (data, timestamp)
-const MAX_INSERT_ROWS = Math.floor(MAX_SQL_PARAMS / 2);
+// Include durable producer context without exceeding SQLite's bind limit.
+const MAX_INSERT_ROWS = Math.floor(MAX_SQL_PARAMS / 3);
 
 export const TRACE_BATCHER_BATCH_SIZE = BATCH_SIZE;
 export const TRACE_BATCHER_FLUSH_INTERVAL_MS = FLUSH_INTERVAL_MS;
@@ -53,6 +59,7 @@ interface StoredTraceRow {
   data: string;
   clean_sent_at_ms: number | null;
   legacy_sent_at_ms: number | null;
+  producer_sentry_trace: string | null;
 }
 
 interface TinybirdTraceTarget {
@@ -64,6 +71,10 @@ export interface MessageTraceBatchItem {
   messageId: string;
   traces: TinybirdTrace[];
   importedExecution?: OTLPQueueMessage['importedExecution'];
+}
+
+export interface MessageTraceBatchOptions {
+  sentryTraceHeaders?: Record<string, string>;
 }
 
 export interface MessageTraceResult {
@@ -157,6 +168,7 @@ class TraceBatcherBase extends DurableObject<Env> {
     `);
     this.ensureColumn('traces', 'clean_sent_at_ms', 'INTEGER');
     this.ensureColumn('traces', 'legacy_sent_at_ms', 'INTEGER');
+    this.ensureColumn('traces', 'producer_sentry_trace', 'TEXT');
 
     this.durableState.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS processed_messages (
@@ -247,7 +259,18 @@ class TraceBatcherBase extends DurableObject<Env> {
     }
   }
 
-  async addMessageTraces(items: MessageTraceBatchItem[]): Promise<MessageTraceResult[]> {
+  async addMessageTraces(
+    items: MessageTraceBatchItem[],
+    options: MessageTraceBatchOptions = {},
+  ): Promise<MessageTraceResult[]> {
+    for (const [messageId, header] of Object.entries(options.sentryTraceHeaders ?? {})) {
+      if (
+        !items.some((item) => item.messageId === messageId) ||
+        !durableSentryTraceHeader({ 'sentry-trace': header })
+      ) {
+        throw new Error('Invalid trace batch producer context');
+      }
+    }
     if (items.length === 0) {
       return [];
     }
@@ -258,7 +281,11 @@ class TraceBatcherBase extends DurableObject<Env> {
 
     for (const item of items) {
       try {
-        const summary = this.insertMessageTraces(item, now);
+        const summary = this.insertMessageTraces(
+          item,
+          now,
+          options.sentryTraceHeaders?.[item.messageId] ?? null,
+        );
         if (summary.messageInserted) {
           insertedTraceCount += summary.queuedTraces;
         }
@@ -387,7 +414,7 @@ class TraceBatcherBase extends DurableObject<Env> {
   private selectHealthyRows(target: TinybirdTraceTarget): StoredTraceRow[] {
     return [
       ...this.durableState.storage.sql.exec<StoredTraceRow>(
-        `SELECT id, data, clean_sent_at_ms, legacy_sent_at_ms
+        `SELECT id, data, clean_sent_at_ms, legacy_sent_at_ms, producer_sentry_trace
          FROM traces AS t
          WHERE ${target.sentColumn} IS NULL
            AND NOT EXISTS (
@@ -420,6 +447,27 @@ class TraceBatcherBase extends DurableObject<Env> {
     rows: StoredTraceRow[],
   ): Promise<'confirmed' | 'blocked' | 'retryable'> {
     if (rows.length === 0) return 'confirmed';
+    const headers = [...new Set(rows.map((row) => row.producer_sentry_trace).filter(Boolean))];
+    const links = sentryTraceLinks(headers);
+    return Sentry.startSpan(
+      {
+        name: 'flush trace batch',
+        op: 'queue.flush',
+        links,
+        attributes: {
+          'messaging.batch.message_count': rows.length,
+          'trace_flow.producer_link_count': links.length,
+          'trace_flow.producer_links_omitted': headers.length - links.length,
+        },
+      },
+      () => this.sendTraceBatchInner(target, rows),
+    );
+  }
+
+  private async sendTraceBatchInner(
+    target: TinybirdTraceTarget,
+    rows: StoredTraceRow[],
+  ): Promise<'confirmed' | 'blocked' | 'retryable'> {
     const rowIds = rows.map((row) => row.id);
     let traces: TinybirdTrace[];
     try {
@@ -486,9 +534,7 @@ class TraceBatcherBase extends DurableObject<Env> {
       return 'confirmed';
     } catch (error) {
       const classification = classifyTinybirdInsertFailure(error);
-      const sanitizedError = new Error(
-        error instanceof Error ? error.message : 'Tinybird insert failed',
-      );
+      const sanitizedError = new Error('Tinybird insert failed');
       this.logger
         .child({ traceId: firstTraceId(rows) })
         .error('consumer.tinybird_flush_failed', sanitizedError, {
@@ -496,7 +542,10 @@ class TraceBatcherBase extends DurableObject<Env> {
           classification,
           datasource: target.datasource,
         });
-      Sentry.captureException(sanitizedError, { tags: { operation: 'flush', classification } });
+      captureSafeException(error, {
+        message: 'Tinybird insert failed',
+        operation: 'trace_batcher.flush',
+      });
 
       if (classification === 'retryable') {
         this.recovery.discardIntent(recoveryId);
@@ -687,7 +736,11 @@ class TraceBatcherBase extends DurableObject<Env> {
     };
   }
 
-  private insertMessageTraces(item: MessageTraceBatchItem, now: number): TraceInsertSummary {
+  private insertMessageTraces(
+    item: MessageTraceBatchItem,
+    now: number,
+    producerSentryTrace: string | null,
+  ): TraceInsertSummary {
     const summary: TraceInsertSummary = {
       messageInserted: false,
       queuedTraces: 0,
@@ -788,10 +841,14 @@ class TraceBatcherBase extends DurableObject<Env> {
                 new TextEncoder().encode(JSON.stringify(trace)).byteLength <= MAX_NDJSON_BYTES,
             );
           if (chunk.length === 0) continue;
-          const values = chunk.map(() => '(?, ?)').join(', ');
-          const params = chunk.flatMap((trace) => [JSON.stringify(trace), timestamp]);
+          const values = chunk.map(() => '(?, ?, ?)').join(', ');
+          const params = chunk.flatMap((trace) => [
+            JSON.stringify(trace),
+            timestamp,
+            producerSentryTrace,
+          ]);
           this.durableState.storage.sql.exec(
-            `INSERT INTO traces (data, timestamp) VALUES ${values}`,
+            `INSERT INTO traces (data, timestamp, producer_sentry_trace) VALUES ${values}`,
             ...params,
           );
         }
@@ -799,9 +856,10 @@ class TraceBatcherBase extends DurableObject<Env> {
           const data = JSON.stringify(trace);
           if (new TextEncoder().encode(data).byteLength <= MAX_NDJSON_BYTES) continue;
           this.durableState.storage.sql.exec(
-            'INSERT INTO traces (data, timestamp) VALUES (?, ?)',
+            'INSERT INTO traces (data, timestamp, producer_sentry_trace) VALUES (?, ?, ?)',
             '',
             timestamp,
+            producerSentryTrace,
           );
           const traceId = this.durableState.storage.sql
             .exec<{ id: number }>('SELECT last_insert_rowid() AS id')
@@ -900,6 +958,7 @@ export const TraceBatcher = Sentry.instrumentDurableObjectWithSentry(
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
     tracesSampleRate: 1.0,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
+    ...sentryRequestPrivacy(),
     // Must match the calling Worker: the stub appends a trailing metadata argument that only an
     // RPC-instrumented Durable Object strips back off before the method sees its args.
     enableRpcTracePropagation: true,

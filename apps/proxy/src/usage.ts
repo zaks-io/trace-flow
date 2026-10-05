@@ -1,5 +1,6 @@
 import type { SubscriptionKVData, SubscriptionTier } from '@trace-flow/types';
 import { getCached } from './cache';
+import { internalTraceHeaders } from '@trace-flow/utils/sentry-tracing';
 
 interface UsageEnv {
   API_KEYS: KVNamespace;
@@ -49,6 +50,7 @@ export async function checkUsage(
     const doResponse = await stub.fetch(
       new Request('http://do/check', {
         method: 'POST',
+        headers: internalTraceHeaders(),
         body: JSON.stringify({ count, subscriptionConfig, orgId }),
       }),
     );

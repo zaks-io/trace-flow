@@ -233,6 +233,7 @@ function clearErasedCoordinatorMetadata(storage: DurableObjectStorage): void {
     DELETE FROM active_delivery_days;
     DELETE FROM dirty_day_links;
     DELETE FROM dirty_days;
+    DELETE FROM snapshot_producer_traces;
     DELETE FROM incomplete_days;
     DELETE FROM snapshot_days;
     DELETE FROM snapshot_progress;

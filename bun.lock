@@ -319,9 +319,11 @@
       "name": "@trace-flow/logging",
       "version": "0.0.1",
       "dependencies": {
+        "@sentry/core": "10.73.0",
         "@trace-flow/utils": "workspace:*",
       },
       "devDependencies": {
+        "@sentry/cloudflare": "10.73.0",
         "@vitest/coverage-v8": "^4.1.11",
         "typescript": "^5.9.3",
         "vitest": "^4.1.11",
@@ -331,6 +333,7 @@
       "name": "@trace-flow/mcp-core",
       "version": "0.0.1",
       "dependencies": {
+        "@sentry/core": "10.73.0",
         "@trace-flow/otel-conventions": "workspace:*",
         "@trace-flow/tinybird-client": "workspace:*",
       },
@@ -441,6 +444,9 @@
         "vitest": "^4.1.11",
       },
     },
+  },
+  "patchedDependencies": {
+    "@sentry/cloudflare@10.73.0": "patches/@sentry%2Fcloudflare@10.73.0.patch",
   },
   "overrides": {
     "@types/react": "19.2.14",

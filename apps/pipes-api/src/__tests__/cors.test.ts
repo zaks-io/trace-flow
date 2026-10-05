@@ -3,6 +3,10 @@ import { pipesApp } from '../index';
 
 function executionCtx() {
   return {
+    tracing: {
+      enterSpan: <T>(_name: string, callback: (span: Span) => T) =>
+        callback({ isTraced: false, setAttribute: vi.fn(), end: vi.fn() }),
+    },
     waitUntil: vi.fn(),
     passThroughOnException: vi.fn(),
   } as unknown as ExecutionContext;
@@ -16,7 +20,8 @@ describe('pipes API CORS', () => {
         headers: {
           Origin: 'https://trace-flow.dev',
           'Access-Control-Request-Method': 'GET',
-          'Access-Control-Request-Headers': 'authorization,baggage,sentry-trace',
+          'Access-Control-Request-Headers':
+            'authorization,baggage,sentry-trace,traceparent,tracestate',
         },
       }),
       { SENTRY_ENVIRONMENT: 'prod' },
@@ -26,7 +31,7 @@ describe('pipes API CORS', () => {
     expect(res.status).toBe(204);
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://trace-flow.dev');
     expect(res.headers.get('Access-Control-Allow-Headers')).toBe(
-      'Content-Type,Authorization,Baggage,Sentry-Trace',
+      'Content-Type,Authorization,Baggage,Sentry-Trace,Traceparent,Tracestate',
     );
   });
 });

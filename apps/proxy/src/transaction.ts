@@ -8,6 +8,7 @@ import type {
 } from '@trace-flow/types';
 import type { ResolvedRoute } from '@trace-flow/llm-providers';
 import type { Logger } from '@trace-flow/logging';
+import * as Sentry from '@sentry/cloudflare';
 import {
   COUNT_TOKENS_OPERATION,
   getCurrentTimestamp,
@@ -24,6 +25,34 @@ import { MAX_REQUEST_SIZE } from './pipeline/validateRequest';
 import type { ProxyEnv, TracingDecision } from './context';
 import type { AttachedCapture } from './pipeline/attachCapture';
 import type { UpstreamFetchError } from './pipeline/forwardToUpstream';
+
+type ProxyFailureOperation =
+  | 'upstream_fetch'
+  | 'request_capture'
+  | 'response_stream'
+  | 'capture'
+  | 'analytics_write'
+  | 'queue_send'
+  | 'stream_cleanup'
+  | 'handler';
+
+export type ProxyFailureReporter = (error: unknown, operation: ProxyFailureOperation) => void;
+
+/** Raw provider and stream exceptions can contain customer payloads or credentials. */
+export function createProxyFailureReporter(): ProxyFailureReporter {
+  const reported = new Set<unknown>();
+  return (error, operation) => {
+    const aborted = error instanceof Error && error.name === 'AbortError';
+    if (aborted && (operation === 'response_stream' || operation === 'stream_cleanup')) return;
+    if (reported.has(error)) return;
+    reported.add(error);
+    const category = aborted ? 'aborted' : error instanceof TypeError ? 'type_error' : 'unexpected';
+    Sentry.getActiveSpan()?.setStatus({ code: 2, message: 'internal_error' });
+    Sentry.captureException(new Error(`Proxy ${operation} failed`), {
+      tags: { 'proxy.operation': operation, 'proxy.failure_category': category },
+    });
+  };
+}
 
 /**
  * Output of `drainCapture`. Composes the attached stage and adds the stream-side
@@ -98,12 +127,14 @@ interface PersistOpts {
   route: ResolvedRoute;
   omitBody: boolean;
   logger: Logger;
+  reportFailure?: ProxyFailureReporter;
 }
 
 interface SkipOpts {
   decision: TracingDecision;
   route: ResolvedRoute;
   logger: Logger;
+  reportFailure?: ProxyFailureReporter;
 }
 
 export async function buildUpstreamFailureTransaction(
@@ -220,7 +251,11 @@ export async function drainCapture(attached: AttachedCapture): Promise<DrainedCa
  * adapters may throw on malformed bodies, and we want a breadcrumb without
  * dropping the whole transaction.
  */
-export function buildTransaction(drained: DrainedCapture, logger: Logger): Transaction {
+export function buildTransaction(
+  drained: DrainedCapture,
+  logger: Logger,
+  reportFailure: ProxyFailureReporter = createProxyFailureReporter(),
+): Transaction {
   const { attached, requestBody, responseBody, responseComplete, firstTokenReceived } = drained;
   const { forwarded, isSSE, sseStreamData } = attached;
   const { validated, response, targetUrl } = forwarded;
@@ -234,7 +269,8 @@ export function buildTransaction(drained: DrainedCapture, logger: Logger): Trans
   }
 
   if (drained.requestCaptureError) {
-    logger.error('proxy.request_capture_failed', drained.requestCaptureError);
+    logger.error('proxy.request_capture_failed');
+    reportFailure(drained.requestCaptureError, 'request_capture');
   }
 
   // For SSE responses, only use aggregated SSE tokens — parsing raw SSE text
@@ -319,7 +355,7 @@ export async function persistTransaction(
   transaction: Transaction,
   opts: PersistOpts,
 ): Promise<PersistedTransaction> {
-  const { tier, route, omitBody, logger } = opts;
+  const { tier, route, omitBody, logger, reportFailure = createProxyFailureReporter() } = opts;
 
   try {
     const redactedRequestBody = redactBody(transaction.requestBody);
@@ -387,7 +423,8 @@ export async function persistTransaction(
         stored: !omitBody,
       });
     } catch (err) {
-      logger.error('proxy.analytics_write_failed', err);
+      logger.error('proxy.analytics_write_failed');
+      reportFailure(err, 'analytics_write');
     }
 
     logger.info('proxy.capture_metrics', {
@@ -425,7 +462,7 @@ export async function persistTransaction(
     );
     return { deliveryKey, message: queueMessage };
   } catch (err) {
-    logger.error('proxy.capture_failed', err);
+    logger.error('proxy.capture_failed');
     throw err;
   }
 }
@@ -434,11 +471,13 @@ export async function enqueuePersistedTransaction(
   env: ProxyEnv,
   persisted: PersistedTransaction,
   logger: Logger,
+  reportFailure: ProxyFailureReporter = createProxyFailureReporter(),
 ): Promise<void> {
   try {
     await enqueueTraceDelivery(env.REQUEST_QUEUE, persisted.deliveryKey, persisted.message);
   } catch (err) {
-    logger.error('proxy.queue_send_failed', err, { deliveryKey: persisted.deliveryKey });
+    logger.error('proxy.queue_send_failed', undefined, { deliveryKey: persisted.deliveryKey });
+    reportFailure(err, 'queue_send');
   } finally {
     await logger.flush();
   }
@@ -454,7 +493,7 @@ export async function recordSkippedExchange(
   attached: AttachedCapture,
   opts: SkipOpts,
 ): Promise<void> {
-  const { decision, route, logger } = opts;
+  const { decision, route, logger, reportFailure = createProxyFailureReporter() } = opts;
   const { forwarded, isSSE, pipePromise, capture } = attached;
   const { validated, response, streamToCapture } = forwarded;
   capture.release();
@@ -478,7 +517,8 @@ export async function recordSkippedExchange(
     await pipePromise;
   } catch (err) {
     if (err instanceof Error && err.name !== 'AbortError') {
-      logger.error('proxy.stream_cleanup_failed', err);
+      logger.error('proxy.stream_cleanup_failed');
+      reportFailure(err, 'stream_cleanup');
     }
   } finally {
     await logger.flush();

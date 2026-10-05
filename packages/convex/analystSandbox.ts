@@ -85,7 +85,7 @@ async function runTraceFlowTool(
 ): Promise<ToolCallResult> {
   const response = await withTinybirdTracing((sentryScope) =>
     dispatchToolCall(
-      createMcpBackend(ctx, userId),
+      createMcpBackend(ctx, userId, sentryScope),
       TINYBIRD_BASE_URL,
       Date.now(),
       params,

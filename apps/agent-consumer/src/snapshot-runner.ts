@@ -1,4 +1,5 @@
-import * as Sentry from '@sentry/cloudflare';
+import { captureSafeException } from '@trace-flow/utils/sentry-tracing';
+import { linkSnapshotProducers } from './snapshot-tracing';
 import { SNAPSHOT_CAPACITY_NAME } from './snapshot-capacity';
 import type { AgentConsumerEnv } from './context';
 import type { AgentSnapshotProgress } from './agent-delivery-coordinator-contract';
@@ -87,6 +88,13 @@ export async function runAgentSnapshot(
     generation: progress.generation,
     dirtyDays: progress.dirtyDays,
   };
+  const tracedProgress = await coordinator.getSnapshotProgress(
+    { generation: progress.generation, claimId },
+    { includeTraceLinks: true },
+  );
+  if ('sentryTraceHeaders' in tracedProgress && Array.isArray(tracedProgress.sentryTraceHeaders)) {
+    linkSnapshotProducers(tracedProgress.sentryTraceHeaders);
+  }
   const capacity = env.AGENT_SNAPSHOT_CAPACITY.getByName(SNAPSHOT_CAPACITY_NAME);
   const slot = { orgId, generation: plan.generation };
   const continueRun = (current: AgentSnapshotProgress) =>
@@ -188,7 +196,10 @@ export async function runAgentSnapshot(
       if (!jobId) throw new Error('Terminal snapshot job has no receipt');
       await coordinator.settleSnapshotCopyIntent({ ...key, jobId, status });
       if (status === 'error') throw new Error(`Snapshot Copy job ${jobId} failed`);
-      progress = await coordinator.getSnapshotProgress({ generation: plan.generation, claimId });
+      progress = await coordinator.getSnapshotProgress({
+        generation: plan.generation,
+        claimId,
+      });
     }
 
     assertSnapshotDaysRetained(plan.dirtyDays, Date.now());
@@ -200,7 +211,10 @@ export async function runAgentSnapshot(
       recovery: false,
     });
     if (!check.ready) return await continueRun(progress);
-    progress = await coordinator.prepareSnapshotManifest({ generation: plan.generation, claimId });
+    progress = await coordinator.prepareSnapshotManifest({
+      generation: plan.generation,
+      claimId,
+    });
     if (progress.manifestPublishedAtMs === undefined)
       throw new Error('snapshot manifest timestamp is missing');
     const publishedAtMs = progress.manifestPublishedAtMs;
@@ -211,9 +225,9 @@ export async function runAgentSnapshot(
     );
     await coordinator.finishSnapshot({ generation: plan.generation, claimId });
   } catch (error) {
-    Sentry.captureException(error, {
-      tags: { operation: 'agent_snapshot' },
-      extra: { orgId, generation: plan.generation },
+    captureSafeException(error, {
+      message: 'Agent snapshot processing failed',
+      operation: 'agent_snapshot',
     });
     const failure = (await coordinator.getSnapshotSchedule({})).failure;
     if (failure?.generation === plan.generation) {

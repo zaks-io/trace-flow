@@ -4,6 +4,12 @@ import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { JWKS_PATH, MCP_ACCESS_TOKEN_ALG, MCP_ACCESS_TOKEN_KID } from '@trace-flow/mcp-core';
 
 const CONNECT_ORIGIN = 'https://connect.test';
+const clientTraceHeaders = {
+  traceparent: '00-11111111111111111111111111111111-2222222222222222-01',
+  tracestate: 'vendor=value',
+  baggage: 'sentry-environment=external',
+  'sentry-trace': '11111111111111111111111111111111-2222222222222222-1',
+};
 const signingKeyPair = generateKeyPair(MCP_ACCESS_TOKEN_ALG, { extractable: true });
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -254,10 +260,14 @@ describe('MCP worker auth discovery', () => {
       const req = new Request(input, init);
       expect(req.method).toBe('GET');
       expect(req.url).toBe(`${CONNECT_ORIGIN}/.well-known/oauth-authorization-server`);
+      for (const header of Object.keys(clientTraceHeaders))
+        expect(req.headers.has(header)).toBe(false);
       return jsonResponse({ issuer: CONNECT_ORIGIN });
     });
 
-    const res = await SELF.fetch('http://localhost/.well-known/oauth-authorization-server');
+    const res = await SELF.fetch('http://localhost/.well-known/oauth-authorization-server', {
+      headers: clientTraceHeaders,
+    });
 
     expect(fetchSpy).toHaveBeenCalledOnce();
     expect(res.status).toBe(200);
@@ -269,6 +279,8 @@ describe('MCP worker auth discovery', () => {
       const req = new Request(input, init);
       expect(req.method).toBe('POST');
       expect(req.url).toBe(`${CONNECT_ORIGIN}/mcp/register`);
+      for (const header of Object.keys(clientTraceHeaders))
+        expect(req.headers.has(header)).toBe(false);
       expect(await req.json()).toEqual({ client_name: 'Claude Code' });
       return jsonResponse({ client_id: 'client-1' }, 201);
     });
@@ -291,7 +303,7 @@ describe('MCP worker auth discovery', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const res = await SELF.fetch('http://localhost/mcp/register', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...clientTraceHeaders },
       body: JSON.stringify({ client_name: 'Claude Code' }),
     });
 
@@ -350,6 +362,8 @@ describe('MCP worker auth discovery', () => {
       const req = new Request(input, init);
       expect(req.method).toBe('POST');
       expect(req.url).toBe(`${CONNECT_ORIGIN}/mcp/token`);
+      for (const header of Object.keys(clientTraceHeaders))
+        expect(req.headers.has(header)).toBe(false);
       const body = await req.formData();
       expect(body.get('grant_type')).toBe('authorization_code');
       expect(body.get('code')).toBe('code-1');
@@ -359,7 +373,10 @@ describe('MCP worker auth discovery', () => {
 
     const res = await SELF.fetch('http://localhost/mcp/token', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        ...clientTraceHeaders,
+      },
       body: 'grant_type=authorization_code&code=code-1',
     });
 

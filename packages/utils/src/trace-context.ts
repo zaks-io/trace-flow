@@ -1,6 +1,13 @@
 // W3C Trace Context types and utilities
 // https://www.w3.org/TR/trace-context/
 
+export const TRACE_CONTEXT_HEADERS = [
+  'traceparent',
+  'tracestate',
+  'baggage',
+  'sentry-trace',
+] as const;
+
 export interface TraceparentData {
   version: string;
   traceId: string;

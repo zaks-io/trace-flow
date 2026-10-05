@@ -1,13 +1,20 @@
+import { sentryRequestPrivacy } from '@trace-flow/utils/sentry-tracing';
 import {
   axiomConfigFromEnv,
   createLogger,
-  traceContextToHeaders,
   type Logger,
   type TraceContext,
 } from '@trace-flow/logging';
 import type { SubscriptionKVData } from '@trace-flow/types';
 import { generateTraceId } from '@trace-flow/utils';
-import { DurableObject } from 'cloudflare:workers';
+import { DurableObject, tracing } from 'cloudflare:workers';
+import * as Sentry from '@sentry/cloudflare';
+import {
+  captureSafeException,
+  internalTraceHeaders,
+  TRACE_FLOW_PROPAGATION_TARGETS,
+} from '@trace-flow/utils/sentry-tracing';
+import { withNativeTrace } from '@trace-flow/utils/native-tracing';
 
 interface Env {
   CONVEX_SITE_URL: string;
@@ -15,6 +22,9 @@ interface Env {
   AXIOM_TOKEN?: string;
   AXIOM_DATASET?: string;
   AXIOM_DOMAIN?: string;
+  SENTRY_DSN?: string;
+  SENTRY_ENVIRONMENT?: string;
+  CF_VERSION_METADATA?: { id: string };
 }
 
 interface CheckRequest {
@@ -52,7 +62,7 @@ interface UsageSyncPayload {
 export function buildUsageSyncRequestInit(secret: string, payload: UsageSyncPayload): RequestInit {
   return {
     method: 'POST',
-    headers: traceContextToHeaders(payload.traceContext ?? {}, {
+    headers: internalTraceHeaders({
       'Content-Type': 'application/json',
       Authorization: `Bearer ${secret}`,
     }),
@@ -64,12 +74,12 @@ export function isPermanentUsageSyncFailure(status: number): boolean {
   return status >= 400 && status < 500 && status !== 408 && status !== 429;
 }
 
-export class UsageTracker extends DurableObject<Env> {
+class UsageTrackerBase extends DurableObject<Env> {
   private initialized = false;
 
   private createTraceContext(orgId: string, periodStart: number, periodEnd: number): TraceContext {
     return {
-      traceId: generateTraceId(),
+      traceId: Sentry.getActiveSpan()?.spanContext().traceId ?? generateTraceId(),
       workflowId: `usage:${orgId}:${periodStart}:${periodEnd}`,
       orgId,
     };
@@ -211,7 +221,11 @@ export class UsageTracker extends DurableObject<Env> {
           traceContext,
         );
       } catch (e) {
-        logger.error('proxy.usage_rollover_push_failed', e);
+        logger.error('proxy.usage_rollover_push_failed');
+        captureSafeException(e, {
+          message: 'Usage rollover synchronization failed',
+          operation: 'usage.rollover',
+        });
       } finally {
         await logger.flush();
       }
@@ -254,6 +268,10 @@ export class UsageTracker extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
+    return withNativeTrace(tracing, 'trace_flow.usage', () => this.handleFetch(request));
+  }
+
+  private async handleFetch(request: Request): Promise<Response> {
     this.ensureTables();
 
     const url = new URL(request.url);
@@ -326,6 +344,10 @@ export class UsageTracker extends DurableObject<Env> {
   }
 
   async alarm() {
+    return withNativeTrace(tracing, 'trace_flow.usage_alarm', () => this.handleAlarm());
+  }
+
+  private async handleAlarm() {
     this.ensureTables();
 
     const config = this.getConfig();
@@ -354,7 +376,11 @@ export class UsageTracker extends DurableObject<Env> {
           traceContext,
         );
       } catch (e) {
-        logger.error('proxy.usage_alarm_push_failed', e);
+        logger.error('proxy.usage_alarm_push_failed');
+        captureSafeException(e, {
+          message: 'Usage alarm synchronization failed',
+          operation: 'usage.alarm',
+        });
         await this.ctx.storage.setAlarm(Date.now() + 60_000);
         return;
       } finally {
@@ -395,18 +421,16 @@ export class UsageTracker extends DurableObject<Env> {
     );
 
     if (!response.ok) {
-      const body = await response.text();
+      await response.arrayBuffer();
       if (isPermanentUsageSyncFailure(response.status)) {
         logger.warn('proxy.usage_sync_rejected', {
           status: response.status,
-          body,
         });
         return;
       }
 
       logger.error('proxy.usage_sync_failed', undefined, {
         status: response.status,
-        body,
       });
       throw new Error(`pushToConvex failed: ${response.status} ${response.statusText}`);
     }
@@ -419,3 +443,16 @@ export class UsageTracker extends DurableObject<Env> {
     });
   }
 }
+
+export const UsageTracker = Sentry.instrumentDurableObjectWithSentry(
+  (env: Env) => ({
+    dsn: env.SENTRY_DSN,
+    release: env.CF_VERSION_METADATA?.id,
+    environment: env.SENTRY_ENVIRONMENT ?? 'development',
+    tracesSampleRate: 1,
+    enableRpcTracePropagation: true,
+    tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
+    ...sentryRequestPrivacy(),
+  }),
+  UsageTrackerBase,
+);

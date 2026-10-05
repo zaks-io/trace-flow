@@ -1,6 +1,13 @@
+import { sentryRequestPrivacy } from '@trace-flow/utils/sentry-tracing';
 import * as Sentry from '@sentry/cloudflare';
-import { BodySizeLimitError, readRequestBodyWithLimit } from '@trace-flow/utils';
+import {
+  BodySizeLimitError,
+  readRequestBodyWithLimit,
+  TRACE_CONTEXT_HEADERS,
+} from '@trace-flow/utils';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
+import { normalizeTraceRequest } from '@trace-flow/utils/ingress-tracing';
+import { withNativeTrace } from '@trace-flow/utils/native-tracing';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { axiomConfigFromEnv, createWorkerLogger, type Logger } from '@trace-flow/logging';
@@ -54,6 +61,10 @@ interface Variables {
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
+app.use('*', (c, next) =>
+  withNativeTrace((c.executionCtx as ExecutionContext).tracing, 'trace_flow.mcp_request', next),
+);
+
 const OAUTH_METADATA_PATH = '/.well-known/oauth-authorization-server';
 const MCP_SSE_HEARTBEAT_MS = 15_000;
 const MCP_REQUEST_MAX_BYTES = 256 * 1024;
@@ -82,7 +93,16 @@ app.use(
   cors({
     origin: '*',
     allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id', 'Mcp-Protocol-Version'],
+    allowHeaders: [
+      'Content-Type',
+      'Authorization',
+      'Mcp-Session-Id',
+      'Mcp-Protocol-Version',
+      'Baggage',
+      'Sentry-Trace',
+      'Traceparent',
+      'Tracestate',
+    ],
     exposeHeaders: ['Mcp-Session-Id'],
     maxAge: 86400,
   }),
@@ -133,12 +153,14 @@ async function proxyConnect(
 ): Promise<Response> {
   const url = new URL(path, normalizeOrigin(c.env.CONNECT_BASE_URL));
   const req = new Request(url, c.req.raw);
+  for (const header of TRACE_CONTEXT_HEADERS) req.headers.delete(header);
   return fetch(req);
 }
 
 async function proxyToken(c: { req: { raw: Request }; env: Env }): Promise<Response> {
   const url = new URL('/mcp/token', normalizeOrigin(c.env.CONNECT_BASE_URL));
   const headers = new Headers(c.req.raw.headers);
+  for (const header of TRACE_CONTEXT_HEADERS) headers.delete(header);
   headers.delete('content-length');
 
   const contentType = headers.get('content-type')?.toLowerCase() ?? '';
@@ -510,7 +532,7 @@ async function handleInitialize(
 
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
 
-export default Sentry.withSentry(
+const instrumentedMcp = Sentry.withSentry(
   (env: Env) => ({
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
@@ -518,6 +540,13 @@ export default Sentry.withSentry(
     tracesSampleRate: 1.0,
     sendDefaultPii: false,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
+    ...sentryRequestPrivacy(),
   }),
   app,
 );
+
+export default {
+  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    return instrumentedMcp.fetch(normalizeTraceRequest(request), env, ctx);
+  },
+};

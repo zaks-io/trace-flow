@@ -1,4 +1,5 @@
 import type { Logger } from '@trace-flow/logging';
+import { internalTraceHeaders } from '@trace-flow/utils/sentry-tracing';
 
 /**
  * First-writer session ownership. Before enqueuing a session's facts the Worker asks Convex (2a's
@@ -92,10 +93,10 @@ async function claimChunk(
   try {
     res = await fetch(`${env.CONVEX_SITE_URL}/agent-ingest/claim-sessions`, {
       method: 'POST',
-      headers: {
+      headers: internalTraceHeaders({
         Authorization: `Bearer ${env.AGENT_INGEST_SHARED_SECRET}`,
         'Content-Type': 'application/json',
-      },
+      }),
       body: JSON.stringify(request),
       signal: AbortSignal.timeout(CLAIM_TIMEOUT_MS),
     });

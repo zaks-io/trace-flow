@@ -5,6 +5,7 @@ import { internal } from '../_generated/api';
 import { hasApiKeyPermission } from '../apiKeyPermissions';
 import { verifyPipesAccessGrant } from '../pipesAccessGrant';
 import { hasValidBearerSecret, isConvexDocumentId, isJsonContentType } from './shared';
+import { getRequestSentryScope, serializeConvexTraceContext } from '../convexTracing';
 
 export function registerWorkerAuthorizationRoutes(app: HonoWithConvex<ActionCtx>): void {
   app.post('/worker/authorize-body-access', async (c) => {
@@ -95,6 +96,7 @@ export function registerWorkerAuthorizationRoutes(app: HonoWithConvex<ActionCtx>
         userId: grant.userId as Id<'users'>,
         orgId: grant.orgId as Id<'organizations'>,
         pipe: body.pipe,
+        traceContext: serializeConvexTraceContext(getRequestSentryScope(c.req.raw)),
       },
     );
     if (!authorization) return c.json({ authorized: false as const });

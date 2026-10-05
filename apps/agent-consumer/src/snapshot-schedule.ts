@@ -1,4 +1,9 @@
 import type { AgentSnapshotQueueMessage } from '@trace-flow/types';
+import { getActiveSpan } from '@sentry/cloudflare';
+import {
+  currentSentryTraceContext,
+  durableSentryTraceHeader,
+} from '@trace-flow/utils/sentry-tracing';
 import type { AgentDeliveryCoordinatorStats } from './agent-delivery-coordinator-contract';
 import { readSnapshotCheck, SNAPSHOT_FIRST_CHECK_MS, snapshotStartedAt } from './snapshot-checks';
 import { readSnapshotFailure } from './snapshot-failure';
@@ -86,7 +91,14 @@ export async function publishAgentSnapshot(
   }
   // Keep a durable wake-up if dispatch succeeds but its queue consumer crashes.
   await storage.setAlarm(Date.now() + DISPATCH_RECOVERY_MS);
-  await queue.send({ type: 'agent-snapshot', org_id: orgId });
+  const traceHeader = getActiveSpan()
+    ? durableSentryTraceHeader(currentSentryTraceContext())
+    : null;
+  await queue.send({
+    type: 'agent-snapshot',
+    org_id: orgId,
+    ...(traceHeader ? { sentry_trace_context: { 'sentry-trace': traceHeader } } : {}),
+  });
 }
 
 async function bindSnapshotOrg(storage: DurableObjectStorage, orgId: string): Promise<void> {

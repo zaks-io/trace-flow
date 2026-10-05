@@ -7,6 +7,7 @@ describe('convex/http.ts MCP backend routes', () => {
   let deps: HttpDeps;
 
   beforeEach(() => {
+    vi.stubEnv('AXIOM_TOKEN', '');
     vi.stubEnv('AUTH0_DOMAIN', 'test.auth0.com');
     ctx = createMockCtx();
     deps = createMockDeps();
