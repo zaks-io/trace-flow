@@ -101,6 +101,7 @@ pub struct CycleReport {
     /// Units whose POST failed; their cursors were left untouched for the next cycle.
     pub failed: u32,
     /// The first ingest error of the cycle, kept for logging and the handoff to the orchestrator.
+    /// Errors of [`unconfirmed`](Self::unconfirmed) rejections are carried there instead.
     pub first_error: Option<IngestError>,
     /// Set when cancellation or a cycle-fatal error stopped the cycle before every unit was attempted.
     pub aborted_early: bool,
@@ -109,10 +110,23 @@ pub struct CycleReport {
     pub quarantined: Vec<String>,
     /// Units skipped because an earlier cycle quarantined them in their current state.
     pub skipped_quarantined: u32,
+    /// Units rejected alone by a `400` that named no session while nothing else in this cycle was
+    /// accepted. They count in `failed`; the caller may quarantine them once another cycle of the same
+    /// pass is accepted, which shows the rejection was about the data, not the client or server.
+    pub unconfirmed: Vec<UnconfirmedRejection>,
     /// Set when the server shed load (`429` or `503 enqueue_failed`); the embedder should back off.
     pub throttled: bool,
     /// The server's requested `Retry-After` for that back-off, when it sent one.
     pub retry_after: Option<Duration>,
+}
+
+/// A unit rejected without evidence that the rejection is about the unit; see
+/// [`CycleReport::unconfirmed`].
+#[derive(Debug)]
+pub struct UnconfirmedRejection {
+    pub vendor_session_id: String,
+    pub cursor: UnitCursor,
+    pub error: IngestError,
 }
 
 /// Whether an ingest error makes the rest of the cycle futile because it is not specific to one
@@ -360,7 +374,11 @@ async fn drain<C: IngestClient>(
             report.quarantined.push(unit.ctx.vendor_session_id.clone());
         } else {
             report.failed += 1;
-            report.first_error.get_or_insert(rejection.error);
+            report.unconfirmed.push(UnconfirmedRejection {
+                vendor_session_id: unit.ctx.vendor_session_id.clone(),
+                cursor: unit.next_cursor.clone(),
+                error: rejection.error,
+            });
         }
     }
     Ok(report)

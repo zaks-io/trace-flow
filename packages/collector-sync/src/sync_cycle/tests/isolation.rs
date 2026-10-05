@@ -190,10 +190,18 @@ async fn a_400_on_every_envelope_fails_the_units_instead_of_quarantining_them() 
     assert_eq!(client.calls.get(), 3);
     assert_eq!(report.failed, 2);
     assert!(report.quarantined.is_empty());
-    assert!(matches!(
-        report.first_error,
-        Some(IngestError::InvalidEnvelope(_))
-    ));
+    // The pass, not this cycle, decides whether they are quarantined.
+    let mut unconfirmed: Vec<&str> = report
+        .unconfirmed
+        .iter()
+        .map(|r| r.vendor_session_id.as_str())
+        .collect();
+    unconfirmed.sort_unstable();
+    assert_eq!(unconfirmed, ["/a.jsonl", "/b.jsonl"]);
+    assert!(report
+        .unconfirmed
+        .iter()
+        .all(|r| matches!(r.error, IngestError::InvalidEnvelope(_))));
     assert!(!store
         .is_quarantined(AgentSource::Claude, &units[0].next_cursor)
         .unwrap());

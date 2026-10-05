@@ -66,5 +66,5 @@ pub use import::{HistoryPreset, ImportWindow};
 pub use orchestrator::{Action, Orchestrator, OrchestratorState, Trigger};
 pub use sync_cycle::{
     run_sync_cycle, run_sync_cycle_tuned, CycleReport, IngestClient, SyncTuning, SyncUnit,
-    UnitCursor,
+    UnconfirmedRejection, UnitCursor,
 };

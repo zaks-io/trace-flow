@@ -28,7 +28,7 @@ use collector_api_client::{CollectorApiClient, CollectorApiClientConfig};
 use collector_contracts::AgentSource;
 use collector_sync::{
     assemble_cursor_units, run_sync_cycle, BatchMeta, CursorStore, GitRemoteCache, HistoryPreset,
-    ImportWindow, Orchestrator, SyncUnit, Trigger,
+    ImportWindow, Orchestrator, SyncUnit, Trigger, UnconfirmedRejection,
 };
 
 use crate::connection::Paths;
@@ -204,12 +204,22 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
     let mut reports = Vec::new();
     for source in ingestable_sources() {
         let mut report = SourceReport::default();
+        let mut unconfirmed = Vec::new();
         let roots = source_homes.roots(source);
         store.set_replay_facts(cfg.replay);
         if roots.is_empty() {
             let units = assemble_cursor_source_units(&store, &cfg, window, &mut report)?;
             if !units.is_empty() {
-                apply_fact_cycle(&client, &store, source, &units, &mut mint, &mut report).await?;
+                apply_fact_cycle(
+                    &client,
+                    &store,
+                    source,
+                    &units,
+                    &mut mint,
+                    &mut report,
+                    &mut unconfirmed,
+                )
+                .await?;
             }
         } else {
             discovery_passes += 1;
@@ -225,14 +235,23 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
             .context("select changed files")?;
             while let Some(units) = files.next_batch(&cache, &mut report, &mut files_read).await {
                 if !units.is_empty() {
-                    apply_fact_cycle(&client, &store, source, &units, &mut mint, &mut report)
-                        .await?;
+                    apply_fact_cycle(
+                        &client,
+                        &store,
+                        source,
+                        &units,
+                        &mut mint,
+                        &mut report,
+                        &mut unconfirmed,
+                    )
+                    .await?;
                 }
                 if report.aborted_early {
                     break;
                 }
             }
         }
+        settle_unconfirmed(&store, source, unconfirmed, &mut report)?;
         let aborted_early = report.aborted_early;
         reports.push((source, report));
         if aborted_early {
@@ -278,6 +297,7 @@ async fn apply_fact_cycle(
     units: &[SyncUnit],
     mint: &mut dyn FnMut() -> String,
     report: &mut SourceReport,
+    unconfirmed: &mut Vec<UnconfirmedRejection>,
 ) -> Result<()> {
     let meta = BatchMeta {
         source,
@@ -300,10 +320,39 @@ async fn apply_fact_cycle(
     report.skipped_quarantined += cycle.skipped_quarantined;
     report.throttled |= cycle.throttled;
     report.retry_after = report.retry_after.max(cycle.retry_after);
+    unconfirmed.extend(cycle.unconfirmed);
     if let Some(err) = &cycle.first_error {
         // The IngestError Display is a stable error class (e.g. "unauthorized", "upgrade required"),
         // never the credential or transcript text — safe to surface.
         report.first_error = Some(err.to_string());
+    }
+    Ok(())
+}
+
+/// Settle the Source pass's rejections that no single cycle could attribute. Assembly splits a pass
+/// into several cycles, so a unit accepted in any of them shows ingest takes this client's envelopes
+/// and the rejection is about the unit: quarantine it so it stops blocking pass completion. With
+/// nothing accepted, the rejections stay failed and the first one is the pass's reason.
+fn settle_unconfirmed(
+    store: &CursorStore,
+    source: AgentSource,
+    rejections: Vec<UnconfirmedRejection>,
+    report: &mut SourceReport,
+) -> Result<()> {
+    if report.advanced == 0 {
+        if let Some(rejection) = rejections.first() {
+            report
+                .first_error
+                .get_or_insert_with(|| rejection.error.to_string());
+        }
+        return Ok(());
+    }
+    for rejection in rejections {
+        store
+            .quarantine_unit(source, &rejection.cursor)
+            .context("quarantine rejected unit")?;
+        report.failed -= 1;
+        report.quarantined.push(rejection.vendor_session_id);
     }
     Ok(())
 }
@@ -674,6 +723,81 @@ mod tests {
         );
         assert_eq!(replayed.reports[0].1.skipped_quarantined, 1);
         assert!(replayed.reports[0].1.quarantined.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_unnamed_400_is_quarantined_when_a_later_batch_of_the_pass_is_accepted() {
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        let now: i64 = 1_779_840_000_000;
+        let claude_dir = home.path().join(".claude").join("projects").join("p1");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        let fixture: String = CLAUDE.iter().map(|b| *b as char).collect();
+        let write = |name: &str, body: &str, mtime_ms: i64| {
+            let path = claude_dir.join(name);
+            std::fs::write(&path, body).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(std::time::UNIX_EPOCH + Duration::from_millis(mtime_ms as u64))
+                .unwrap();
+        };
+        // Sixteen older poisoned files fill the first assembly batch; the healthy file is the second.
+        for i in 0..16 {
+            let body = fixture
+                .replace("claude-session-001", &format!("poison-{i:02}"))
+                .replace("claude-record-00", &format!("poison-{i:02}-record-"));
+            write(&format!("poison-{i:02}.jsonl"), &body, now - 60_000 + i);
+        }
+        write("claude-session-001.jsonl", &fixture, now - 1_000);
+        let ingest_url = spawn_http(move |raw| {
+            if request_json(&raw).contains("poison-") {
+                return raw_response(400, "Bad Request", r#"{"error":"invalid_envelope"}"#);
+            }
+            raw_response(
+                202,
+                "Accepted",
+                r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#,
+            )
+        })
+        .await;
+
+        let outcome = run_fact_sync(home.path(), state.path(), ingest_url, false, now).await;
+
+        let claude = &outcome.reports[0].1;
+        assert_eq!(claude.advanced, 1);
+        assert_eq!(claude.failed, 0, "{claude:?}");
+        assert_eq!(claude.quarantined.len(), 16);
+        assert!(claude.is_complete());
+        assert_eq!(last_complete_sync_at_ms(state.path()), Some(now));
+    }
+
+    #[tokio::test]
+    async fn an_unnamed_400_stays_failed_when_nothing_in_the_pass_is_accepted() {
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        let claude_dir = home.path().join(".claude").join("projects").join("p1");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(claude_dir.join("claude-session-001.jsonl"), CLAUDE).unwrap();
+        let ingest_url =
+            spawn_http(|_raw| raw_response(400, "Bad Request", r#"{"error":"invalid_envelope"}"#))
+                .await;
+
+        let outcome = run_fact_sync(
+            home.path(),
+            state.path(),
+            ingest_url,
+            false,
+            1_779_840_000_000,
+        )
+        .await;
+
+        let claude = &outcome.reports[0].1;
+        assert_eq!(claude.failed, 1);
+        assert!(claude.quarantined.is_empty());
+        assert_eq!(claude.first_error.as_deref(), Some("invalid envelope"));
+        assert_eq!(last_complete_sync_at_ms(state.path()), None);
     }
 
     #[tokio::test]
