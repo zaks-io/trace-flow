@@ -60,6 +60,7 @@
     "preview": {
       "name": "trace-flow-web-preview",
       "workers_dev": true,
+      "routes": [{ "pattern": "preview.trace-flow.dev", "custom_domain": true }],
       "version_metadata": {
         "binding": "CF_VERSION_METADATA",
       },
@@ -69,6 +70,7 @@
       "vars": {
         "AXIOM_DATASET": "cloudflare",
         "SENTRY_ENVIRONMENT": "preview",
+        "APP_BASE_URL": "https://preview.trace-flow.dev",
       },
       "ratelimits": [
         {

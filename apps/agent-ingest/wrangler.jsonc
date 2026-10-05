@@ -72,6 +72,8 @@
   "env": {
     "preview": {
       "name": "trace-flow-agent-ingest-preview",
+      "workers_dev": true,
+      "routes": [{ "pattern": "collector.preview.trace-flow.dev", "custom_domain": true }],
       "observability": {
         "traces": {
           "enabled": true,

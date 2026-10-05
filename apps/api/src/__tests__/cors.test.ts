@@ -34,4 +34,25 @@ describe('api CORS', () => {
       'Content-Type,Authorization,Baggage,Sentry-Trace,Traceparent,Tracestate',
     );
   });
+  it.each([
+    ['preview', 'https://preview.trace-flow.dev', true],
+    ['prod', 'https://preview.trace-flow.dev', false],
+    ['preview', 'https://untrusted.preview.trace-flow.dev', false],
+  ])('checks the %s browser origin %s', async (environment, origin, allowed) => {
+    const res = await apiApp.fetch(
+      new Request('https://raw.preview.trace-flow.dev/bodies/req_123', {
+        method: 'OPTIONS',
+        headers: {
+          Origin: origin,
+          'Access-Control-Request-Method': 'GET',
+          'Access-Control-Request-Headers': 'authorization,baggage,sentry-trace',
+        },
+      }),
+      { SENTRY_ENVIRONMENT: environment },
+      executionCtx(),
+    );
+
+    expect(res.status).toBe(204);
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe(allowed ? origin : null);
+  });
 });

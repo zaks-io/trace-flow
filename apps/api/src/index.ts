@@ -36,6 +36,7 @@ interface Variables {
 
 const PRODUCTION_ORIGINS = ['https://trace-flow.dev'];
 const NON_PROD_ORIGINS = [
+  'https://preview.trace-flow.dev',
   'https://trace-flow-web-dev.isaac-a46.workers.dev',
   'https://trace-flow-web-preview.isaac-a46.workers.dev',
 ];

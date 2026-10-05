@@ -177,6 +177,47 @@ Before the first production merge, provision the production `SPLITCH_API_KEY`
 with explicit production approval. The migration does not enable Pro or start
 an experiment.
 
+## Preview Deployment
+
+The repository owner dispatches `.github/workflows/preview.yml` for an open same-repository PR.
+Update the target PR branch from `main` before dispatching so its routes and CORS settings match
+the workflow. The workflow deploys the PR head to the shared Preview Workers and comments their URLs
+on the PR.
+The canonical Web URL is `https://preview.trace-flow.dev`; API and Collector endpoints are listed
+in [CONTEXT.md](CONTEXT.md#concrete-endpoints-canonical--stop-rediscovering-these).
+
+Each Preview Worker declares an exact [Cloudflare Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/).
+Cloudflare creates DNS records and certificates, including nested subdomains, without a separate
+Advanced Certificate Manager subscription. The Preview deployment token needs zone permissions for
+Custom Domains, and the hostnames must have no conflicting CNAME records. Existing API, MCP, and
+Collector `workers.dev` URLs remain available during rollout. Web sign-in uses the canonical
+`https://preview.trace-flow.dev` origin.
+
+Configure the Preview Auth0 application's allowed callback URLs with
+`https://preview.trace-flow.dev/auth/callback`, and add `https://preview.trace-flow.dev` to its
+allowed logout URLs and web origins. The workflow sets the branch's Convex `AGENT_INGEST_URL`,
+`ANALYST_SANDBOX_URL`, and `APP_URL` to the matching Preview hosts.
+
+Dev Tinybird must deploy the `trace_flow_proxy_spans_append` token declared in
+`datasources/otel_trace_spans.datasource` before Preview runs. The workflow verifies its exact
+`otel_trace_spans` append scope and gives it only to the Preview Proxy Consumer. Tinybird requires
+resource-scoped tokens to be managed through datafile deployments; the workflow does not create
+resource tokens through its API or migrate the shared dev schema.
+
+Collector device login also needs the current branch Convex site's `/mcp/callback` in the selected
+Auth0 application's callback allowlist. Convex recreates that site on a new Preview deployment, so
+verify the current site before requesting an additive allowlist change. Preview Convex needs an
+active Collector compatibility policy. Analyst execution additionally requires an active Pro
+subscription and the Preview `OPENROUTER_API_KEY`.
+
+Preview MCP uses production Connect. Its new resource URL, `https://mcp.preview.trace-flow.dev/mcp`,
+requires the updated Connect resource allowlist to reach production through a separately approved
+merge. Until then, use the existing MCP Preview `workers.dev` URL for OAuth.
+
+Preview Workers and data resources are shared across PRs, so dispatch one Preview deployment at a
+time. The Agent Ingest Preview still uses the dev Agent Consumer, queue, and delivery bucket;
+this domain migration does not provide dedicated Preview data isolation.
+
 ## Production Deployment
 
 Production deploys are automated by `.github/workflows/deploy.yml` on merge to `main`.

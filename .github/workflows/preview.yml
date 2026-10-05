@@ -14,6 +14,14 @@ concurrency:
 
 env:
   TURBO_LOG_VERBOSITY: 1
+  PREVIEW_WEB_URL: https://preview.trace-flow.dev
+  PREVIEW_GATEWAY_URL: https://gateway.preview.trace-flow.dev
+  PREVIEW_PIPES_API_URL: https://pipes.preview.trace-flow.dev
+  PREVIEW_RAW_API_URL: https://raw.preview.trace-flow.dev
+  PREVIEW_COLLECTOR_URL: https://collector.preview.trace-flow.dev
+  PREVIEW_ANALYST_SANDBOX_URL: https://analyst-sandbox.preview.trace-flow.dev
+  PREVIEW_MCP_URL: https://mcp.preview.trace-flow.dev
+  PREVIEW_API_KEYS_NAMESPACE_ID: 30c9a31ff3af4b408b4d64b8ecfa98a5
   PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: 422b54e456c7446ea5ba4f9ef9a8c84e
   PREVIEW_AGENT_DELIVERY_BUCKET: trace-flow-agent-deliveries-dev
 
@@ -82,14 +90,18 @@ jobs:
         run: |
           bun -e '
             import agentIngestConfig from "./apps/agent-ingest/wrangler.jsonc";
+            const proxyConfig = Bun.TOML.parse(await Bun.file("./apps/proxy/wrangler.toml").text());
+            const expectedApiKeysNamespace = process.env.PREVIEW_API_KEYS_NAMESPACE_ID;
             const expectedNamespace = process.env.PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID;
             const expectedDeliveryBucket = process.env.PREVIEW_AGENT_DELIVERY_BUCKET;
-            if (!expectedNamespace || !expectedDeliveryBucket) throw new Error("Trusted Preview resources are required");
+            if (!expectedApiKeysNamespace || !expectedNamespace || !expectedDeliveryBucket) throw new Error("Trusted Preview resources are required");
 
             const findBinding = (items, name) => items?.find((item) => item.binding === name);
             const ingestNamespace = findBinding(agentIngestConfig.env?.preview?.kv_namespaces, "COLLECTOR_CREDS")?.id;
             const deliveryBucket = findBinding(agentIngestConfig.env?.preview?.r2_buckets, "AGENT_DELIVERIES")?.bucket_name;
 
+            const apiKeysNamespace = findBinding(proxyConfig.env?.preview?.kv_namespaces, "API_KEYS")?.id;
+            if (apiKeysNamespace !== expectedApiKeysNamespace) throw new Error("Proxy Preview namespace mismatch");
             if (ingestNamespace !== expectedNamespace) throw new Error("Agent Ingest Preview namespace mismatch");
             if (deliveryBucket !== expectedDeliveryBucket) throw new Error("Agent delivery Preview bucket mismatch");
           '
@@ -113,6 +125,34 @@ jobs:
           test -n "$SENTRY_DSN"
           test -n "$PIPES_API_SHARED_SECRET"
           test -n "$BODY_ACCESS_JWT_SECRET"
+          test -n "$AUTH0_DOMAIN"
+          test -n "$AUTH0_CLIENT_ID"
+          test -n "$TB_TOKEN"
+          tinybird_workspace_id=$(node --input-type=module <<'NODE'
+          const response = await fetch(new URL("/v1/workspace", process.env.TB_HOST), {
+            headers: { Authorization: `Bearer ${process.env.TB_TOKEN}` },
+          });
+          if (!response.ok) throw new Error(`Tinybird workspace lookup failed: HTTP ${response.status}`);
+          const workspace = await response.json();
+          if (workspace.name !== "trace_flow_dev" || !/^[0-9a-f-]{36}$/.test(workspace.id ?? "")) {
+            throw new Error("Preview requires the trace_flow_dev Tinybird workspace");
+          }
+          process.stdout.write(workspace.id);
+          NODE
+          )
+          bunx convex env set --preview-name "$BRANCH_NAME" TINYBIRD_WORKSPACE_ID "$tinybird_workspace_id"
+          bunx convex env set --preview-name "$BRANCH_NAME" TINYBIRD_API_URL "$TB_HOST"
+          bunx convex env set --preview-name "$BRANCH_NAME" CLOUDFLARE_KV_NAMESPACE_ID "$PREVIEW_API_KEYS_NAMESPACE_ID"
+          bunx convex env set --preview-name "$BRANCH_NAME" CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID "$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID"
+          for name in AUTH0_CLIENT_SECRET CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN AGENT_INGEST_SHARED_SECRET ANALYST_SANDBOX_SHARED_SECRET USAGE_SYNC_SECRET; do
+            value="${!name}"
+            test -n "$value"
+            printf '%s' "$value" | bunx convex env set --preview-name "$BRANCH_NAME" "$name"
+          done
+          printf '%s' "$TB_TOKEN" |
+            bunx convex env set --preview-name "$BRANCH_NAME" TINYBIRD_ADMIN_TOKEN
+          bunx convex env set --preview-name "$BRANCH_NAME" AUTH0_DOMAIN "$AUTH0_DOMAIN"
+          bunx convex env set --preview-name "$BRANCH_NAME" AUTH0_CLIENT_ID "$AUTH0_CLIENT_ID"
           printf '%s' "$SENTRY_DSN" |
             bunx convex env set --preview-name "$BRANCH_NAME" SENTRY_DSN
           printf '%s' "$PIPES_API_SHARED_SECRET" |
@@ -120,11 +160,25 @@ jobs:
           printf '%s' "$BODY_ACCESS_JWT_SECRET" |
             bunx convex env set --preview-name "$BRANCH_NAME" BODY_ACCESS_JWT_SECRET
           bunx convex env set --preview-name "$BRANCH_NAME" SENTRY_ENVIRONMENT preview
-          bunx convex env set --preview-name "$BRANCH_NAME" AGENT_INGEST_URL https://trace-flow-agent-ingest-preview.isaac-a46.workers.dev
+          bunx convex env set --preview-name "$BRANCH_NAME" AGENT_INGEST_URL "$PREVIEW_COLLECTOR_URL"
+          bunx convex env set --preview-name "$BRANCH_NAME" ANALYST_SANDBOX_URL "$PREVIEW_ANALYST_SANDBOX_URL"
+          bunx convex env set --preview-name "$BRANCH_NAME" APP_URL "$PREVIEW_WEB_URL"
+          # Auth configuration is evaluated when the deployment is pushed.
+          bunx convex deploy --preview-name "$BRANCH_NAME"
         env:
           SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
           PIPES_API_SHARED_SECRET: ${{ secrets.PIPES_API_SHARED_SECRET }}
           BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}
+          AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
+          AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
+          AUTH0_CLIENT_SECRET: ${{ secrets.AUTH0_CLIENT_SECRET }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          AGENT_INGEST_SHARED_SECRET: ${{ secrets.AGENT_INGEST_SHARED_SECRET }}
+          ANALYST_SANDBOX_SHARED_SECRET: ${{ secrets.ANALYST_SANDBOX_SHARED_SECRET }}
+          USAGE_SYNC_SECRET: ${{ secrets.USAGE_SYNC_SECRET }}
+          TB_TOKEN: ${{ secrets.TINYBIRD_DEV_TOKEN_MANAGER_TOKEN }}
+          TB_HOST: https://api.us-west-2.aws.tinybird.co
           BRANCH_NAME: ${{ needs.prepare.outputs.head_ref }}
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
 
@@ -185,6 +239,7 @@ jobs:
               --filter='./apps/*' \
               --filter='!@trace-flow/web' \
               --filter='!@trace-flow/proxy' \
+              --filter='!@trace-flow/proxy-consumer' \
               --filter='!@trace-flow/mcp' \
               --filter='!@trace-flow/agent-ingest' \
               --filter='!@trace-flow/agent-consumer' \
@@ -226,19 +281,29 @@ jobs:
           api_secrets_file="$secrets_directory/api.env"
           agent_consumer_secrets_file="$secrets_directory/agent-consumer.env"
           agent_ingest_secrets_file="$secrets_directory/agent-ingest.env"
+          proxy_secrets_file="$secrets_directory/proxy.env"
+          proxy_consumer_secrets_file="$secrets_directory/proxy-consumer.env"
           test -n "$PIPES_API_SHARED_SECRET"
           test -n "$BODY_ACCESS_JWT_SECRET"
           test -n "$AGENT_DELIVERY_ENCRYPTION_ROOT_KEY"
+          test -n "$AGENT_INGEST_SHARED_SECRET"
+          test -n "$USAGE_SYNC_SECRET"
+          test -n "$BODY_ENCRYPTION_ROOT_KEY"
           test -n "$TB_TOKEN"
           printf 'PIPES_API_SHARED_SECRET=%s\n' "$PIPES_API_SHARED_SECRET" > "$pipes_secrets_file"
-          printf 'BODY_ACCESS_JWT_SECRET=%s\n' "$BODY_ACCESS_JWT_SECRET" > "$api_secrets_file"
+          printf 'BODY_ACCESS_JWT_SECRET=%s\nBODY_ENCRYPTION_ROOT_KEY=%s\n' "$BODY_ACCESS_JWT_SECRET" "$BODY_ENCRYPTION_ROOT_KEY" > "$api_secrets_file"
           bun scripts/ci/configure-agent-tinybird-tokens.mjs "$agent_consumer_secrets_file"
+          node scripts/ci/configure-proxy-tinybird-token.mjs "$proxy_consumer_secrets_file"
           unset TB_TOKEN
+          printf 'USAGE_SYNC_SECRET=%s\nBODY_ENCRYPTION_ROOT_KEY=%s\n' "$USAGE_SYNC_SECRET" "$BODY_ENCRYPTION_ROOT_KEY" > "$proxy_secrets_file"
           printf 'BODY_ENCRYPTION_ROOT_KEY=%s\n' "$AGENT_DELIVERY_ENCRYPTION_ROOT_KEY" >> "$agent_consumer_secrets_file"
           printf 'BODY_ENCRYPTION_ROOT_KEY=%s\n' "$AGENT_DELIVERY_ENCRYPTION_ROOT_KEY" > "$agent_ingest_secrets_file"
+          printf 'AGENT_INGEST_SHARED_SECRET=%s\n' "$AGENT_INGEST_SHARED_SECRET" >> "$agent_ingest_secrets_file"
           for attempt in 1 2 3; do
             if (
-              cd apps/proxy && bunx wrangler deploy --env preview --var CONVEX_SITE_URL:"$CONVEX_SITE_URL"
+              cd apps/proxy && bunx wrangler deploy --env preview --secrets-file "$proxy_secrets_file" --var CONVEX_SITE_URL:"$CONVEX_SITE_URL"
+            ) && (
+              cd apps/proxy-consumer && bunx wrangler deploy --env preview --secrets-file "$proxy_consumer_secrets_file"
             ) && (
               cd apps/mcp && bunx wrangler deploy --env preview
             ) && (
@@ -274,6 +339,9 @@ jobs:
           PIPES_API_SHARED_SECRET: ${{ secrets.PIPES_API_SHARED_SECRET }}
           BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}
           AGENT_DELIVERY_ENCRYPTION_ROOT_KEY: ${{ secrets.AGENT_DELIVERY_ENCRYPTION_ROOT_KEY }}
+          AGENT_INGEST_SHARED_SECRET: ${{ secrets.AGENT_INGEST_SHARED_SECRET }}
+          USAGE_SYNC_SECRET: ${{ secrets.USAGE_SYNC_SECRET }}
+          BODY_ENCRYPTION_ROOT_KEY: ${{ secrets.BODY_ENCRYPTION_ROOT_KEY }}
           TB_TOKEN: ${{ secrets.TINYBIRD_DEV_TOKEN_MANAGER_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
           CONVEX_URL: ${{ needs.deploy-convex.outputs.convex_url }}
@@ -281,16 +349,17 @@ jobs:
 
       # The proxy refuses every request with 503 when its secrets fail startup validation.
       # A bad BODY_ENCRYPTION_ROOT_KEY otherwise only surfaces as truncated response bodies.
+      # Custom Domain DNS and certificates can take a few minutes on the first deployment.
       - name: Verify Proxy Preview health
-        run: curl --fail --silent --show-error --retry 5 --retry-delay 5 https://trace-flow-proxy-preview.isaac-a46.workers.dev/healthz
+        run: curl --fail --silent --show-error --retry-all-errors --retry 20 --retry-delay 15 --retry-max-time 300 --connect-timeout 10 --max-time 30 "$PREVIEW_GATEWAY_URL/healthz"
 
       - name: Build Web Preview
         run: bunx turbo run build --filter=@trace-flow/web && cd apps/web && bunx opennextjs-cloudflare build
         env:
           NEXT_PUBLIC_CONVEX_URL: ${{ needs.deploy-convex.outputs.convex_url }}
-          NEXT_PUBLIC_API_URL: https://trace-flow-raw-api-preview.isaac-a46.workers.dev
-          NEXT_PUBLIC_PIPES_API_URL: https://trace-flow-pipes-api-preview.isaac-a46.workers.dev
-          NEXT_PUBLIC_RAW_API_URL: https://trace-flow-raw-api-preview.isaac-a46.workers.dev
+          NEXT_PUBLIC_API_URL: ${{ env.PREVIEW_RAW_API_URL }}
+          NEXT_PUBLIC_PIPES_API_URL: ${{ env.PREVIEW_PIPES_API_URL }}
+          NEXT_PUBLIC_RAW_API_URL: ${{ env.PREVIEW_RAW_API_URL }}
           NEXT_PUBLIC_AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
           NEXT_PUBLIC_AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
           NEXT_PUBLIC_TINYBIRD_API_URL: ${{ vars.NEXT_PUBLIC_TINYBIRD_API_URL }}
@@ -300,8 +369,32 @@ jobs:
           AUTH0_SECRET: ${{ secrets.AUTH0_SECRET }}
           AUTH0_CLIENT_SECRET: ${{ secrets.AUTH0_CLIENT_SECRET }}
           BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}
-          APP_BASE_URL: https://trace-flow-web-preview.isaac-a46.workers.dev
+          APP_BASE_URL: ${{ env.PREVIEW_WEB_URL }}
           NEXT_PUBLIC_DEPLOY_ID: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: Configure Web Preview authentication
+        working-directory: apps/web
+        run: |
+          web_secrets_file=$(mktemp)
+          trap 'rm -f "$web_secrets_file"' EXIT
+          bun -e '
+            const names = ["AUTH0_DOMAIN", "AUTH0_CLIENT_ID", "AUTH0_CLIENT_SECRET", "AUTH0_SECRET", "BODY_ACCESS_JWT_SECRET"];
+            const values = Object.fromEntries(names.map((name) => {
+              const value = process.env[name];
+              if (!value) throw new Error(name + " is required");
+              return [name, value];
+            }));
+            await Bun.write(process.argv[1], JSON.stringify(values));
+          ' "$web_secrets_file"
+          bunx wrangler secret bulk "$web_secrets_file" --env preview
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
+          AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
+          AUTH0_CLIENT_SECRET: ${{ secrets.AUTH0_CLIENT_SECRET }}
+          AUTH0_SECRET: ${{ secrets.AUTH0_SECRET }}
+          BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}
 
       # Deploy web to Workers preview
       - name: Deploy Web Preview
@@ -309,6 +402,27 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Configure Analyst Preview authentication
+        run: |
+          test -n "$ANALYST_SANDBOX_SHARED_SECRET"
+          test -n "$OPENROUTER_API_KEY"
+          (
+            cd apps/analyst-sandbox
+            printf '%s' "$ANALYST_SANDBOX_SHARED_SECRET" |
+              bunx wrangler secret put ANALYST_SANDBOX_SHARED_SECRET --env preview
+            printf '%s' "$OPENROUTER_API_KEY" |
+              bunx wrangler secret put OPENROUTER_API_KEY --env preview
+          )
+          printf '%s' "$OPENROUTER_API_KEY" |
+            bunx convex env set --preview-name "$BRANCH_NAME" OPENROUTER_API_KEY
+        env:
+          ANALYST_SANDBOX_SHARED_SECRET: ${{ secrets.ANALYST_SANDBOX_SHARED_SECRET }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          BRANCH_NAME: ${{ needs.prepare.outputs.head_ref }}
 
   comment:
     name: Comment Preview URLs
@@ -329,12 +443,13 @@ jobs:
 
             | Service | URL |
             |---------|-----|
-            | Web | https://trace-flow-web-preview.isaac-a46.workers.dev |
-            | Pipes API | https://trace-flow-pipes-api-preview.isaac-a46.workers.dev |
-            | Raw API | https://trace-flow-raw-api-preview.isaac-a46.workers.dev |
-            | Proxy | https://trace-flow-proxy-preview.isaac-a46.workers.dev |
-            | Agent Ingest | https://trace-flow-agent-ingest-preview.isaac-a46.workers.dev |
-            | Analyst Sandbox | https://trace-flow-analyst-sandbox-preview.isaac-a46.workers.dev |
+            | Web | ${process.env.PREVIEW_WEB_URL} |
+            | Pipes API | ${process.env.PREVIEW_PIPES_API_URL} |
+            | Raw API | ${process.env.PREVIEW_RAW_API_URL} |
+            | Proxy | ${process.env.PREVIEW_GATEWAY_URL} |
+            | Agent Ingest | ${process.env.PREVIEW_COLLECTOR_URL} |
+            | Analyst Sandbox | ${process.env.PREVIEW_ANALYST_SANDBOX_URL} |
+            | MCP | ${process.env.PREVIEW_MCP_URL} |
             `;
 
             const { data: comments } = await github.rest.issues.listComments({

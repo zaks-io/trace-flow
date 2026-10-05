@@ -72,6 +72,11 @@ simple = { limit = 120, period = 60 }
 
 [env.preview]
 name = "trace-flow-raw-api-preview"
+workers_dev = true
+
+[[env.preview.routes]]
+pattern = "raw.preview.trace-flow.dev"
+custom_domain = true
 
 [env.preview.version_metadata]
 binding = "CF_VERSION_METADATA"

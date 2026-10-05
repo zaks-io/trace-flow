@@ -447,6 +447,37 @@ describe('convex/http.ts OAuth routes', () => {
       expect(deps.oauth.signConsent).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ['https://mcp.preview.trace-flow.dev/mcp', 200],
+      ['https://untrusted.preview.trace-flow.dev/mcp', 400],
+      ['https://mcp.preview.trace-flow.dev.evil.example/mcp', 400],
+      ['http://mcp.preview.trace-flow.dev/mcp', 400],
+    ])('validates the preview MCP resource %s', async (resource, status) => {
+      const app = createApp(deps);
+      ctx.runQuery.mockResolvedValue({
+        clientId: 'client-1',
+        redirectUris: ['https://example.com/callback'],
+      });
+      const url = new URL('http://localhost/mcp/authorize');
+      url.search = new URLSearchParams({
+        response_type: 'code',
+        client_id: 'client-1',
+        redirect_uri: 'https://example.com/callback',
+        resource,
+        code_challenge: '0123456789012345678901234567890123456789012',
+        code_challenge_method: 'S256',
+      }).toString();
+
+      const res = await app.request(url.toString(), {}, ctx);
+
+      expect(res.status).toBe(status);
+      if (status === 200) {
+        expect(deps.oauth.signConsent).toHaveBeenCalledWith(expect.objectContaining({ resource }));
+      } else {
+        expect(deps.oauth.signConsent).not.toHaveBeenCalled();
+      }
+    });
+
     it('rejects a resource outside the Trace Flow MCP deployment allowlist', async () => {
       const app = createApp(deps);
       ctx.runQuery.mockResolvedValue({
