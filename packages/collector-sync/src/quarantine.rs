@@ -87,6 +87,27 @@ impl CursorStore {
         }))
     }
 
+    /// True when a transcript file was quarantined under an older parser version. Discovery selects
+    /// these on a parser upgrade even when they never had an accepted cursor and sit outside the
+    /// incremental window, so a parser fix retries them instead of hiding them forever.
+    pub fn has_stale_file_quarantine(
+        &self,
+        source: AgentSource,
+        file_path: &str,
+    ) -> Result<bool, CursorStoreError> {
+        let version: Option<String> = self
+            .conn
+            .prepare_cached(
+                "SELECT parser_version FROM quarantined_units \
+                 WHERE org_id = ?1 AND source = ?2 AND unit_key = ?3",
+            )?
+            .query_row(params![self.org_id, source_key(source), file_path], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        Ok(version.is_some_and(|version| version != self.active_parser()))
+    }
+
     /// Drop the unit's quarantine record once a later version of it is accepted.
     pub(crate) fn clear_quarantine(
         &self,
@@ -131,8 +152,18 @@ mod tests {
             .is_quarantined(AgentSource::Codex, &file(10.5, 100))
             .unwrap());
 
+        assert!(!store
+            .has_stale_file_quarantine(source, "/t/a.jsonl")
+            .unwrap());
+
         store.set_active_parser_version("0.4.0");
         assert!(!store.is_quarantined(source, &file(10.5, 100)).unwrap());
+        assert!(store
+            .has_stale_file_quarantine(source, "/t/a.jsonl")
+            .unwrap());
+        assert!(!store
+            .has_stale_file_quarantine(source, "/t/b.jsonl")
+            .unwrap());
     }
 
     #[test]

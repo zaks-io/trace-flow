@@ -256,3 +256,38 @@ async fn duplicate_identities_across_units_are_sent_once_per_envelope() {
     assert_eq!(report.advanced, 2);
     assert_eq!(client.envelopes.borrow()[0].facts.messages.len(), 1);
 }
+
+#[tokio::test]
+async fn a_changed_copy_of_a_batched_fact_is_sent_in_its_own_envelope() {
+    let client = MockClient::new([ok(), ok()]);
+    let store = CursorStore::open_in_memory("org").unwrap();
+    let mut orch = syncing_orchestrator();
+    let mut mint = counter();
+    let mut a = message_unit("/a.jsonl", "claude-opus-4-7");
+    let mut b = message_unit("/b.jsonl", "claude-opus-4-8");
+    a.ctx.vendor_session_id = "shared".to_string();
+    b.ctx.vendor_session_id = "shared".to_string();
+
+    let (report, _) = run_sync_cycle(
+        &client,
+        &store,
+        &mut orch,
+        &meta(),
+        &[a, b],
+        &mut mint,
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Dropping b's copy would commit its cursor for content the Worker never received.
+    assert_eq!(client.calls.get(), 2);
+    assert_eq!(report.advanced, 2);
+    let models: Vec<String> = client
+        .envelopes
+        .borrow()
+        .iter()
+        .flat_map(|envelope| envelope.facts.messages.iter().map(|m| m.model.clone()))
+        .collect();
+    assert_eq!(models, ["claude-opus-4-7", "claude-opus-4-8"]);
+}

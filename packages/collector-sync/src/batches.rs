@@ -103,12 +103,14 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
             }
             let assembled = self.assemble(store, unit)?;
 
-            // If adding this unit would overflow the open (non-empty) batch, close and return it now
-            // without consuming `unit`, so it starts the next batch.
-            let would_overflow = !open.units.is_empty()
+            // If adding this unit would overflow the open (non-empty) batch, or would send a changed
+            // copy of a fact the batch already carries, close and return the batch now without
+            // consuming `unit`, so it starts the next batch.
+            let must_close = !open.units.is_empty()
                 && (open.units.len() >= self.max_sessions
-                    || open.bytes + assembled.bytes > self.max_bytes);
-            if would_overflow {
+                    || open.bytes + assembled.bytes > self.max_bytes
+                    || open.identities.conflicts(&assembled.fact_cursors));
+            if must_close {
                 return Ok(Some(self.close(open)));
             }
 
@@ -127,7 +129,8 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
     }
 
     /// A retry group as one batch. A group is a subset of a batch that already fit the budget, so only
-    /// a lone oversized unit needs splitting.
+    /// a lone oversized unit needs splitting. Send state may have moved since the group was first
+    /// prepared, so a unit that now conflicts with the group is requeued on its own.
     fn batch_of(
         &mut self,
         store: &CursorStore,
@@ -142,6 +145,10 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
         let mut open = OpenBatch::default();
         for index in group {
             let assembled = self.assemble(store, &self.units[index])?;
+            if open.identities.conflicts(&assembled.fact_cursors) {
+                self.requeue(vec![index]);
+                continue;
+            }
             self.merge(&mut open, index, assembled)?;
         }
         Ok(self.close(open))
