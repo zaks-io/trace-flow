@@ -14,4 +14,14 @@ describe('getSpanType', () => {
   it('classifies chat spans as LLM spans', () => {
     expect(getSpanType(span('chat gpt-4o'), { [GEN_AI.OPERATION_NAME]: 'chat' })).toBe('llm');
   });
+
+  it('classifies decision requests as LLM spans', () => {
+    expect(getSpanType(span('decision jev-latest'), { [GEN_AI.OPERATION_NAME]: 'decision' })).toBe(
+      'llm',
+    );
+  });
+
+  it('preserves typed decision outputs instead of labeling them assistant text', () => {
+    expect(getSpanType(span('gen_ai.response.decision'), {})).toBe('decision');
+  });
 });

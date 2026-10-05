@@ -26,6 +26,15 @@ describe('extractProviderFromUrl', () => {
     });
   });
 
+  describe('TypeSafe', () => {
+    it('should identify TypeSafe URLs without matching lookalike hosts', () => {
+      expect(extractProviderFromUrl('https://api.typesafe.ai/v1/systemone')).toBe('typesafe');
+      expect(extractProviderFromUrl('https://api.typesafe.ai.example.com/v1/systemone')).toBe(
+        'api.typesafe.ai.example.com',
+      );
+    });
+  });
+
   describe('Google', () => {
     it('should identify Google URLs', () => {
       expect(extractProviderFromUrl('https://generativelanguage.googleapis.com/v1/models')).toBe(

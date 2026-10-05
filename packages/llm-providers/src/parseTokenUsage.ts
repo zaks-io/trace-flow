@@ -2,6 +2,7 @@ import type { LLMTokenUsage } from '@trace-flow/types';
 import { PROVIDER_SCHEMAS } from './schemas';
 import type { ProviderId, ProviderTokenSchema } from './types';
 import { applyTokenSchema, type RawTokenTotals } from './applyTokenSchema';
+import { parseDecisionTokenUsage } from './providers/decision';
 
 function matchIntField(body: string, field: string, lastMatchOnly: boolean): number | undefined {
   if (lastMatchOnly) {
@@ -89,6 +90,7 @@ function extractRawTotals(body: string, schema: ProviderTokenSchema): RawTokenTo
  * — the same normalizer the streaming accumulator uses, so the two paths can't drift.
  */
 export function parseTokenUsage(body: string, providerId: ProviderId): LLMTokenUsage | undefined {
+  if (providerId === 'typesafe') return parseDecisionTokenUsage(body);
   const schema = PROVIDER_SCHEMAS[providerId];
   return parseTokenUsageWithSchema(body, schema);
 }

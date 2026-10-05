@@ -18,7 +18,8 @@ const noopLogger: Logger = {
 };
 
 function makeDrained(opts: {
-  providerId: 'openai' | 'google';
+  providerId: 'openai' | 'google' | 'openrouter' | 'typesafe';
+  operationName?: string;
   isSSE?: boolean;
   sseMessages?: SSEStreamData['messages'];
   responseBody?: string;
@@ -42,7 +43,7 @@ function makeDrained(opts: {
       apiKey: 'tf_test',
       keyData: { orgId: 'org_1' },
       route: { provider },
-      operationName: 'chat',
+      operationName: opts.operationName ?? 'chat',
     },
     response,
     streamToCapture: null,
@@ -151,6 +152,58 @@ describe('buildTransaction', () => {
       noopLogger,
     );
     expect(txn.responseMetadata?.model).toBe('text-embedding-004');
+  });
+
+  it('keeps requested and resolved decision models separate', () => {
+    const requestBody = JSON.stringify({
+      model: 'jev-latest',
+      state: { model: 'customer-state' },
+      questions: { usage: { type: 'noul', instructions: 'Is this urgent?' } },
+    });
+    const responseBody = JSON.stringify({
+      model: 'jev-1.13.0',
+      answers: { usage: { type: 'noul', noul: 0.8 } },
+      usage: { input_tokens: 296, output_tokens: 20 },
+    });
+
+    const txn = buildTransaction(
+      makeDrained({
+        providerId: 'typesafe',
+        operationName: 'decision',
+        requestBody,
+        responseBody,
+        targetUrl: 'https://api.typesafe.ai/v1/systemone',
+      }),
+      noopLogger,
+    );
+
+    expect(txn.requestedModel).toBe('jev-latest');
+    expect(txn.responseMetadata?.model).toBe('jev-1.13.0');
+    expect(txn.tokens).toEqual({
+      promptTokens: 296,
+      uncachedInputTokens: 296,
+      completionTokens: 20,
+      totalTokens: 316,
+    });
+    expect(txn.inputMessages).toBeUndefined();
+  });
+
+  it('does not guess decision accounting from a truncated response', () => {
+    const txn = buildTransaction(
+      makeDrained({
+        providerId: 'openrouter',
+        operationName: 'decision',
+        requestBody: '{"model":"~typesafe/jev-latest"}',
+        responseBody: '{"usage":{"input_tokens":296,"output_tokens":',
+        targetUrl: 'https://openrouter.ai/api/alpha/decisions',
+        isTruncated: true,
+      }),
+      noopLogger,
+    );
+
+    expect(txn.requestedModel).toBe('~typesafe/jev-latest');
+    expect(txn.tokens).toBeUndefined();
+    expect(txn.responseMetadata).toBeUndefined();
   });
 
   it('parses input messages from the request body', () => {

@@ -85,6 +85,22 @@ describe('deriveOperationName', () => {
     });
   });
 
+  describe('Jev decision patterns', () => {
+    it.each([
+      '/typesafe/v1/systemone',
+      '/typesafe/v1/systemone/',
+      '/openrouter/v1/systemone',
+      '/openrouter/alpha/decisions',
+      '/OPENROUTER/ALPHA/DECISIONS?preview=true',
+    ])('should identify %s as a decision', (path) => {
+      expect(deriveOperationName(path)).toBe('decision');
+    });
+
+    it('should not classify nested lookalike paths as decisions', () => {
+      expect(deriveOperationName('/custom/typesafe/v1/systemone')).toBe('chat');
+    });
+  });
+
   describe('case insensitivity', () => {
     it('should handle uppercase paths', () => {
       expect(deriveOperationName('/OpenAI/V1/Chat/Completions')).toBe('chat');

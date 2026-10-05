@@ -317,4 +317,28 @@ describe('createQueueMessage', () => {
     expect(result.request.model).toBe('text-embedding-004');
     expect(result.responseMetadata).toEqual({ model: 'text-embedding-004' });
   });
+
+  it('preserves a requested decision alias separately from the resolved model', () => {
+    const result = createQueueMessage({
+      ...baseParams,
+      targetUrl: 'https://api.typesafe.ai/v1/systemone',
+      operationName: 'decision',
+      requestedModel: 'jev-latest',
+      responseMetadata: { model: 'jev-1.13.0' },
+    });
+
+    expect(result.request).toMatchObject({ provider: 'typesafe', model: 'jev-latest' });
+    expect(result.responseMetadata).toEqual({ model: 'jev-1.13.0' });
+    expect(result.operationName).toBe('decision');
+  });
+
+  it('keeps existing chat attribution on the resolved model', () => {
+    const result = createQueueMessage({
+      ...baseParams,
+      operationName: 'chat',
+      requestedModel: 'gpt-4o',
+      responseMetadata: { model: 'gpt-4o-2024-08-06' },
+    });
+    expect(result.request.model).toBe('gpt-4o-2024-08-06');
+  });
 });

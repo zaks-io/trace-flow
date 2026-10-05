@@ -12,6 +12,7 @@ import { PROVIDERS } from '../index';
  */
 
 interface ProviderFixture {
+  isDecision?: boolean;
   requestBody: string;
   responseBody: string;
   streamEvents: { event?: string; data: string; timestamp: number }[];
@@ -21,6 +22,23 @@ interface ProviderFixture {
 }
 
 const FIXTURES: Record<string, ProviderFixture> = {
+  typesafe: {
+    isDecision: true,
+    requestBody: JSON.stringify({
+      model: 'jev-latest',
+      state: 'hi',
+      questions: { urgent: { type: 'noul', instructions: 'Urgent?' } },
+    }),
+    responseBody: JSON.stringify({
+      model: 'jev-1.13.0',
+      answers: { urgent: { type: 'noul', noul: 0.5 } },
+      usage: { input_tokens: 5, output_tokens: 3 },
+    }),
+    streamEvents: [],
+    expectedPromptTokens: 5,
+    expectedCompletionTokens: 3,
+    expectedModel: 'jev-1.13.0',
+  },
   openai: {
     requestBody: JSON.stringify({
       model: 'gpt-4o-mini',
@@ -218,6 +236,10 @@ describe.each(Object.entries(PROVIDERS))('Provider contract: %s', (id, provider)
 
   it('parses request body into InputMessages', () => {
     const messages = provider.parseRequestBody(fixture.requestBody);
+    if (fixture.isDecision) {
+      expect(messages).toBeNull();
+      return;
+    }
     expect(messages).not.toBeNull();
     expect(messages?.length).toBeGreaterThan(0);
     const userMsg = messages?.find((m) => m.role === 'user');
@@ -245,6 +267,11 @@ describe.each(Object.entries(PROVIDERS))('Provider contract: %s', (id, provider)
     const state: SSEStreamData = { messages: [] };
     for (const event of fixture.streamEvents) {
       provider.handleSSEEvent(event, event.timestamp, state);
+    }
+    if (fixture.isDecision) {
+      expect(state.messages).toEqual([]);
+      expect(provider.aggregateSSETokens(state)).toBeUndefined();
+      return;
     }
     expect(state.messages.length).toBeGreaterThan(0);
 

@@ -1,4 +1,5 @@
 import { PROVIDER_SCHEMAS } from '../schemas';
+import { parseDecisionMetadata, parseDecisionTokenUsage } from './decision';
 import {
   aggregateOpenAIStyleSSETokens,
   findOpenAIStyleStreamFailure,
@@ -20,8 +21,14 @@ export const openrouter: Provider = {
   tokenSchema: PROVIDER_SCHEMAS.openrouter,
 
   parseRequestBody: parseOpenAIStyleRequestBody,
-  parseResponseMetadata: parseOpenAIStyleResponseMetadata,
-  parseResponseTokenUsage: (body) => parseOpenAIStyleResponseTokenUsage(body, 'openrouter'),
+  parseResponseMetadata: (body, ctx) =>
+    ctx?.operationName === 'decision'
+      ? parseDecisionMetadata(body)
+      : parseOpenAIStyleResponseMetadata(body),
+  parseResponseTokenUsage: (body, ctx) =>
+    ctx?.operationName === 'decision'
+      ? parseDecisionTokenUsage(body, true)
+      : parseOpenAIStyleResponseTokenUsage(body, 'openrouter'),
 
   handleSSEEvent: (event, timestamp, state) =>
     handleOpenAIStyleSSEEvent(event, timestamp, state, { includeCost: true }),

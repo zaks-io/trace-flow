@@ -2410,6 +2410,12 @@ export declare const internal: {
         {},
         { imported: number; skipped: number }
       >;
+      importFromOpenRouterInternal: FunctionReference<
+        "action",
+        "internal",
+        {},
+        { imported: number }
+      >;
       importOneFromOpenRouterInternal: FunctionReference<
         "action",
         "internal",

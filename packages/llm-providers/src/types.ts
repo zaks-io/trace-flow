@@ -1,4 +1,4 @@
-export type ProviderId = 'openai' | 'anthropic' | 'google' | 'openrouter' | 'groq';
+export type ProviderId = 'openai' | 'anthropic' | 'google' | 'openrouter' | 'groq' | 'typesafe';
 
 /**
  * Per-provider description of where token fields live in the response body. Drives

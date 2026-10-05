@@ -7,6 +7,7 @@ import type {
   SubscriptionTier,
 } from '@trace-flow/types';
 import type { ResolvedRoute } from '@trace-flow/llm-providers';
+import { parseRequestModel } from '@trace-flow/llm-providers';
 import type { Logger } from '@trace-flow/logging';
 import * as Sentry from '@sentry/cloudflare';
 import {
@@ -104,6 +105,7 @@ export interface Transaction {
   responseComplete: number;
 
   tokens: LLMTokenUsage | undefined;
+  requestedModel?: string;
   error: LLMError | undefined;
   responseMetadata: LLMResponseMetadataSummary | undefined;
   inputMessages: InputMessage[] | undefined;
@@ -169,6 +171,8 @@ export async function buildUpstreamFailureTransaction(
     firstTokenReceived: undefined,
     responseComplete,
     tokens: undefined,
+    requestedModel:
+      validated.operationName === 'decision' ? parseRequestModel(requestBody) : undefined,
     error: { type: 'upstream_fetch_error', message: 'Upstream request failed' },
     responseMetadata: undefined,
     inputMessages: undefined,
@@ -276,14 +280,18 @@ export function buildTransaction(
   // For SSE responses, only use aggregated SSE tokens — parsing raw SSE text
   // would match partial data from individual events and could leak stale fields.
   const hasSSEMessages = isSSE && sseStreamData.messages.length > 0;
-  const parseWholeBody = !drained.streamError && response.status < 400;
+  const parseWholeBody =
+    !drained.streamError &&
+    response.status < 400 &&
+    (validated.operationName !== 'decision' || (!isSSE && !drained.isTruncated));
   const reportsUsage = validated.operationName !== COUNT_TOKENS_OPERATION;
+  const parsingContext = { targetUrl, operationName: validated.operationName };
 
   let tokens: LLMTokenUsage | undefined;
   if (reportsUsage && hasSSEMessages) {
     tokens = provider.aggregateSSETokens(sseStreamData);
   } else if (reportsUsage && parseWholeBody) {
-    tokens = provider.parseResponseTokenUsage(responseBody);
+    tokens = provider.parseResponseTokenUsage(responseBody, parsingContext);
   }
 
   const error: LLMError | undefined = drained.streamError
@@ -296,11 +304,11 @@ export function buildTransaction(
   if (hasSSEMessages && response.status < 400) {
     responseMetadata = sseStreamData.messages[sseStreamData.messages.length - 1]?.metadata;
   } else if (parseWholeBody) {
-    responseMetadata = provider.parseResponseMetadata(responseBody, { targetUrl });
+    responseMetadata = provider.parseResponseMetadata(responseBody, parsingContext);
   }
 
   let inputMessages: InputMessage[] | undefined;
-  if (requestBody) {
+  if (requestBody && validated.operationName !== 'decision') {
     try {
       inputMessages = provider.parseRequestBody(requestBody) ?? undefined;
     } catch {
@@ -331,6 +339,8 @@ export function buildTransaction(
     responseComplete,
 
     tokens,
+    requestedModel:
+      validated.operationName === 'decision' ? parseRequestModel(requestBody) : undefined,
     error,
     responseMetadata,
     inputMessages,
@@ -391,6 +401,9 @@ export async function persistTransaction(
       responseComplete: transaction.responseComplete,
       latency,
       tokens: transaction.tokens,
+      requestedModel: transaction.requestedModel
+        ? redactValue(transaction.requestedModel)
+        : undefined,
       error: redactedError,
       truncated: transaction.isTruncated,
       sseStreamData: redactedSseStreamData,

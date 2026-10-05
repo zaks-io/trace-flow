@@ -10,8 +10,10 @@ import {
 } from '../_generated/server';
 import {
   convertOpenRouterModelRates,
+  findOpenRouterModel,
+  indexOpenRouterModels,
+  OPENROUTER_MODELS_URL,
   parseModelPricing,
-  parseOpenRouterModelId,
   type OpenRouterModel,
 } from '@trace-flow/pricing';
 import { v, type Infer } from 'convex/values';
@@ -181,42 +183,61 @@ export const listAll = internalQuery({
   },
 });
 
-interface _OpenRouterModelsResponse {
+interface OpenRouterModelsResponse {
   data: OpenRouterModel[];
 }
+
+async function fetchOpenRouterModels() {
+  const response = await fetch(OPENROUTER_MODELS_URL);
+  if (!response.ok) {
+    throw new Error(`OpenRouter API error: ${response.status}`);
+  }
+  const data: OpenRouterModelsResponse = await response.json();
+  return data.data;
+}
+
+async function importOpenRouterModel(ctx: ActionCtx, model: string, orModel: OpenRouterModel) {
+  await ctx.runMutation(internal.billing.modelPricing.upsertInternal, {
+    provider: 'openrouter',
+    model,
+    ...convertOpenRouterModelRates(orModel),
+    source: 'openrouter',
+  });
+}
+
+export const importFromOpenRouterInternal = internalAction({
+  args: {},
+  returns: v.object({ imported: v.number() }),
+  handler: async (ctx) => {
+    const catalog = await fetchOpenRouterModels();
+    const index = indexOpenRouterModels(catalog);
+    const existing = await ctx.runQuery(internal.billing.modelPricing.listAll);
+    const manualModels = new Set(
+      existing
+        .filter((pricing) => pricing.provider === 'openrouter' && pricing.source === 'manual')
+        .map((pricing) => pricing.model),
+    );
+    let imported = 0;
+
+    for (const [model, resolved] of index) {
+      if (manualModels.has(model)) continue;
+      await importOpenRouterModel(ctx, model, resolved);
+      await ctx.scheduler.runAfter(0, internal.billing.pricingSync.syncToKV, {
+        provider: 'openrouter',
+        model,
+      });
+      imported++;
+    }
+    return { imported };
+  },
+});
 
 export const importFromOpenRouter = action({
   args: {},
   returns: v.object({ imported: v.number() }),
   handler: async (ctx) => {
     await requireAdminAction(ctx);
-
-    const response = await fetch('https://openrouter.ai/api/v1/models');
-    if (!response.ok) {
-      throw new Error(`OpenRouter API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    let imported = 0;
-
-    for (const orModel of data.data) {
-      if (!parseOpenRouterModelId(orModel.id)) continue;
-      const converted = convertOpenRouterModelRates(orModel);
-
-      await ctx.runMutation(internal.billing.modelPricing.upsertInternal, {
-        provider: 'openrouter',
-        model: orModel.id,
-        promptCostPerMillion: converted.promptCostPerMillion,
-        completionCostPerMillion: converted.completionCostPerMillion,
-        cacheReadCostPerMillion: converted.cacheReadCostPerMillion,
-        cacheWriteCostPerMillion: converted.cacheWriteCostPerMillion,
-        reasoningCostPerMillion: converted.reasoningCostPerMillion,
-        source: 'openrouter',
-      });
-      imported++;
-    }
-
-    return { imported };
+    return ctx.runAction(internal.billing.modelPricing.importFromOpenRouterInternal, {});
   },
 });
 
@@ -229,28 +250,18 @@ export const importOneFromOpenRouterInternal = internalAction({
   args: { model: v.string() },
   returns: v.object({ imported: v.boolean() }),
   handler: async (ctx, args) => {
-    const response = await fetch('https://openrouter.ai/api/v1/models');
-    if (!response.ok) {
-      throw new Error(`OpenRouter API error: ${response.status}`);
-    }
-    const data = await response.json();
-    const orModel = (data.data as OpenRouterModel[]).find((m) => m.id === args.model);
-    if (!orModel || !parseOpenRouterModelId(orModel.id)) return { imported: false };
-
-    const converted = convertOpenRouterModelRates(orModel);
-    await ctx.runMutation(internal.billing.modelPricing.upsertInternal, {
+    const models = indexOpenRouterModels(await fetchOpenRouterModels());
+    const orModel = findOpenRouterModel(models, args.model);
+    if (!orModel) return { imported: false };
+    const existing = await ctx.runQuery(internal.billing.modelPricing.getInternal, {
       provider: 'openrouter',
-      model: orModel.id,
-      promptCostPerMillion: converted.promptCostPerMillion,
-      completionCostPerMillion: converted.completionCostPerMillion,
-      cacheReadCostPerMillion: converted.cacheReadCostPerMillion,
-      cacheWriteCostPerMillion: converted.cacheWriteCostPerMillion,
-      reasoningCostPerMillion: converted.reasoningCostPerMillion,
-      source: 'openrouter',
+      model: args.model,
     });
+    if (existing?.source === 'manual') return { imported: true };
+    await importOpenRouterModel(ctx, args.model, orModel);
     await ctx.runAction(internal.billing.pricingSync.syncToKV, {
       provider: 'openrouter',
-      model: orModel.id,
+      model: args.model,
     });
     return { imported: true };
   },

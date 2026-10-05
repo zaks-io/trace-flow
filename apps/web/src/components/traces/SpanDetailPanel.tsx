@@ -35,6 +35,8 @@ import { BarCard, formatCompact, formatCostCompact } from '@/components/shared/B
 import { AlertList } from '@/components/alerts';
 import { buildTokenSegments } from '@/components/shared/tokenTypes';
 import { ModelPill } from '@/components/traces/spans-table/ModelPill';
+import { DecisionBodyDetails } from './DecisionBodyDetails';
+import { parseDecisionBody } from './decisionBody';
 import { fetchStoredBodies, formatStoredBodiesForDisplay, getBodyAccessToken } from '@/lib/bodies';
 import type { TriggeredAlert } from '@/types/alerts';
 import { isLLMRequestSpan, parseSpanAttributes, type TraceSpan } from '@/lib/spans';
@@ -182,6 +184,7 @@ function extractOutputContent(
 const displayedKeys = new Set<string>([
   GEN_AI.SYSTEM,
   GEN_AI.REQUEST_MODEL,
+  GEN_AI.RESPONSE_MODEL,
   GEN_AI_USAGE.INPUT_TOKENS,
   GEN_AI_USAGE.INPUT_TOKENS_UNCACHED,
   GEN_AI_USAGE.OUTPUT_TOKENS,
@@ -287,15 +290,21 @@ function BodyContent({
   rawBody,
   loading,
   isSse,
+  isDecision = false,
 }: {
   title: 'Request' | 'Response';
   data: MessageBreakdownData | null;
   rawBody: FormattedBody | null;
   loading: boolean;
   isSse?: boolean;
+  isDecision?: boolean;
 }) {
   const [expandedMessages, setExpandedMessages] = useState<Set<number>>(new Set());
   const [viewMode, setViewMode] = useState<'breakdown' | 'raw'>('breakdown');
+  const decisionData =
+    isDecision && rawBody?.format === 'json'
+      ? parseDecisionBody(rawBody.content, title === 'Request' ? 'request' : 'response')
+      : null;
 
   const toggleExpanded = (index: number) => {
     setExpandedMessages((prev) => {
@@ -364,6 +373,18 @@ function BodyContent({
             )}
           </>
         )}
+        {decisionData && (
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+            {decisionData.entries.length}{' '}
+            {title === 'Request'
+              ? decisionData.entries.length === 1
+                ? 'question'
+                : 'questions'
+              : decisionData.entries.length === 1
+                ? 'answer'
+                : 'answers'}
+          </span>
+        )}
         <div className="flex-1" />
         <div className="flex gap-1">
           <button
@@ -395,7 +416,11 @@ function BodyContent({
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
         </div>
       ) : viewMode === 'breakdown' ? (
-        data ? (
+        decisionData ? (
+          <DecisionBodyDetails data={decisionData} />
+        ) : isDecision || !rawBody ? (
+          renderRawContent()
+        ) : data ? (
           <div className="space-y-1.5">
             {data.messages.map((msg) => (
               <MessageRow
@@ -489,6 +514,8 @@ export function SpanDetailPanel({
 
   const provider = allAttributes[GEN_AI.SYSTEM] ?? '';
   const model = allAttributes[GEN_AI.REQUEST_MODEL] ?? '';
+  const resolvedModel = allAttributes[GEN_AI.RESPONSE_MODEL] ?? '';
+  const isDecision = allAttributes[GEN_AI.OPERATION_NAME] === 'decision';
   const operation = allAttributes[`${BAGGAGE_PREFIX}operation`] ?? '';
   const spanStatus = normalizeSpanStatus(span?.StatusCode);
 
@@ -526,10 +553,15 @@ export function SpanDetailPanel({
   const costCacheImpact = allAttributes[GEN_AI_COST.CACHE_IMPACT]
     ? parseFloat(allAttributes[GEN_AI_COST.CACHE_IMPACT])
     : 0;
-  const costUpstream = allAttributes[GEN_AI_COST.UPSTREAM]
-    ? parseFloat(allAttributes[GEN_AI_COST.UPSTREAM])
-    : 0;
-  const costTotal = costInput + costOutput + costCacheRead + costCacheWrite + costReasoning;
+  const hasUpstreamCost = allAttributes[GEN_AI_COST.UPSTREAM] !== undefined;
+  const costUpstream = hasUpstreamCost ? parseFloat(allAttributes[GEN_AI_COST.UPSTREAM]) : 0;
+  const hasCalculatedCost = allAttributes[GEN_AI_COST.TOTAL] !== undefined;
+  const costTotal = hasCalculatedCost
+    ? parseFloat(allAttributes[GEN_AI_COST.TOTAL])
+    : costInput + costOutput + costCacheRead + costCacheWrite + costReasoning;
+  const hasTokenUsage =
+    allAttributes[GEN_AI_USAGE.INPUT_TOKENS] !== undefined ||
+    allAttributes[GEN_AI_USAGE.OUTPUT_TOKENS] !== undefined;
 
   const inputTokens = allAttributes[GEN_AI_USAGE.INPUT_TOKENS_UNCACHED]
     ? parseInt(allAttributes[GEN_AI_USAGE.INPUT_TOKENS_UNCACHED], 10)
@@ -566,12 +598,14 @@ export function SpanDetailPanel({
   );
 
   // Output span detection
-  const isOutputSpan =
-    span?.SpanName.match(/^gen_ai\.response\.(text|thinking|tool_use)/i) !== null;
+  const isDecisionOutput = spanAttributes[GEN_AI.CONTENT_TYPE] === 'decision';
+  const isOutputSpan = Boolean(
+    span?.SpanName.match(/^gen_ai\.response\.(text|thinking|tool_use|decision)/i),
+  );
   const contentType = (() => {
     const attrType = spanAttributes[GEN_AI.CONTENT_TYPE];
     if (attrType) return attrType;
-    const spanMatch = span?.SpanName.match(/^gen_ai\.response\.(text|thinking|tool_use)/i);
+    const spanMatch = span?.SpanName.match(/^gen_ai\.response\.(text|thinking|tool_use|decision)/i);
     return spanMatch?.[1]?.toLowerCase() ?? '';
   })();
 
@@ -580,6 +614,11 @@ export function SpanDetailPanel({
 
   useEffect(() => {
     abortControllerRef.current?.abort();
+    setRequestBody(null);
+    setResponseBody(null);
+    setMessageContent(null);
+    setBodiesLoading(false);
+    setMessageContentLoading(false);
 
     if (!span || !isOpen) {
       setRequestBody(null);
@@ -605,7 +644,7 @@ export function SpanDetailPanel({
     setMessageContent(null);
 
     const run = async () => {
-      if (isLLMRoot) {
+      if (isLLMRoot || isDecisionOutput) {
         setBodiesLoading(true);
       } else {
         setMessageContentLoading(true);
@@ -615,7 +654,7 @@ export function SpanDetailPanel({
       const storedBodies = await fetchStoredBodies(requestId, token, signal);
       if (signal.aborted) return;
 
-      if (isLLMRoot) {
+      if (isLLMRoot || isDecisionOutput) {
         const formattedBodies = formatStoredBodiesForDisplay(storedBodies);
         setRequestBody(formattedBodies.requestBody);
         setResponseBody(formattedBodies.responseBody);
@@ -636,13 +675,13 @@ export function SpanDetailPanel({
     });
 
     return () => controller.abort();
-  }, [span, isRootSpan, isOpen, isOutputSpan, contentType, issueBodyToken]);
+  }, [span, isRootSpan, isOpen, isOutputSpan, isDecisionOutput, contentType, issueBodyToken]);
 
   return (
     <Sheet open={isOpen} onOpenChange={onClose}>
       <SheetContent
         side="right"
-        className="flex w-[680px] flex-col overflow-hidden p-0 sm:max-w-[680px]"
+        className="flex w-full flex-col overflow-hidden p-0 sm:max-w-[680px]"
       >
         {/* ── Header ── */}
         <SheetHeader className="flex-shrink-0 space-y-2 border-b border-border/50 p-4">
@@ -680,9 +719,22 @@ export function SpanDetailPanel({
           </div>
 
           {/* Model + Provider */}
-          {model && (
-            <div className="flex items-center gap-2">
-              <ModelPill model={model} provider={provider ?? undefined} />
+          {(model || resolvedModel) && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {model && (
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  {resolvedModel && resolvedModel !== model && (
+                    <span className="text-[11px] text-muted-foreground">Requested</span>
+                  )}
+                  <ModelPill model={model} provider={provider || undefined} />
+                </div>
+              )}
+              {resolvedModel && resolvedModel !== model && (
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] text-muted-foreground">Resolved</span>
+                  <ModelPill model={resolvedModel} provider={provider || undefined} />
+                </div>
+              )}
             </div>
           )}
 
@@ -718,12 +770,16 @@ export function SpanDetailPanel({
               )}
 
               {/* Token + Cost BarCards + stat badges */}
-              {(totalTokens > 0 || costTotal > 0) && (
+              {(hasTokenUsage ||
+                hasCalculatedCost ||
+                totalTokens > 0 ||
+                costTotal > 0 ||
+                hasUpstreamCost) && (
                 <div className="space-y-2">
                   <div
-                    className={`grid gap-2 ${costTotal > 0 && totalTokens > 0 ? 'grid-cols-2' : 'grid-cols-1'}`}
+                    className={`grid gap-2 ${(hasCalculatedCost || costTotal > 0) && (hasTokenUsage || totalTokens > 0) ? 'grid-cols-2' : 'grid-cols-1'}`}
                   >
-                    {totalTokens > 0 && (
+                    {(hasTokenUsage || totalTokens > 0) && (
                       <BarCard
                         label="Tokens"
                         value={formatCompact(totalTokens)}
@@ -734,9 +790,9 @@ export function SpanDetailPanel({
                         compact
                       />
                     )}
-                    {costTotal > 0 && (
+                    {(hasCalculatedCost || costTotal > 0) && (
                       <BarCard
-                        label="Cost"
+                        label={isDecision ? 'Estimated cost' : 'Cost'}
                         value={formatCostCompact(costTotal)}
                         segments={costSegments}
                         total={costTotal}
@@ -749,7 +805,7 @@ export function SpanDetailPanel({
                   {(ttftMs !== null ||
                     costPromptBaseline > 0 ||
                     costCacheImpact !== 0 ||
-                    costUpstream > 0) && (
+                    hasUpstreamCost) && (
                     <div className="flex flex-wrap gap-1.5">
                       {ttftMs !== null && (
                         <Badge variant="outline" className="font-mono text-[11px]">
@@ -766,9 +822,10 @@ export function SpanDetailPanel({
                           Impact {formatCostCompact(costCacheImpact)}
                         </Badge>
                       )}
-                      {costUpstream > 0 && (
+                      {hasUpstreamCost && (
                         <Badge variant="outline" className="font-mono text-[11px]">
-                          Upstream {formatCostCompact(costUpstream)}
+                          {isDecision ? 'Reported cost' : 'Upstream'}{' '}
+                          {formatCostCompact(costUpstream)}
                         </Badge>
                       )}
                     </div>
@@ -788,6 +845,7 @@ export function SpanDetailPanel({
                     }
                     rawBody={requestBody}
                     loading={bodiesLoading}
+                    isDecision={isDecision}
                   />
                   <BodyContent
                     title="Response"
@@ -805,12 +863,22 @@ export function SpanDetailPanel({
                     rawBody={responseBody}
                     loading={bodiesLoading}
                     isSse={responseBody?.format === 'sse'}
+                    isDecision={isDecision}
                   />
                 </>
               )}
 
               {/* Output content (for output spans) */}
-              {isOutputSpan && !isRootSpan && (
+              {isDecisionOutput && !isRootSpan && (
+                <BodyContent
+                  title="Response"
+                  data={null}
+                  rawBody={responseBody}
+                  loading={bodiesLoading}
+                  isDecision
+                />
+              )}
+              {isOutputSpan && !isDecisionOutput && !isRootSpan && (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-foreground">Output Content</span>

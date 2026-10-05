@@ -12,6 +12,7 @@ import type {
   SentryTraceContext,
 } from '@trace-flow/types';
 import { extractProviderFromUrl } from '@trace-flow/utils';
+import { boundedSSEMetadataValue } from '@trace-flow/llm-providers';
 import { sanitizeResponseMetadata, sanitizeSSEStreamData } from './queue-boundary';
 
 /**
@@ -23,8 +24,8 @@ import { sanitizeResponseMetadata, sanitizeSSEStreamData } from './queue-boundar
  * - `tokens/error` are parsed from response body when available
  * - `truncated` indicates if response was truncated due to size limits
  *
- * Sets `model` to 'unknown' because the proxy doesn't parse request bodies.
- * The consumer extracts the actual model from the stored request body in R2.
+ * Keeps the caller's model separate from provider response metadata so aliases
+ * and requests that fail before a response retain their original attribution.
  *
  * SSE metadata is only included when present (streaming responses), keeping messages compact for non-SSE requests.
  */
@@ -46,6 +47,7 @@ export function createQueueMessage(params: {
   responseComplete: number;
   latency: number;
   tokens: LLMTokenUsage | undefined;
+  requestedModel?: string;
   error: LLMError | undefined;
   truncated?: boolean;
   sseStreamData?: SSEStreamData;
@@ -75,6 +77,7 @@ export function createQueueMessage(params: {
     responseComplete,
     latency,
     tokens,
+    requestedModel,
     error,
     truncated,
     sseStreamData,
@@ -100,8 +103,10 @@ export function createQueueMessage(params: {
     responseComplete,
   };
 
-  // Use model from response metadata if available, otherwise default to 'unknown'
-  const model = safeResponseMetadata?.model ?? 'unknown';
+  const model =
+    (operationName === 'decision' ? boundedSSEMetadataValue(requestedModel) : undefined) ??
+    safeResponseMetadata?.model ??
+    'unknown';
 
   const queueMessage: QueueMessage = {
     requestId,

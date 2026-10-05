@@ -6,6 +6,7 @@ import {
   formatCostAsString,
   type ModelPricing,
 } from '../pricing';
+import { TYPESAFE_JEV_PRICING } from '../typesafe';
 import type { LLMTokenUsage } from '@trace-flow/types';
 
 const createMockKV = () => ({
@@ -89,6 +90,12 @@ describe('pricing', () => {
       expect(mockKV.get).toHaveBeenCalledTimes(1);
       expect(result).toBeNull();
     });
+
+    it('does not apply a Jev family price to an unknown dated release', async () => {
+      mockKV.get.mockResolvedValueOnce(null).mockResolvedValueOnce(samplePricing);
+      expect(await getPricing(mockKV, 'openrouter', 'typesafe/jev-1.13-20261005')).toBeNull();
+      expect(mockKV.get).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('calculateCost', () => {
@@ -98,6 +105,19 @@ describe('pricing', () => {
       updatedAt: Date.now(),
       source: 'manual',
     };
+
+    it('preserves the integer-microdollar rounding limit for repeated small Jev requests', () => {
+      const pricing: ModelPricing = { ...TYPESAFE_JEV_PRICING, updatedAt: 0, source: 'default' };
+      const result = calculateCost({ promptTokens: 476, completionTokens: 100 }, pricing);
+      expect(result.inputCostMicrodollars).toBe(20);
+      expect(result.outputCostMicrodollars).toBe(0);
+      expect(result.totalCostMicrodollars * 1000).toBe(20_000);
+      expect((476 * 0.042 * 1000) / 1_000_000).toBeCloseTo(0.019992, 12);
+      expect(microdollarsToDollars(result.totalCostMicrodollars * 1000)).toBe(0.02);
+      expect(
+        calculateCost({ promptTokens: 1, completionTokens: 1 }, pricing).totalCostMicrodollars,
+      ).toBe(0);
+    });
 
     it('should calculate basic prompt and completion costs', () => {
       const tokens: LLMTokenUsage = {

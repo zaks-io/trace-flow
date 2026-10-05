@@ -22,6 +22,12 @@ crons.daily(
   internal.billing.modelPricing.importFromModelsDevInternal,
 );
 
+crons.daily(
+  'import model pricing from OpenRouter',
+  { hourUTC: 6, minuteUTC: 45 },
+  internal.billing.modelPricing.importFromOpenRouterInternal,
+);
+
 crons.hourly(
   'remove superseded agent snapshots',
   { minuteUTC: 20 },

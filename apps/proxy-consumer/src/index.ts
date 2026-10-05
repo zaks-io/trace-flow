@@ -38,7 +38,7 @@ import {
   SOURCE_IMPORTED_EXECUTION,
   TRACE_FLOW,
 } from '@trace-flow/otel-conventions';
-import { getPricing, type ModelPricing } from '@trace-flow/pricing';
+import { getPricing, TYPESAFE_JEV_PRICING, type ModelPricing } from '@trace-flow/pricing';
 import { fetchOpenRouterPricing } from './openrouter-pricing';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type {
@@ -188,6 +188,11 @@ async function getPricingForMessage(
   // Try KV first (exact match or prefix without date suffix)
   const pricing = await getPricing(kv, provider, model);
   if (pricing) return pricing;
+
+  // Direct TypeSafe rates come from its own catalog, never a gateway's price.
+  if (provider === 'typesafe') {
+    return model === TYPESAFE_JEV_PRICING.model ? TYPESAFE_JEV_PRICING : null;
+  }
 
   // For OpenRouter, the model ID is already in OpenRouter format
   if (provider === 'openrouter') {
