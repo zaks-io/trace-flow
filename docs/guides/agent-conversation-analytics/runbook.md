@@ -224,9 +224,17 @@ Snapshot admission closure is normal backpressure. A pending registration retain
 delivery, receipt, and recovery alarm without publishing a queue reference until a revision is
 reserved. Agent Ingest returns `503 enqueue_failed` with `Retry-After: 60` for known admission
 closure, including a gate that closes after the admission check. The Collector honors bounded
-numeric admission delays within its retry budget; other enqueue failures return to the next sync
-cycle with cursors unchanged. Unknown reservation failures and mismatched delivery references
-remain errors.
+numeric admission delays within its retry budget. When that budget is spent, or the failure has no
+usable delay, the Collector stops the pass with cursors unchanged and skips periodic passes for at
+least `Retry-After` (60 seconds when absent) plus up to 50% jitter. Unknown reservation failures and
+mismatched delivery references remain errors.
+
+A `400 invalid_envelope` on a multi-session batch does not fail its healthy sessions. The Collector
+re-sends the sessions named in `vendor_session_ids` alone (or every session alone when the body
+names none) in the same pass. A session still rejected on its own is quarantined locally until its
+transcript file or the parser version changes, so it no longer blocks pass completion. When the
+body does not name the session and nothing else in the pass was accepted, the session counts as
+failed instead, because that points at the client or server. Desktop logs each quarantined vendor session id once.
 
 Ordinary snapshot batches wait one minute, then check each Copy through the Tinybird Jobs API after
 15 seconds, with subsequent checks after 30 and then 60 seconds. Two generations may run globally.

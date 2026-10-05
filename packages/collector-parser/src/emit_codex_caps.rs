@@ -33,6 +33,7 @@ use collector_contracts::facts::AgentCapabilitySnapshotFact;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use crate::codex_continuation::{continuation_scope, scoped_turn_id};
 use crate::session_context::SessionContext;
 use crate::timestamp::rfc3339_to_epoch_ms;
 
@@ -155,13 +156,15 @@ fn fact(
     obs: CapabilityObservation,
     event_at: i64,
     stable_turn_index: i64,
+    scope: Option<&str>,
     ctx: &SessionContext,
 ) -> AgentCapabilitySnapshotFact {
     AgentCapabilitySnapshotFact {
         vendor_session_id: ctx.vendor_session_id.clone(),
         // Codex assigns no per-snapshot id (`session_meta.payload.id` is just the session UUID), so
-        // identity falls to the per-session ordinal in `stable_turn_index`.
-        source_snapshot_id: None,
+        // identity falls to the per-session ordinal in `stable_turn_index`, scoped to the continuation
+        // page when there is one because the ordinal restarts there.
+        source_snapshot_id: scoped_turn_id(scope, stable_turn_index),
         stable_turn_index,
         event_at,
         capability_kind: obs.kind,
@@ -186,6 +189,7 @@ pub fn codex_capability_facts(
     let mut facts = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     let mut ordinal: i64 = 0;
+    let scope = continuation_scope(records);
     for record in records {
         if record.get("type").and_then(Value::as_str) != Some("session_meta") {
             continue;
@@ -197,7 +201,7 @@ pub fn codex_capability_facts(
         for obs in observations(payload) {
             let dedup_key = format!("{}:{}", kind_str(obs.kind), obs.content_hash);
             if seen.insert(dedup_key) {
-                facts.push(fact(obs, event_at, ordinal, ctx));
+                facts.push(fact(obs, event_at, ordinal, scope.as_deref(), ctx));
                 ordinal += 1;
             }
         }

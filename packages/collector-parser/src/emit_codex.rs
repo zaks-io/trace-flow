@@ -17,6 +17,7 @@ use collector_contracts::enums::{AgentMessageRole, CacheCoverage, TokenCoverage}
 use collector_contracts::facts::AgentMessageFact;
 use serde_json::Value;
 
+use crate::codex_continuation::{continuation_scope, scoped_turn_id};
 use crate::codex_turns::{session_turns, CodexTurn, CodexTurnRole};
 use crate::session_context::SessionContext;
 use crate::timestamp::rfc3339_to_epoch_ms;
@@ -89,6 +90,7 @@ fn message_fact(
     turn: &CodexTurn,
     model: String,
     is_sidechain: bool,
+    scope: Option<&str>,
     ctx: &SessionContext,
 ) -> AgentMessageFact {
     let usage = turn.usage.unwrap_or_default();
@@ -97,8 +99,9 @@ fn message_fact(
         parent_vendor_session_id: ctx.parent_vendor_session_id.clone(),
         vendor_session_id: ctx.vendor_session_id.clone(),
         // Codex emits no per-message vendor ID; the Worker's `message_pk` falls back to the positional
-        // `turn_index` (ADR identity rule).
-        vendor_message_id: None,
+        // `turn_index` (ADR identity rule). A continuation page restarts that index, so its turns carry
+        // a page-scoped id instead.
+        vendor_message_id: scoped_turn_id(scope, turn.turn_index),
         turn_index: turn.turn_index,
         role: match turn.role {
             CodexTurnRole::User => AgentMessageRole::User,
@@ -148,10 +151,11 @@ pub fn codex_message_facts(records: &[Value], ctx: &SessionContext) -> Vec<Agent
     let turns = session_turns(records.iter());
     let models = models_by_turn(records, &turns);
     let is_sidechain = session_is_sidechain(records, ctx);
+    let scope = continuation_scope(records);
     turns
         .iter()
         .zip(models)
-        .map(|(turn, model)| message_fact(turn, model, is_sidechain, ctx))
+        .map(|(turn, model)| message_fact(turn, model, is_sidechain, scope.as_deref(), ctx))
         .collect()
 }
 

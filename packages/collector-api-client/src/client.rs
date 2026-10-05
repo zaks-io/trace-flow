@@ -14,7 +14,9 @@ use reqwest::Client;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
-use crate::error::{IngestError, IngestOk, IngestResult, UpgradeRequiredDetail};
+use crate::error::{
+    IngestError, IngestOk, IngestResult, InvalidEnvelopeDetail, UpgradeRequiredDetail,
+};
 use crate::retry::{backoff_delay, wait_delay, RetryConfig, DEFAULT_TIMEOUT};
 
 /// Mirrors the Worker cap in `apps/agent-ingest/src/handler.ts`.
@@ -139,14 +141,14 @@ impl CollectorApiClient {
             };
 
             let status = response.status().as_u16();
-            let admission_delay = response
+            let retry_after = response
                 .headers()
                 .get(reqwest::header::RETRY_AFTER)
                 .and_then(|value| value.to_str().ok())
-                .and_then(admission_retry_delay);
+                .and_then(parse_retry_after);
             let body_text = response.text().await.unwrap_or_else(|_| String::from("{}"));
 
-            match classify_response(status, &body_text) {
+            match classify_response(status, &body_text, retry_after) {
                 ResponseClass::Success(ok) => return Ok(ok),
                 ResponseClass::RetryableUnavailable => {
                     // Only policy_unavailable is retried.
@@ -161,12 +163,15 @@ impl CollectorApiClient {
                         attempt + 1
                     )));
                 }
-                ResponseClass::Terminal(IngestError::EnqueueFailed)
-                    if admission_delay.is_some() && attempt < self.config.retry.max_retries =>
+                ResponseClass::Terminal(IngestError::EnqueueFailed { retry_after })
+                    if attempt < self.config.retry.max_retries =>
                 {
+                    let Some(delay) = admission_retry_delay(retry_after) else {
+                        return Err(IngestError::EnqueueFailed { retry_after });
+                    };
                     // Admission can close after another group queues. Retain the original batch
                     // identity and body so fact-identity deduplication absorbs partial retries.
-                    wait_delay(admission_delay.unwrap(), cancel)
+                    wait_delay(delay, cancel)
                         .await
                         .map_err(IngestError::Transport)?;
                     continue;
@@ -181,15 +186,22 @@ impl CollectorApiClient {
     }
 }
 
-fn admission_retry_delay(value: &str) -> Option<Duration> {
+/// `Retry-After` as positive delta-seconds. The ingest Worker never sends the HTTP-date form, so
+/// that form, signs, and zero are not a usable delay rather than something to parse against a local
+/// clock.
+fn parse_retry_after(value: &str) -> Option<Duration> {
     let seconds = value.trim();
     if seconds.is_empty() || !seconds.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
     let seconds = seconds.parse::<u64>().ok()?;
-    (1..=MAX_ADMISSION_RETRY_SECONDS)
-        .contains(&seconds)
-        .then(|| Duration::from_secs(seconds))
+    (seconds > 0).then(|| Duration::from_secs(seconds))
+}
+
+/// The in-request wait for a closed admission gate. A longer `Retry-After` is left to the sync
+/// loop's back-off instead of holding this request open.
+fn admission_retry_delay(retry_after: Option<Duration>) -> Option<Duration> {
+    retry_after.filter(|delay| *delay <= Duration::from_secs(MAX_ADMISSION_RETRY_SECONDS))
 }
 
 enum ResponseClass {
@@ -199,12 +211,16 @@ enum ResponseClass {
     Terminal(IngestError),
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct IngestResponseBody {
     #[serde(default)]
     error: Option<String>,
     #[serde(default)]
     reason: Option<String>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    vendor_session_ids: Vec<String>,
     #[serde(default)]
     detail: Option<String>,
     #[serde(default)]
@@ -217,16 +233,8 @@ struct IngestResponseBody {
     skipped_conflict: Option<u32>,
 }
 
-fn classify_response(status: u16, body: &str) -> ResponseClass {
-    let parsed: IngestResponseBody = serde_json::from_str(body).unwrap_or(IngestResponseBody {
-        error: None,
-        reason: None,
-        detail: None,
-        min_desktop_version: None,
-        min_parser_version: None,
-        sessions: None,
-        skipped_conflict: None,
-    });
+fn classify_response(status: u16, body: &str, retry_after: Option<Duration>) -> ResponseClass {
+    let parsed: IngestResponseBody = serde_json::from_str(body).unwrap_or_default();
 
     match status {
         202 => ResponseClass::Success(IngestOk {
@@ -236,7 +244,11 @@ fn classify_response(status: u16, body: &str) -> ResponseClass {
         401 => ResponseClass::Terminal(IngestError::Unauthorized {
             reason: parsed.reason.unwrap_or_default(),
         }),
-        400 => ResponseClass::Terminal(IngestError::InvalidEnvelope),
+        400 => ResponseClass::Terminal(IngestError::InvalidEnvelope(InvalidEnvelopeDetail {
+            reason: parsed.reason,
+            category: parsed.category,
+            vendor_session_ids: parsed.vendor_session_ids,
+        })),
         413 => ResponseClass::Terminal(IngestError::PayloadTooLarge),
         426 => ResponseClass::Terminal(IngestError::UpgradeRequired(Box::new(
             UpgradeRequiredDetail {
@@ -245,13 +257,15 @@ fn classify_response(status: u16, body: &str) -> ResponseClass {
                 min_parser_version: parsed.min_parser_version.unwrap_or_default(),
             },
         ))),
-        429 => ResponseClass::Terminal(IngestError::RateLimited),
+        429 => ResponseClass::Terminal(IngestError::RateLimited { retry_after }),
         503 => match parsed.error.as_deref() {
             Some("policy_unavailable") => ResponseClass::RetryableUnavailable,
             Some("session_claim_unavailable") => {
                 ResponseClass::Terminal(IngestError::SessionClaimUnavailable)
             }
-            Some("enqueue_failed") => ResponseClass::Terminal(IngestError::EnqueueFailed),
+            Some("enqueue_failed") => {
+                ResponseClass::Terminal(IngestError::EnqueueFailed { retry_after })
+            }
             _ => ResponseClass::Terminal(IngestError::InternalError),
         },
         500 => ResponseClass::Terminal(IngestError::InternalError),

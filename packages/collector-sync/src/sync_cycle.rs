@@ -15,20 +15,22 @@
 //!
 //! Cursor discipline (ADR): a unit's cursor advances on `Ok` and on `Ok` only. Any failure leaves the
 //! cursor where it was, so the file is re-sent next cycle. A *cycle-fatal* error (bad credential,
-//! too-old client, org rate limit) is not specific to one envelope and would reject every remaining
-//! POST too, so it stops the cycle early; per-envelope failures only strand their own unit and the
-//! cycle continues with the rest.
+//! too-old client, org rate limit, closed delivery gate) is not specific to one envelope and would
+//! reject every remaining POST too, so it stops the cycle early; per-envelope failures only strand
+//! their own unit and the cycle continues with the rest. A `400` is isolated to the unit that caused
+//! it within the cycle, and that unit is quarantined so it cannot block pass completion.
+
+use std::time::Duration;
 
 use collector_api_client::{CollectorApiClient, IngestError, IngestResult};
-use collector_contracts::{AgentIngestEnvelope, AgentIngestFacts, AgentSource};
-use collector_parser::assemble::session_facts;
+use collector_contracts::{AgentIngestEnvelope, AgentSource};
 use collector_parser::session_context::SessionContext;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::cursor::{ComposerCursor, CursorStore, CursorStoreError, FactCursor, FileCursor};
-use crate::envelope::{build_envelope, BatchMeta};
-use crate::fact_batches::{serialized_facts_bytes, split_facts, SessionFactContext};
+use crate::batches::{BatchPreparer, PreparedBatch};
+use crate::cursor::{ComposerCursor, CursorStore, CursorStoreError, FileCursor};
+use crate::envelope::BatchMeta;
 use crate::orchestrator::{Action, Orchestrator, Trigger};
 
 /// The watermark a [`SyncUnit`] commits on a `2xx`, by source shape. JSONL sources (Claude, Codex)
@@ -43,12 +45,13 @@ pub enum UnitCursor {
 
 impl UnitCursor {
     /// Commit this unit's progress to the store. Dispatched per variant; **called only after a
-    /// `2xx`**, exactly like the inherent `advance` it wraps.
+    /// `2xx`**, exactly like the inherent `advance` it wraps. An accepted unit is no longer poisoned.
     fn advance(&self, store: &CursorStore, source: AgentSource) -> Result<(), CursorStoreError> {
         match self {
-            UnitCursor::File(c) => store.advance(source, c),
-            UnitCursor::Composer(c) => store.advance_composer(source, c),
+            UnitCursor::File(c) => store.advance(source, c)?,
+            UnitCursor::Composer(c) => store.advance_composer(source, c)?,
         }
+        store.clear_quarantine(source, self)
     }
 }
 
@@ -100,18 +103,26 @@ pub struct CycleReport {
     pub first_error: Option<IngestError>,
     /// Set when cancellation or a cycle-fatal error stopped the cycle before every unit was attempted.
     pub aborted_early: bool,
+    /// Vendor session ids of units quarantined this cycle. Each is reported once: later cycles skip
+    /// the unit silently until its file or the parser version changes.
+    pub quarantined: Vec<String>,
+    /// Units skipped because an earlier cycle quarantined them in their current state.
+    pub skipped_quarantined: u32,
+    /// Set when the server shed load (`429` or `503 enqueue_failed`); the embedder should back off.
+    pub throttled: bool,
+    /// The server's requested `Retry-After` for that back-off, when it sent one.
+    pub retry_after: Option<Duration>,
 }
 
 /// Whether an ingest error makes the rest of the cycle futile because it is not specific to one
-/// envelope. A bad credential, a too-old client, or an exhausted org rate limit rejects every
-/// remaining POST too, so stop now and re-send next cycle.
+/// envelope. A bad credential, a too-old client, an exhausted org rate limit, or a closed delivery
+/// gate rejects every remaining POST too, so stop now and re-send next cycle.
 fn is_cycle_fatal(err: &IngestError) -> bool {
-    matches!(
-        err,
-        IngestError::Unauthorized { .. }
-            | IngestError::UpgradeRequired(_)
-            | IngestError::RateLimited
-    )
+    err.is_backoff()
+        || matches!(
+            err,
+            IngestError::Unauthorized { .. } | IngestError::UpgradeRequired(_)
+        )
 }
 
 /// How many sessions to pack into one ingest envelope, and how many envelopes to keep in flight.
@@ -145,13 +156,6 @@ impl Default for SyncTuning {
     }
 }
 
-/// One prepared batch: the envelopes to POST and the cursors to commit iff every POST is accepted.
-struct PreparedBatch {
-    envelopes: Vec<AgentIngestEnvelope>,
-    cursors: Vec<UnitCursor>,
-    fact_cursors: Vec<FactCursor>,
-}
-
 /// Run one sync cycle against `units` with default tuning. Advances a unit's cursor only after every
 /// envelope carrying it is accepted.
 pub async fn run_sync_cycle<C: IngestClient>(
@@ -176,17 +180,32 @@ pub async fn run_sync_cycle<C: IngestClient>(
     .await
 }
 
+/// A unit the Worker rejected with a `400` when sent on its own, awaiting the end-of-cycle verdict.
+struct Rejected {
+    unit: usize,
+    named: bool,
+    error: IngestError,
+}
+
 /// Run one sync cycle, batching sessions into multi-session envelopes and POSTing up to
 /// `tuning.max_concurrent_uploads` at once.
 ///
-/// Sessions are grouped into [`PreparedBatch`]es under the session/byte budget (lazily, via
-/// [`BatchPreparer`]); each batch's cursors advance together, and only after its POST returns `2xx`.
-/// POSTs run concurrently in a `FuturesUnordered` capped at `max_concurrent_uploads`, but that set is
-/// polled on this one task, so cursor writes and report mutation stay single-threaded (the
-/// `CursorStore`'s SQLite connection is not shared across tasks).
-/// A cycle-fatal error (bad credential, too-old client, exhausted rate limit) stops draining the rest:
-/// every remaining batch would hit the same wall, and their cursors stay put for the next cycle. The
-/// terminal `JobSucceeded`/`JobFailed` trigger is applied exactly as before.
+/// Sessions are grouped into batches under the session/byte budget (lazily, via [`BatchPreparer`]);
+/// each batch's cursors advance together, and only after its POST returns `2xx`. POSTs run
+/// concurrently in a `FuturesUnordered` capped at `max_concurrent_uploads`, but that set is polled on
+/// this one task, so cursor writes and report mutation stay single-threaded (the `CursorStore`'s
+/// SQLite connection is not shared across tasks).
+///
+/// A `400` on a multi-unit batch is not that batch's verdict: one poisoned session would otherwise
+/// strand every healthy session merged with it. The batch is split and re-sent in the same cycle,
+/// sessions the `400` body names on their own and the rest together (or all individually when the
+/// body names none). A unit rejected on its own is quarantined when the rejection is evidently about
+/// that unit (the body names its session, or another envelope was accepted this cycle), so it stops
+/// blocking pass completion; otherwise it counts as failed, because a `400` on every envelope points at
+/// the client or server, not at the data.
+///
+/// A cycle-fatal error (bad credential, too-old client, shed load) stops draining the rest: every
+/// remaining batch would hit the same wall, and their cursors stay put for the next cycle.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_sync_cycle_tuned<C: IngestClient>(
     client: &C,
@@ -198,94 +217,22 @@ pub async fn run_sync_cycle_tuned<C: IngestClient>(
     cancel: Option<&CancellationToken>,
     tuning: SyncTuning,
 ) -> Result<(CycleReport, Vec<Action>), CursorStoreError> {
-    use futures_util::stream::{FuturesUnordered, StreamExt};
-
-    let mut report = CycleReport::default();
-
-    // Lazy: batches are assembled on demand as the pipeline pulls them, so only ~`concurrency` merged
-    // envelopes are ever in memory at once (not the whole window), and a pre-cancelled run assembles
-    // nothing.
-    let concurrency = tuning.max_concurrent_uploads.max(1);
-    let mut inflight = FuturesUnordered::new();
-    let mut pending = BatchPreparer::new(meta, units, mint_batch_id, tuning);
-
-    // A token already cancelled before we start must POST nothing, but still counts as an early abort
-    // if there was work to do (so the cycle fails the job rather than reporting a clean drain).
-    let precancelled = cancel.is_some_and(CancellationToken::is_cancelled);
-    if precancelled {
-        report.aborted_early = !units.is_empty();
-    } else {
-        // Prime the pipeline up to the concurrency limit.
-        for _ in 0..concurrency {
-            match pending.next_batch(store) {
-                Ok(Some(batch)) => inflight.push(post_batch(client, batch, cancel)),
-                Ok(None) => break,
-                // A cursor-store read failure is terminal; drive the orchestrator to its failed
-                // state first so it can't stay stuck in `Syncing` when the caller tears down.
-                Err(err) => {
-                    orchestrator.apply(Trigger::JobFailed);
-                    return Err(err);
-                }
-            }
+    let result = drain(client, store, meta, units, mint_batch_id, cancel, tuning).await;
+    let report = match result {
+        Ok(report) => report,
+        // A cursor-store failure is terminal; drive the orchestrator to its failed state first so it
+        // can't stay stuck in `Syncing` when the caller tears down. Un-advanced cursors re-send next
+        // cycle.
+        Err(err) => {
+            orchestrator.apply(Trigger::JobFailed);
+            return Err(err);
         }
-    }
-
-    'drain: while let Some((batch, result)) = inflight.next().await {
-        match result {
-            Ok(_) => {
-                // A cursor-store write failure is terminal for the cycle and propagates as `Err`. Drive
-                // the orchestrator to its failed state first so it can't stay stuck in `Syncing` when the
-                // caller tears down; un-advanced cursors re-send this batch's sessions next cycle.
-                if let Err(err) = store.advance_facts(meta.source, &batch.fact_cursors) {
-                    orchestrator.apply(Trigger::JobFailed);
-                    return Err(err);
-                }
-                for cursor in &batch.cursors {
-                    if let Err(err) = cursor.advance(store, meta.source) {
-                        orchestrator.apply(Trigger::JobFailed);
-                        return Err(err);
-                    }
-                }
-                report.advanced += batch.cursors.len() as u32;
-            }
-            Err(err) => {
-                report.failed += batch.cursors.len() as u32;
-                let fatal = is_cycle_fatal(&err);
-                if report.first_error.is_none() {
-                    report.first_error = Some(err);
-                }
-                if fatal {
-                    // Stop launching new POSTs; remaining batches' cursors stay put for next cycle.
-                    report.aborted_early = true;
-                    break 'drain;
-                }
-            }
-        }
-
-        // Backfill the freed concurrency slot, unless cancelled.
-        if cancel.is_some_and(CancellationToken::is_cancelled) {
-            report.aborted_early = true;
-            break 'drain;
-        }
-        match pending.next_batch(store) {
-            Ok(Some(batch)) => inflight.push(post_batch(client, batch, cancel)),
-            Ok(None) => {}
-            Err(err) => {
-                orchestrator.apply(Trigger::JobFailed);
-                return Err(err);
-            }
-        }
-    }
-
-    // Batches never launched (because a fatal error / cancellation stopped the drain) are simply not
-    // counted: their cursors were never advanced, so they re-send next cycle. `aborted_early` already
-    // records that the cycle did not finish its work.
-    drop(inflight);
+    };
 
     // A cancelled cycle has no failures yet did not finish its work, so it must not report success:
     // `JobSucceeded` would return the orchestrator to `Watching` as if the batch were drained. Any
     // failure or early abort (cancellation or a cycle-fatal error) is `JobFailed`; the un-advanced
-    // cursors mean those files re-send once watching resumes.
+    // cursors mean those files re-send once watching resumes. A quarantined unit is not a failure.
     let trigger = if report.failed == 0 && !report.aborted_early {
         Trigger::JobSucceeded
     } else {
@@ -293,6 +240,112 @@ pub async fn run_sync_cycle_tuned<C: IngestClient>(
     };
     let actions = orchestrator.apply(trigger);
     Ok((report, actions))
+}
+
+async fn drain<C: IngestClient>(
+    client: &C,
+    store: &CursorStore,
+    meta: &BatchMeta,
+    units: &[SyncUnit],
+    mint_batch_id: &mut dyn FnMut() -> String,
+    cancel: Option<&CancellationToken>,
+    tuning: SyncTuning,
+) -> Result<CycleReport, CursorStoreError> {
+    use futures_util::stream::{FuturesUnordered, StreamExt};
+
+    let mut report = CycleReport::default();
+    // A token already cancelled before we start must POST nothing, but still counts as an early abort
+    // if there was work to do (so the cycle fails the job rather than reporting a clean drain).
+    if cancel.is_some_and(CancellationToken::is_cancelled) {
+        report.aborted_early = !units.is_empty();
+        return Ok(report);
+    }
+
+    let concurrency = tuning.max_concurrent_uploads.max(1);
+    let mut inflight = FuturesUnordered::new();
+    let mut pending = BatchPreparer::new(meta, units, mint_batch_id, tuning);
+    let mut rejected: Vec<Rejected> = Vec::new();
+
+    loop {
+        // Refill every free slot: a split `400` batch can queue several retry groups at once.
+        while inflight.len() < concurrency {
+            match pending.next_batch(store)? {
+                Some(batch) => inflight.push(post_batch(client, batch, cancel)),
+                None => break,
+            }
+        }
+        let Some((batch, result)) = inflight.next().await else {
+            break;
+        };
+        match result {
+            Ok(_) => {
+                store.advance_facts(meta.source, &batch.fact_cursors)?;
+                for &index in &batch.units {
+                    units[index].next_cursor.advance(store, meta.source)?;
+                }
+                report.advanced += batch.units.len() as u32;
+            }
+            Err(IngestError::InvalidEnvelope(detail)) => {
+                let named = |index: &usize| {
+                    detail
+                        .vendor_session_ids
+                        .contains(&units[*index].ctx.vendor_session_id)
+                };
+                if let [unit] = batch.units[..] {
+                    rejected.push(Rejected {
+                        unit,
+                        named: named(&unit),
+                        error: IngestError::InvalidEnvelope(detail),
+                    });
+                } else {
+                    let (suspects, rest): (Vec<usize>, Vec<usize>) =
+                        batch.units.iter().partition(|index| named(index));
+                    if suspects.is_empty() || rest.is_empty() {
+                        batch.units.iter().for_each(|&u| pending.requeue(vec![u]));
+                    } else {
+                        pending.requeue(rest);
+                        suspects.into_iter().for_each(|u| pending.requeue(vec![u]));
+                    }
+                }
+            }
+            Err(err) => {
+                report.failed += batch.units.len() as u32;
+                let fatal = is_cycle_fatal(&err);
+                if err.is_backoff() {
+                    report.throttled = true;
+                    report.retry_after = report.retry_after.max(err.retry_after());
+                }
+                report.first_error.get_or_insert(err);
+                if fatal {
+                    // Stop launching new POSTs; remaining batches' cursors stay put for next cycle.
+                    report.aborted_early = true;
+                    break;
+                }
+            }
+        }
+        if cancel.is_some_and(CancellationToken::is_cancelled) {
+            report.aborted_early = true;
+            break;
+        }
+    }
+    // Batches never launched (because a fatal error / cancellation stopped the drain) are simply not
+    // counted: their cursors were never advanced, so they re-send next cycle. `aborted_early` already
+    // records that the cycle did not finish its work.
+    drop(inflight);
+    report.skipped_quarantined = pending.skipped_quarantined;
+
+    let endpoint_accepted_this_cycle = report.advanced > 0;
+    for rejection in rejected {
+        let unit = &units[rejection.unit];
+        if rejection.named || endpoint_accepted_this_cycle {
+            store.quarantine_unit(meta.source, &unit.next_cursor)?;
+            report.quarantined.push(unit.ctx.vendor_session_id.clone());
+        } else {
+            report.failed += 1;
+            report.first_error.get_or_insert(rejection.error);
+        }
+    }
+    Ok(report)
 }
 
 /// POST one prepared batch, returning the batch back alongside the result so the caller can advance
@@ -316,128 +369,14 @@ async fn post_batch<C: IngestClient>(
     )
 }
 
-/// A **lazy** producer of multi-session [`PreparedBatch`]es: it assembles + merges sessions only as
-/// each batch is pulled, so peak memory tracks `max_concurrent_uploads` (the in-flight batches), not
-/// the whole sync window, and a pre-cancelled run does no assembly. Each unit's facts are assembled
-/// once and merged into the open batch; the batch closes when adding the next unit would exceed
-/// `max_sessions_per_batch` or `max_batch_bytes`. A lone oversized session is split into sequential
-/// envelopes that share one local commit boundary, so a partial upload never advances its cursor.
-/// One `collector_batch_id` is minted per POST.
-///
-/// A unit that assembles to zero facts still carries a cursor that must advance (an empty session is
-/// "seen, nothing to send"), so it is folded into a batch and rides along; the Worker treats an
-/// all-empty envelope as an accepted no-op.
-struct BatchPreparer<'a, M: FnMut() -> String> {
-    meta: &'a BatchMeta,
-    units: &'a [SyncUnit],
-    next_unit: usize,
-    mint_batch_id: M,
-    max_sessions: usize,
-    max_bytes: usize,
-}
-
-impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
-    fn new(
-        meta: &'a BatchMeta,
-        units: &'a [SyncUnit],
-        mint_batch_id: M,
-        tuning: SyncTuning,
-    ) -> Self {
-        Self {
-            meta,
-            units,
-            next_unit: 0,
-            mint_batch_id,
-            max_sessions: tuning.max_sessions_per_batch.max(1),
-            max_bytes: tuning.max_batch_bytes.max(1),
-        }
-    }
-
-    fn next_batch(
-        &mut self,
-        store: &CursorStore,
-    ) -> Result<Option<PreparedBatch>, CursorStoreError> {
-        let mut open_facts = AgentIngestFacts::default();
-        let mut open_cursors: Vec<UnitCursor> = Vec::new();
-        let mut open_fact_cursors: Vec<FactCursor> = Vec::new();
-        let mut open_bytes: usize = 0;
-
-        while let Some(unit) = self.units.get(self.next_unit) {
-            let facts = session_facts(self.meta.source, &unit.records, &unit.ctx);
-            let context = SessionFactContext::capture(&facts);
-            let (mut facts, fact_cursors) = store.filter_unsent_facts(self.meta.source, facts)?;
-            context.retain_for(&mut facts);
-            let facts_bytes = serialized_facts_bytes(&facts);
-
-            // If adding this unit would overflow the open (non-empty) batch, close and return it now
-            // without consuming `unit`, so it starts the next batch.
-            let would_overflow = !open_cursors.is_empty()
-                && (open_cursors.len() >= self.max_sessions
-                    || open_bytes + facts_bytes > self.max_bytes);
-            if would_overflow {
-                return Ok(Some(PreparedBatch {
-                    envelopes: vec![build_envelope(
-                        self.meta,
-                        (self.mint_batch_id)(),
-                        open_facts,
-                    )],
-                    cursors: open_cursors,
-                    fact_cursors: open_fact_cursors,
-                }));
-            }
-
-            if open_cursors.is_empty() && facts_bytes > self.max_bytes {
-                self.next_unit += 1;
-                let envelopes = split_facts(facts, self.max_bytes)
-                    .into_iter()
-                    .map(|chunk| build_envelope(self.meta, (self.mint_batch_id)(), chunk))
-                    .collect();
-                return Ok(Some(PreparedBatch {
-                    envelopes,
-                    cursors: vec![unit.next_cursor.clone()],
-                    fact_cursors,
-                }));
-            }
-
-            // Commit the peeked unit into the open batch.
-            self.next_unit += 1;
-            merge_facts(&mut open_facts, facts);
-            open_cursors.push(unit.next_cursor.clone());
-            open_fact_cursors.extend(fact_cursors);
-            open_bytes += facts_bytes;
-        }
-
-        if open_cursors.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(PreparedBatch {
-            envelopes: vec![build_envelope(
-                self.meta,
-                (self.mint_batch_id)(),
-                open_facts,
-            )],
-            cursors: open_cursors,
-            fact_cursors: open_fact_cursors,
-        }))
-    }
-}
-
-/// Concatenate one session's facts onto the batch accumulator. Facts are independent at rest (the
-/// consumer dedups each `*_pk`), so a simple per-array append is the whole merge.
-fn merge_facts(into: &mut AgentIngestFacts, mut from: AgentIngestFacts) {
-    into.messages.append(&mut from.messages);
-    into.tool_events.append(&mut from.tool_events);
-    into.file_events.append(&mut from.file_events);
-    into.capability_snapshots
-        .append(&mut from.capability_snapshots);
-    into.pull_request_links.append(&mut from.pull_request_links);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fact_batches::serialized_facts_bytes;
     use collector_api_client::error::IngestOk;
+    use collector_api_client::InvalidEnvelopeDetail;
     use collector_contracts::AgentSource;
+    use collector_parser::assemble::session_facts;
     use serde_json::json;
     use std::cell::{Cell, RefCell};
     use std::collections::{HashSet, VecDeque};
@@ -714,7 +653,7 @@ mod tests {
         let mut mint = counter();
 
         // Cycle 1: the POST fails, so nothing is committed.
-        let c1 = MockClient::new([Err(IngestError::EnqueueFailed)]);
+        let c1 = MockClient::new([Err(IngestError::EnqueueFailed { retry_after: None })]);
         let mut o1 = syncing_orchestrator();
         run_sync_cycle(
             &c1,
@@ -914,7 +853,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_per_envelope_failure_does_not_strand_the_rest_of_the_batch() {
-        let client = MockClient::new([ok(), Err(IngestError::InvalidEnvelope), ok()]);
+        let client = MockClient::new([ok(), Err(IngestError::InternalError), ok()]);
         let store = CursorStore::open_in_memory("org").unwrap();
         let mut orch = syncing_orchestrator();
         let mut mint = counter();
@@ -1239,7 +1178,7 @@ mod tests {
         // Two single-session batches, two in flight: the failing one strands only its own cursor; the
         // other still advances. Proves concurrent batches are independent and a non-fatal failure does
         // not abort the cycle.
-        let client = MockClient::new([Err(IngestError::InvalidEnvelope), ok()]);
+        let client = MockClient::new([Err(IngestError::InternalError), ok()]);
         let store = CursorStore::open_in_memory("org").unwrap();
         let mut orch = syncing_orchestrator();
         let mut mint = counter();
@@ -1267,4 +1206,6 @@ mod tests {
         assert_eq!(report.failed, 1);
         assert!(!report.aborted_early);
     }
+
+    mod isolation;
 }

@@ -12,7 +12,8 @@
 //! redaction, and token rules stay entirely the emitters' (this layer adds none of its own).
 //!
 //! Source coverage:
-//! - **Claude Code** emits messages, tool events, file events, and PR links. It has no capability
+//! - **Claude Code** emits messages, tool events, file events, and PR links from the records left after
+//!   [`drop_reappended_records`] removes the compact-boundary tail copies. It has no capability
 //!   snapshots — that signal is Codex `session_meta`-only — so `capability_snapshots` is empty by
 //!   design, not a missing emitter.
 //! - **Codex CLI** emits all five fact kinds.
@@ -24,6 +25,7 @@ use collector_contracts::enums::AgentSource;
 use collector_contracts::envelope::AgentIngestFacts;
 use serde_json::Value;
 
+use crate::claude_records::drop_reappended_records;
 use crate::emit_claude::claude_message_facts;
 use crate::emit_claude_files::claude_file_facts;
 use crate::emit_claude_tools::claude_tool_facts;
@@ -45,13 +47,16 @@ pub fn session_facts(
     ctx: &SessionContext,
 ) -> AgentIngestFacts {
     match source {
-        AgentSource::Claude => AgentIngestFacts {
-            messages: claude_message_facts(records, ctx),
-            tool_events: claude_tool_facts(records, ctx),
-            file_events: claude_file_facts(records, ctx),
-            capability_snapshots: Vec::new(),
-            pull_request_links: claude_pr_link_facts(records, ctx),
-        },
+        AgentSource::Claude => {
+            let records = drop_reappended_records(records);
+            AgentIngestFacts {
+                messages: claude_message_facts(&records, ctx),
+                tool_events: claude_tool_facts(&records, ctx),
+                file_events: claude_file_facts(&records, ctx),
+                capability_snapshots: Vec::new(),
+                pull_request_links: claude_pr_link_facts(&records, ctx),
+            }
+        }
         AgentSource::Codex => AgentIngestFacts {
             messages: codex_message_facts(records, ctx),
             tool_events: codex_tool_facts(records, ctx),

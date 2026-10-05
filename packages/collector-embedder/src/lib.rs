@@ -19,6 +19,7 @@
 //! - [`defaults`] — the production ingest + Convex-site URLs, resolved as env override →
 //!   baked default so a normal user never has to know or set a URL.
 
+pub mod backoff;
 pub mod connection;
 pub mod defaults;
 mod fact_sources;

@@ -20,6 +20,7 @@
 
 use serde_json::Value;
 
+use crate::codex_continuation::is_continuation_meta;
 use crate::codex_usage::{cumulative_usage, last_token_usage, CodexTurnUsage, CumulativeUsage};
 
 /// Whether a turn is a user message or an assistant (model) turn. Codex's `developer` preamble is not a
@@ -88,8 +89,14 @@ where
     // The most recent assistant-activity record not yet closed into a turn. An assistant turn normally
     // closes on its `token_count`; this flushes one that a user message or end-of-session closes instead.
     let mut pending_activity: Option<&'a Value> = None;
+    // A continuation page's cumulative carries on from the parent's at the fork, so its first counted
+    // snapshot is not a delta from zero (see `codex_continuation`).
+    let mut continues_parent_cumulative = false;
 
     for record in records {
+        if is_continuation_meta(record) {
+            continues_parent_cumulative = true;
+        }
         match classify(record) {
             RecordKind::UserMessage => {
                 if let Some(activity) = pending_activity.take() {
@@ -115,26 +122,31 @@ where
                 let Some(cumulative) = payload.and_then(cumulative_usage) else {
                     continue;
                 };
-                // Per-turn usage = diff of successive cumulative snapshots (ccusage#884). Three cases:
-                let usage: Option<CodexTurnUsage> =
-                    if cumulative.total_tokens > prev_cumulative.total_tokens {
-                        // Normal advance: the delta since the last counted snapshot.
-                        let u = cumulative.delta_since(prev_cumulative);
-                        prev_cumulative = cumulative;
-                        Some(u)
-                    } else if cumulative.total_tokens == prev_cumulative.total_tokens {
-                        // Unchanged cumulative = duplicate snapshot Codex re-emits → contributes nothing.
-                        continue;
-                    } else {
-                        // Cumulative went backwards: a session reset/rollback (e.g. resumed/compacted
-                        // context). The cumulative is no longer a continuation of `prev`, so fall back to
-                        // this row's own `last_token_usage` and re-baseline `prev` to the new snapshot. If
-                        // that row has no usable `last_token_usage` either, leave it `None` — the turn ran
-                        // but its tokens are unknown, which the emitter maps to `Missing` coverage. Coercing
-                        // to zero would falsely claim known full coverage and undercount.
-                        prev_cumulative = cumulative;
-                        payload.and_then(last_token_usage)
-                    };
+                // Per-turn usage = diff of successive cumulative snapshots (ccusage#884). Four cases:
+                let usage: Option<CodexTurnUsage> = if continues_parent_cumulative {
+                    // The parent's tokens up to the fork are already counted by the parent file;
+                    // this row's own `last_token_usage` is the page's first turn.
+                    continues_parent_cumulative = false;
+                    prev_cumulative = cumulative;
+                    payload.and_then(last_token_usage)
+                } else if cumulative.total_tokens > prev_cumulative.total_tokens {
+                    // Normal advance: the delta since the last counted snapshot.
+                    let u = cumulative.delta_since(prev_cumulative);
+                    prev_cumulative = cumulative;
+                    Some(u)
+                } else if cumulative.total_tokens == prev_cumulative.total_tokens {
+                    // Unchanged cumulative = duplicate snapshot Codex re-emits → contributes nothing.
+                    continue;
+                } else {
+                    // Cumulative went backwards: a session reset/rollback (e.g. resumed/compacted
+                    // context). The cumulative is no longer a continuation of `prev`, so fall back to
+                    // this row's own `last_token_usage` and re-baseline `prev` to the new snapshot. If
+                    // that row has no usable `last_token_usage` either, leave it `None` — the turn ran
+                    // but its tokens are unknown, which the emitter maps to `Missing` coverage. Coercing
+                    // to zero would falsely claim known full coverage and undercount.
+                    prev_cumulative = cumulative;
+                    payload.and_then(last_token_usage)
+                };
                 turns.push(CodexTurn {
                     turn_index: next_index,
                     role: CodexTurnRole::Assistant,

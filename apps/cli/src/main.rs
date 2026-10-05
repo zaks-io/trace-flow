@@ -207,6 +207,21 @@ async fn cmd_sync(since: &str, replay: bool) -> Result<()> {
         if let Some(err) = &r.first_error {
             println!("           reason: {err}");
         }
+        for vendor_session_id in &r.quarantined {
+            println!("           quarantined session {vendor_session_id}: rejected by ingest; retried when it changes");
+        }
+        if r.skipped_quarantined > 0 {
+            println!(
+                "           skipped {} quarantined session(s)",
+                r.skipped_quarantined
+            );
+        }
+        if r.throttled {
+            let wait = r
+                .retry_after
+                .map_or_else(|| "a minute".to_string(), |d| format!("{}s", d.as_secs()));
+            println!("           ingest is busy; try again in {wait}");
+        }
     }
     println!("\nUploaded {total_advanced} session(s); {total_failed} failed.");
     if total_failed > 0 {

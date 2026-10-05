@@ -7,5 +7,5 @@ pub mod error;
 pub mod retry;
 
 pub use client::{CollectorApiClient, CollectorApiClientConfig};
-pub use error::{IngestError, IngestResult, UpgradeRequiredDetail};
+pub use error::{IngestError, IngestResult, InvalidEnvelopeDetail, UpgradeRequiredDetail};
 pub use retry::RetryConfig;

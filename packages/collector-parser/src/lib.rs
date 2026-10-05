@@ -14,7 +14,9 @@
 //! see `apps/agent-ingest/src/redaction.ts`.
 
 pub mod assemble;
+pub mod claude_records;
 pub mod claude_usage;
+pub mod codex_continuation;
 pub mod codex_turns;
 pub mod codex_usage;
 pub mod command;

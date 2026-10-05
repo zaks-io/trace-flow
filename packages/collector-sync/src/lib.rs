@@ -27,6 +27,7 @@
 //! last 3d leaf.
 
 pub mod assemble_units;
+mod batches;
 pub mod claude_session;
 pub mod codex_lineage;
 pub mod codex_session;
@@ -35,10 +36,12 @@ pub mod cursor_reader;
 pub mod discovery;
 pub mod envelope;
 mod fact_batches;
+mod fact_dedupe;
 pub mod git;
 pub mod git_remote;
 pub mod import;
 pub mod orchestrator;
+mod quarantine;
 pub mod sync_cycle;
 
 pub use assemble_units::{
@@ -61,4 +64,7 @@ pub use git::{resolve_git_metadata, GitMetadata, GitRemoteCache};
 pub use git_remote::normalize_git_remote;
 pub use import::{HistoryPreset, ImportWindow};
 pub use orchestrator::{Action, Orchestrator, OrchestratorState, Trigger};
-pub use sync_cycle::{run_sync_cycle, CycleReport, IngestClient, SyncUnit, UnitCursor};
+pub use sync_cycle::{
+    run_sync_cycle, run_sync_cycle_tuned, CycleReport, IngestClient, SyncTuning, SyncUnit,
+    UnitCursor,
+};

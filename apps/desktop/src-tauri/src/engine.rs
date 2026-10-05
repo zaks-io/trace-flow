@@ -19,7 +19,7 @@
 //! syncing when it quit (or was restarted by login autostart) comes back syncing and runs a cycle at
 //! once. Before this, every relaunch silently reset to paused and weeks of transcripts went unsynced.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use collector_embedder::connection::{Connection, Paths};
 use collector_embedder::keychain;
@@ -102,9 +102,12 @@ async fn run_loop(
     refresh_connection(&bus);
     refresh_sources(&bus, Some(&settings.source_homes));
 
+    // Set when the ingest Worker shed load; periodic ticks wait it out. An explicit click still runs.
+    let mut backoff_until: Option<Instant> = None;
+
     if settings.syncing {
         tracing::info!("sync authorized before relaunch; resuming");
-        run_authorized_cycle(&bus, &mut settings).await;
+        backoff_until = run_authorized_cycle(&bus, &mut settings).await;
         persist(&settings_file, &settings);
     }
 
@@ -126,15 +129,19 @@ async fn run_loop(
                         // Persist the authorization before the (possibly long) pass so a quit
                         // mid-backfill still comes back syncing.
                         persist(&settings_file, &settings);
-                        run_authorized_cycle(&bus, &mut settings).await;
+                        backoff_until = run_authorized_cycle(&bus, &mut settings).await;
                     }
                 }
                 persist(&settings_file, &settings);
             }
             _ = ticker.tick() => {
+                if backoff_until.is_some_and(|until| Instant::now() < until) {
+                    tracing::info!("sync tick skipped: ingest asked collectors to back off");
+                    continue;
+                }
                 if settings.syncing {
                     let before = settings.clone();
-                    run_authorized_cycle(&bus, &mut settings).await;
+                    backoff_until = run_authorized_cycle(&bus, &mut settings).await;
                     if settings != before {
                         persist(&settings_file, &settings);
                     }
@@ -147,12 +154,18 @@ async fn run_loop(
 /// One authorized pass. Until the one-time history backfill has actually reached ingest, every pass
 /// (a click, a tick, a relaunch catch-up) uses the wider `FIRST_BACKFILL` window, so a first backfill
 /// that failed (network down, then a relaunch) is retried rather than quietly replaced by an
-/// incremental pass that would leave the older sessions unsynced.
-async fn run_authorized_cycle(bus: &AppStateBus, settings: &mut Settings) {
+/// incremental pass that would leave the older sessions unsynced. Returns when periodic passes may
+/// resume if the ingest Worker shed load.
+async fn run_authorized_cycle(bus: &AppStateBus, settings: &mut Settings) -> Option<Instant> {
     let window = window_for_authorized_cycle(settings);
-    if let Some(outcome) = run_cycle(bus, window, settings.source_homes.clone()).await {
-        apply_authorized_cycle(settings, &outcome);
-    }
+    let outcome = run_cycle(bus, window, settings.source_homes.clone()).await?;
+    apply_authorized_cycle(settings, &outcome);
+    let backoff = outcome.backoff?;
+    tracing::warn!(
+        backoff_secs = backoff.as_secs(),
+        "ingest shed load; pausing periodic sync"
+    );
+    Some(Instant::now() + backoff)
 }
 
 fn window_for_authorized_cycle(settings: &Settings) -> Window {
@@ -216,6 +229,8 @@ struct CycleOutcome {
     first_error: Option<String>,
     /// A setup failure (bad client config, broken cursor DB) — distinct from per-session ingest errors.
     setup_error: Option<String>,
+    /// How long to wait before the next periodic pass when the ingest Worker shed load.
+    backoff: Option<Duration>,
 }
 
 /// Run one sync pass over all sources, mirroring the result into the state bus. A failed cycle records
@@ -371,6 +386,7 @@ fn run_cycle_blocking(
                 failed: 0,
                 first_error: None,
                 setup_error: Some(format!("build runtime: {err}")),
+                backoff: None,
             };
         }
     };
@@ -393,11 +409,19 @@ fn run_cycle_blocking(
             let mut advanced = 0u32;
             let mut failed = 0u32;
             let mut first_error = None;
-            for (_source, report) in &outcome.reports {
+            for (source, report) in &outcome.reports {
                 advanced += report.advanced;
                 failed += report.failed;
                 if first_error.is_none() {
                     first_error = report.first_error.clone();
+                }
+                // Each quarantine is reported once; later passes skip the unit silently.
+                for vendor_session_id in &report.quarantined {
+                    tracing::warn!(
+                        source = ?source,
+                        vendor_session_id = %vendor_session_id,
+                        "session quarantined: ingest rejected it; retried when it changes"
+                    );
                 }
             }
             CycleOutcome {
@@ -405,6 +429,7 @@ fn run_cycle_blocking(
                 failed,
                 first_error,
                 setup_error: None,
+                backoff: outcome.backoff(),
             }
         }
         Err(err) => CycleOutcome {
@@ -412,6 +437,7 @@ fn run_cycle_blocking(
             failed: 0,
             first_error: None,
             setup_error: Some(err.to_string()),
+            backoff: None,
         },
     }
 }

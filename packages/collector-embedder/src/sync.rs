@@ -21,6 +21,7 @@
 //! within a run without needing `Date.now()` at the cursor seam.
 
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use collector_api_client::{CollectorApiClient, CollectorApiClientConfig};
@@ -35,9 +36,12 @@ use crate::fact_sources::FactSources;
 use crate::sources::{cursor_db_path, ingestable_sources, SourceHomes};
 
 /// The version strings the ingest worker's compatibility policy gates on. The CLI is the collector
-/// "desktop" embedder; the parser version tracks the `collector-parser` crate.
+/// "desktop" embedder; the parser version tracks the `collector-parser` crate. Bump it whenever fact
+/// identity or content changes, so known transcripts are re-parsed and quarantined units retried.
+/// 0.3.0: Claude compact-boundary re-appends dropped; Codex continuation pages scoped and their
+/// inherited cumulative tokens no longer recounted.
 pub const DESKTOP_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const PARSER_VERSION: &str = "0.2.0";
+pub const PARSER_VERSION: &str = "0.3.0";
 
 /// How far back a sync reaches.
 #[derive(Debug, Clone, Copy)]
@@ -74,6 +78,15 @@ pub struct SourceReport {
     pub aborted_early: bool,
     /// The first ingest error class of the pass, surfaced so a failed sync says *why* (no secrets).
     pub first_error: Option<String>,
+    /// Vendor session ids newly quarantined this pass after the Worker rejected them on their own.
+    /// Ids only, never paths or transcript content.
+    pub quarantined: Vec<String>,
+    /// Units skipped because they were already quarantined in their current state.
+    pub skipped_quarantined: u32,
+    /// True when the Worker shed load; the embedder should wait [`SyncRunOutcome::backoff`].
+    pub throttled: bool,
+    /// The Worker's `Retry-After` for that wait, when it sent one.
+    pub retry_after: Option<Duration>,
 }
 
 impl SourceReport {
@@ -110,6 +123,27 @@ pub struct SyncRunOutcome {
     pub reports: Vec<(AgentSource, SourceReport)>,
     pub discovery_passes: usize,
     pub files_read: usize,
+}
+
+impl SyncRunOutcome {
+    /// How long to wait before the next pass when the Worker shed load, honoring its `Retry-After`
+    /// with jitter; `None` when the pass was not throttled.
+    pub fn backoff(&self) -> Option<Duration> {
+        let throttled: Vec<&SourceReport> = self
+            .reports
+            .iter()
+            .map(|(_, report)| report)
+            .filter(|report| report.throttled)
+            .collect();
+        if throttled.is_empty() {
+            return None;
+        }
+        let retry_after = throttled.iter().filter_map(|r| r.retry_after).max();
+        Some(crate::backoff::backoff_delay(
+            retry_after,
+            crate::backoff::jitter_unit(),
+        ))
+    }
 }
 
 /// Run a sync pass over every ingestable Source, returning one report per Source attempted.
@@ -262,6 +296,10 @@ async fn apply_fact_cycle(
     report.advanced += cycle.advanced;
     report.failed += cycle.failed;
     report.aborted_early = cycle.aborted_early;
+    report.quarantined.extend(cycle.quarantined);
+    report.skipped_quarantined += cycle.skipped_quarantined;
+    report.throttled |= cycle.throttled;
+    report.retry_after = report.retry_after.max(cycle.retry_after);
     if let Some(err) = &cycle.first_error {
         // The IngestError Display is a stable error class (e.g. "unauthorized", "upgrade required"),
         // never the credential or transcript text — safe to surface.
@@ -569,6 +607,107 @@ mod tests {
         let outcome = run_with_servers(home.path(), state.path(), ingest_url).await;
 
         assert!(outcome.reports.iter().any(|(_, report)| report.failed > 0));
+        assert_eq!(last_complete_sync_at_ms(state.path()), None);
+    }
+
+    fn request_json(raw: &[u8]) -> String {
+        use std::io::Read as _;
+        let start = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        let mut json = String::new();
+        flate2::read::GzDecoder::new(&raw[start..])
+            .read_to_string(&mut json)
+            .unwrap();
+        json
+    }
+
+    #[tokio::test]
+    async fn a_poisoned_session_is_quarantined_and_the_pass_still_completes() {
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        write_home_transcripts(home.path());
+        let poisoned = CLAUDE
+            .iter()
+            .map(|b| *b as char)
+            .collect::<String>()
+            .replace("claude-session-001", "poison-session")
+            .replace("claude-record-00", "poison-record-00");
+        let claude_dir = home.path().join(".claude").join("projects").join("p1");
+        std::fs::write(claude_dir.join("poison-session.jsonl"), poisoned).unwrap();
+        let poisoned_posts = Arc::new(Mutex::new(0u32));
+        let ingest_url = spawn_http({
+            let poisoned_posts = Arc::clone(&poisoned_posts);
+            move |raw| {
+                if request_json(&raw).contains("poison-session") {
+                    *poisoned_posts.lock().unwrap() += 1;
+                    return raw_response(400, "Bad Request", r#"{"error":"invalid_envelope"}"#);
+                }
+                raw_response(
+                    202,
+                    "Accepted",
+                    r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#,
+                )
+            }
+        })
+        .await;
+        let now = 1_779_840_000_000;
+
+        let outcome =
+            run_fact_sync(home.path(), state.path(), ingest_url.clone(), false, now).await;
+
+        let claude = &outcome.reports[0].1;
+        assert_eq!(claude.advanced, 1);
+        assert_eq!(claude.failed, 0);
+        assert_eq!(claude.quarantined, vec!["poison-session".to_string()]);
+        assert!(claude.is_complete());
+        assert_eq!(
+            *poisoned_posts.lock().unwrap(),
+            2,
+            "batched once, then alone"
+        );
+        assert_eq!(last_complete_sync_at_ms(state.path()), Some(now));
+
+        let replayed = run_fact_sync(home.path(), state.path(), ingest_url, false, now + 1).await;
+        assert_eq!(
+            *poisoned_posts.lock().unwrap(),
+            2,
+            "a quarantined unit is not re-sent"
+        );
+        assert_eq!(replayed.reports[0].1.skipped_quarantined, 1);
+        assert!(replayed.reports[0].1.quarantined.is_empty());
+    }
+
+    #[tokio::test]
+    async fn enqueue_failed_stops_the_pass_and_asks_for_a_backoff() {
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        write_home_transcripts(home.path());
+        let hits = Arc::new(Mutex::new(0u32));
+        // Above the client's in-request admission bound, so the wait falls to the pass back-off.
+        let ingest_url = spawn_http({
+            let hits = Arc::clone(&hits);
+            move |_raw| {
+                *hits.lock().unwrap() += 1;
+                let body = r#"{"error":"enqueue_failed"}"#;
+                format!(
+                    "HTTP/1.1 503 Service Unavailable\r\ncontent-type: application/json\r\nretry-after: 600\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+            }
+        })
+        .await;
+
+        let outcome = run_with_servers(home.path(), state.path(), ingest_url).await;
+
+        assert_eq!(
+            *hits.lock().unwrap(),
+            1,
+            "no later source posts into a closed gate"
+        );
+        assert_eq!(outcome.reports.len(), 1);
+        let backoff = outcome
+            .backoff()
+            .expect("throttled pass asks for a backoff");
+        assert!(backoff >= Duration::from_secs(600) && backoff < Duration::from_secs(900));
         assert_eq!(last_complete_sync_at_ms(state.path()), None);
     }
 
