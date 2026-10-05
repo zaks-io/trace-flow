@@ -1,0 +1,97 @@
+DESCRIPTION >
+    Token and cost mix per source, provider and model, with cache hit rate for the window and the
+    equal-length window just before it. Source is proxy (your apps) or imported_execution (Local
+    proxy); the two are separate lenses on spend and rows never merge across them.
+    Token buckets are disjoint: uncached input, cache read, cache write, non-reasoning output,
+    reasoning and unclassified. Output tokens include reasoning everywhere except Google proxy
+    traffic, whose candidate count already excludes thoughts. Cost columns mirror the buckets and
+    sum to total_cost_usd. cache_hit_rate is cache read over all input-side tokens, NULL when there
+    is no input. Rows need at least one request in the current window.
+    The api_keys and retention_days parameters are enforced via JWT fixed_params for security.
+
+NODE scoped_facts
+DESCRIPTION >
+    Facts for the authorized keys from the start of the prior window, floored at retention.
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ns, 0) }} AS start_ns_raw,
+        if(start_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now() - toIntervalDay(7), 9)), start_ns_raw) AS start_ns,
+        {{ Int64(end_time_ns, 0) }} AS end_ns_raw,
+        if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns,
+        start_ns - greatest(end_ns - start_ns, 0) AS prior_start_ns
+    SELECT
+        Source,
+        Provider,
+        Model,
+        ReceivedAt >= start_ns AS is_current,
+        UncachedInputTokens,
+        CacheReadInputTokens,
+        CacheCreationInputTokens,
+        if(
+            Source = 'proxy' AND lower(Provider) = 'google',
+            toUInt64(OutputTokens),
+            toUInt64(greatest(toInt64(OutputTokens) - toInt64(ReasoningTokens), 0))
+        ) AS OutputNonReasoningTokens,
+        ReasoningTokens,
+        UnclassifiedTokens,
+        InputCostMicrodollars,
+        CacheReadCostMicrodollars,
+        CacheCreationCostMicrodollars,
+        OutputCostMicrodollars,
+        ReasoningCostMicrodollars,
+        TotalCostMicrodollars,
+        UsageMissing,
+        CostStatus
+    FROM llm_request_facts
+    WHERE Source IN ('proxy', 'imported_execution')
+        {% if defined(source) %}
+        AND Source = {{ String(source) }}
+        {% end %}
+        AND ReceivedAt >= prior_start_ns
+        AND ReceivedAt <= end_ns
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
+        AND (
+            ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+        )
+        AND ApiKey != ''
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        Source AS source,
+        Provider AS provider,
+        Model AS model,
+        countIf(is_current) AS request_count,
+        sumIf(UncachedInputTokens, is_current) AS uncached_input_tokens,
+        sumIf(CacheReadInputTokens, is_current) AS cache_read_input_tokens,
+        sumIf(CacheCreationInputTokens, is_current) AS cache_creation_input_tokens,
+        sumIf(OutputNonReasoningTokens, is_current) AS output_non_reasoning_tokens,
+        sumIf(ReasoningTokens, is_current) AS reasoning_tokens,
+        sumIf(UnclassifiedTokens, is_current) AS unclassified_tokens,
+        sumIf(InputCostMicrodollars, is_current) / 1000000 AS uncached_input_cost_usd,
+        sumIf(CacheReadCostMicrodollars, is_current) / 1000000 AS cache_read_cost_usd,
+        sumIf(CacheCreationCostMicrodollars, is_current) / 1000000 AS cache_creation_cost_usd,
+        sumIf(OutputCostMicrodollars, is_current) / 1000000 AS output_cost_usd,
+        sumIf(ReasoningCostMicrodollars, is_current) / 1000000 AS reasoning_cost_usd,
+        sumIf(TotalCostMicrodollars, is_current) / 1000000 AS total_cost_usd,
+        sumIf(UsageMissing, is_current) AS usage_missing_count,
+        countIf(is_current AND CostStatus = 'priced') AS cost_priced_count,
+        countIf(is_current AND CostStatus = 'partial') AS cost_partial_count,
+        countIf(is_current AND CostStatus = 'unpriced') AS cost_unpriced_count,
+        countIf(is_current AND Source = 'imported_execution' AND CostStatus = '') AS cost_unassessed_count,
+        countIf(is_current AND Source = 'proxy') AS cost_proxy_count,
+        uncached_input_tokens + cache_read_input_tokens + cache_creation_input_tokens AS input_side_tokens,
+        if(input_side_tokens = 0, NULL, round(cache_read_input_tokens / input_side_tokens, 6)) AS cache_hit_rate,
+        countIf(NOT is_current) AS prior_request_count,
+        sumIf(UncachedInputTokens + CacheReadInputTokens + CacheCreationInputTokens, NOT is_current) AS prior_input_side_tokens,
+        if(prior_input_side_tokens = 0, NULL, round(sumIf(CacheReadInputTokens, NOT is_current) / prior_input_side_tokens, 6)) AS prior_cache_hit_rate
+    FROM scoped_facts
+    GROUP BY Source, Provider, Model
+    HAVING request_count > 0
+    ORDER BY total_cost_usd DESC, request_count DESC, source, provider, model
+    LIMIT greatest(1, least({{ Int32(limit, 100) }}, 100))
+
+TYPE ENDPOINT

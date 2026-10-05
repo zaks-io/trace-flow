@@ -2,7 +2,9 @@ DESCRIPTION >
     Per-conversation cost and token distribution for agent conversations. Each conversation
     is one data point; the endpoint reports the spend skew (how concentrated cost is in a few
     conversations), cost-per-conversation percentiles, and a parallel token distribution so the
-    UI can toggle the axis between cost (default) and tokens. Message counts are deliberately
+    UI can toggle the axis between cost (default) and tokens. The priced_* and log_bin_* columns
+    describe only sessions with at least one priced Agent Message, binned on a log scale
+    (log_bins_per_decade bins per power of ten, from $0.01 up) for a cost histogram. Message counts are deliberately
     NOT a headline unit. Reads the generation-published session serving table and merges aggregate
     states by (OrgId, session_pk) via GROUP BY on the hot path (mirrors agent_sessions_browser).
 
@@ -25,7 +27,8 @@ SQL >
         message_count,
         cache_inclusive_tokens,
         generated_tokens,
-        cost_usd
+        cost_usd,
+        priced_message_count
     FROM (
         SELECT
             session_pk,
@@ -41,6 +44,7 @@ SQL >
             input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + reasoning_tokens AS cache_inclusive_tokens,
             input_tokens + output_tokens + reasoning_tokens AS generated_tokens,
             round(sumMerge(CostUsd), 6) AS cost_usd,
+            sumMerge(PricedMessageCount) AS priced_message_count,
             maxMerge(LastEventAt) AS last_event_at
         FROM agent_session_summaries_published
         WHERE OrgId = {{ String(org_id, '') }}
@@ -99,7 +103,16 @@ SQL >
                 arrayMap(k -> toUInt64(round(k * n / num_points)), range(0, num_points + 1)),
                 [if(total_cost = 0, 0, arrayFirstIndex(value -> value >= total_cost / 2, cumulative_cost))]
             )))
-        ) AS sample_ranks
+        ) AS sample_ranks,
+        8 AS log_bins_per_decade_value,
+        period = 'current' AND priced_message_count > 0 AS is_priced_current,
+        -- The bin expression runs on every row before the If filter, so clamp to keep log10(0) finite.
+        -- The epsilon keeps exact decade costs such as $0.10 out of the bin below.
+        groupArrayIf(
+            (toInt32(floor(log10(greatest(cost_usd, 0.01)) * log_bins_per_decade_value + 1e-9)), cost_usd),
+            is_priced_current AND cost_usd >= 0.01
+        ) AS log_bin_points,
+        arraySort(arrayDistinct(arrayMap(point -> point.1, log_bin_points))) AS log_bins
     SELECT
         toUInt64(countIf(period = 'current')) AS session_count,
         toUInt64(countIf(period = 'prior')) AS prior_session_count,
@@ -160,7 +173,16 @@ SQL >
         ), 4) AS gini,
         if(total_cost = 0, toUInt64(0), toUInt64(arrayFirstIndex(value -> value >= total_cost / 2, cumulative_cost))) AS half_spend_conv_count,
         arrayMap(rank -> if(n = 0, 0., rank / n), sample_ranks) AS lorenz_conv_pct,
-        arrayMap(rank -> if(rank = 0 OR total_cost = 0, 0., cumulative_cost[rank] / total_cost), sample_ranks) AS lorenz_cost_pct
+        arrayMap(rank -> if(rank = 0 OR total_cost = 0, 0., cumulative_cost[rank] / total_cost), sample_ranks) AS lorenz_cost_pct,
+        toUInt64(countIf(is_priced_current)) AS priced_session_count,
+        toUInt64(countIf(period = 'current' AND priced_message_count = 0)) AS unpriced_session_count,
+        toUInt64(countIf(is_priced_current AND cost_usd < 0.01)) AS sub_cent_session_count,
+        if(priced_session_count = 0, 0., round(quantileExactIf(0.5)(cost_usd, is_priced_current), 6)) AS priced_cost_p50,
+        if(priced_session_count = 0, 0., round(quantileExactIf(0.95)(cost_usd, is_priced_current), 6)) AS priced_cost_p95,
+        toUInt8(log_bins_per_decade_value) AS log_bins_per_decade,
+        log_bins AS log_bin_index,
+        arrayMap(bin -> toUInt64(length(arrayFilter(point -> point.1 = bin, log_bin_points))), log_bins) AS log_bin_count,
+        arrayMap(bin -> round(arraySum(arrayMap(point -> point.2, arrayFilter(point -> point.1 = bin, log_bin_points))), 6), log_bins) AS log_bin_sum
     FROM sessions
 
 NODE endpoint

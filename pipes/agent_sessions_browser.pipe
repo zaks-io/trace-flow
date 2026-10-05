@@ -1,6 +1,7 @@
 DESCRIPTION >
     Browsable Agent Session table. Reads published daily session states and merges every retained day before applying
-    the session last-event window.
+    the session last-event window. Token sums and the priced message count let the client derive
+    per-session cache hit and cost coverage without another query.
 
 NODE candidates
 SQL >
@@ -71,7 +72,14 @@ SQL >
         unique_file_count,
         cost_usd,
         duration_ms,
-        last_event_ms
+        last_event_ms,
+        git_branch,
+        input_tokens,
+        cache_read_tokens,
+        cache_creation_tokens,
+        output_tokens,
+        reasoning_tokens,
+        priced_message_count
     FROM (
         SELECT
             session_pk,
@@ -85,7 +93,14 @@ SQL >
             minMerge(StartedAt) AS started_at,
             maxMerge(LastEventAt) AS last_event_at,
             toUnixTimestamp64Milli(last_event_at) - toUnixTimestamp64Milli(started_at) AS duration_ms,
-            toUnixTimestamp64Milli(last_event_at) AS last_event_ms
+            toUnixTimestamp64Milli(last_event_at) AS last_event_ms,
+            argMaxMerge(git_branch) AS git_branch,
+            sumMerge(InputTokens) AS input_tokens,
+            sumMerge(CacheReadTokens) AS cache_read_tokens,
+            sumMerge(CacheCreationTokens) AS cache_creation_tokens,
+            sumMerge(OutputTokens) AS output_tokens,
+            sumMerge(ReasoningTokens) AS reasoning_tokens,
+            sumMerge(PricedMessageCount) AS priced_message_count
         FROM agent_session_summaries_published
         WHERE OrgId = {{ String(org_id, '') }}
           AND session_pk IN (SELECT session_pk FROM candidates)

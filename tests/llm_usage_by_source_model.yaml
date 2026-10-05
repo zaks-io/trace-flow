@@ -1,0 +1,57 @@
+# key_source_model fixtures, current window [2026-10-01, 2026-10-02), prior [2026-09-30, 2026-10-01):
+# - proxy claude-sonnet-4-5: current 200 uncached + 700 read + 100 write (hit 0.7), 300 output of which
+#   100 reasoning; prior 500 uncached + 500 read (hit 0.5); an all-read row before the prior window
+#   must not move the prior rate.
+# - proxy gemini-2.5-pro: 40 output beside 60 reasoning; Google output already excludes thoughts.
+# - proxy gpt-4.1: prior window only, so it has no row.
+# - imported gpt-5: one priced (300 uncached + 600 read, 50 output of which 20 reasoning), one
+#   unpriced with missing usage, one unassessed legacy row (10 uncached, 5 output).
+# key_source_model_other repeats claude-sonnet-4-5 for another organization.
+
+- name: splits_by_source_and_model
+  description: proxy and imported rows stay separate, ordered by cost, with disjoint token and cost buckets and current versus prior cache hit
+  expected_http_status: 200
+  parameters: api_keys=key_source_model&start_time_ns=1790812800000000000&end_time_ns=1790899200000000000&retention_days=3650
+  expected_result: |
+    {"source":"proxy","provider":"anthropic","model":"claude-sonnet-4-5","request_count":1,"uncached_input_tokens":200,"cache_read_input_tokens":700,"cache_creation_input_tokens":100,"output_non_reasoning_tokens":200,"reasoning_tokens":100,"unclassified_tokens":0,"uncached_input_cost_usd":0.001,"cache_read_cost_usd":0.002,"cache_creation_cost_usd":0.003,"output_cost_usd":0.004,"reasoning_cost_usd":0.005,"total_cost_usd":0.015,"usage_missing_count":0,"cost_priced_count":0,"cost_partial_count":0,"cost_unpriced_count":0,"cost_unassessed_count":0,"cost_proxy_count":1,"input_side_tokens":1000,"cache_hit_rate":0.7,"prior_request_count":1,"prior_input_side_tokens":1000,"prior_cache_hit_rate":0.5}
+    {"source":"proxy","provider":"google","model":"gemini-2.5-pro","request_count":1,"uncached_input_tokens":100,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_non_reasoning_tokens":40,"reasoning_tokens":60,"unclassified_tokens":0,"uncached_input_cost_usd":0.0001,"cache_read_cost_usd":0,"cache_creation_cost_usd":0,"output_cost_usd":0.0004,"reasoning_cost_usd":0.0006,"total_cost_usd":0.0011,"usage_missing_count":0,"cost_priced_count":0,"cost_partial_count":0,"cost_unpriced_count":0,"cost_unassessed_count":0,"cost_proxy_count":1,"input_side_tokens":100,"cache_hit_rate":0,"prior_request_count":0,"prior_input_side_tokens":0,"prior_cache_hit_rate":null}
+    {"source":"imported_execution","provider":"openai","model":"gpt-5","request_count":3,"uncached_input_tokens":310,"cache_read_input_tokens":600,"cache_creation_input_tokens":0,"output_non_reasoning_tokens":35,"reasoning_tokens":20,"unclassified_tokens":0,"uncached_input_cost_usd":0.0003,"cache_read_cost_usd":0.00006,"cache_creation_cost_usd":0,"output_cost_usd":0.0003,"reasoning_cost_usd":0.0002,"total_cost_usd":0.00086,"usage_missing_count":1,"cost_priced_count":1,"cost_partial_count":0,"cost_unpriced_count":1,"cost_unassessed_count":1,"cost_proxy_count":0,"input_side_tokens":910,"cache_hit_rate":0.659341,"prior_request_count":0,"prior_input_side_tokens":0,"prior_cache_hit_rate":null}
+
+- name: source_filter_selects_one_lens
+  description: source=imported_execution returns only Local proxy rows
+  expected_http_status: 200
+  parameters: api_keys=key_source_model&source=imported_execution&start_time_ns=1790812800000000000&end_time_ns=1790899200000000000&retention_days=3650
+  expected_result: |
+    {"source":"imported_execution","provider":"openai","model":"gpt-5","request_count":3,"uncached_input_tokens":310,"cache_read_input_tokens":600,"cache_creation_input_tokens":0,"output_non_reasoning_tokens":35,"reasoning_tokens":20,"unclassified_tokens":0,"uncached_input_cost_usd":0.0003,"cache_read_cost_usd":0.00006,"cache_creation_cost_usd":0,"output_cost_usd":0.0003,"reasoning_cost_usd":0.0002,"total_cost_usd":0.00086,"usage_missing_count":1,"cost_priced_count":1,"cost_partial_count":0,"cost_unpriced_count":1,"cost_unassessed_count":1,"cost_proxy_count":0,"input_side_tokens":910,"cache_hit_rate":0.659341,"prior_request_count":0,"prior_input_side_tokens":0,"prior_cache_hit_rate":null}
+
+- name: unknown_source_returns_nothing
+  description: a source outside proxy and imported_execution matches no rows
+  expected_http_status: 200
+  parameters: api_keys=key_source_model&source=agent_message&start_time_ns=1790812800000000000&end_time_ns=1790899200000000000&retention_days=3650
+  expected_result: ''
+
+- name: other_org_same_model_is_isolated
+  description: another organization's identical model only returns its own usage
+  expected_http_status: 200
+  parameters: api_keys=key_source_model_other&start_time_ns=1790812800000000000&end_time_ns=1790899200000000000&retention_days=3650
+  expected_result: |
+    {"source":"proxy","provider":"anthropic","model":"claude-sonnet-4-5","request_count":1,"uncached_input_tokens":9000,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_non_reasoning_tokens":900,"reasoning_tokens":0,"unclassified_tokens":0,"uncached_input_cost_usd":4,"cache_read_cost_usd":0,"cache_creation_cost_usd":0,"output_cost_usd":5,"reasoning_cost_usd":0,"total_cost_usd":9,"usage_missing_count":0,"cost_priced_count":0,"cost_partial_count":0,"cost_unpriced_count":0,"cost_unassessed_count":0,"cost_proxy_count":1,"input_side_tokens":9000,"cache_hit_rate":0,"prior_request_count":0,"prior_input_side_tokens":0,"prior_cache_hit_rate":null}
+
+- name: unauthorized_keys_return_nothing
+  description: usage is invisible without the owning API key
+  expected_http_status: 200
+  parameters: api_keys=key_other&start_time_ns=1790812800000000000&end_time_ns=1790899200000000000&retention_days=3650
+  expected_result: ''
+
+- name: limit_is_clamped_to_at_least_one
+  description: limit=0 still returns the costliest row
+  expected_http_status: 200
+  parameters: api_keys=key_source_model&limit=0&start_time_ns=1790812800000000000&end_time_ns=1790899200000000000&retention_days=3650
+  expected_result: |
+    {"source":"proxy","provider":"anthropic","model":"claude-sonnet-4-5","request_count":1,"uncached_input_tokens":200,"cache_read_input_tokens":700,"cache_creation_input_tokens":100,"output_non_reasoning_tokens":200,"reasoning_tokens":100,"unclassified_tokens":0,"uncached_input_cost_usd":0.001,"cache_read_cost_usd":0.002,"cache_creation_cost_usd":0.003,"output_cost_usd":0.004,"reasoning_cost_usd":0.005,"total_cost_usd":0.015,"usage_missing_count":0,"cost_priced_count":0,"cost_partial_count":0,"cost_unpriced_count":0,"cost_unassessed_count":0,"cost_proxy_count":1,"input_side_tokens":1000,"cache_hit_rate":0.7,"prior_request_count":1,"prior_input_side_tokens":1000,"prior_cache_hit_rate":0.5}
+
+- name: retention_floor_hides_old_usage
+  description: explicit historical bounds cannot bypass the signed visibility floor
+  expected_http_status: 200
+  parameters: api_keys=key_source_model&start_time_ns=1790812800000000000&end_time_ns=1790899200000000000&retention_days=1
+  expected_result: ''
