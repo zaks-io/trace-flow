@@ -52,6 +52,7 @@ describe('AgentDeliveryCoordinator', () => {
     await withCoordinator((coordinator, state) => {
       coordinator.requestSnapshot({});
       const snapshot = coordinator.beginSnapshot({ claimId: CLAIM_ID });
+      if (snapshot === null) throw new Error('Expected snapshot start');
       const progress = coordinator.getSnapshotProgress(
         { generation: snapshot.generation, claimId: CLAIM_ID },
         { includeTraceLinks: true },
@@ -108,6 +109,7 @@ describe('AgentDeliveryCoordinator', () => {
   it('returns the same reservation only for an exact idempotent retry', async () => {
     const input = reservation('delivery-1', HASH_A, ['2026-09-12', '2026-09-13']);
     const created = await withCoordinator((coordinator) => coordinator.reserve(input));
+    if (created === null) throw new Error('Expected delivery reservation');
     const retried = await withCoordinator((coordinator) =>
       coordinator.reserve({ ...input, dirtyDays: [...input.dirtyDays].reverse() }),
     );
@@ -148,15 +150,11 @@ describe('AgentDeliveryCoordinator', () => {
       );
     }
 
-    const error = await withCoordinator((coordinator) => {
-      try {
-        coordinator.reserve(reservation('delivery-over-cap', HASH_A, ['2026-09-13']));
-      } catch (caught) {
-        return caught;
-      }
-      return null;
-    });
-    expect(error).toBeInstanceOf(AgentDeliveryCoordinatorRetryableError);
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.reserve(reservation('delivery-over-cap', HASH_A, ['2026-09-13'])),
+      ),
+    ).resolves.toBeNull();
     await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
       { activeDeliveries: MAX_ACTIVE_AGENT_DELIVERIES },
     );
@@ -218,17 +216,14 @@ describe('AgentDeliveryCoordinator', () => {
     const snapshot = await withCoordinator((coordinator) =>
       coordinator.beginSnapshot({ claimId: CLAIM_ID }),
     );
+    if (snapshot === null) throw new Error('Expected snapshot start');
     expect(snapshot).toEqual({ generation: 1, dirtyDays: ['2026-09-11', '2026-09-13'] });
 
-    const blocked = await withCoordinator((coordinator) => {
-      try {
-        coordinator.reserve(reservation('delivery-2', HASH_B, ['2026-09-13']));
-      } catch (error) {
-        return error;
-      }
-      return null;
-    });
-    expect(blocked).toBeInstanceOf(AgentDeliveryCoordinatorRetryableError);
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.reserve(reservation('delivery-2', HASH_B, ['2026-09-13'])),
+      ),
+    ).resolves.toBeNull();
 
     await expect(
       withCoordinator((coordinator) => finishSnapshotCopies(coordinator, 1, CLAIM_ID)),
@@ -244,6 +239,7 @@ describe('AgentDeliveryCoordinator', () => {
     await completeOne('delivery-dirty', ['2026-09-12']);
     const active = reservation('delivery-active', HASH_B, ['2026-09-13']);
     const reserved = await withCoordinator((coordinator) => coordinator.reserve(active));
+    if (reserved === null) throw new Error('Expected delivery reservation');
 
     await expect(
       withCoordinator((coordinator) => coordinator.requestSnapshot({})),
@@ -256,10 +252,10 @@ describe('AgentDeliveryCoordinator', () => {
       withCoordinator((coordinator) =>
         coordinator.reserve(reservation('delivery-new', HASH_A, ['2026-09-13'])),
       ),
-    ).rejects.toBeInstanceOf(AgentDeliveryCoordinatorRetryableError);
+    ).resolves.toBeNull();
     await expect(
       withCoordinator((coordinator) => coordinator.beginSnapshot({ claimId: CLAIM_ID })),
-    ).rejects.toBeInstanceOf(AgentDeliveryCoordinatorRetryableError);
+    ).resolves.toBeNull();
 
     await withCoordinator((coordinator) =>
       coordinator.complete({ deliveryId: active.deliveryId, payloadSha256: active.payloadSha256 }),
@@ -317,6 +313,7 @@ describe('AgentDeliveryCoordinator', () => {
     const first = await withCoordinator((coordinator) =>
       coordinator.beginSnapshot({ claimId: CLAIM_ID }),
     );
+    if (first === null) throw new Error('Expected snapshot start');
     expect(first.dirtyDays).toEqual([...newestFirst.slice(0, MAX_AGENT_SNAPSHOT_DAYS)].sort());
     await withCoordinator((coordinator) =>
       finishSnapshotCopies(coordinator, first.generation, CLAIM_ID),
@@ -484,6 +481,7 @@ describe('AgentDeliveryCoordinator', () => {
     const first = await withCoordinator((coordinator) =>
       coordinator.beginSnapshot({ claimId: CLAIM_ID }),
     );
+    if (first === null) throw new Error('Expected snapshot start');
     await expect(
       withCoordinator((coordinator) =>
         coordinator.assertSnapshotActive({ generation: first.generation, claimId: CLAIM_ID }),
@@ -523,6 +521,7 @@ describe('AgentDeliveryCoordinator', () => {
     const snapshot = await withCoordinator((coordinator) =>
       coordinator.beginSnapshot({ claimId: CLAIM_ID }),
     );
+    if (snapshot === null) throw new Error('Expected snapshot start');
 
     vi.advanceTimersByTime(3 * 60 * 1000);
     await expect(

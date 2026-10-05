@@ -194,6 +194,11 @@ async function replayBatch(
     createdAtMs: batch.createdAtMs,
     facts: batch.facts.map((fact) => ({ ...fact, expectedCanonical: null })),
   });
+  if (result?.status === 'retry' && result.deliveryId === batch.deliveryId) {
+    throw new Error(
+      'Frozen recovery delivery admission is closed; rerun later with the same journal',
+    );
+  }
   if (
     result?.status !== 'confirmed' ||
     result.deliveryId !== batch.deliveryId ||

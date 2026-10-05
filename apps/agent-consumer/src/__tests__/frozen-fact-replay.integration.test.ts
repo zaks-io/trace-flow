@@ -136,6 +136,26 @@ describe('frozen ledger replay', () => {
     };
 
     const coordinator = env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${orgId}`);
+    const seed = { deliveryId: 'dirty-seed', payloadSha256: 'b'.repeat(64) };
+    await coordinator.reserve({
+      ...seed,
+      dirtyDays: ['2026-09-01'],
+      createdAtMs: Date.now(),
+      expiresAtMs: Date.now() + 60_000,
+    });
+    await coordinator.complete(seed);
+    await coordinator.requestSnapshot({});
+    const snapshot = await coordinator.beginSnapshot({ claimId: 'snapshot-owner' });
+    if (snapshot === null) throw new Error('Expected snapshot start');
+    await expect(replayFrozenFactSelection(env, orgId, input, batcher)).resolves.toEqual({
+      status: 'retry',
+      deliveryId: input.deliveryId,
+    });
+    expect(writes).toHaveLength(0);
+    expect(
+      await env.AGENT_DELIVERIES.head(`agent-deliveries/${orgId}/${input.deliveryId}`),
+    ).not.toBeNull();
+    await coordinator.failSnapshot({ generation: snapshot.generation, claimId: 'snapshot-owner' });
     const predecessor = { deliveryId: 'earlier-delivery', payloadSha256: 'a'.repeat(64) };
     await coordinator.reserve({
       ...predecessor,
@@ -151,6 +171,7 @@ describe('frozen ledger replay', () => {
     const first = await replayFrozenFactSelection(env, orgId, input, batcher);
     const second = await replayFrozenFactSelection(env, orgId, input, batcher);
 
+    if (first.status !== 'confirmed') throw new Error('Expected replay confirmation');
     expect(second).toEqual(first);
     expect(writes).toHaveLength(1);
     expect(writes[0]).toMatchObject({ cost_usd: 47.125, DeliverySequence: first.deliverySequence });

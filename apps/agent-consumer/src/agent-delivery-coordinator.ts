@@ -238,13 +238,10 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
   reserve(input: ReserveAgentDeliveryInput): {
     status: 'reserved' | 'existing';
     deliverySequence: number;
-  } {
-    const migration = ingestionMigrationState(this.ctx.storage);
-    if (migration && !migration.complete)
-      throw new AgentDeliveryCoordinatorRetryableError(
-        'Ingestion baseline migration is incomplete',
-      );
+  } | null {
     const reservation = validateReservationInput(input);
+    const migration = ingestionMigrationState(this.ctx.storage);
+    if (migration && !migration.complete) return null;
     const now = Date.now();
     recoverExpiredSnapshotGate(this.ctx.storage, now);
     this.ctx.storage.transactionSync(() => pruneRetainedDayMetadata(this.ctx.storage, now));
@@ -258,10 +255,10 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
       assertNewReservationWindow(reservation, now);
       const state = readCoordinatorState(this.ctx.storage);
       if (state.gate_phase !== 'open') {
-        throw new AgentDeliveryCoordinatorRetryableError('agent snapshot gate is closed');
+        return null;
       }
       if (countRows(this.ctx.storage, 'active_deliveries') >= MAX_ACTIVE_AGENT_DELIVERIES) {
-        throw new AgentDeliveryCoordinatorRetryableError('active delivery limit reached');
+        return null;
       }
       if (state.last_delivery_sequence >= Number.MAX_SAFE_INTEGER) {
         throw new Error('delivery sequence exhausted');

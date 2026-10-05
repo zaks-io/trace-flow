@@ -11,110 +11,19 @@ import type {
 } from '@trace-flow/types';
 import { AGENT_INGEST_LIMITS, validateAgentIngestQueueMessage } from '@trace-flow/types';
 import { app } from '../index';
-import { __resetPolicyCache, type CompatibilityPolicy } from '../policy';
-import type { AgentConsumerService, AgentIngestEnv } from '../context';
+import { __resetPolicyCache } from '../policy';
+import type { AgentIngestEnv } from '../context';
 import type { ClaimStatus } from '../ownership';
 import { envelope, emptyFacts, facts, messageFact, toolEventFact } from './factories';
-
-const CONVEX = 'https://convex.test';
-const SECRET = 'valid-collector-secret';
-const ROOT_KEY = btoa('0123456789abcdef'.repeat(2));
-const TEST_NOW = 1_700_000_001_000;
-
-const POLICY: CompatibilityPolicy = {
-  minDesktopVersion: '1.0.0',
-  minParserVersion: '1.0.0',
-  denylistedVersions: [],
-  updatedAt: 1_700_000_000_000,
-};
-
-function makeKv(entries: Record<string, string>): KVNamespace {
-  return {
-    get: async (key: string) => entries[key] ?? null,
-  } as unknown as KVNamespace;
-}
-
-interface EnvOverrides {
-  creds?: Record<string, string>;
-  limitSuccess?: boolean;
-  queueSend?: ReturnType<typeof vi.fn>;
-  deliveryPut?: ReturnType<typeof vi.fn>;
-  canAcceptDeliveries?: AgentConsumerService['canAcceptDeliveries'];
-  registerDelivery?: AgentConsumerService['registerDelivery'];
-}
-
-async function validCredEntries(
-  over: Partial<Record<string, unknown>> = {},
-): Promise<Record<string, string>> {
-  const key = `collector:${await sha256Hex(SECRET)}`;
-  return {
-    [key]: JSON.stringify({
-      orgId: 'org-1',
-      userId: 'user-1',
-      collectorId: 'collector-1',
-      expiresAt: Date.now() + 3_600_000,
-      status: 'active',
-      createdAt: Date.now(),
-      ...over,
-    }),
-  };
-}
-
-function makeEnv(over: EnvOverrides = {}): {
-  env: AgentIngestEnv;
-  queueSend: ReturnType<typeof vi.fn>;
-  rateLimit: ReturnType<typeof vi.fn>;
-  deliveryObjects: Map<string, string>;
-} {
-  const queueSend = over.queueSend ?? vi.fn(async () => {});
-  const rateLimit = vi.fn(async () => ({ success: over.limitSuccess ?? true }));
-  const deliveryObjects = new Map<string, string>();
-  let nextRevision = 0;
-  const canAcceptDeliveries: AgentConsumerService['canAcceptDeliveries'] =
-    over.canAcceptDeliveries ?? vi.fn(async () => true);
-  const registerDelivery: AgentConsumerService['registerDelivery'] =
-    over.registerDelivery ?? vi.fn(async () => (nextRevision += 1));
-  const deliveryPut =
-    over.deliveryPut ??
-    vi.fn(async (key: string, value: string) => {
-      deliveryObjects.set(key, value);
-      return { key };
-    });
-  const deliveries = {
-    put: deliveryPut,
-    get: vi.fn(async (key: string) => {
-      const value = deliveryObjects.get(key);
-      if (value === undefined) return null;
-      return {
-        key,
-        size: new TextEncoder().encode(value).byteLength,
-        text: async () => value,
-      };
-    }),
-  } as unknown as R2Bucket;
-  const env = {
-    AGENT_INGEST_MAINTENANCE: 'false',
-    COLLECTOR_CREDS: makeKv(over.creds ?? {}),
-    // The handler enqueues via sendBatch (one call per <=100-message group). Tests assert on it.
-    AGENT_QUEUE: { sendBatch: queueSend } as unknown as Queue<AgentIngestQueuePayload>,
-    AGENT_DELIVERIES: deliveries,
-    AGENT_CONSUMER: {
-      canAcceptDeliveries,
-      registerDelivery,
-      eraseOrganization: async () => {
-        throw new Error('Unexpected erasure');
-      },
-    },
-    BODY_ENCRYPTION_ROOT_KEY: ROOT_KEY,
-    BODY_ENCRYPTION_KEY_ID: 'v1',
-    AGENT_INGEST_LIMITER: {
-      limit: rateLimit,
-    } as unknown as RateLimit,
-    CONVEX_SITE_URL: CONVEX,
-    AGENT_INGEST_SHARED_SECRET: 'shared-secret',
-  } satisfies AgentIngestEnv;
-  return { env, queueSend, rateLimit, deliveryObjects };
-}
+import {
+  CONVEX,
+  SECRET,
+  ROOT_KEY,
+  TEST_NOW,
+  POLICY,
+  makeEnv,
+  validCredEntries,
+} from './handler-fixture';
 
 async function queuedMessages(
   queueSend: ReturnType<typeof vi.fn>,
@@ -657,6 +566,56 @@ describe('POST /v1/ingest', () => {
 
     expect(res.status).toBe(503);
     expect(deliveryObjects.size).toBeGreaterThan(0);
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it('returns Retry-After and preserves the staged delivery when admission closes during registration', async () => {
+    const registerDelivery = vi.fn(async () => null);
+    const { env, deliveryObjects, queueSend } = makeEnv({
+      creds: await validCredEntries(),
+      registerDelivery,
+    });
+    interceptAccepted();
+
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get('Retry-After')).toBe('60');
+    expect(await res.json()).toEqual({ error: 'enqueue_failed' });
+    expect(registerDelivery).toHaveBeenCalledOnce();
+    expect(deliveryObjects.size).toBe(1);
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unexpected registration failure loud when another delivery is pending', async () => {
+    const registerDelivery = vi
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new Error('coordinator unavailable'));
+    const { env, queueSend, deliveryObjects } = makeEnv({
+      creds: await validCredEntries(),
+      registerDelivery,
+    });
+    const link = facts().pull_request_links[0]!;
+    const links = Array.from({ length: 2 }, (_, index) => ({
+      ...link,
+      source_event_id: `event-${index}`,
+      stable_turn_index: index,
+      number: index + 1,
+      url: `https://example.test/${index}/${'x'.repeat(70_000)}`,
+    }));
+    interceptAccepted();
+
+    const res = await post(
+      env,
+      JSON.stringify(envelope({ facts: facts({ pull_request_links: links }) })),
+      authHeaders,
+    );
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get('Retry-After')).toBeNull();
+    expect(registerDelivery).toHaveBeenCalledTimes(2);
+    expect(deliveryObjects.size).toBe(2);
     expect(queueSend).not.toHaveBeenCalled();
   });
 

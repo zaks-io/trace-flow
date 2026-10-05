@@ -15,10 +15,12 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{IngestError, IngestOk, IngestResult, UpgradeRequiredDetail};
-use crate::retry::{backoff_delay, RetryConfig, DEFAULT_TIMEOUT};
+use crate::retry::{backoff_delay, wait_delay, RetryConfig, DEFAULT_TIMEOUT};
 
 /// Mirrors the Worker cap in `apps/agent-ingest/src/handler.ts`.
 const MAX_INGEST_BYTES: usize = 10 * 1024 * 1024;
+// Bound each admission wait to the coordinator's five-minute lease interval.
+const MAX_ADMISSION_RETRY_SECONDS: u64 = 300;
 
 #[derive(Clone)]
 pub struct CollectorApiClientConfig {
@@ -80,10 +82,8 @@ impl CollectorApiClient {
 
     /// POST an `AgentIngestEnvelope` to `POST /v1/ingest`.
     ///
-    /// Retries transport send failures and `503 {error:"policy_unavailable"}` — transient cases
-    /// where another request attempt can succeed without changing the envelope. Every other HTTP
-    /// response failure is terminal for this call; the sync loop decides whether to re-send the batch
-    /// on the next cycle.
+    /// Retries transport failures, unavailable policy, and admission closure with a bounded
+    /// `Retry-After` delay. Other failures return to the sync loop with cursors unchanged.
     pub async fn ingest(
         &self,
         envelope: &AgentIngestEnvelope,
@@ -139,6 +139,11 @@ impl CollectorApiClient {
             };
 
             let status = response.status().as_u16();
+            let admission_delay = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(admission_retry_delay);
             let body_text = response.text().await.unwrap_or_else(|_| String::from("{}"));
 
             match classify_response(status, &body_text) {
@@ -156,6 +161,16 @@ impl CollectorApiClient {
                         attempt + 1
                     )));
                 }
+                ResponseClass::Terminal(IngestError::EnqueueFailed)
+                    if admission_delay.is_some() && attempt < self.config.retry.max_retries =>
+                {
+                    // Admission can close after another group queues. Retain the original batch
+                    // identity and body so fact-identity deduplication absorbs partial retries.
+                    wait_delay(admission_delay.unwrap(), cancel)
+                        .await
+                        .map_err(IngestError::Transport)?;
+                    continue;
+                }
                 ResponseClass::Terminal(err) => return Err(err),
             }
         }
@@ -166,9 +181,20 @@ impl CollectorApiClient {
     }
 }
 
+fn admission_retry_delay(value: &str) -> Option<Duration> {
+    let seconds = value.trim();
+    if seconds.is_empty() || !seconds.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let seconds = seconds.parse::<u64>().ok()?;
+    (1..=MAX_ADMISSION_RETRY_SECONDS)
+        .contains(&seconds)
+        .then(|| Duration::from_secs(seconds))
+}
+
 enum ResponseClass {
     Success(IngestOk),
-    /// `503 policy_unavailable` — the only case we retry.
+    /// `503 policy_unavailable` uses the exponential transport backoff.
     RetryableUnavailable,
     Terminal(IngestError),
 }

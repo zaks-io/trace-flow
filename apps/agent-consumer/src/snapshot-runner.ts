@@ -66,11 +66,21 @@ export async function runAgentSnapshot(
     if (initial.gatePhase === 'open' && initial.dirtyDays <= initial.incompleteDays)
       return { status: 'idle' };
     let activeDeliveries = initial.activeDeliveries;
-    if (initial.gatePhase === 'open')
-      activeDeliveries = (await coordinator.requestSnapshot({})).activeDeliveries;
+    if (initial.gatePhase === 'open') {
+      const requested = await coordinator.requestSnapshot({});
+      if (requested === null) return { status: 'retry', reason: 'gate-active' };
+      activeDeliveries = requested.activeDeliveries;
+    }
     if (activeDeliveries > 0) return { status: 'retry', reason: 'deliveries-draining' };
     try {
       const snapshot = await coordinator.beginSnapshot({ claimId });
+      if (snapshot === null) {
+        const current = await coordinator.getStats({});
+        return {
+          status: 'retry',
+          reason: current.activeDeliveries > 0 ? 'deliveries-draining' : 'gate-active',
+        };
+      }
       progress = await coordinator.getSnapshotProgress({
         generation: snapshot.generation,
         claimId,

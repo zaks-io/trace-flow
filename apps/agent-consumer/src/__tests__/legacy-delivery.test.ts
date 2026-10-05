@@ -12,6 +12,17 @@ vi.mock('@sentry/cloudflare', async (importOriginal) => ({
 const ROOT_KEY = btoa('a'.repeat(32));
 
 describe('legacy inline delivery migration', () => {
+  it('retries registration backpressure while preserving the encrypted source', async () => {
+    const { env, process, objects } = makeEnv({ register: vi.fn(async () => null) });
+    const message = stubMessage(queueMessage());
+
+    await expect(processMigratedLegacyMessage(message, env)).resolves.toBe(true);
+
+    expect(message.retry).toHaveBeenCalledExactlyOnceWith({ delaySeconds: 60 });
+    expect(message.ack).not.toHaveBeenCalled();
+    expect(process).not.toHaveBeenCalled();
+    expect(objects.size).toBe(1);
+  });
   it('retries a pending delivery without acknowledging the legacy source', async () => {
     const { env } = makeEnv({ process: vi.fn(async () => 'retry') });
     const message = stubMessage(queueMessage());

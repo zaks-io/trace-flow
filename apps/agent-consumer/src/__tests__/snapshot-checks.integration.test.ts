@@ -34,7 +34,9 @@ describe('durable snapshot checks', () => {
       });
       const reservation = coordinator.getNextDelivery()!;
       coordinator.complete({ deliveryId: reservation.deliveryId, payloadSha256: HASH });
-      generation = coordinator.beginSnapshot({ claimId: CLAIM_ID }).generation;
+      const snapshot = coordinator.beginSnapshot({ claimId: CLAIM_ID });
+      if (snapshot === null) throw new Error('Expected snapshot start');
+      generation = snapshot.generation;
       coordinator.recordSnapshotCopyIntent({
         generation,
         target: AGENT_SNAPSHOT_TARGETS[0],

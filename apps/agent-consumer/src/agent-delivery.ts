@@ -63,7 +63,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     reference: AgentDeliveryStagedReference,
     days: string[],
     options?: { legacySourceOrder?: boolean },
-  ): Promise<number> {
+  ): Promise<number | null> {
     if (
       options?.legacySourceOrder !== undefined &&
       typeof options.legacySourceOrder !== 'boolean'
@@ -79,7 +79,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     reference: AgentDeliveryStagedReference,
     days: string[],
     canonicalProof?: ExpectedCanonicalFact[],
-  ): Promise<number> {
+  ): Promise<number | null> {
     const validatedProof = canonicalProof
       ? validateExpectedCanonicalProof(canonicalProof)
       : undefined;
@@ -92,7 +92,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     inputFormat: DeliveryState['inputFormat'],
     canonicalProof?: ExpectedCanonicalFact[],
     legacySourceOrder = false,
-  ): Promise<number> {
+  ): Promise<number | null> {
     if (validateAgentDeliveryStagedReference(reference))
       throw new Error('Invalid delivery registration');
     if (reference.expires_at <= Date.now()) throw new Error('Delivery registration expired');
@@ -146,6 +146,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
       }
       throw error;
     }
+    if (result === null) return null;
     state.revision = result.deliverySequence;
     await this.ctx.storage.put('receipt', state);
     return result.deliverySequence;
@@ -175,9 +176,30 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
       state.reference.sha256 !== reference.sha256 ||
       state.reference.org_id !== reference.org_id ||
       state.reference.created_at !== reference.created_at ||
-      state.reference.expires_at !== reference.expires_at ||
-      state.revision !== reference.delivery_revision
+      state.reference.expires_at !== reference.expires_at
     ) {
+      throw new Error('Agent delivery does not match its registered receipt');
+    }
+    if (state.revision === undefined && state.phase === 'registered') {
+      // A reserve RPC reply can be lost after the coordinator commits. A predecessor may then
+      // queue this reservation before the receipt's recovery alarm has persisted its revision.
+      const reservation = await this.coordinator(reference.org_id).getReservation({
+        deliveryId: reference.key,
+      });
+      if (
+        reservation?.deliveryId !== reference.key ||
+        reservation.payloadSha256 !== reference.sha256 ||
+        reservation.createdAtMs !== reference.created_at ||
+        reservation.expiresAtMs !== reference.expires_at ||
+        reservation.deliverySequence !== reference.delivery_revision ||
+        JSON.stringify(reservation.dirtyDays) !== JSON.stringify([...new Set(state.days)].sort())
+      ) {
+        throw new Error('Agent delivery does not match its registered receipt');
+      }
+      state.revision = reservation.deliverySequence;
+      await this.ctx.storage.put('receipt', state);
+    }
+    if (state.revision !== reference.delivery_revision) {
       throw new Error('Agent delivery does not match its registered receipt');
     }
     if (state.phase === 'complete') {
@@ -393,6 +415,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
         state.canonicalProof,
         state.legacySourceOrder === true,
       ));
+    if (revision === null) return;
     await this.env.AGENT_QUEUE.send({ ...state.reference, delivery_revision: revision });
   }
 

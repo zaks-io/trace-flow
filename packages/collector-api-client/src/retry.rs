@@ -35,7 +35,11 @@ pub async fn backoff_delay(
     let factor = 1u32.checked_shl(attempt).unwrap_or(u32::MAX) as u128;
     let ms = retry.base_backoff.as_millis().saturating_mul(factor);
     let ms = ms.min(MAX_BACKOFF.as_millis()) as u64;
-    let sleep = tokio::time::sleep(Duration::from_millis(ms));
+    wait_delay(Duration::from_millis(ms), cancel).await
+}
+
+pub(crate) async fn wait_delay(delay: Duration, cancel: Option<&CancellationToken>) -> Result<()> {
+    let sleep = tokio::time::sleep(delay);
     if let Some(token) = cancel {
         tokio::select! {
             _ = token.cancelled() => Err(anyhow!("request cancelled")),

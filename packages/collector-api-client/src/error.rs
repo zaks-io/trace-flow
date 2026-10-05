@@ -45,7 +45,8 @@ pub enum IngestError {
     SessionClaimUnavailable,
 
     /// `503 enqueue_failed` — queue send failed after partial or full enqueue.
-    /// Not retried in-request; the sync loop re-sends next cycle.
+    /// Retried in-request only when a bounded `Retry-After` identifies admission backpressure.
+    /// Other failures return to the sync loop, which re-sends next cycle.
     #[error("enqueue failed")]
     EnqueueFailed,
 

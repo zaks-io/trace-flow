@@ -220,6 +220,14 @@ TINYBIRD_DEPLOY_PHASE=switch TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-
 
 ### Snapshot scheduling and recovery
 
+Snapshot admission closure is normal backpressure. A pending registration retains its encrypted
+delivery, receipt, and recovery alarm without publishing a queue reference until a revision is
+reserved. Agent Ingest returns `503 enqueue_failed` with `Retry-After: 60` for known admission
+closure, including a gate that closes after the admission check. The Collector honors bounded
+numeric admission delays within its retry budget; other enqueue failures return to the next sync
+cycle with cursors unchanged. Unknown reservation failures and mismatched delivery references
+remain errors.
+
 Ordinary snapshot batches wait one minute, then check each Copy through the Tinybird Jobs API after
 15 seconds, with subsequent checks after 30 and then 60 seconds. Two generations may run globally.
 Nine promptly completed Copies publish in at least three minutes and fifteen seconds including batching; queue delivery adds latency.

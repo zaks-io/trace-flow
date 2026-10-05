@@ -399,6 +399,7 @@ async function publishDeliveryGroups(
     const deliveries = await settleAll(
       staged.map(async (reference, index): Promise<AgentDeliveryReference> => {
         const revision = await env.AGENT_CONSUMER.registerDelivery(reference, days[index]!);
+        if (revision === null) throw new DeliveryAdmissionClosedError();
         if (!Number.isSafeInteger(revision) || revision <= 0) {
           throw new Error('Agent consumer returned an invalid delivery revision');
         }
@@ -433,9 +434,12 @@ function admissionClosedResponse(
 
 async function settleAll<T>(promises: Promise<T>[]): Promise<T[]> {
   const results = await Promise.allSettled(promises);
-  const failure = results.find(
+  const failures = results.filter(
     (result): result is PromiseRejectedResult => result.status === 'rejected',
   );
+  const failure =
+    failures.find((result) => !(result.reason instanceof DeliveryAdmissionClosedError)) ??
+    failures[0];
   if (failure) throw failure.reason;
   return results.map((result) => {
     if (result.status !== 'fulfilled') throw new Error('Unreachable rejected delivery operation');

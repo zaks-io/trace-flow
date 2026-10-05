@@ -1,5 +1,4 @@
 import {
-  AgentDeliveryCoordinatorRetryableError,
   MAX_AGENT_SNAPSHOT_LEASE_MS,
   type BeginAgentSnapshotResult,
 } from './agent-delivery-coordinator-contract';
@@ -21,13 +20,13 @@ import { readSnapshotFailure } from './snapshot-failure';
 export function requestAgentSnapshot(
   storage: DurableObjectStorage,
   now: number,
-): { status: 'draining'; activeDeliveries: number } {
+): { status: 'draining'; activeDeliveries: number } | null {
   if (readSnapshotFailure(storage)) throw new Error('agent snapshot requires operator recovery');
   recoverExpiredSnapshotGate(storage, now);
   storage.transactionSync(() => pruneRetainedDayMetadata(storage, now));
   return storage.transactionSync(() => {
     const state = readCoordinatorState(storage);
-    if (state.gate_phase === 'snapshot') throw new Error('agent snapshot is already in progress');
+    if (state.gate_phase === 'snapshot') return null;
     if (countRows(storage, 'dirty_days') === 0) {
       throw new Error('agent snapshot has no dirty days');
     }
@@ -47,20 +46,20 @@ export function beginAgentSnapshot(
   storage: DurableObjectStorage,
   claimId: string,
   now: number,
-): BeginAgentSnapshotResult {
+): BeginAgentSnapshotResult | null {
   if (readSnapshotFailure(storage)) throw new Error('agent snapshot requires operator recovery');
   recoverExpiredSnapshotGate(storage, now);
   storage.transactionSync(() => pruneRetainedDayMetadata(storage, now));
   const snapshot = storage.transactionSync(() => {
     const state = readCoordinatorState(storage);
-    if (state.gate_phase === 'snapshot') throw new Error('agent snapshot is already in progress');
+    if (state.gate_phase === 'snapshot') return null;
     if (countRows(storage, 'active_deliveries') !== 0) {
-      throw new AgentDeliveryCoordinatorRetryableError('active deliveries prevent snapshot');
+      return null;
     }
     const dirtyDays = selectSnapshotDirtyDays(storage);
     if (dirtyDays.length === 0) {
       openSnapshotGate(storage);
-      return null;
+      return undefined;
     }
     if (state.last_snapshot_generation >= Number.MAX_SAFE_INTEGER) {
       throw new Error('snapshot generation exhausted');
@@ -87,7 +86,8 @@ export function beginAgentSnapshot(
     beginSnapshotTiming(storage, generation, now);
     return { generation, dirtyDays };
   });
-  if (!snapshot) throw new Error('agent snapshot has no complete dirty days; recovery is required');
+  if (snapshot === undefined)
+    throw new Error('agent snapshot has no complete dirty days; recovery is required');
   return snapshot;
 }
 

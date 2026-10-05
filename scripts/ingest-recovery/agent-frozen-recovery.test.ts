@@ -109,55 +109,65 @@ describe('frozen census recovery', () => {
     });
   });
 
-  test('reuses the same durable delivery ID and creation time after an uncertain replay', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'frozen-restart-'));
-    const path = join(directory, 'journal.sqlite');
-    const orgId = 'org-a';
-    const day = agentAnalyticsDayBounds(Date.now()).today;
-    let journal = new FrozenRecoveryJournal(path, orgId, 'a'.repeat(64));
-    journal.recordInspection(
-      [{ category: 'messages', factId: `${orgId}\x1fsession\x1ffact` }],
-      [
-        {
-          category: 'messages',
-          factId: `${orgId}\x1fsession\x1ffact`,
-          sourceHash: 'b'.repeat(16),
-          payloadBytes: 100,
-          eventDay: day,
-          ingestedAt: `${day} 01:00:00.000`,
+  test.each([
+    ['a lost response', 'lost', 'response lost'],
+    ['closed admission', 'retry', 'delivery admission is closed; rerun later'],
+    ['an invalid retry reference', 'invalid', 'Frozen recovery confirmation is invalid'],
+  ])(
+    'reuses the same durable delivery ID and creation time after %s',
+    async (_name, result, error) => {
+      const directory = mkdtempSync(join(tmpdir(), 'frozen-restart-'));
+      const path = join(directory, 'journal.sqlite');
+      const orgId = 'org-a';
+      const day = agentAnalyticsDayBounds(Date.now()).today;
+      let journal = new FrozenRecoveryJournal(path, orgId, 'a'.repeat(64));
+      journal.recordInspection(
+        [{ category: 'messages', factId: `${orgId}\x1fsession\x1ffact` }],
+        [
+          {
+            category: 'messages',
+            factId: `${orgId}\x1fsession\x1ffact`,
+            sourceHash: 'b'.repeat(16),
+            payloadBytes: 100,
+            eventDay: day,
+            ingestedAt: `${day} 01:00:00.000`,
+          },
+        ],
+        agentAnalyticsDayBounds(Date.now()).oldestDay,
+      );
+      const calls: unknown[] = [];
+      const uncertain = {
+        call: async (_method: string, input: any) => {
+          calls.push(input);
+          if (result === 'lost') throw new Error('response lost');
+          return { status: 'retry', deliveryId: result === 'retry' ? input.deliveryId : 'wrong' };
         },
-      ],
-      agentAnalyticsDayBounds(Date.now()).oldestDay,
-    );
-    const calls: unknown[] = [];
-    const uncertain = {
-      call: async (_method: string, input: unknown) => {
-        calls.push(input);
-        throw new Error('response lost');
-      },
-    } as unknown as AgentRecoveryClient;
-    await expect(recoverReadyFacts(uncertain, journal, emptyTinybird(), orgId)).rejects.toThrow(
-      'response lost',
-    );
-    journal.close();
+      } as unknown as AgentRecoveryClient;
+      await expect(recoverReadyFacts(uncertain, journal, emptyTinybird(), orgId)).rejects.toThrow(
+        error,
+      );
+      expect(journal.pendingBatches()).toHaveLength(1);
+      expect(journal.report().confirmed).toBe(0);
+      journal.close();
 
-    journal = new FrozenRecoveryJournal(path, orgId, 'a'.repeat(64));
-    opened.push(journal);
-    const confirmed = {
-      call: async (_method: string, input: any) => {
-        calls.push(input);
-        return {
-          status: 'confirmed',
-          deliveryId: input.deliveryId,
-          deliverySequence: 2,
-          factCount: input.facts.length,
-        };
-      },
-    } as unknown as AgentRecoveryClient;
-    await recoverReadyFacts(confirmed, journal, emptyTinybird(), orgId);
+      journal = new FrozenRecoveryJournal(path, orgId, 'a'.repeat(64));
+      opened.push(journal);
+      const confirmed = {
+        call: async (_method: string, input: any) => {
+          calls.push(input);
+          return {
+            status: 'confirmed',
+            deliveryId: input.deliveryId,
+            deliverySequence: 2,
+            factCount: input.facts.length,
+          };
+        },
+      } as unknown as AgentRecoveryClient;
+      await recoverReadyFacts(confirmed, journal, emptyTinybird(), orgId);
 
-    expect(calls).toHaveLength(2);
-    expect(calls[1]).toEqual(calls[0]);
-    expect(journal.report().confirmed).toBe(1);
-  });
+      expect(calls).toHaveLength(2);
+      expect(calls[1]).toEqual(calls[0]);
+      expect(journal.report().confirmed).toBe(1);
+    },
+  );
 });

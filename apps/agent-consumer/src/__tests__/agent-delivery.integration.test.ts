@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { stageAgentDelivery } from '@trace-flow/utils';
 import type { AgentDeliveryReference, AgentDeliveryStagedReference } from '@trace-flow/types';
 import { AgentDelivery } from '../agent-delivery';
+import { MAX_ACTIVE_AGENT_DELIVERIES } from '../agent-delivery-coordinator-contract';
 import { processDeliveryReferences } from '../delivery-queue';
 import { priceDelivery, storeDeliveryRows } from '../delivery-rows';
 import { emptyQueueFacts, messageFact, queueMessage } from './factories';
@@ -43,6 +44,7 @@ async function staged(
     options.days ?? [new Date().toISOString().slice(0, 10)],
     options.legacySourceOrder ? { legacySourceOrder: true } : undefined,
   );
+  if (revision === null) throw new Error('Expected delivery registration');
   return {
     host,
     stagedReference: reference,
@@ -120,6 +122,7 @@ async function stagedRecovery(costUsd = 12.34, proveCanonicalAbsence = false) {
         ]
       : undefined,
   );
+  if (revision === null) throw new Error('Expected recovery registration');
   return {
     ...source,
     reference: { ...stagedReference, delivery_revision: revision },
@@ -360,6 +363,85 @@ describe('bounded delivery durability', () => {
     expect(await env.AGENT_DELIVERIES.head(reference.key)).not.toBeNull();
   });
 
+  it('processes a committed reservation before the alarm recovers a lost registration reply', async () => {
+    mockTransport();
+    const { host, orgId, reference } = await unregistered();
+    const coordinator = env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${orgId}`);
+    await runInDurableObject(host, async (_instance, state) => {
+      const localCoordinator = env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${orgId}`);
+      const delivery = new AgentDelivery(state, {
+        ...env,
+        AGENT_DELIVERY_COORDINATOR: {
+          getByName: () => ({
+            reserve: async (input: Parameters<typeof coordinator.reserve>[0]) => {
+              await localCoordinator.reserve(input);
+              throw new Error('reserve reply lost');
+            },
+            getErasureState: () => localCoordinator.getErasureState({}),
+          }),
+        } as unknown as typeof env.AGENT_DELIVERY_COORDINATOR,
+      });
+      await expect(
+        delivery.register(reference, [new Date().toISOString().slice(0, 10)]),
+      ).rejects.toThrow('reserve reply lost');
+      expect(await state.storage.get('receipt')).not.toHaveProperty('revision');
+    });
+    const reservation = await coordinator.getReservation({ deliveryId: reference.key });
+    if (!reservation) throw new Error('Expected committed reservation');
+    const queued = { ...reference, delivery_revision: reservation.deliverySequence };
+
+    await expect(host.process(queued)).resolves.toBe('complete');
+    await expect(host.process(queued)).resolves.toBe('complete');
+
+    expect(writes.flat()).toHaveLength(1);
+    await runInDurableObject(host, async (_instance, state) => {
+      expect(await state.storage.get('receipt')).toMatchObject({
+        revision: reservation.deliverySequence,
+        phase: 'complete',
+      });
+    });
+    expect(await coordinator.getReservation({ deliveryId: reference.key })).toBeNull();
+  });
+
+  it.each(['revision', 'hash', 'creation', 'expiry', 'days'] as const)(
+    'rejects inconsistent %s when recovering a pending receipt',
+    async (mismatch) => {
+      mockTransport();
+      const { host, reference, orgId } = await staged();
+      const coordinator = env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${orgId}`);
+      const reservation = await coordinator.getReservation({ deliveryId: reference.key });
+      if (!reservation) throw new Error('Expected committed reservation');
+      const inconsistent = {
+        ...reservation,
+        ...(mismatch === 'hash' ? { payloadSha256: 'f'.repeat(64) } : {}),
+        ...(mismatch === 'creation' ? { createdAtMs: reservation.createdAtMs + 1 } : {}),
+        ...(mismatch === 'expiry' ? { expiresAtMs: reservation.expiresAtMs + 1 } : {}),
+        ...(mismatch === 'days' ? { dirtyDays: [] } : {}),
+      };
+      await runInDurableObject(host, async (_instance, state) => {
+        const receipt = await state.storage.get<Record<string, unknown>>('receipt');
+        if (!receipt) throw new Error('Expected durable receipt');
+        delete receipt.revision;
+        await state.storage.put('receipt', receipt);
+        const delivery = new AgentDelivery(state, {
+          ...env,
+          AGENT_DELIVERY_COORDINATOR: {
+            getByName: () => ({ getReservation: async () => inconsistent }),
+          } as unknown as typeof env.AGENT_DELIVERY_COORDINATOR,
+        });
+        await expect(
+          delivery.process({
+            ...reference,
+            delivery_revision: reference.delivery_revision + (mismatch === 'revision' ? 1 : 0),
+          }),
+        ).rejects.toThrow('registered receipt');
+        expect(await state.storage.get('receipt')).not.toHaveProperty('revision');
+      });
+      expect(fetch).not.toHaveBeenCalled();
+      expect(await env.AGENT_DELIVERIES.head(reference.key)).not.toBeNull();
+    },
+  );
+
   it('expires failed delivery bodies and records an incomplete day instead of publishing partial totals', async () => {
     const { host, reference, orgId } = await staged();
     vi.spyOn(Date, 'now').mockReturnValue(reference.expires_at + 1);
@@ -387,6 +469,82 @@ describe('bounded delivery durability', () => {
       expect(await state.storage.getAlarm()).not.toBeNull();
     });
   });
+
+  it.each(['draining', 'snapshot', 'capacity'] as const)(
+    'keeps a pending delivery durable through %s backpressure and publishes after it clears',
+    async (reason) => {
+      const { host, reference, orgId } = await unregistered();
+      const coordinator = env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${orgId}`);
+      const day = new Date().toISOString().slice(0, 10);
+      const seed = { deliveryId: 'dirty-seed', payloadSha256: 'a'.repeat(64) };
+      await coordinator.reserve({
+        ...seed,
+        dirtyDays: [day],
+        createdAtMs: Date.now(),
+        expiresAtMs: Date.now() + 60_000,
+      });
+      await coordinator.complete(seed);
+      if (reason === 'capacity') {
+        for (let index = 0; index < MAX_ACTIVE_AGENT_DELIVERIES; index++) {
+          await coordinator.reserve({
+            deliveryId: `active-${index}`,
+            payloadSha256: 'b'.repeat(64),
+            dirtyDays: [day],
+            createdAtMs: Date.now(),
+            expiresAtMs: Date.now() + 60_000,
+          });
+        }
+      } else {
+        await coordinator.requestSnapshot({});
+        if (reason === 'snapshot') await coordinator.beginSnapshot({ claimId: 'snapshot-owner' });
+      }
+      const before = await coordinator.getStats({});
+
+      await expect(host.register(reference, [day])).resolves.toBeNull();
+      expect(await env.AGENT_DELIVERIES.head(reference.key)).not.toBeNull();
+      expect(await coordinator.getReservation({ deliveryId: reference.key })).toBeNull();
+      expect(await coordinator.getStats({})).toMatchObject({
+        lastDeliverySequence: before.lastDeliverySequence,
+        activeDeliveries: before.activeDeliveries,
+      });
+
+      const send = vi.fn(async () => undefined);
+      await runInDurableObject(host, async (_instance, state) => {
+        const delivery = new AgentDelivery(state, {
+          ...env,
+          AGENT_QUEUE: { send } as unknown as typeof env.AGENT_QUEUE,
+        });
+        await delivery.alarm();
+        expect(send).not.toHaveBeenCalled();
+        expect(await state.storage.get('receipt')).toMatchObject({ phase: 'registered' });
+        expect(await state.storage.get('receipt')).not.toHaveProperty('revision');
+        expect(await state.storage.getAlarm()).not.toBeNull();
+      });
+
+      if (reason === 'capacity') {
+        await coordinator.complete({ deliveryId: 'active-0', payloadSha256: 'b'.repeat(64) });
+      } else {
+        if (reason === 'draining') await coordinator.beginSnapshot({ claimId: 'snapshot-owner' });
+        await coordinator.failSnapshot({ generation: 1, claimId: 'snapshot-owner' });
+      }
+      await runInDurableObject(host, async (_instance, state) => {
+        const delivery = new AgentDelivery(state, {
+          ...env,
+          AGENT_QUEUE: { send } as unknown as typeof env.AGENT_QUEUE,
+        });
+        await delivery.alarm();
+        expect(send).toHaveBeenCalledExactlyOnceWith({
+          ...reference,
+          delivery_revision: before.lastDeliverySequence + 1,
+        });
+        expect(await state.storage.get('receipt')).toMatchObject({
+          revision: before.lastDeliverySequence + 1,
+        });
+        expect(await state.storage.getAlarm()).not.toBeNull();
+      });
+      expect(await env.AGENT_DELIVERIES.head(reference.key)).not.toBeNull();
+    },
+  );
 
   it('removes a late staged body when erasure permanently rejects its reservation', async () => {
     const { host, reference } = await unregistered();

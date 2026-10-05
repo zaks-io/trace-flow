@@ -45,7 +45,11 @@ describe('agent snapshot progress', () => {
       });
       coordinator.complete({ deliveryId: 'delivery-1', payloadSha256 });
     });
-    return withCoordinator((coordinator) => coordinator.beginSnapshot({ claimId: 'claim-a' }));
+    const snapshot = await withCoordinator((coordinator) =>
+      coordinator.beginSnapshot({ claimId: 'claim-a' }),
+    );
+    if (snapshot === null) throw new Error('Expected snapshot start');
+    return snapshot;
   }
 
   it('returns contention without changing the active claim and permits its owner to renew', async () => {
@@ -78,10 +82,44 @@ describe('agent snapshot progress', () => {
     });
     await coordinator.complete(delivery);
     const snapshot = await coordinator.beginSnapshot({ claimId: 'claim-a' });
+    if (snapshot === null) throw new Error('Expected snapshot start');
     await expect(coordinator.claimSnapshot({ claimId: 'claim-b' })).resolves.toBeNull();
     await expect(
       coordinator.getSnapshotProgress({ generation: snapshot.generation, claimId: 'claim-a' }),
     ).resolves.toMatchObject({ claimId: 'claim-a', nextCopyIndex: 0 });
+  });
+
+  it('fences concurrent snapshot starts across RPC without replacing the generation or claim', async () => {
+    vi.useRealTimers();
+    const coordinator = workerEnv.AGENT_DELIVERY_COORDINATOR.getByName(crypto.randomUUID());
+    const delivery = { deliveryId: 'delivery-1', payloadSha256 };
+    await coordinator.reserve({
+      ...delivery,
+      dirtyDays: [new Date().toISOString().slice(0, 10)],
+      createdAtMs: Date.now(),
+      expiresAtMs: Date.now() + 60_000,
+    });
+    await coordinator.complete(delivery);
+    await coordinator.requestSnapshot({});
+
+    const claims = ['claim-a', 'claim-b'];
+    const starts = await Promise.all(
+      claims.map((claimId) => coordinator.beginSnapshot({ claimId })),
+    );
+    expect(starts.filter((result) => result === null)).toHaveLength(1);
+    const ownerIndex = starts.findIndex((result) => result !== null);
+    const claimId = claims[ownerIndex]!;
+    const snapshot = starts[ownerIndex]!;
+    await expect(coordinator.requestSnapshot({})).resolves.toBeNull();
+    expect(await coordinator.getStats({})).toMatchObject({
+      gatePhase: 'snapshot',
+      activeSnapshotGeneration: 1,
+      lastSnapshotGeneration: 1,
+    });
+    expect(
+      await coordinator.getSnapshotProgress({ generation: snapshot.generation, claimId }),
+    ).toMatchObject({ generation: 1, claimId, nextCopyIndex: 0 });
+    expect(await coordinator.getOutstandingSnapshotCopyIntents({})).toEqual([]);
   });
 
   it('fences an expired owner and resumes the same cursor under a new claim', async () => {
