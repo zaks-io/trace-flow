@@ -20,6 +20,7 @@
 //! their own unit and the cycle continues with the rest. A `400` is isolated to the unit that caused
 //! it within the cycle, and that unit is quarantined so it cannot block pass completion.
 
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use collector_api_client::{CollectorApiClient, IngestError, IngestResult};
@@ -265,22 +266,27 @@ async fn drain<C: IngestClient>(
     let mut inflight = FuturesUnordered::new();
     let mut pending = BatchPreparer::new(meta, units, mint_batch_id, tuning);
     let mut rejected: Vec<Rejected> = Vec::new();
-    let mut held: Option<PreparedBatch> = None;
+    let mut held: VecDeque<PreparedBatch> = VecDeque::new();
 
     loop {
-        // Refill every free slot: a split `400` batch can queue several retry groups at once. A batch
-        // ordered after the in-flight ones is held until they finish.
+        // Refill every free slot: a split `400` batch can queue several retry groups at once. Retry
+        // groups go first; an ordered batch is held until nothing is in flight and no retry remains,
+        // because a retry may carry the older copy it replaces. Nothing new is prepared meanwhile.
         while inflight.len() < concurrency {
-            let next = match held.take() {
-                Some(batch) => Some(batch),
-                None => pending.next_batch(store)?,
+            let next = if !held.is_empty() && !pending.has_retries() {
+                if !inflight.is_empty() {
+                    break;
+                }
+                held.pop_front()
+            } else {
+                pending.next_batch(store)?
             };
             let Some(batch) = next else {
                 break;
             };
-            if batch.after_inflight && !inflight.is_empty() {
-                held = Some(batch);
-                break;
+            if batch.after_inflight && (!inflight.is_empty() || pending.has_retries()) {
+                held.push_back(batch);
+                continue;
             }
             inflight.push(post_batch(client, batch, cancel));
         }

@@ -257,65 +257,105 @@ async fn duplicate_identities_across_units_are_sent_once_per_envelope() {
     assert_eq!(client.envelopes.borrow()[0].facts.messages.len(), 1);
 }
 
-/// Holds the first POST open across several polls, so a concurrent second POST could finish first.
-/// Records each POST's start and end by the model of its first message.
-#[derive(Default)]
-struct SlowFirstClient {
+/// Holds every POST carrying `slow_model` open across several polls, so a concurrent POST could
+/// finish first, and rejects any envelope carrying the `poisoned` session with a naming `400`. Records
+/// each accepted POST's start and end by the model of its first message.
+struct OrderClient {
+    poisoned: &'static str,
+    slow_model: &'static str,
     events: RefCell<Vec<String>>,
 }
 
-impl IngestClient for SlowFirstClient {
+impl OrderClient {
+    fn new(poisoned: &'static str, slow_model: &'static str) -> Self {
+        Self {
+            poisoned,
+            slow_model,
+            events: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+impl IngestClient for OrderClient {
     async fn ingest(
         &self,
         envelope: &AgentIngestEnvelope,
         _cancel: Option<&CancellationToken>,
     ) -> IngestResult {
-        let model = envelope.facts.messages[0].model.clone();
-        let first = self.events.borrow().is_empty();
-        self.events.borrow_mut().push(format!("start {model}"));
-        if first {
+        let messages = &envelope.facts.messages;
+        if messages
+            .iter()
+            .any(|m| m.vendor_session_id == self.poisoned)
+        {
+            return Err(IngestError::InvalidEnvelope(InvalidEnvelopeDetail {
+                vendor_session_ids: vec![self.poisoned.to_string()],
+                ..InvalidEnvelopeDetail::default()
+            }));
+        }
+        let label = messages[0].model.clone();
+        self.events.borrow_mut().push(format!("start {label}"));
+        if messages.iter().any(|m| m.model == self.slow_model) {
             for _ in 0..10 {
                 tokio::task::yield_now().await;
             }
         }
-        self.events.borrow_mut().push(format!("end {model}"));
+        self.events.borrow_mut().push(format!("end {label}"));
         ok()
     }
 }
 
+fn shared(path: &str, model: &str) -> SyncUnit {
+    let mut unit = message_unit(path, model);
+    unit.ctx.vendor_session_id = "shared".to_string();
+    unit
+}
+
+const IN_ORDER: [&str; 4] = [
+    "start claude-opus-4-7",
+    "end claude-opus-4-7",
+    "start claude-opus-4-8",
+    "end claude-opus-4-8",
+];
+
 #[tokio::test]
 async fn a_changed_copy_of_a_batched_fact_is_sent_after_the_copy_it_replaces() {
-    let client = SlowFirstClient::default();
+    let client = OrderClient::new("none", "claude-opus-4-7");
     let store = CursorStore::open_in_memory("org").unwrap();
     let mut orch = syncing_orchestrator();
     let mut mint = counter();
-    let mut a = message_unit("/a.jsonl", "claude-opus-4-7");
-    let mut b = message_unit("/b.jsonl", "claude-opus-4-8");
-    a.ctx.vendor_session_id = "shared".to_string();
-    b.ctx.vendor_session_id = "shared".to_string();
+    let units = [
+        shared("/a.jsonl", "claude-opus-4-7"),
+        shared("/b.jsonl", "claude-opus-4-8"),
+    ];
 
-    let (report, _) = run_sync_cycle(
-        &client,
-        &store,
-        &mut orch,
-        &meta(),
-        &[a, b],
-        &mut mint,
-        None,
-    )
-    .await
-    .unwrap();
+    let (report, _) = run_sync_cycle(&client, &store, &mut orch, &meta(), &units, &mut mint, None)
+        .await
+        .unwrap();
 
     // Merged, b's copy would be dropped while its cursor advanced. Sent concurrently, it could land
     // first and be overwritten by a's older copy.
     assert_eq!(report.advanced, 2);
-    assert_eq!(
-        *client.events.borrow(),
-        [
-            "start claude-opus-4-7",
-            "end claude-opus-4-7",
-            "start claude-opus-4-8",
-            "end claude-opus-4-8",
-        ]
-    );
+    assert_eq!(*client.events.borrow(), IN_ORDER);
+}
+
+#[tokio::test]
+async fn a_changed_copy_waits_for_the_retry_of_a_rejected_batch_carrying_the_older_copy() {
+    let client = OrderClient::new("/p.jsonl", "claude-opus-4-7");
+    let store = CursorStore::open_in_memory("org").unwrap();
+    let mut orch = syncing_orchestrator();
+    let mut mint = counter();
+    let units = [
+        shared("/a.jsonl", "claude-opus-4-7"),
+        message_unit("/p.jsonl", "claude-opus-4-7"),
+        shared("/b.jsonl", "claude-opus-4-8"),
+    ];
+
+    let (report, _) = run_sync_cycle(&client, &store, &mut orch, &meta(), &units, &mut mint, None)
+        .await
+        .unwrap();
+
+    // [a, p] is rejected and a is re-sent alone; b must not overtake that retry.
+    assert_eq!(report.advanced, 2);
+    assert_eq!(report.quarantined, ["/p.jsonl"]);
+    assert_eq!(*client.events.borrow(), IN_ORDER);
 }
