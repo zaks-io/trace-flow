@@ -360,12 +360,12 @@ async fn a_changed_copy_waits_for_the_retry_of_a_rejected_batch_carrying_the_old
     assert_eq!(*client.events.borrow(), IN_ORDER);
 }
 
-/// Rejects the envelope carrying the `poisoned` session with a naming `400` and, while doing so,
-/// records `shift` as sent, as if another upload had moved that fact's stored state. Records each
-/// accepted POST by the model of its first message.
+/// Rejects the envelope carrying the `/p.jsonl` session with a naming `400` and, while doing so,
+/// records `shift` as sent, as if another upload had moved those facts' stored state. Records the
+/// models of every accepted POST's messages, in upload order.
 struct StateShiftClient<'a> {
     store: &'a CursorStore,
-    shift: crate::cursor::FactCursor,
+    shift: Vec<crate::cursor::FactCursor>,
     events: RefCell<Vec<String>>,
 }
 
@@ -378,16 +378,16 @@ impl IngestClient for StateShiftClient<'_> {
         let messages = &envelope.facts.messages;
         if messages.iter().any(|m| m.vendor_session_id == "/p.jsonl") {
             self.store
-                .advance_facts(AgentSource::Claude, std::slice::from_ref(&self.shift))
+                .advance_facts(AgentSource::Claude, &self.shift)
                 .unwrap();
             return Err(IngestError::InvalidEnvelope(InvalidEnvelopeDetail {
                 vendor_session_ids: vec!["/p.jsonl".to_string()],
                 ..InvalidEnvelopeDetail::default()
             }));
         }
-        if let Some(first) = messages.first() {
-            self.events.borrow_mut().push(first.model.clone());
-        }
+        self.events
+            .borrow_mut()
+            .extend(messages.iter().map(|m| m.model.clone()));
         ok()
     }
 }
@@ -414,7 +414,7 @@ async fn held_batches_launch_oldest_unit_first_when_a_retry_defers_a_unit() {
         .unwrap();
     let client = StateShiftClient {
         store: &store,
-        shift: first_message(&r),
+        shift: vec![first_message(&r)],
         events: RefCell::new(Vec::new()),
     };
     let units = [r, q, message_unit("/p.jsonl", "claude-opus-4-7"), b];
@@ -432,4 +432,60 @@ async fn held_batches_launch_oldest_unit_first_when_a_retry_defers_a_unit() {
         position("claude-opus-4-9") < position("claude-opus-4-8"),
         "{events:?}"
     );
+}
+
+/// A unit of the shared session whose records are the given `(message id, model)` pairs.
+fn shared_messages(path: &str, messages: &[(&str, &str)]) -> SyncUnit {
+    let mut unit = shared(path, "unused");
+    let template = unit.records[0].clone();
+    unit.records = messages
+        .iter()
+        .map(|(id, model)| {
+            let mut record = template.clone();
+            record["message"]["id"] = json!(id);
+            record["message"]["model"] = json!(model);
+            record
+        })
+        .collect();
+    unit
+}
+
+#[tokio::test]
+async fn a_retry_closes_at_its_first_conflict_and_keeps_the_rest_in_order() {
+    let store = CursorStore::open_in_memory("org").unwrap();
+    let mut orch = syncing_orchestrator();
+    let mut mint = counter();
+    let a = shared_messages("/a.jsonl", &[("msg_1", "x-a"), ("msg_2", "a-2")]);
+    let b = shared_messages("/b.jsonl", &[("msg_1", "x-b"), ("msg_3", "z-b")]);
+    let c = shared_messages("/c.jsonl", &[("msg_3", "z-c")]);
+    let cursors = |unit: &SyncUnit| -> Vec<crate::cursor::FactCursor> {
+        session_facts(AgentSource::Claude, &unit.records, &unit.ctx)
+            .messages
+            .iter()
+            .map(|m| crate::cursor::message_cursor(AgentSource::Claude, m).unwrap())
+            .collect()
+    };
+    // b's facts are already current, so the first batch carries it empty. The poisoned upload then
+    // moves both identities, so the retry finds b's older copies pending.
+    store
+        .advance_facts(AgentSource::Claude, &cursors(&b))
+        .unwrap();
+    let mut moved_z = cursors(&b)[1].clone();
+    moved_z.content_hash = "sha256:moved".to_string();
+    let client = StateShiftClient {
+        store: &store,
+        shift: vec![cursors(&a)[0].clone(), moved_z],
+        events: RefCell::new(Vec::new()),
+    };
+    let units = [a, b, c, message_unit("/p.jsonl", "p")];
+
+    let (report, _) = run_sync_cycle(&client, &store, &mut orch, &meta(), &units, &mut mint, None)
+        .await
+        .unwrap();
+
+    // b's copy of msg_3 is older than c's, so c's must be the last one uploaded.
+    assert_eq!(report.advanced, 3);
+    let events = client.events.borrow();
+    let last_z = events.iter().rev().find(|model| model.starts_with("z-"));
+    assert_eq!(last_z.map(String::as_str), Some("z-c"), "{events:?}");
 }

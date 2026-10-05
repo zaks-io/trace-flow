@@ -160,7 +160,7 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
 
     /// A retry group as one batch. A group is a subset of a batch that already fit the budget, so only
     /// a lone oversized unit needs splitting. Send state may have moved since the group was first
-    /// prepared, so a unit that now conflicts with the group is requeued on its own.
+    /// prepared, so a unit can now conflict with the group.
     fn batch_of(
         &mut self,
         store: &CursorStore,
@@ -173,12 +173,15 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
             }
         }
         let mut open = OpenBatch::default();
-        for index in group {
+        let mut group = group.into_iter();
+        while let Some(index) = group.next() {
             let assembled = self.assemble(store, &self.units[index])?;
             if open.identities.conflicts(&assembled.fact_cursors) {
+                // Like a new batch, a retry closes at its first conflict. The rest stays in order behind
+                // the deferred unit, so no later unit's newer copy overtakes one of its older copies.
                 self.ordered_units.insert(index);
-                self.requeue(vec![index]);
-                continue;
+                self.requeue(std::iter::once(index).chain(group).collect());
+                break;
             }
             self.merge(&mut open, index, assembled)?;
         }
