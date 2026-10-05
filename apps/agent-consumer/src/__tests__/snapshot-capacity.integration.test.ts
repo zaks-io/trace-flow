@@ -18,7 +18,9 @@ async function startSnapshot(orgId: string, deliveryId = crypto.randomUUID()) {
     expiresAtMs: Date.now() + 60_000,
   });
   await coordinator.complete({ deliveryId, payloadSha256 });
-  const { generation } = await coordinator.beginSnapshot({ claimId: 'claim-a' });
+  const snapshot = await coordinator.beginSnapshot({ claimId: 'claim-a' });
+  if (snapshot === null) throw new Error('Expected snapshot start');
+  const { generation } = snapshot;
   return { coordinator, key: { orgId, generation } };
 }
 

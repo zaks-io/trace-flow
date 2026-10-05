@@ -26,7 +26,7 @@ describe('bounded ingestion migration', () => {
         proofSha256,
         complete: false,
       });
-      expect(() =>
+      expect(
         coordinator.reserve({
           deliveryId: 'delivery',
           payloadSha256: proofSha256,
@@ -34,11 +34,12 @@ describe('bounded ingestion migration', () => {
           createdAtMs: Date.now(),
           expiresAtMs: Date.now() + 60_000,
         }),
-      ).toThrow('migration is incomplete');
+      ).toBeNull();
       expect(() => coordinator.completeIngestionMigration({ proofSha256 })).toThrow(
         'snapshots are not complete',
       );
       const snapshot = coordinator.beginSnapshot({ claimId: CLAIM_ID });
+      if (snapshot === null) throw new Error('Expected snapshot start');
       finishSnapshotCopies(coordinator, snapshot.generation, CLAIM_ID);
       expect(coordinator.completeIngestionMigration({ proofSha256 })).toEqual({
         proofSha256,

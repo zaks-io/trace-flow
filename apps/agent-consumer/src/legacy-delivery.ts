@@ -40,6 +40,10 @@ export async function processMigratedLegacyMessage(
   });
   const delivery = env.AGENT_DELIVERY.getByName(staged.key);
   const revision = await delivery.register(staged, days, { legacySourceOrder: true });
+  if (revision === null) {
+    message.retry({ delaySeconds: 60 });
+    return true;
+  }
   if (!Number.isSafeInteger(revision) || revision <= 0) {
     throw new Error('Agent delivery returned an invalid revision');
   }

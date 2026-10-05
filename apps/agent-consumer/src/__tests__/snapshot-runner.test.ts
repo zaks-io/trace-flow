@@ -32,6 +32,45 @@ describe('durable snapshot runner', () => {
   });
   afterEach(() => vi.useRealTimers());
 
+  it('retries the losing concurrent start without starting a second Copy or releasing the owner', async () => {
+    const f = await makeSnapshotRunner();
+    const initial = await f.coordinator.getStats({});
+    let reads = 0;
+    const coordinator = new Proxy(f.coordinator, {
+      get(target, name) {
+        if (name === 'getStats')
+          return () => (++reads <= 2 ? Promise.resolve(initial) : target.getStats({}));
+        return Reflect.get(target, name);
+      },
+    });
+    const env = {
+      ...f.env,
+      AGENT_DELIVERY_COORDINATOR: {
+        getByName: () => coordinator,
+      } as unknown as typeof f.env.AGENT_DELIVERY_COORDINATOR,
+    };
+
+    const results = await Promise.all([
+      runAgentSnapshot(env, f.orgId),
+      runAgentSnapshot(env, f.orgId),
+    ]);
+
+    expect(results).toEqual(
+      expect.arrayContaining([
+        { status: 'retry', reason: 'gate-active' },
+        expect.objectContaining({ status: 'continued', generation: 1 }),
+      ]),
+    );
+    expect(startSnapshotCopy).toHaveBeenCalledOnce();
+    expect(f.capacity.acquire).toHaveBeenCalledOnce();
+    expect(f.capacity.release).not.toHaveBeenCalled();
+    expect(await f.coordinator.getStats({})).toMatchObject({
+      lastSnapshotGeneration: 1,
+      activeSnapshotGeneration: 1,
+      gatePhase: 'snapshot',
+    });
+  });
+
   it('schedules one Copy at a time and atomically publishes after all nine finish', async () => {
     const f = await makeSnapshotRunner();
     await f.coordinator.scheduleSnapshot({ orgId: f.orgId });

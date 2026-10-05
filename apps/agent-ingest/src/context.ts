@@ -6,7 +6,7 @@ export interface AgentConsumerService {
     afterId?: number,
   ): Promise<{ ready: boolean; nextAfterId?: number }>;
   canAcceptDeliveries(orgId: string): Promise<boolean>;
-  registerDelivery(reference: AgentDeliveryStagedReference, days: string[]): Promise<number>;
+  registerDelivery(reference: AgentDeliveryStagedReference, days: string[]): Promise<number | null>;
 }
 
 /**

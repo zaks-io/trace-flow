@@ -10,7 +10,7 @@ import {
   type ReplayFrozenFactsInput,
 } from './frozen-fact-recovery';
 
-export interface FrozenFactReplayConfirmation {
+interface FrozenFactReplayConfirmation {
   status: 'confirmed';
   deliveryId: string;
   deliverySequence: number;
@@ -18,12 +18,16 @@ export interface FrozenFactReplayConfirmation {
   factCount: number;
 }
 
+export type FrozenFactReplayResult =
+  | FrozenFactReplayConfirmation
+  | { status: 'retry'; deliveryId: string };
+
 export async function replayFrozenFactSelection(
   env: AgentConsumerEnv,
   orgId: string,
   input: ReplayFrozenFactsInput,
   batcher: DurableObjectStub<AgentFactBatcherInstance>,
-): Promise<FrozenFactReplayConfirmation> {
+): Promise<FrozenFactReplayResult> {
   const validated = validateReplayFrozenFactsInput(input);
   const sources = await batcher.readFrozenFacts(orgId, {
     facts: validated.facts.map(({ category, factId, expectedSourceHash }) => ({
@@ -47,6 +51,7 @@ export async function replayFrozenFactSelection(
     frozenDeliveryDays(deliveryRows),
     canonicalProof(validated),
   );
+  if (deliverySequence === null) return { status: 'retry', deliveryId: validated.deliveryId };
   const result = await delivery.process({ ...reference, delivery_revision: deliverySequence });
   if (result !== 'complete') throw new Error('Frozen fact replay delivery is not complete');
   return {

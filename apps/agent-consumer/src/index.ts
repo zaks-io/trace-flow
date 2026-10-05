@@ -47,7 +47,7 @@ import { agentIngestionErasureStarted, processMigratedLegacyMessages } from './l
 import { eraseAgentOrganization } from './organization-erasure';
 import { MAX_ACTIVE_AGENT_DELIVERIES } from './agent-delivery-coordinator-contract';
 import { replayAgentDlqPayload } from './dlq-replay';
-import { replayFrozenFactSelection, type FrozenFactReplayConfirmation } from './frozen-fact-replay';
+import { replayFrozenFactSelection, type FrozenFactReplayResult } from './frozen-fact-replay';
 import type {
   FrozenFactIdentity,
   FrozenFactSelector,
@@ -217,7 +217,10 @@ class AgentIngestionEntrypoint extends WorkerEntrypoint<AgentConsumerEnv> {
     );
   }
 
-  async registerDelivery(reference: AgentDeliveryStagedReference, days: string[]): Promise<number> {
+  async registerDelivery(
+    reference: AgentDeliveryStagedReference,
+    days: string[],
+  ): Promise<number | null> {
     if (validateAgentDeliveryStagedReference(reference))
       throw new Error('Invalid delivery registration');
     return this.env.AGENT_DELIVERY.getByName(reference.key).register(reference, days);
@@ -343,10 +346,7 @@ class TraceRecoveryEntrypoint extends WorkerEntrypoint<AgentConsumerEnv> {
     return getAgentBatcher(this.env, normalized).readFrozenFacts(normalized, input);
   }
 
-  replayFrozenFacts(
-    orgId: string,
-    input: ReplayFrozenFactsInput,
-  ): Promise<FrozenFactReplayConfirmation> {
+  replayFrozenFacts(orgId: string, input: ReplayFrozenFactsInput): Promise<FrozenFactReplayResult> {
     const normalized = normalizeAgentShardId(orgId);
     return replayFrozenFactSelection(
       this.env,

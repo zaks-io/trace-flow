@@ -13,6 +13,9 @@ use std::sync::{
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
+#[path = "admission_tests.rs"]
+mod admission_tests;
+
 fn minimal_envelope() -> AgentIngestEnvelope {
     AgentIngestEnvelope {
         batch: AgentIngestBatch {

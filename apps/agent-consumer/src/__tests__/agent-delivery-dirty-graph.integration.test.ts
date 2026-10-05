@@ -129,6 +129,7 @@ describe('AgentDeliveryCoordinator dirty day links', () => {
     const snapshot = await withCoordinator((coordinator) =>
       coordinator.beginSnapshot({ claimId: CLAIM_ID }),
     );
+    if (snapshot === null) throw new Error('Expected snapshot start');
     await withCoordinator((coordinator) =>
       finishSnapshotCopies(coordinator, snapshot.generation, CLAIM_ID),
     );
@@ -146,6 +147,7 @@ describe('AgentDeliveryCoordinator dirty day links', () => {
     const snapshot = await withCoordinator((coordinator) =>
       coordinator.beginSnapshot({ claimId: CLAIM_ID }),
     );
+    if (snapshot === null) throw new Error('Expected snapshot start');
     await withCoordinator((coordinator) =>
       coordinator.failSnapshot({ generation: snapshot.generation, claimId: CLAIM_ID }),
     );

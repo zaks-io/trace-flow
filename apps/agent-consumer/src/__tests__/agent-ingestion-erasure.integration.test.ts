@@ -36,6 +36,7 @@ describe('agent ingestion erasure fence', () => {
   it('permanently blocks new work while an existing reservation drains', async () => {
     const input = reservation('delivery-active');
     const reserved = await withCoordinator((coordinator) => coordinator.reserve(input));
+    if (reserved === null) throw new Error('Expected delivery reservation');
     await withCoordinator((coordinator) => coordinator.scheduleSnapshot({ orgId: 'org-1' }));
 
     const started = await withCoordinator((coordinator) => coordinator.beginErasure({}));
@@ -138,6 +139,7 @@ describe('agent ingestion erasure fence', () => {
     const snapshot = await withCoordinator((coordinator) =>
       coordinator.beginSnapshot({ claimId: CLAIM_ID }),
     );
+    if (snapshot === null) throw new Error('Expected snapshot start');
     const key = copyKey(snapshot.generation, AGENT_SNAPSHOT_TARGETS[0]);
     await withCoordinator((coordinator) =>
       coordinator.recordSnapshotCopyIntent({
@@ -198,6 +200,7 @@ describe('agent ingestion erasure fence', () => {
     const snapshot = await withCoordinator((coordinator) =>
       coordinator.beginSnapshot({ claimId: CLAIM_ID }),
     );
+    if (snapshot === null) throw new Error('Expected snapshot start');
     const intent = {
       ...copyKey(snapshot.generation, AGENT_SNAPSHOT_TARGETS[0]),
       claimId: CLAIM_ID,
@@ -237,6 +240,7 @@ describe('agent ingestion erasure fence', () => {
     const snapshot = await withCoordinator((coordinator) =>
       coordinator.beginSnapshot({ claimId: CLAIM_ID }),
     );
+    if (snapshot === null) throw new Error('Expected snapshot start');
     const target = AGENT_SNAPSHOT_TARGETS[0];
     const copyAttempt = snapshotCopyAttempt(snapshot.generation);
 
