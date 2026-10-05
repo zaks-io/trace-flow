@@ -20,7 +20,7 @@
 //! their own unit and the cycle continues with the rest. A `400` is isolated to the unit that caused
 //! it within the cycle, and that unit is quarantined so it cannot block pass completion.
 
-use std::collections::VecDeque;
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use collector_api_client::{CollectorApiClient, IngestError, IngestResult};
@@ -266,7 +266,9 @@ async fn drain<C: IngestClient>(
     let mut inflight = FuturesUnordered::new();
     let mut pending = BatchPreparer::new(meta, units, mint_batch_id, tuning);
     let mut rejected: Vec<Rejected> = Vec::new();
-    let mut held: VecDeque<PreparedBatch> = VecDeque::new();
+    // Keyed by each batch's oldest unit. Units arrive in file-modification order, so launching the
+    // lowest key first sends older copies of a fact before newer ones.
+    let mut held: BTreeMap<usize, PreparedBatch> = BTreeMap::new();
 
     loop {
         // Refill every free slot: a split `400` batch can queue several retry groups at once. Retry
@@ -277,7 +279,7 @@ async fn drain<C: IngestClient>(
                 if !inflight.is_empty() {
                     break;
                 }
-                held.pop_front()
+                held.pop_first().map(|(_, batch)| batch)
             } else {
                 pending.next_batch(store)?
             };
@@ -285,7 +287,7 @@ async fn drain<C: IngestClient>(
                 break;
             };
             if batch.after_inflight && (!inflight.is_empty() || pending.has_retries()) {
-                held.push_back(batch);
+                held.insert(batch.oldest_unit(), batch);
                 continue;
             }
             inflight.push(post_batch(client, batch, cancel));

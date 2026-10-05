@@ -59,6 +59,17 @@ struct OpenBatch {
     identities: EnvelopeIdentities,
 }
 
+impl PreparedBatch {
+    /// A unit belongs to one batch at a time, so this also identifies the batch.
+    pub(crate) fn oldest_unit(&self) -> usize {
+        *self
+            .units
+            .iter()
+            .min()
+            .expect("a prepared batch always carries a unit")
+    }
+}
+
 pub(crate) struct BatchPreparer<'a, M: FnMut() -> String> {
     meta: &'a BatchMeta,
     units: &'a [SyncUnit],

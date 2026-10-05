@@ -359,3 +359,77 @@ async fn a_changed_copy_waits_for_the_retry_of_a_rejected_batch_carrying_the_old
     assert_eq!(report.quarantined, ["/p.jsonl"]);
     assert_eq!(*client.events.borrow(), IN_ORDER);
 }
+
+/// Rejects the envelope carrying the `poisoned` session with a naming `400` and, while doing so,
+/// records `shift` as sent, as if another upload had moved that fact's stored state. Records each
+/// accepted POST by the model of its first message.
+struct StateShiftClient<'a> {
+    store: &'a CursorStore,
+    shift: crate::cursor::FactCursor,
+    events: RefCell<Vec<String>>,
+}
+
+impl IngestClient for StateShiftClient<'_> {
+    async fn ingest(
+        &self,
+        envelope: &AgentIngestEnvelope,
+        _cancel: Option<&CancellationToken>,
+    ) -> IngestResult {
+        let messages = &envelope.facts.messages;
+        if messages.iter().any(|m| m.vendor_session_id == "/p.jsonl") {
+            self.store
+                .advance_facts(AgentSource::Claude, std::slice::from_ref(&self.shift))
+                .unwrap();
+            return Err(IngestError::InvalidEnvelope(InvalidEnvelopeDetail {
+                vendor_session_ids: vec!["/p.jsonl".to_string()],
+                ..InvalidEnvelopeDetail::default()
+            }));
+        }
+        if let Some(first) = messages.first() {
+            self.events.borrow_mut().push(first.model.clone());
+        }
+        ok()
+    }
+}
+
+#[tokio::test]
+async fn held_batches_launch_oldest_unit_first_when_a_retry_defers_a_unit() {
+    let store = CursorStore::open_in_memory("org").unwrap();
+    let mut orch = syncing_orchestrator();
+    let mut mint = counter();
+    // r carries the shared message plus one of its own; q's copy of the shared message is already
+    // current, so it rides along empty until the poisoned upload moves that state.
+    let mut r = shared("/r.jsonl", "claude-opus-4-7");
+    let mut second = r.records[0].clone();
+    second["message"]["id"] = json!("msg_2");
+    r.records.push(second);
+    let q = shared("/q.jsonl", "claude-opus-4-9");
+    let b = shared("/b.jsonl", "claude-opus-4-8");
+    let first_message = |unit: &SyncUnit| {
+        let facts = session_facts(AgentSource::Claude, &unit.records, &unit.ctx);
+        crate::cursor::message_cursor(AgentSource::Claude, &facts.messages[0]).unwrap()
+    };
+    store
+        .advance_facts(AgentSource::Claude, &[first_message(&q)])
+        .unwrap();
+    let client = StateShiftClient {
+        store: &store,
+        shift: first_message(&r),
+        events: RefCell::new(Vec::new()),
+    };
+    let units = [r, q, message_unit("/p.jsonl", "claude-opus-4-7"), b];
+
+    let (report, _) = run_sync_cycle(&client, &store, &mut orch, &meta(), &units, &mut mint, None)
+        .await
+        .unwrap();
+
+    // The retry of [r, q] now finds q's copy pending and defers q while b is already held. q is the
+    // older unit, so it must land before b.
+    assert_eq!(report.advanced, 3);
+    let events = client.events.borrow();
+    let position = |model: &str| events.iter().position(|e| e == model).unwrap();
+    assert!(
+        position("claude-opus-4-9") < position("claude-opus-4-8"),
+        "{events:?}"
+    );
+}
