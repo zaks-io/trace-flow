@@ -515,6 +515,14 @@ fixed to bring the live pipeline in line:
 Quantiles are pinned to **`quantileExact`** per the house-estimator exception above (no Type 8
 migration).
 
+The Spend dashboard's session cost histogram reads additive columns on the same pipe. They cover
+only sessions with at least one priced Agent Message, so unpriced sessions cannot drag the median
+toward zero: `priced_cost_p50` and `priced_cost_p95` (still `quantileExact`, so an even count
+reports the upper middle value), plus fixed **log-width bins**, `log_bins_per_decade` (8) per power
+of ten from $0.01. Sessions below a cent are counted in `sub_cent_session_count` instead of
+binned. Log-width bins keep a heavy right tail readable on one axis; the equal-frequency decile
+buckets remain for the Agents page.
+
 **Known deferred gap (out of scope for this catalog, tracked separately):** the LLM/trace-layer
 pipes (`llm_usage_summary`, `operations_leaderboard`, `operation_user_breakdown`,
 `traces_summary`) headline **arithmetic-mean** durations (`avg`/`avgMerge`) and

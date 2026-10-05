@@ -34,6 +34,7 @@ const EXPECTED_WEB_PIPES = [
   'operations_leaderboard',
   'llm_usage_by_api_key',
   'llm_usage_by_account',
+  'llm_usage_by_source_model',
   'llm_cost_forecast',
   'llm_cost_tail_risk',
   'llm_token_ratio_drift',

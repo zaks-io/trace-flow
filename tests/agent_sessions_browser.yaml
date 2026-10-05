@@ -12,34 +12,34 @@
   expected_http_status: 200
   parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000
   expected_result: |
-    {"session_pk":"s1","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":3,"file_event_count":5,"unique_file_count":5,"cost_usd":4,"duration_ms":3600000,"last_event_ms":1779271200000}
-    {"session_pk":"s2","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":1,"file_event_count":1,"unique_file_count":1,"cost_usd":0.1,"duration_ms":0,"last_event_ms":1779271200000}
-    {"session_pk":"s3","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":2,"file_event_count":2,"unique_file_count":2,"cost_usd":0.8,"duration_ms":5400000,"last_event_ms":1779271200000}
+    {"session_pk":"s1","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":3,"file_event_count":5,"unique_file_count":5,"cost_usd":4,"duration_ms":3600000,"last_event_ms":1779271200000,"git_branch":"","input_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"output_tokens":0,"reasoning_tokens":0,"priced_message_count":3}
+    {"session_pk":"s2","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":1,"file_event_count":1,"unique_file_count":1,"cost_usd":0.1,"duration_ms":0,"last_event_ms":1779271200000,"git_branch":"","input_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"output_tokens":0,"reasoning_tokens":0,"priced_message_count":1}
+    {"session_pk":"s3","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":2,"file_event_count":2,"unique_file_count":2,"cost_usd":0.8,"duration_ms":5400000,"last_event_ms":1779271200000,"git_branch":"","input_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"output_tokens":0,"reasoning_tokens":0,"priced_message_count":1}
 
 - name: sessions_sort_by_cost_reproduces_outliers
   description: explicit sort=cost descending reproduces the prior outliers ranking (s1 > s3 > s2)
   expected_http_status: 200
   parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&sort=cost
   expected_result: |
-    {"session_pk":"s1","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":3,"file_event_count":5,"unique_file_count":5,"cost_usd":4,"duration_ms":3600000,"last_event_ms":1779271200000}
-    {"session_pk":"s3","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":2,"file_event_count":2,"unique_file_count":2,"cost_usd":0.8,"duration_ms":5400000,"last_event_ms":1779271200000}
-    {"session_pk":"s2","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":1,"file_event_count":1,"unique_file_count":1,"cost_usd":0.1,"duration_ms":0,"last_event_ms":1779271200000}
+    {"session_pk":"s1","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":3,"file_event_count":5,"unique_file_count":5,"cost_usd":4,"duration_ms":3600000,"last_event_ms":1779271200000,"git_branch":"","input_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"output_tokens":0,"reasoning_tokens":0,"priced_message_count":3}
+    {"session_pk":"s3","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":2,"file_event_count":2,"unique_file_count":2,"cost_usd":0.8,"duration_ms":5400000,"last_event_ms":1779271200000,"git_branch":"","input_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"output_tokens":0,"reasoning_tokens":0,"priced_message_count":1}
+    {"session_pk":"s2","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":1,"file_event_count":1,"unique_file_count":1,"cost_usd":0.1,"duration_ms":0,"last_event_ms":1779271200000,"git_branch":"","input_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"output_tokens":0,"reasoning_tokens":0,"priced_message_count":1}
 
 - name: sessions_sort_by_duration_breaks_ties_by_pk
   description: sort=duration desc ranks sessions by message-to-file activity span
   expected_http_status: 200
   parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&sort=duration
   expected_result: |
-    {"session_pk":"s3","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":2,"file_event_count":2,"unique_file_count":2,"cost_usd":0.8,"duration_ms":5400000,"last_event_ms":1779271200000}
-    {"session_pk":"s1","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":3,"file_event_count":5,"unique_file_count":5,"cost_usd":4,"duration_ms":3600000,"last_event_ms":1779271200000}
-    {"session_pk":"s2","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":1,"file_event_count":1,"unique_file_count":1,"cost_usd":0.1,"duration_ms":0,"last_event_ms":1779271200000}
+    {"session_pk":"s3","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":2,"file_event_count":2,"unique_file_count":2,"cost_usd":0.8,"duration_ms":5400000,"last_event_ms":1779271200000,"git_branch":"","input_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"output_tokens":0,"reasoning_tokens":0,"priced_message_count":1}
+    {"session_pk":"s1","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":3,"file_event_count":5,"unique_file_count":5,"cost_usd":4,"duration_ms":3600000,"last_event_ms":1779271200000,"git_branch":"","input_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"output_tokens":0,"reasoning_tokens":0,"priced_message_count":3}
+    {"session_pk":"s2","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":1,"file_event_count":1,"unique_file_count":1,"cost_usd":0.1,"duration_ms":0,"last_event_ms":1779271200000,"git_branch":"","input_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"output_tokens":0,"reasoning_tokens":0,"priced_message_count":1}
 
 - name: sessions_pagination
   description: limit=1 offset=1 returns the second session by the default recency tie-break sort (s2)
   expected_http_status: 200
   parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&limit=1&offset=1
   expected_result: |
-    {"session_pk":"s2","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":1,"file_event_count":1,"unique_file_count":1,"cost_usd":0.1,"duration_ms":0,"last_event_ms":1779271200000}
+    {"session_pk":"s2","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":1,"file_event_count":1,"unique_file_count":1,"cost_usd":0.1,"duration_ms":0,"last_event_ms":1779271200000,"git_branch":"","input_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"output_tokens":0,"reasoning_tokens":0,"priced_message_count":1}
 
 - name: sessions_respects_source_filter
   description: sources=codex isolates a source with no org_test sessions -> empty
@@ -58,3 +58,12 @@
   expected_http_status: 200
   parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=7
   expected_result: ''
+
+- name: sessions_expose_branch_tokens_and_pricing
+  description: org_spend sessions carry their git branch, token sums, and priced message count; an unpriced session reports zero priced messages
+  expected_http_status: 200
+  parameters: org_id=org_spend&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&sort=cost
+  expected_result: |
+    {"session_pk":"sp_priced","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_spend","message_count":2,"file_event_count":0,"unique_file_count":0,"cost_usd":1.5,"duration_ms":1800000,"last_event_ms":1779269400000,"git_branch":"feat\/spend","input_tokens":110,"cache_read_tokens":440,"cache_creation_tokens":20,"output_tokens":55,"reasoning_tokens":10,"priced_message_count":2}
+    {"session_pk":"sp_subcent","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_spend","message_count":1,"file_event_count":0,"unique_file_count":0,"cost_usd":0.004,"duration_ms":0,"last_event_ms":1779271200000,"git_branch":"main","input_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"output_tokens":0,"reasoning_tokens":0,"priced_message_count":1}
+    {"session_pk":"sp_unpriced","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_spend","message_count":1,"file_event_count":0,"unique_file_count":0,"cost_usd":0,"duration_ms":0,"last_event_ms":1779274800000,"git_branch":"","input_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"output_tokens":0,"reasoning_tokens":0,"priced_message_count":0}
