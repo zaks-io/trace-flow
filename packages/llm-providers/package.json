@@ -14,7 +14,8 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@trace-flow/types": "workspace:*"
+    "@trace-flow/types": "workspace:*",
+    "jsonc-parser": "3.3.1"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^4.1.11",

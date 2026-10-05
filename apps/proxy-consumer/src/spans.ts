@@ -55,6 +55,7 @@ function calculateRetentionExpiresAt(receivedAt: number, tier?: string): number 
 }
 
 function getNonStreamingOutputType(operationName: string): string {
+  if (operationName === 'decision') return 'decision';
   return operationName === 'embeddings' ? 'embedding' : 'text';
 }
 
@@ -140,13 +141,17 @@ function buildRoot(
 
   const attributes: Record<string, string> = {
     ...requestAttributes(data, { isStreaming, operationName }),
-    ...timingAttributes(data.timing, data.tokens),
+    ...timingAttributes(data.timing, operationName === 'decision' ? undefined : data.tokens),
     ...(data.baggage ? baggageAttributes(data.baggage) : {}),
   };
 
   if (data.tokens) {
     Object.assign(attributes, tokenAttributes(data.tokens));
-    if (pricing) {
+    if (
+      pricing &&
+      (operationName !== 'decision' ||
+        (data.tokens.promptTokens !== undefined && data.tokens.completionTokens !== undefined))
+    ) {
       Object.assign(
         attributes,
         costAttributes(calculateCost(data.tokens, pricing, data.request.provider)),

@@ -1,3 +1,5 @@
+import { TYPESAFE_JEV_PRICING } from '@trace-flow/pricing';
+
 export interface DefaultPricing {
   provider: string;
   model: string;
@@ -9,6 +11,7 @@ export interface DefaultPricing {
 }
 
 export const DEFAULT_PRICING: DefaultPricing[] = [
+  TYPESAFE_JEV_PRICING,
   // Anthropic models - using prefixes (without date suffixes) for automatic matching
   // Claude 4.6 series
   {

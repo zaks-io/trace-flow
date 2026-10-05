@@ -54,6 +54,51 @@ describe('buildSpans core trace generation', () => {
   });
 
   describe('token usage', () => {
+    it('records decisions without generated-text timing metrics', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        targetUrl: 'https://api.typesafe.ai/v1/systemone',
+        operationName: 'decision',
+        request: {
+          ...baseQueueMessage.request,
+          provider: 'typesafe',
+          model: 'jev-latest',
+        },
+        response: { ...baseQueueMessage.response, provider: 'typesafe' },
+        responseMetadata: { model: 'jev-1.13.0' },
+        tokens: {
+          promptTokens: 296,
+          uncachedInputTokens: 296,
+          completionTokens: 20,
+          totalTokens: 316,
+          upstreamCost: 0,
+        },
+      };
+
+      const traces = buildSpans(message, {
+        promptCostPerMillion: 42_000,
+        completionCostPerMillion: 0,
+        updatedAt: Date.now(),
+        source: 'default',
+      });
+      const rootSpan = traces[0]!;
+      const outputSpan = traces[1]!;
+
+      expect(rootSpan.SpanName).toBe('decision jev-1.13.0');
+      expect(rootSpan.SpanAttributes).toMatchObject({
+        'gen_ai.operation.name': 'decision',
+        'gen_ai.request.model': 'jev-latest',
+        'gen_ai.response.model': 'jev-1.13.0',
+        'gen_ai.usage.input_tokens': '296',
+        'gen_ai.usage.output_tokens': '20',
+        'gen_ai.cost.total': '0.000012',
+        'gen_ai.cost.upstream': '0',
+      });
+      expect(rootSpan.SpanAttributes['gen_ai.tokens_per_second']).toBeUndefined();
+      expect(outputSpan.SpanName).toBe('gen_ai.response.decision');
+      expect(outputSpan.SpanAttributes['gen_ai.content.type']).toBe('decision');
+    });
+
     it('should include token usage in root span when provided', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,

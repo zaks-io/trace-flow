@@ -5,6 +5,7 @@ export function extractProviderFromUrl(url: string): string {
     if (hostname.includes('openai.com')) return 'openai';
     if (hostname.includes('anthropic.com')) return 'anthropic';
     if (hostname.includes('openrouter.ai')) return 'openrouter';
+    if (hostname === 'api.typesafe.ai') return 'typesafe';
     if (hostname.includes('groq.com')) return 'groq';
     if (hostname.includes('generativelanguage.googleapis.com')) return 'google';
     if (hostname.includes('api.mistral.ai')) return 'mistral';
@@ -31,6 +32,14 @@ export const COUNT_TOKENS_OPERATION = 'count_tokens';
  */
 export function deriveOperationName(path: string): string {
   const normalizedPath = path.toLowerCase();
+
+  if (
+    /^\/(?:typesafe\/v1\/systemone|openrouter\/(?:v1\/systemone|alpha\/decisions))\/?$/.test(
+      normalizedPath.split('?')[0] ?? '',
+    )
+  ) {
+    return 'decision';
+  }
 
   if (
     normalizedPath.includes('/count_tokens') ||

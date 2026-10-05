@@ -82,6 +82,7 @@ export type SpanType =
   | 'assistant_text' // Assistant text output
   | 'assistant_thinking' // Thinking/reasoning output
   | 'assistant_tool_use' // Tool use request (output)
+  | 'decision'
   | 'tool_execution' // Cross-request tool execution
   | 'synthetic' // Synthetic grouping span for orphan parents
   | 'internal'; // Fallback
@@ -191,6 +192,7 @@ export function getSpanType(span: TraceSpan, attrs: Record<string, string>): Spa
     operationName === 'generate_content' ||
     operationName === 'embeddings' ||
     operationName === 'count_tokens' ||
+    operationName === 'decision' ||
     operationName === 'invoke_agent'
   ) {
     return 'llm';
@@ -200,6 +202,7 @@ export function getSpanType(span: TraceSpan, attrs: Record<string, string>): Spa
   if (name === 'gen_ai.request' || name.includes('chat/completions')) return 'llm';
 
   // Output spans (cool/vibrant tones) - gen_ai.response.{type} pattern
+  if (name.startsWith(SPAN_NAMES.responseFor('decision'))) return 'decision';
   if (name.startsWith(SPAN_NAMES.responseFor('text'))) return 'assistant_text';
   if (name.startsWith(SPAN_NAMES.responseFor('thinking'))) return 'assistant_thinking';
   if (name.startsWith(SPAN_NAMES.responseFor('tool_use'))) return 'assistant_tool_use';
@@ -368,6 +371,7 @@ export function getTypeColor(
       return 'bg-amber-500';
 
     case 'assistant_text':
+    case 'decision':
       return 'bg-indigo-500';
     case 'assistant_thinking':
       return 'bg-violet-500';
@@ -392,6 +396,7 @@ export function getTypeIcon(type: SpanType) {
   switch (type) {
     // Infrastructure
     case 'llm':
+    case 'decision':
       return <Bot className="h-3.5 w-3.5" />;
 
     // Synthetic grouping spans
@@ -450,6 +455,7 @@ export function getTypeIconColor(type: SpanType, span?: TraceSpan): string {
 
     // Output spans - cool/vibrant
     case 'assistant_text':
+    case 'decision':
       return 'text-indigo-400';
     case 'assistant_thinking':
       return 'text-violet-400';

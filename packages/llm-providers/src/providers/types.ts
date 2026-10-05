@@ -21,10 +21,12 @@ export interface ParsedSSEEvent {
  * Optional context for `parseResponseMetadata`. `targetUrl` lets providers fall
  * back to URL-path parsing when the response body lacks the model field —
  * Gemini's `embedContent` and `batchEmbedContents` responses don't include
- * `modelVersion`, so Google's adapter recovers it from the path.
+ * `modelVersion`, so Google's adapter recovers it from the path. `operationName`
+ * selects native decision accounting on OpenRouter's non-chat endpoints.
  */
 export interface ResponseMetadataContext {
   targetUrl: string;
+  operationName?: string;
 }
 
 /**
@@ -47,7 +49,7 @@ export interface Provider {
     body: string,
     ctx?: ResponseMetadataContext,
   ): LLMResponseMetadataSummary | undefined;
-  parseResponseTokenUsage(body: string): LLMTokenUsage | undefined;
+  parseResponseTokenUsage(body: string, ctx?: ResponseMetadataContext): LLMTokenUsage | undefined;
 
   handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStreamData): void;
   aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | undefined;

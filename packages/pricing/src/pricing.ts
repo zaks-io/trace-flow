@@ -68,6 +68,8 @@ export interface PricingStore {
  * This allows pricing to be stored by model family rather than specific snapshots.
  */
 function extractModelPrefix(model: string): string | null {
+  // Jev snapshots are catalog identities; an unknown release must not inherit an older price.
+  if (/^(?:~?typesafe\/)?jev-(?:\d|latest)/.test(model)) return null;
   const match = /^(.+)-\d{8}$/.exec(model);
   return match?.[1] ?? null;
 }

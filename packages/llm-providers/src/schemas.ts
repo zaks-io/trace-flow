@@ -1,6 +1,12 @@
 import type { ProviderId, ProviderTokenSchema } from './types';
 
 export const PROVIDER_SCHEMAS: Record<ProviderId, ProviderTokenSchema> = {
+  typesafe: {
+    promptFields: ['input_tokens'],
+    completionFields: ['output_tokens'],
+    promptIncludesCache: true,
+    lastMatchOnly: false,
+  },
   openai: {
     promptFields: ['prompt_tokens', 'input_tokens'],
     completionFields: ['completion_tokens', 'output_tokens'],

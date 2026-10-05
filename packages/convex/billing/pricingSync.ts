@@ -1,5 +1,5 @@
 import { internalAction } from '../_generated/server';
-import { serializeModelPricing } from '@trace-flow/pricing';
+import { OPENROUTER_PRICING_TTL_SECONDS, serializeModelPricing } from '@trace-flow/pricing';
 import { v } from 'convex/values';
 import { internal } from '../_generated/api';
 import { cloudflareKvValuesUrl } from '../integrations/cloudflareApi';
@@ -14,6 +14,7 @@ interface PricingKvRequest {
   body?: string;
   failureLabel: string;
   allowNotFound?: boolean;
+  expirationTtl?: number;
 }
 
 function getPricingKvConfig(): PricingKvConfig {
@@ -41,7 +42,10 @@ async function requestPricingKv(
   request: PricingKvRequest,
 ): Promise<void> {
   const { apiToken, namespaceUrl } = getPricingKvConfig();
-  const url = `${namespaceUrl}/${encodeURIComponent(pricingKvKey(provider, model))}`;
+  const url = new URL(`${namespaceUrl}/${encodeURIComponent(pricingKvKey(provider, model))}`);
+  if (request.expirationTtl !== undefined) {
+    url.searchParams.set('expiration_ttl', String(request.expirationTtl));
+  }
   const response = await fetch(url, {
     method: request.method,
     headers: {
@@ -90,6 +94,7 @@ export const syncToKV = internalAction({
       method: 'PUT',
       body: value,
       failureLabel: 'sync pricing to KV',
+      expirationTtl: pricing.source === 'openrouter' ? OPENROUTER_PRICING_TTL_SECONDS : undefined,
     });
 
     return null;

@@ -97,6 +97,98 @@ organization analytics; MCP tools currently have no write operations.
 | Google     | `/google/v1beta` |
 | OpenRouter | `/openrouter/v1` |
 | Groq       | `/groq/v1`       |
+| TypeSafe   | `/typesafe/v1`   |
+
+## Jev decisions
+
+Jev accepts application `state` and typed `questions`, then returns `answers` and token usage.
+Trace Flow captures these requests as decisions. Use the provider's normal bearer key and the
+Trace Flow header. Choose the gateway for the deployment you intend to use.
+
+| API                   | Hosted gateway endpoint                                     | Model example          |
+| --------------------- | ----------------------------------------------------------- | ---------------------- |
+| TypeSafe System One   | `https://gateway.trace-flow.dev/typesafe/v1/systemone`      | `jev-latest`           |
+| OpenRouter System One | `https://gateway.trace-flow.dev/openrouter/v1/systemone`    | `jev-latest`           |
+| OpenRouter Decisions  | `https://gateway.trace-flow.dev/openrouter/alpha/decisions` | `~typesafe/jev-latest` |
+
+For plain HTTP, a synthetic TypeSafe request looks like this:
+
+```bash
+curl https://gateway.trace-flow.dev/typesafe/v1/systemone \
+  -H "Authorization: Bearer ${TYPESAFE_API_KEY}" \
+  -H "X-Trace-Flow-Api-Key: ${TRACE_FLOW_API_KEY}" \
+  -H 'Content-Type: application/json' \
+  --data '{"model":"jev-latest","state":"My subscription was charged twice.","questions":{"refund":{"type":"noul","instructions":"Is the customer asking for money back?"}}}'
+```
+
+The same request through OpenRouter's Decisions API uses its namespaced model alias:
+
+```bash
+curl https://gateway.trace-flow.dev/openrouter/alpha/decisions \
+  -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
+  -H "X-Trace-Flow-Api-Key: ${TRACE_FLOW_API_KEY}" \
+  -H 'Content-Type: application/json' \
+  --data '{"model":"~typesafe/jev-latest","state":"My subscription was charged twice.","questions":{"refund":{"type":"noul","instructions":"Is the customer asking for money back?"}}}'
+```
+
+To use OpenRouter's System One endpoint, change the second URL to
+`https://gateway.trace-flow.dev/openrouter/v1/systemone` and set `model` to `jev-latest`.
+
+The official [TypeSafe JavaScript SDK](https://docs.typesafe.ai/sdk/javascript) accepts
+`baseURL` and `defaultHeaders`. Its base URL ends at the provider name because the SDK appends
+`/v1/systemone`:
+
+```typescript
+import { noul, TypeSafeClient } from '@typesafe-ai/sdk';
+
+const traceFlowKey = process.env.TRACE_FLOW_API_KEY;
+if (!traceFlowKey) throw new Error('TRACE_FLOW_API_KEY is required');
+
+const client = new TypeSafeClient({
+  apiKey: process.env.TYPESAFE_API_KEY,
+  baseURL: 'https://gateway.trace-flow.dev/typesafe',
+  defaultHeaders: { 'X-Trace-Flow-Api-Key': traceFlowKey },
+});
+
+const result = await client.systemOne({
+  model: 'jev-latest',
+  state: 'My subscription was charged twice.',
+  questions: { refund: noul('Is the customer asking for money back?') },
+});
+```
+
+For the [same SDK through OpenRouter](https://openrouter.ai/docs/guides/community/typesafe-sdk),
+replace the client configuration with:
+
+```typescript
+const openRouterKey = process.env.OPENROUTER_API_KEY;
+if (!openRouterKey) throw new Error('OPENROUTER_API_KEY is required');
+
+const client = new TypeSafeClient({
+  apiKey: openRouterKey,
+  baseURL: 'https://gateway.trace-flow.dev/openrouter',
+  defaultHeaders: { 'X-Trace-Flow-Api-Key': traceFlowKey },
+});
+```
+
+OpenRouter's model-list response differs from the TypeSafe SDK's `models.list()` return type.
+Trace Flow preserves that upstream response; use OpenRouter's HTTP model catalog when listing
+models through OpenRouter.
+
+Choice answers contain the selected option, option probabilities, and confidence. Score answers
+contain the weighted score, legend, probabilities, and confidence. Noul is a probability of yes;
+it is not a confidence score. The trace detail panel shows these fields and captured state and
+questions when body recording is enabled. Privacy mode retains decision metrics while omitting
+these bodies.
+
+Direct TypeSafe costs are estimates from its published rates. OpenRouter can also return a
+provider-reported `usage.cost` in USD. Estimated and reported costs are separate trace fields.
+Usage aggregates currently round each request to integer microdollars, so tiny Jev charges can
+accumulate rounding differences. Output tokens remain visible even when their price is zero.
+
+See the [TypeSafe HTTP API](https://docs.typesafe.ai/api) and
+[OpenRouter Decisions reference](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request)
+for current request and response contracts.
 
 ## Understanding Trace Context (W3C)
 
