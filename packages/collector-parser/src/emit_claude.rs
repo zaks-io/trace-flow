@@ -182,8 +182,9 @@ fn user_fact(record: &Value, turn_index: i64, ctx: &SessionContext) -> AgentMess
 
 /// Emits one [`AgentMessageFact`] per Claude turn in file order: one per assistant `message.id` (usage
 /// collapsed by [`session_message_usages`], so a turn written across many content-block records counts
-/// once) and one per text-bearing user record. `turn_index` is the positional ordinal of the emitted
-/// fact; identity rides on `vendor_message_id` (`message.id` for assistant, record `uuid` for user).
+/// once) and one per text-bearing user record `uuid`. `turn_index` is the positional ordinal of the
+/// emitted fact; identity rides on `vendor_message_id` (`message.id` for assistant, record `uuid` for
+/// user), so a repeated id is skipped rather than emitted again at a later position.
 pub fn claude_message_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentMessageFact> {
     // `message.id -> collapsed usage`. Keyed by owned `String`; `get` takes the record's `&str` id via
     // `String: Borrow<str>`, so no allocation per lookup and the collapse in `claude_usage` is reused.
@@ -194,7 +195,9 @@ pub fn claude_message_facts(records: &[Value], ctx: &SessionContext) -> Vec<Agen
     let spawns = spawning_message_ids(records);
 
     let mut facts = Vec::new();
+    // A re-appended record keeps its id, so the first occurrence owns the fact and its position.
     let mut seen_assistant_ids: HashSet<&str> = HashSet::new();
+    let mut seen_user_ids: HashSet<&str> = HashSet::new();
     let mut turn_index = 0i64;
 
     for record in records {
@@ -217,6 +220,11 @@ pub fn claude_message_facts(records: &[Value], ctx: &SessionContext) -> Vec<Agen
                 turn_index += 1;
             }
             Some("user") if is_text_bearing_user(record) => {
+                if let Some(uuid) = record.get("uuid").and_then(Value::as_str) {
+                    if !seen_user_ids.insert(uuid) {
+                        continue;
+                    }
+                }
                 facts.push(user_fact(record, turn_index, ctx));
                 turn_index += 1;
             }
@@ -505,6 +513,34 @@ mod tests {
         });
         let fact = &claude_message_facts(&[a], &ctx())[0];
         assert_eq!(fact.event_at, 1_778_964_000_000);
+    }
+
+    #[test]
+    fn a_repeated_user_uuid_keeps_its_first_turn_index() {
+        let records = [
+            user_text("u1", "2026-05-25T23:37:20.000Z"),
+            assistant(
+                "msg_a",
+                "claude-opus-4-7",
+                "2026-05-25T23:37:23.000Z",
+                json!([text_block("a")]),
+                Some(usage(1, 1, 0, 0)),
+            ),
+            user_text("u1", "2026-05-25T23:40:00.000Z"),
+            user_text("u2", "2026-05-25T23:41:00.000Z"),
+        ];
+        let ids: Vec<_> = claude_message_facts(&records, &ctx())
+            .into_iter()
+            .map(|f| (f.vendor_message_id.unwrap(), f.turn_index))
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                ("u1".to_string(), 0),
+                ("msg_a".to_string(), 1),
+                ("u2".to_string(), 2)
+            ]
+        );
     }
 
     #[test]

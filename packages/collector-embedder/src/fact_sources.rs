@@ -52,8 +52,9 @@ impl FactSources {
             let mut selected = Vec::new();
             for file in files {
                 let needs_upgrade = reparse_known
-                    && store.get(source, &file.path)?.is_some()
-                    && !store.is_file_parser_current(source, &file.path)?;
+                    && ((store.get(source, &file.path)?.is_some()
+                        && !store.is_file_parser_current(source, &file.path)?)
+                        || store.has_stale_file_quarantine(source, &file.path)?);
                 if (replay && window.includes(file.mtime_ms)) || needs_upgrade {
                     selected.push(file);
                 } else {
@@ -174,6 +175,42 @@ mod tests {
                 .unwrap(),
             completed
         );
+    }
+
+    #[test]
+    fn a_parser_upgrade_retries_a_quarantined_file_outside_the_window() {
+        let home = tempfile::TempDir::new().unwrap();
+        write_jsonl(home.path(), "poison.jsonl", json!({"a":1}));
+        let file = walk_transcripts(home.path()).files.remove(0);
+        let mut store = CursorStore::open_in_memory("org").unwrap();
+        store.set_active_parser_version("0.1.0");
+        let quarantined = collector_sync::UnitCursor::File(FileCursor {
+            file_path: file.path.clone(),
+            mtime_ms: file.mtime_ms,
+            byte_offset: file.size_bytes,
+            content_hash_head: String::new(),
+        });
+        store
+            .quarantine_unit(AgentSource::Claude, &quarantined)
+            .unwrap();
+        let selected = |store: &CursorStore| {
+            let mut report = SourceReport::default();
+            FactSources::discover(
+                &[home.path().to_path_buf()],
+                AgentSource::Claude,
+                store,
+                ImportWindow::first_incremental(9_000_000_000_000),
+                false,
+                true,
+                &mut report,
+            )
+            .unwrap();
+            report.selected
+        };
+
+        assert_eq!(selected(&store), 0, "same parser: stays quarantined");
+        store.set_active_parser_version("0.2.0");
+        assert_eq!(selected(&store), 1, "new parser: retried");
     }
 
     fn write_jsonl(dir: &std::path::Path, name: &str, value: serde_json::Value) -> PathBuf {

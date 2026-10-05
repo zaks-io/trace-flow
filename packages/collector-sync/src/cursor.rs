@@ -84,6 +84,17 @@ CREATE TABLE IF NOT EXISTS file_parser_versions (
     org_id TEXT NOT NULL, source TEXT NOT NULL, file_path TEXT NOT NULL, version TEXT NOT NULL,
     PRIMARY KEY (org_id, source, file_path)
 ) WITHOUT ROWID;
+-- Units the ingest Worker rejected with a deterministic 400 on their own. A row matches only while
+-- the unit's fingerprint (file mtime + size, or composer content) and the parser version are
+-- unchanged, so editing the transcript or upgrading the parser retries it automatically.
+CREATE TABLE IF NOT EXISTS quarantined_units (
+    org_id         TEXT NOT NULL,
+    source         TEXT NOT NULL,
+    unit_key       TEXT NOT NULL,
+    fingerprint    TEXT NOT NULL,
+    parser_version TEXT NOT NULL,
+    PRIMARY KEY (org_id, source, unit_key)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS cursor_meta (
     org_id TEXT NOT NULL,
     key    TEXT NOT NULL,
@@ -156,10 +167,10 @@ pub enum CursorStoreError {
 /// [`CursorStore::open_in_memory`] for tests); read with [`get`](Self::get) / [`list`](Self::list)
 /// and commit progress with [`advance`](Self::advance).
 pub struct CursorStore {
-    conn: Connection,
-    org_id: String,
+    pub(crate) conn: Connection,
+    pub(crate) org_id: String,
     replay_facts: bool,
-    active_parser_version: Option<String>,
+    pub(crate) active_parser_version: Option<String>,
 }
 
 impl CursorStore {
@@ -585,7 +596,7 @@ fn ensure_composer_content_hash(conn: &mut Connection) -> Result<(), rusqlite::E
 /// The source's internal DB key. It is a *persisted* key, deliberately decoupled from the serde wire
 /// form — a future wire rename must not silently re-key and orphan stored rows. The exhaustive match
 /// forces a fixed key to be chosen for any new source.
-fn source_key(source: AgentSource) -> &'static str {
+pub(crate) fn source_key(source: AgentSource) -> &'static str {
     match source {
         AgentSource::Claude => "claude",
         AgentSource::Codex => "codex",
@@ -593,7 +604,7 @@ fn source_key(source: AgentSource) -> &'static str {
     }
 }
 
-fn message_cursor(
+pub(crate) fn message_cursor(
     source: AgentSource,
     fact: &AgentMessageFact,
 ) -> Result<FactCursor, CursorStoreError> {
@@ -612,7 +623,7 @@ fn message_cursor(
     })
 }
 
-fn tool_event_cursor(
+pub(crate) fn tool_event_cursor(
     source: AgentSource,
     fact: &AgentToolEventFact,
 ) -> Result<FactCursor, CursorStoreError> {
@@ -634,7 +645,7 @@ fn tool_event_cursor(
     })
 }
 
-fn file_event_cursor(
+pub(crate) fn file_event_cursor(
     source: AgentSource,
     fact: &AgentFileEventFact,
 ) -> Result<FactCursor, CursorStoreError> {
@@ -653,7 +664,7 @@ fn file_event_cursor(
     })
 }
 
-fn capability_snapshot_cursor(
+pub(crate) fn capability_snapshot_cursor(
     source: AgentSource,
     fact: &AgentCapabilitySnapshotFact,
 ) -> Result<FactCursor, CursorStoreError> {
@@ -672,7 +683,7 @@ fn capability_snapshot_cursor(
     })
 }
 
-fn pull_request_link_cursor(
+pub(crate) fn pull_request_link_cursor(
     source: AgentSource,
     fact: &AgentPullRequestLinkFact,
 ) -> Result<FactCursor, CursorStoreError> {

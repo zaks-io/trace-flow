@@ -29,6 +29,7 @@ use collector_contracts::facts::AgentFileEventFact;
 use regex::Regex;
 use serde_json::Value;
 
+use crate::codex_continuation::continuation_scope;
 use crate::paths::relativize_repo_path;
 use crate::session_context::SessionContext;
 use crate::timestamp::rfc3339_to_epoch_ms;
@@ -92,6 +93,8 @@ fn patch_files(patch: &str) -> Vec<(AgentFileOperation, String)> {
 /// the same path stay distinct rows even though Codex file facts share an empty `vendor_message_id`.
 pub fn codex_file_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentFileEventFact> {
     let repo_root = Path::new(&ctx.repo_root);
+    // The block counter restarts on a continuation page; its scope keeps those rows distinct.
+    let scope = continuation_scope(records);
     let mut block_index = 0i64;
     let mut facts = Vec::new();
 
@@ -114,8 +117,9 @@ pub fn codex_file_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentFil
         for (operation, raw_path) in patch_files(&patch) {
             facts.push(AgentFileEventFact {
                 vendor_session_id: ctx.vendor_session_id.clone(),
-                // Codex emits no per-message vendor ID; identity rides path + operation + block index.
-                vendor_message_id: None,
+                // Codex emits no per-message vendor ID; identity rides path + operation + block index,
+                // scoped to the continuation page when there is one.
+                vendor_message_id: scope.clone(),
                 source_block_index: block_index,
                 normalized_repo_path: relativize_repo_path(repo_root, &raw_path),
                 operation,

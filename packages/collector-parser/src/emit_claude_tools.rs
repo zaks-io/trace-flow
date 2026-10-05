@@ -15,7 +15,7 @@
 //! and a spawned sub-agent's economics live in its own separate transcript's facts, not double-counted
 //! here), so those columns ship empty.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use collector_contracts::enums::AgentEventStatus;
@@ -104,6 +104,8 @@ pub fn claude_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentTo
         .map(|event| (event.tool_use_id.clone(), event))
         .collect();
     let mut next_block_index: HashMap<&str, i64> = HashMap::new();
+    // A re-appended `tool_use` keeps its id; the first occurrence owns the fact and its block index.
+    let mut seen_tool_use_ids: HashSet<&str> = HashSet::new();
     let mut facts = Vec::new();
 
     for record in records {
@@ -124,6 +126,9 @@ pub fn claude_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentTo
             let Some(tool_use_id) = block.get("id").and_then(Value::as_str) else {
                 continue;
             };
+            if !seen_tool_use_ids.insert(tool_use_id) {
+                continue;
+            }
             let result = folded.get(tool_use_id);
             let command = block
                 .get("input")
@@ -461,6 +466,21 @@ mod tests {
         let f = &claude_tool_facts(&records, &ctx())[0];
         assert_eq!(f.source_block_index, 1);
         assert_eq!(f.event_at, 1_779_883_200_000);
+    }
+
+    #[test]
+    fn a_repeated_tool_use_id_keeps_its_first_block_index() {
+        let first = json!({
+            "type": "assistant",
+            "timestamp": "2026-05-27T12:00:00Z",
+            "message": { "id": "msg_1", "content": [
+                { "type": "text", "text": "plan" },
+                { "type": "tool_use", "id": "t1", "name": "Bash", "input": { "command": "ls" } }
+            ] }
+        });
+        let facts = claude_tool_facts(&[first.clone(), first], &ctx());
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].source_block_index, 1);
     }
 
     #[test]

@@ -21,8 +21,9 @@
 //! `stable_turn_index` is a per-session ordinal over the surviving distinct links. Claude records carry
 //! a stable per-record `uuid`, so `source_event_id` is set and the *same* link in two different records
 //! is two genuine observations; Codex records carry no per-record id, so `source_event_id` is `None`
-//! and a link repeated across the session collapses to one row. That asymmetry is inherited directly
-//! from the pk formula, not invented here. The ordinal is stable across a re-parse of the same session.
+//! (or the continuation-page scope on a continuation rollout) and a link repeated across the file
+//! collapses to one row. That asymmetry is inherited directly from the pk formula, not invented here.
+//! The ordinal is stable across a re-parse of the same session.
 
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -325,12 +326,16 @@ fn codex_output_text(payload: &Value) -> Option<&str> {
 /// session: assistant message text ([`PullRequestLinkEvidence::AssistantText`]),
 /// `function_call_output` text ([`PullRequestLinkEvidence::ToolOutput`]), and user message text
 /// ([`PullRequestLinkEvidence::TranscriptRecord`]). Codex carries no per-record id, so `source_event_id`
-/// is `None` and the same link repeated across the session collapses to one row (see module docs).
+/// is `None` (the page scope on a continuation rollout) and the same link repeated across the file
+/// collapses to one row (see module docs).
 pub fn codex_pr_link_facts(
     records: &[Value],
     ctx: &SessionContext,
 ) -> Vec<AgentPullRequestLinkFact> {
     let mut acc = LinkAccumulator::new();
+    // The link ordinal restarts on a continuation page; the page scope keeps its identities distinct.
+    let scope = crate::codex_continuation::continuation_scope(records);
+    let source_event_id = scope.as_deref();
     for record in records {
         if record.get("type").and_then(Value::as_str) != Some("response_item") {
             continue;
@@ -346,14 +351,14 @@ pub fn codex_pr_link_facts(
                     _ => PullRequestLinkEvidence::TranscriptRecord,
                 };
                 for text in codex_message_texts(payload) {
-                    acc.scan(text, None, event_at, evidence, ctx);
+                    acc.scan(text, source_event_id, event_at, evidence, ctx);
                 }
             }
             Some("function_call_output") => {
                 if let Some(text) = codex_output_text(payload) {
                     acc.scan(
                         text,
-                        None,
+                        source_event_id,
                         event_at,
                         PullRequestLinkEvidence::ToolOutput,
                         ctx,

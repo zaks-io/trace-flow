@@ -18,7 +18,7 @@
 //! and useless as that separator; instead each block is numbered by its position in the message's full
 //! block stream in document order — immutable across re-sync, unique within the message.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use collector_contracts::enums::AgentFileOperation;
@@ -79,6 +79,9 @@ pub fn claude_file_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentFi
     // `message.id` (Claude splits a turn into one block per record), numbering every block in document
     // order so the file fact's `source_block_index` is unique within the message and stable on re-sync.
     let mut next_block_index: HashMap<&str, i64> = HashMap::new();
+    // A re-appended `tool_use` keeps its id but would land at a later block index, which is part of
+    // file-event identity, so a repeat would become a second row. The first occurrence owns the fact.
+    let mut seen_tool_use_ids: HashSet<&str> = HashSet::new();
     let mut facts = Vec::new();
 
     for record in records {
@@ -95,6 +98,11 @@ pub fn claude_file_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentFi
             let Some(operation) = file_operation(block) else {
                 continue;
             };
+            if let Some(id) = block.get("id").and_then(Value::as_str) {
+                if !seen_tool_use_ids.insert(id) {
+                    continue;
+                }
+            }
             let Some(path) = block
                 .get("input")
                 .and_then(|input| input.get("file_path"))

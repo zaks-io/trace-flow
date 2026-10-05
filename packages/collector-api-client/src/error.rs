@@ -2,6 +2,8 @@
 // Vendored and refactored from otto-api-client/src/lib.rs (~/src/otto, 2026-05-25).
 // Trace Flow owns the contract, IDs, pricing, redaction, and storage around this code.
 
+use std::time::Duration;
+
 use thiserror::Error;
 
 /// Returned by the ingest worker when the client or Collector binary is too old.
@@ -10,6 +12,16 @@ pub struct UpgradeRequiredDetail {
     pub detail: String,
     pub min_desktop_version: String,
     pub min_parser_version: String,
+}
+
+/// What a `400 invalid_envelope` body says about the rejection. Older ingest Workers send only
+/// `{error}`, so every field is optional; a `fact_identity_conflict` names the vendor sessions whose
+/// facts conflicted, which lets the sync loop isolate the bad unit without bisecting the batch.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct InvalidEnvelopeDetail {
+    pub reason: Option<String>,
+    pub category: Option<String>,
+    pub vendor_session_ids: Vec<String>,
 }
 
 /// Every distinct terminal outcome from `POST /v1/ingest`.
@@ -27,28 +39,28 @@ pub enum IngestError {
     #[error("payload too large")]
     PayloadTooLarge,
 
-    /// `400` — envelope failed structural validation in the worker.
+    /// `400` — envelope failed structural validation or carried conflicting fact identities.
     #[error("invalid envelope")]
-    InvalidEnvelope,
+    InvalidEnvelope(InvalidEnvelopeDetail),
 
     /// `426` — client or parser is below the policy minimum version.
     #[error("upgrade required: {}", .0.detail)]
     UpgradeRequired(Box<UpgradeRequiredDetail>),
 
-    /// `429` — org-level rate limit exhausted.
+    /// `429` — org-level rate limit exhausted. `retry_after` is the server's `Retry-After`, if sent.
     #[error("rate limited")]
-    RateLimited,
+    RateLimited { retry_after: Option<Duration> },
 
     /// `503 session_claim_unavailable` — Convex unreachable for session ownership.
     /// Not retried in-request; the sync loop re-sends next cycle.
     #[error("session claim unavailable")]
     SessionClaimUnavailable,
 
-    /// `503 enqueue_failed` — queue send failed after partial or full enqueue.
-    /// Retried in-request only when a bounded `Retry-After` identifies admission backpressure.
-    /// Other failures return to the sync loop, which re-sends next cycle.
+    /// `503 enqueue_failed`: delivery admission is closed or the queue send failed. Retried
+    /// in-request only while a bounded `Retry-After` marks admission backpressure. Once that budget
+    /// is spent, the sync loop stops the cycle and backs off for at least `retry_after`.
     #[error("enqueue failed")]
-    EnqueueFailed,
+    EnqueueFailed { retry_after: Option<Duration> },
 
     /// `500` — unexpected server error.
     #[error("internal server error")]
@@ -57,6 +69,22 @@ pub enum IngestError {
     /// Transport or serialization error (network failure, gzip, JSON decode).
     #[error("transport error: {0}")]
     Transport(#[from] anyhow::Error),
+}
+
+impl IngestError {
+    /// True for responses that say the server is shedding this collector's load, so every remaining
+    /// POST in the cycle would be refused too and the embedder should back off before the next one.
+    pub fn is_backoff(&self) -> bool {
+        matches!(self, Self::RateLimited { .. } | Self::EnqueueFailed { .. })
+    }
+
+    /// The server's requested `Retry-After`, when the response carried one.
+    pub fn retry_after(&self) -> Option<Duration> {
+        match self {
+            Self::RateLimited { retry_after } | Self::EnqueueFailed { retry_after } => *retry_after,
+            _ => None,
+        }
+    }
 }
 
 /// Successful `202 accepted` response payload.

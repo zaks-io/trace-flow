@@ -361,7 +361,7 @@ async fn does_not_retry_enqueue_failed() {
     let client = test_client(base_url, 3);
     let err = client.ingest(&minimal_envelope(), None).await.unwrap_err();
     assert!(
-        matches!(err, IngestError::EnqueueFailed),
+        matches!(err, IngestError::EnqueueFailed { retry_after: None }),
         "expected EnqueueFailed, got: {err}"
     );
     assert_eq!(
@@ -425,7 +425,7 @@ async fn does_not_retry_rate_limited() {
     let client = test_client(base_url, 3);
     let err = client.ingest(&minimal_envelope(), None).await.unwrap_err();
     assert!(
-        matches!(err, IngestError::RateLimited),
+        matches!(err, IngestError::RateLimited { retry_after: None }),
         "expected RateLimited, got: {err}"
     );
     assert_eq!(
@@ -523,4 +523,76 @@ fn strip_chunked(body: &[u8]) -> Vec<u8> {
         }
     }
     body.to_vec()
+}
+
+// --- TRA-322: 400 detail and Retry-After ---
+
+fn raw_response_with_header(status: u16, reason: &str, header: &str, body: &str) -> String {
+    format!(
+        "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\n{header}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+async fn ingest_once(response: String) -> IngestError {
+    let (base_url, handle) = spawn_server(move |_raw| response.clone()).await;
+    let err = test_client(base_url, 0)
+        .ingest(&minimal_envelope(), None)
+        .await
+        .unwrap_err();
+    handle.abort();
+    err
+}
+
+#[tokio::test]
+async fn invalid_envelope_carries_the_conflict_detail() {
+    let body = r#"{"error":"invalid_envelope","reason":"fact_identity_conflict","category":"messages","vendor_session_ids":["vsid-bad"]}"#;
+    match ingest_once(raw_response(400, "Bad Request", body)).await {
+        IngestError::InvalidEnvelope(detail) => {
+            assert_eq!(detail.reason.as_deref(), Some("fact_identity_conflict"));
+            assert_eq!(detail.category.as_deref(), Some("messages"));
+            assert_eq!(detail.vendor_session_ids, vec!["vsid-bad".to_string()]);
+        }
+        other => panic!("expected InvalidEnvelope, got: {other}"),
+    }
+}
+
+#[tokio::test]
+async fn invalid_envelope_tolerates_the_old_body() {
+    let err = ingest_once(raw_response(
+        400,
+        "Bad Request",
+        r#"{"error":"invalid_envelope"}"#,
+    ))
+    .await;
+    assert!(matches!(
+        err,
+        IngestError::InvalidEnvelope(ref detail) if *detail == InvalidEnvelopeDetail::default()
+    ));
+}
+
+#[tokio::test]
+async fn enqueue_failed_carries_retry_after_and_asks_for_backoff() {
+    let err = ingest_once(raw_response_with_header(
+        503,
+        "Service Unavailable",
+        "retry-after: 60",
+        r#"{"error":"enqueue_failed"}"#,
+    ))
+    .await;
+    assert!(err.is_backoff());
+    assert_eq!(err.retry_after(), Some(Duration::from_secs(60)));
+}
+
+#[tokio::test]
+async fn rate_limited_carries_retry_after() {
+    let err = ingest_once(raw_response_with_header(
+        429,
+        "Too Many Requests",
+        "Retry-After: 30",
+        r#"{"error":"rate_limited"}"#,
+    ))
+    .await;
+    assert!(err.is_backoff());
+    assert_eq!(err.retry_after(), Some(Duration::from_secs(30)));
 }

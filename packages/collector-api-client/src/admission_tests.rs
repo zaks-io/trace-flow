@@ -55,7 +55,10 @@ async fn admission_retries_are_bounded_and_preserve_enqueue_error() {
     let result = test_client(base_url, 1)
         .ingest(&minimal_envelope(), None)
         .await;
-    assert!(matches!(result, Err(IngestError::EnqueueFailed)));
+    assert!(matches!(
+        result,
+        Err(IngestError::EnqueueFailed { retry_after: Some(delay) }) if delay == Duration::from_secs(1)
+    ));
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     server.abort();
 }
@@ -119,8 +122,10 @@ async fn invalid_or_unbounded_delays_do_not_change_enqueue_failure_behavior() {
         let result = test_client(base_url, 3)
             .ingest(&minimal_envelope(), None)
             .await;
+        // An over-bound delay still reaches the sync loop's back-off; malformed ones do not.
+        let expected = (delay == "301").then(|| Duration::from_secs(301));
         assert!(
-            matches!(result, Err(IngestError::EnqueueFailed)),
+            matches!(result, Err(IngestError::EnqueueFailed { retry_after }) if retry_after == expected),
             "delay: {delay}"
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1, "delay: {delay}");
@@ -130,6 +135,8 @@ async fn invalid_or_unbounded_delays_do_not_change_enqueue_failure_behavior() {
 
 #[test]
 fn admission_delay_accepts_the_server_contract_and_lease_bound() {
-    assert_eq!(admission_retry_delay("60"), Some(Duration::from_secs(60)));
-    assert_eq!(admission_retry_delay("300"), Some(Duration::from_secs(300)));
+    let bounded = |value| admission_retry_delay(parse_retry_after(value));
+    assert_eq!(bounded("60"), Some(Duration::from_secs(60)));
+    assert_eq!(bounded("300"), Some(Duration::from_secs(300)));
+    assert_eq!(bounded("301"), None);
 }
