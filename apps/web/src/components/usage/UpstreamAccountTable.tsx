@@ -16,6 +16,7 @@ import {
   estimatedCost,
   planLabel,
   reasoningShare,
+  successRate,
   tokenCell,
   usageGapNote,
 } from './upstreamAccountUsage';
@@ -47,6 +48,7 @@ export function UpstreamAccountTable({
             <th className="pb-2 font-medium">Provider</th>
             <th className="pb-2 text-right font-medium">Requests</th>
             <th className="pb-2 text-right font-medium">Failed</th>
+            <th className="pb-2 text-right font-medium">Success rate</th>
             {TOKEN_COLUMNS.map(([label]) => (
               <th key={label} className="pb-2 text-right font-medium">
                 {label}
@@ -99,6 +101,9 @@ export function UpstreamAccountTable({
                 </td>
                 <td className="py-2 text-right font-mono text-muted-foreground">
                   {formatNumber(row.error_count)}
+                </td>
+                <td className="py-2 text-right font-mono text-muted-foreground">
+                  {successRate(row)}
                 </td>
                 {TOKEN_COLUMNS.map(([label, field]) => (
                   <td key={label} className="py-2 text-right font-mono text-muted-foreground">

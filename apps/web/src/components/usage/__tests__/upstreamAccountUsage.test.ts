@@ -4,6 +4,7 @@ import {
   estimatedCost,
   planLabel,
   reasoningShare,
+  successRate,
   tokenCell,
   usageGapNote,
 } from '../upstreamAccountUsage';
@@ -52,6 +53,16 @@ const unavailable: UpstreamAccountRow = {
 };
 
 describe('upstream account usage display', () => {
+  it.each([
+    [0, 0, '-'],
+    [4, 0, '100%'],
+    [4, 4, '0.0%'],
+    [4, 1, '75%'],
+    [3, 1, '67%'],
+  ])('shows success rate for %i requests and %i failures', (requests, failures, expected) => {
+    expect(successRate({ request_count: requests, error_count: failures })).toBe(expected);
+  });
+
   it('shows missing usage and pricing as unavailable instead of zero', () => {
     expect(tokenCell(unavailable, unavailable.input_tokens)).toBe('-');
     expect(estimatedCost(unavailable)).toBeNull();
