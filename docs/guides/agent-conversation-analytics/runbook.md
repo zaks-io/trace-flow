@@ -243,6 +243,13 @@ Nine promptly completed Copies publish in at least three minutes and fifteen sec
 Large corrections and slow jobs take longer. `agent_snapshot.check` records the persisted check
 counts; `agent_snapshot.published` records `dirtyAgeMs` and `gateDurationMs`.
 
+Snapshot exceptions in Sentry include a safe error classification, provider HTTP status when known,
+the runner stage, generation, Copy cursor and target, and elapsed time. Known source filenames and
+line/column coordinates are retained; arbitrary error messages, causes, provider responses and
+stack text are removed. Check-budget failures include the persisted status and recovery counts.
+The diagnostics use a [scoped Sentry event processor](https://docs.sentry.io/platforms/javascript/guides/cloudflare/enriching-events/event-processors/)
+so other operations retain their existing error scrubbing.
+
 After 15 status checks or three missing-receipt recovery queries, scheduling stops with an
 `agent_snapshot_recovery` error. The generation keeps its ingestion gate and capacity slot because
 an unobserved Copy may still be running. Do not clear its intent or start a replacement Copy.

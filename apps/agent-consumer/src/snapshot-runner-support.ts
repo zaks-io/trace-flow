@@ -11,6 +11,16 @@ import { snapshotCopyAttempt, type SnapshotCopyPlan, type SnapshotPlan } from '.
 export const AGENT_SNAPSHOT_RUN_DEADLINE_MS = 4 * 60 * 1_000;
 export const AGENT_SNAPSHOT_WORK_DEADLINE_MS = 3.5 * 60 * 1_000;
 
+export class SnapshotDeadlineError extends Error {
+  constructor(
+    readonly phase: 'before' | 'during',
+    operation: string,
+  ) {
+    super(`Snapshot deadline reached ${phase} ${operation}`);
+    this.name = 'SnapshotDeadlineError';
+  }
+}
+
 export class SnapshotCapturedDaysExpiredError extends Error {
   constructor() {
     super('snapshot captured days crossed the analytics retention boundary');
@@ -90,13 +100,10 @@ export async function beforeSnapshotDeadline<T>(
   operation: string,
 ): Promise<T> {
   const remainingMs = deadlineAt - Date.now();
-  if (remainingMs <= 0) throw new Error(`Snapshot deadline reached before ${operation}`);
+  if (remainingMs <= 0) throw new SnapshotDeadlineError('before', operation);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`Snapshot deadline reached during ${operation}`)),
-      remainingMs,
-    );
+    timer = setTimeout(() => reject(new SnapshotDeadlineError('during', operation)), remainingMs);
   });
   try {
     return await Promise.race([start(), deadline]);
