@@ -19,7 +19,7 @@
       ]
     },
     "@trace-flow/web#build": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "docs:generate", "skills:generate"],
       "outputs": ["dist/**", ".wrangler/**", ".next/**", "!.next/cache/**"],
       "env": [
         "NEXT_PUBLIC_CONVEX_URL",
@@ -34,6 +34,20 @@
         "NEXT_PUBLIC_DEPLOY_ID",
         "SENTRY_AUTH_TOKEN"
       ]
+    },
+    "@trace-flow/web#docs:generate": {
+      "inputs": ["scripts/generate-docs-content.ts", "public/docs/*.md", "public/agents.md"],
+      "outputs": ["src/generated/docs-content.ts"]
+    },
+    "@trace-flow/web#skills:generate": {
+      "inputs": ["scripts/generate-agent-skills.ts", "$TURBO_ROOT$/skills/**/SKILL.md"],
+      "outputs": ["src/generated/agent-skills.ts"]
+    },
+    "@trace-flow/web#test": {
+      "dependsOn": ["docs:generate", "skills:generate"]
+    },
+    "@trace-flow/web#type-check": {
+      "dependsOn": ["docs:generate", "skills:generate"]
     },
     "dev": {
       "cache": false,
