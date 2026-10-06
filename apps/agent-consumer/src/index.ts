@@ -18,6 +18,8 @@ import * as Sentry from '@sentry/cloudflare';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { sha256Hex } from '@trace-flow/utils';
 import type { AgentConsumerEnv } from './context';
+import type { ResumeSnapshotInput } from './snapshot-recovery';
+import { discoverSnapshotCopy } from './snapshot-tinybird';
 import { processAgentBatch } from './consumer';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { AgentFactBatcherInstance } from './fact-batcher';
@@ -387,20 +389,55 @@ class TraceRecoveryEntrypoint extends WorkerEntrypoint<AgentConsumerEnv> {
     ).completeIngestionMigration(input);
   }
 
-  async inspectDeliveryStatus(orgId: string) {
-    const coordinator = this.env.AGENT_DELIVERY_COORDINATOR.getByName(
-      `org:${normalizeAgentShardId(orgId)}`,
-    );
+  async inspectDeliveryStatus(orgId: string, input: { discoverCopies?: boolean } = {}) {
+    if (
+      typeof input !== 'object' ||
+      input === null ||
+      Array.isArray(input) ||
+      Object.keys(input).some((key) => key !== 'discoverCopies') ||
+      (input.discoverCopies !== undefined && typeof input.discoverCopies !== 'boolean')
+    )
+      throw new Error('Invalid snapshot inspection options');
+    const normalized = normalizeAgentShardId(orgId);
+    const coordinator = this.env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${normalized}`);
+    const intents = await coordinator.getOutstandingSnapshotCopyIntents({});
     return {
       ...(await coordinator.getStats({})),
       snapshotSchedule: await coordinator.getSnapshotSchedule({}),
-      snapshotCopyIntents: await coordinator.getOutstandingSnapshotCopyIntents({}),
+      snapshotCopyIntents: intents,
+      ...(input.discoverCopies
+        ? {
+            snapshotCopyDiscovery: await Promise.all(
+              intents.map(async (intent) => ({
+                intent,
+                job: await discoverSnapshotCopy(this.env, normalized, intent),
+              })),
+            ),
+          }
+        : {}),
     };
   }
 
-  resumeSnapshot(orgId: string, input: { generation: number; reason: string }) {
+  async resumeSnapshot(orgId: string, input: Omit<ResumeSnapshotInput, 'orgId'>) {
     const normalized = normalizeAgentShardId(orgId);
-    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${normalized}`).resumeSnapshot({
+    const coordinator = this.env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${normalized}`);
+    if (input.abandonUnstartedCopy !== undefined) {
+      const expected = input.abandonUnstartedCopy;
+      const intents = await coordinator.getOutstandingSnapshotCopyIntents({});
+      const intent = intents[0];
+      if (
+        intents.length !== 1 ||
+        intent?.generation !== input.generation ||
+        intent.target !== expected.target ||
+        intent.copyAttempt !== expected.copyAttempt ||
+        intent.startedAt !== expected.startedAt ||
+        intent.jobId !== undefined
+      )
+        throw new Error('Snapshot does not match the unstarted Copy');
+      if (await discoverSnapshotCopy(this.env, normalized, intent))
+        throw new Error('Snapshot Copy has a provider job; resume receipt discovery instead');
+    }
+    return coordinator.resumeSnapshot({
       ...input,
       orgId: normalized,
     });

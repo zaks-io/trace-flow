@@ -141,14 +141,12 @@ export async function runAgentSnapshot(
       );
       if (!intent) {
         await coordinator.assertSnapshotActive({ generation: plan.generation, claimId });
+        if (Date.now() >= workDeadlineAt) return await continueRun(progress);
+        // The continuation alarm is already durable. Scheduling here could strand an unsubmitted intent.
         await coordinator.recordSnapshotCopyIntent({ ...key, startedAt: Date.now() });
-        await coordinator.scheduleSnapshotContinuation({ orgId });
         try {
-          const jobId = await beforeSnapshotDeadline(
-            () => startSnapshotCopy(env, target, copy),
-            workDeadlineAt,
-            `start ${target}`,
-          );
+          // Once the intent exists, submit even if its persistence crossed the work deadline.
+          const jobId = await startSnapshotCopy(env, target, copy);
           await coordinator.attachSnapshotCopyJob({ ...key, jobId });
         } catch (error) {
           if (error instanceof SnapshotCopyStartRejectedError)

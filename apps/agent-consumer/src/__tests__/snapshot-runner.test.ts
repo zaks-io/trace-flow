@@ -129,6 +129,37 @@ describe('durable snapshot runner', () => {
     expect(snapshotJobStatus).toHaveBeenCalledWith(f.env, 'recovered-job');
   });
 
+  it('preserves a submitted Copy when continuation scheduling fails and finishes on retry', async () => {
+    const f = await makeSnapshotRunner();
+    let schedulingCalls = 0;
+    const coordinator = new Proxy(f.coordinator, {
+      get(target, name) {
+        if (name === 'scheduleSnapshotContinuation')
+          return async (...args: Parameters<typeof target.scheduleSnapshotContinuation>) => {
+            if (++schedulingCalls === 2) throw new Error('Continuation RPC failed');
+            return target.scheduleSnapshotContinuation(...args);
+          };
+        return Reflect.get(target, name);
+      },
+    });
+    f.env.AGENT_DELIVERY_COORDINATOR = {
+      getByName: () => coordinator,
+    } as unknown as typeof f.env.AGENT_DELIVERY_COORDINATOR;
+
+    await expect(f.wake()).rejects.toThrow();
+    expect(startSnapshotCopy).toHaveBeenCalledOnce();
+    expect(await f.coordinator.getOutstandingSnapshotCopyIntents({})).toEqual([
+      expect.objectContaining({
+        generation: 1,
+        jobId: `job-${AGENT_SNAPSHOT_TARGETS[0].replaceAll('_', '-')}`,
+      }),
+    ]);
+    expect(await f.finish()).toMatchObject({ status: 'complete', generation: 1 });
+    expect(startSnapshotCopy).toHaveBeenCalledTimes(9);
+    expect(discoverSnapshotCopy).not.toHaveBeenCalled();
+    expect(await f.coordinator.getStats({})).toMatchObject({ gatePhase: 'open', dirtyDays: 0 });
+  });
+
   it('bounds ambiguous-start recovery and resumes the same receipt after operator intervention', async () => {
     vi.mocked(startSnapshotCopy).mockRejectedValueOnce(new Error('connection closed'));
     const f = await makeSnapshotRunner();

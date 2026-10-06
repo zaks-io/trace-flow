@@ -20,6 +20,8 @@ export default defineConfig({
     }),
   ],
   test: {
+    // Bound Workers runtimes so alarm tests do not time out under shared runner load.
+    maxWorkers: 2,
     reporters: ['dot'],
     passWithNoTests: true,
     coverage: {

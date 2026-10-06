@@ -112,4 +112,21 @@ describe('fetchPipe', () => {
     const rows = await fetchPipe({ baseUrl: BASE, token: 't', pipe: 'p' });
     expect(rows).toEqual([]);
   });
+
+  it.each([{}, { data: null }, { data: 'invalid' }])(
+    'rejects malformed recovery results instead of treating them as no matching rows',
+    async (body) => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(mockJsonResponse(body));
+      await expect(
+        fetchPipe({ baseUrl: BASE, token: 't', pipe: 'p', requireData: true }),
+      ).rejects.toThrow('no data array');
+    },
+  );
+
+  it('accepts an explicit empty data array for recovery', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(mockJsonResponse({ data: [] }));
+    await expect(
+      fetchPipe({ baseUrl: BASE, token: 't', pipe: 'p', requireData: true }),
+    ).resolves.toEqual([]);
+  });
 });

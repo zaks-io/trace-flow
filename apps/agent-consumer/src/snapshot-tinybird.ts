@@ -106,6 +106,7 @@ export async function discoverSnapshotCopy(
     baseUrl: env.TINYBIRD_HOST,
     token: env.TINYBIRD_AGENT_SNAPSHOT_TOKEN,
     pipe: 'agent_snapshot_copy_intent_jobs',
+    requireData: true,
     params: {
       org_id: orgId,
       generation: intent.generation,

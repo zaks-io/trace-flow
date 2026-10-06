@@ -1,4 +1,5 @@
 import { sentryRequestPrivacy } from '@trace-flow/utils/sentry-tracing';
+import { abandonUnstartedSnapshotCopy, type ResumeSnapshotInput } from './snapshot-recovery';
 import {
   initializeSnapshotChecks,
   startSnapshotCheck,
@@ -534,14 +535,31 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     requireSnapshotRecovery(this.ctx.storage);
   }
 
-  async resumeSnapshot(input: { orgId: string; generation: number; reason: string }) {
-    assertExactKeys(input, ['orgId', 'generation', 'reason'], 'resume snapshot');
-    if (typeof input.reason !== 'string' || input.reason.trim().length < 8)
+  async resumeSnapshot(input: ResumeSnapshotInput) {
+    assertExactKeys(
+      input,
+      input.abandonUnstartedCopy === undefined
+        ? ['orgId', 'generation', 'reason']
+        : ['orgId', 'generation', 'reason', 'abandonUnstartedCopy'],
+      'resume snapshot',
+    );
+    validateGenerationInput({ generation: input.generation }, 'resume snapshot');
+    if (
+      typeof input.reason !== 'string' ||
+      input.reason.trim().length < 8 ||
+      input.reason.length > 512
+    )
       throw new Error('Snapshot recovery requires a reason');
     if (!input.orgId || input.orgId.length > 256 || input.orgId.includes(':'))
       throw new Error('Invalid snapshot organization');
     if (agentIngestionErasureStarted(this.ctx.storage))
       throw new Error('Organization erasure has started');
+    if (input.abandonUnstartedCopy !== undefined) {
+      abandonUnstartedSnapshotCopy(this.ctx.storage, input, Date.now());
+      await this.ctx.storage.deleteAlarm();
+      await this.ctx.storage.put('snapshot_recovery_reason', input.reason);
+      return readSnapshotSchedule(this.ctx.storage);
+    }
     const failure = readSnapshotFailure(this.ctx.storage);
     if (failure) {
       if (failure.generation !== input.generation)
