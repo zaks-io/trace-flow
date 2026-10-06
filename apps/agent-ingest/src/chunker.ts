@@ -1,4 +1,5 @@
 import {
+  AGENT_INGEST_LIMITS,
   validateAgentIngestQueueMessage,
   type AgentIngestQueueFacts,
   type AgentIngestQueueMessage,
@@ -70,8 +71,9 @@ function assertFactsFitQueueMessages(
   base: Omit<AgentIngestQueueMessage, 'facts'>,
   facts: AgentIngestQueueFacts,
   maxBytes: number = MAX_QUEUE_MESSAGE_BYTES,
+  stableAttempts = false,
 ): void {
-  const baseSize = byteLength({ ...base, facts: emptyFacts() });
+  const baseSize = chunkBaseSize(base, stableAttempts);
   for (const category of CATEGORIES) {
     for (const fact of facts[category] ?? []) {
       const messageBytes = baseSize + byteLength(fact);
@@ -92,9 +94,10 @@ export function chunkFacts(
   base: Omit<AgentIngestQueueMessage, 'facts'>,
   facts: AgentIngestQueueFacts,
   maxBytes: number = MAX_QUEUE_MESSAGE_BYTES,
+  stableAttempts = false,
 ): AgentIngestQueueMessage[] {
-  const baseSize = byteLength({ ...base, facts: emptyFacts() });
-  assertFactsFitQueueMessages(base, facts, maxBytes);
+  const baseSize = chunkBaseSize(base, stableAttempts);
+  assertFactsFitQueueMessages(base, facts, maxBytes, stableAttempts);
   const messages: AgentIngestQueueMessage[] = [];
 
   let current = emptyFacts();
@@ -123,4 +126,29 @@ export function chunkFacts(
 
   flush();
   return messages;
+}
+
+function chunkBaseSize(
+  base: Omit<AgentIngestQueueMessage, 'facts'>,
+  stableAttempts: boolean,
+): number {
+  if (!stableAttempts) return byteLength({ ...base, facts: emptyFacts() });
+  const { enqueued_at: _enqueuedAt, sentry_trace_context: _trace, ...content } = base;
+  // Sentry emits ASCII trace headers and URI-encoded baggage. Bound their serialized form too,
+  // so escaping cannot overflow the reserved space or move retry chunk boundaries.
+  const size =
+    byteLength({
+      ...content,
+      enqueued_at: Number.MAX_SAFE_INTEGER,
+      sentry_trace_context: {
+        'sentry-trace': '',
+        baggage: '',
+      },
+      facts: emptyFacts(),
+    }) +
+    2 * AGENT_INGEST_LIMITS.maxTraceHeaderBytes;
+  if (byteLength({ ...base, facts: emptyFacts() }) > size) {
+    throw new QueueMessageContractError('sentry_trace_context');
+  }
+  return size;
 }

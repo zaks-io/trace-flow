@@ -6,10 +6,15 @@ import {
   BodySizeLimitError,
   readBodyWithLimit,
   stageAgentDelivery,
+  agentDeliveryRetryKey,
+  agentDeliveryCanonicalJson,
+  sha256Hex,
+  validateAgentDeliveryStagedReference,
   utf8ByteLength,
 } from '@trace-flow/utils';
 import type {
   AgentDeliveryReference,
+  AgentDeliveryStagedReference,
   AgentIngestEnvelope,
   AgentIngestQueueFacts,
   AgentIngestQueueMessage,
@@ -40,6 +45,7 @@ import {
   AgentFactIdentityConflictError,
   normalizeAgentFactIdentities,
 } from './fact-identity-conflicts';
+import { CollectorBatchConflictError, recordCollectorRequest } from './retry-request';
 
 /** Collector authenticates with this header; the value is the raw Collector Credential secret. */
 const COLLECTOR_SECRET_HEADER = 'X-Trace-Flow-Collector-Secret';
@@ -192,6 +198,11 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
       );
     }
 
+    // Retention and redaction mutate selected fact rows. Bind retries to the original request.
+    const request = {
+      batchId: batch.collector_batch_id,
+      digest: await sha256Hex(agentDeliveryCanonicalJson(envelope)),
+    };
     let retained;
     try {
       retained = retainAgentAnalyticsFacts(facts, Date.now());
@@ -266,7 +277,7 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
     // limit, so validating the unchunked aggregate would reject valid batches.
     let candidateMessages: AgentIngestQueueMessage[];
     try {
-      candidateMessages = chunkFacts(base, queueFacts);
+      candidateMessages = chunkFacts(base, queueFacts, undefined, true);
       assertQueueMessagesValid(candidateMessages);
     } catch (err) {
       if (err instanceof QueueFactTooLargeError) {
@@ -300,6 +311,22 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
     }
 
     let claims;
+    try {
+      await recordCollectorRequest(
+        c.env.AGENT_DELIVERIES,
+        credential.orgId,
+        credential.collectorId,
+        request,
+        Date.now(),
+      );
+    } catch (err) {
+      if (err instanceof CollectorBatchConflictError) {
+        logger.warn('agent_ingest.batch_identity_conflict', { org_id: credential.orgId });
+        return c.json({ error: 'batch_identity_conflict' }, 409);
+      }
+      logger.error('agent_ingest.request_manifest_failed', err);
+      return c.json({ error: 'enqueue_failed' }, 503);
+    }
     try {
       claims = await claimSessions(
         c.env,
@@ -342,7 +369,7 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
     const messages =
       conflicted.size === 0
         ? candidateMessages.map((message) => ({ ...message, enqueued_at: enqueuedAt }))
-        : chunkFacts({ ...base, enqueued_at: enqueuedAt }, owned);
+        : chunkFacts({ ...base, enqueued_at: enqueuedAt }, owned, undefined, true);
 
     try {
       await publishDeliveryGroups(c.env, messages, enqueuedAt);
@@ -384,8 +411,11 @@ async function publishDeliveryGroups(
     await assertDeliveriesAdmitted(env, messageGroup[0]!.tenancy.org_id);
     const days = messageGroup.map(deliveryDays);
     const staged = await settleAll(
-      messageGroup.map((message) =>
-        stageAgentDelivery({
+      messageGroup.map(async (message) => {
+        const key = await agentDeliveryRetryKey(message);
+        const receipt = await reusableDeliveryReceipt(env, key, message.tenancy.org_id, now);
+        if (receipt) return receipt;
+        const reference = await stageAgentDelivery({
           storage: env.AGENT_DELIVERIES,
           message,
           encryption: {
@@ -393,8 +423,21 @@ async function publishDeliveryGroups(
             keyId: env.BODY_ENCRYPTION_KEY_ID,
           },
           now,
-        }),
-      ),
+          retryIdentity: true,
+        });
+        // Completion can delete the original body between lookup and conditional staging. The
+        // receipt remains authoritative; discard recreated bytes instead of renewing retention.
+        const registered = await reusableDeliveryReceipt(env, key, message.tenancy.org_id, now);
+        if (
+          registered &&
+          (registered.sha256 !== reference.sha256 ||
+            registered.created_at !== reference.created_at ||
+            registered.expires_at !== reference.expires_at)
+        ) {
+          await env.AGENT_DELIVERIES.delete(key);
+        }
+        return registered ?? reference;
+      }),
     );
     const deliveries = await settleAll(
       staged.map(async (reference, index): Promise<AgentDeliveryReference> => {
@@ -413,6 +456,24 @@ async function publishDeliveryGroups(
       await env.AGENT_QUEUE.sendBatch(group.map((body) => ({ body })));
     }
   }
+}
+
+async function reusableDeliveryReceipt(
+  env: AgentIngestEnv,
+  key: string,
+  orgId: string,
+  now: number,
+): Promise<AgentDeliveryStagedReference | null> {
+  const receipt = await env.AGENT_CONSUMER.getDeliveryReceipt(key, orgId);
+  if (
+    receipt &&
+    (validateAgentDeliveryStagedReference(receipt) ||
+      receipt.key !== key ||
+      receipt.org_id !== orgId ||
+      receipt.expires_at <= now)
+  )
+    throw new Error('Agent consumer returned an invalid delivery receipt');
+  return receipt;
 }
 
 async function assertDeliveriesAdmitted(env: AgentIngestEnv, orgId: string): Promise<void> {

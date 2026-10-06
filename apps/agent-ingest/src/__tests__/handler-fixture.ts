@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 import { sha256Hex } from '@trace-flow/utils';
-import type { AgentIngestQueuePayload } from '@trace-flow/types';
+import type { AgentDeliveryStagedReference, AgentIngestQueuePayload } from '@trace-flow/types';
 import type { AgentConsumerService, AgentIngestEnv } from '../context';
 import type { CompatibilityPolicy } from '../policy';
 
@@ -29,6 +29,7 @@ interface EnvOverrides {
   deliveryPut?: ReturnType<typeof vi.fn>;
   canAcceptDeliveries?: AgentConsumerService['canAcceptDeliveries'];
   registerDelivery?: AgentConsumerService['registerDelivery'];
+  getDeliveryReceipt?: AgentConsumerService['getDeliveryReceipt'];
 }
 
 export async function validCredEntries(
@@ -57,19 +58,36 @@ export function makeEnv(over: EnvOverrides = {}): {
   const queueSend = over.queueSend ?? vi.fn(async () => {});
   const rateLimit = vi.fn(async () => ({ success: over.limitSuccess ?? true }));
   const deliveryObjects = new Map<string, string>();
+  const receipts = new Map<string, { reference: AgentDeliveryStagedReference; revision: number }>();
   let nextRevision = 0;
   const canAcceptDeliveries: AgentConsumerService['canAcceptDeliveries'] =
     over.canAcceptDeliveries ?? vi.fn(async () => true);
   const registerDelivery: AgentConsumerService['registerDelivery'] =
-    over.registerDelivery ?? vi.fn(async () => (nextRevision += 1));
+    over.registerDelivery ??
+    vi.fn(async (reference: AgentDeliveryStagedReference) => {
+      const existing = receipts.get(reference.key);
+      if (existing) {
+        if (JSON.stringify(existing.reference) !== JSON.stringify(reference)) {
+          throw new Error('Delivery registration conflict');
+        }
+        return existing.revision;
+      }
+      const revision = (nextRevision += 1);
+      receipts.set(reference.key, { reference, revision });
+      return revision;
+    });
   const deliveryPut =
     over.deliveryPut ??
     vi.fn(async (key: string, value: string) => {
+      if (deliveryObjects.has(key)) return null;
       deliveryObjects.set(key, value);
       return { key };
     });
   const deliveries = {
     put: deliveryPut,
+    delete: vi.fn(async (key: string) => {
+      deliveryObjects.delete(key);
+    }),
     get: vi.fn(async (key: string) => {
       const value = deliveryObjects.get(key);
       if (value === undefined) return null;
@@ -77,6 +95,7 @@ export function makeEnv(over: EnvOverrides = {}): {
         key,
         size: new TextEncoder().encode(value).byteLength,
         text: async () => value,
+        json: async () => JSON.parse(value) as unknown,
       };
     }),
   } as unknown as R2Bucket;
@@ -89,6 +108,9 @@ export function makeEnv(over: EnvOverrides = {}): {
     AGENT_CONSUMER: {
       canAcceptDeliveries,
       registerDelivery,
+      getDeliveryReceipt:
+        over.getDeliveryReceipt ??
+        vi.fn(async (key: string) => receipts.get(key)?.reference ?? null),
       eraseOrganization: async () => {
         throw new Error('Unexpected erasure');
       },

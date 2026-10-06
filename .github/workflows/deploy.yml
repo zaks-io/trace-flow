@@ -485,7 +485,7 @@ jobs:
   deploy-agent-ingest:
     name: Deploy Agent Ingest Worker
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [ci, deploy-convex, switch-agent-tinybird]
+    needs: [ci, deploy-convex, switch-agent-tinybird, deploy-agent-consumer]
     # migrate-agent-ingestion is skipped whenever no migration is required, and GitHub skips every
     # transitive dependant of a skipped job under the default success() condition. Evaluate the
     # direct dependencies explicitly so the worker still deploys (and leaves maintenance) on
@@ -494,7 +494,8 @@ jobs:
       always() &&
       needs.ci.result == 'success' &&
       needs.deploy-convex.result == 'success' &&
-      needs.switch-agent-tinybird.result == 'success'
+      needs.switch-agent-tinybird.result == 'success' &&
+      needs.deploy-agent-consumer.result == 'success'
     environment: Production
     permissions:
       contents: read

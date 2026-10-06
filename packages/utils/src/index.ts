@@ -12,6 +12,7 @@ export * from './security-headers';
 export * from './collector-auth';
 export * from './trace-delivery';
 export * from './agent-delivery';
+export * from './agent-delivery-identity';
 export * from './bounded-body';
 
 // Backward compat — djb2Hash was previously exported as hashString

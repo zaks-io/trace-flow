@@ -77,5 +77,7 @@ export async function makeSnapshotRunner(dirtyDays = [new Date().toISOString().s
     }
     throw new Error('Snapshot did not settle within its test budget');
   };
-  return { coordinator, env, orgId, queueSend, capacity, wake, finish };
+  const withStorage = <T>(callback: (storage: DurableObjectStorage) => T | Promise<T>) =>
+    runInDurableObject(host, (_instance, state) => callback(state.storage));
+  return { coordinator, env, orgId, queueSend, capacity, wake, finish, withStorage };
 }

@@ -7,6 +7,7 @@ import { HowItWorks } from '@/components/landing/HowItWorks';
 import { FooterCTA } from '@/components/landing/FooterCTA';
 import { AIHistory } from '@/components/landing/AIHistory';
 import { DesktopCapture } from '@/components/landing/DesktopCapture';
+import { HomePageProvider } from '@/components/landing/HomePageProvider';
 
 export default async function HomePage() {
   const session = await getSession();
@@ -17,14 +18,16 @@ export default async function HomePage() {
   const isWaitlistMode = process.env.NEXT_PUBLIC_WAITLIST_MODE === 'true';
 
   return (
-    <main>
-      <HeroSection isWaitlistMode={isWaitlistMode} />
-      <ProductShowcase />
-      <HowItWorks />
-      <DesktopCapture />
-      <CodeExample />
-      <AIHistory />
-      <FooterCTA isWaitlistMode={isWaitlistMode} />
-    </main>
+    <HomePageProvider isWaitlistMode={isWaitlistMode}>
+      <main>
+        <HeroSection isWaitlistMode={isWaitlistMode} />
+        <ProductShowcase />
+        <HowItWorks />
+        <DesktopCapture />
+        <CodeExample />
+        <AIHistory />
+        <FooterCTA isWaitlistMode={isWaitlistMode} />
+      </main>
+    </HomePageProvider>
   );
 }

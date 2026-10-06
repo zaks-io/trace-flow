@@ -40,6 +40,14 @@ export const recordUsage = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    if (
+      [args.periodStart, args.periodEnd, args.subscriptionUnitsUsed, args.addonUnitsUsed].some(
+        (value) => !Number.isSafeInteger(value) || value < 0,
+      ) ||
+      args.periodEnd <= args.periodStart
+    ) {
+      throw new Error('Invalid usage snapshot');
+    }
     const existing = await ctx.db
       .query('usage')
       .withIndex('by_org_id_period', (q) =>
@@ -49,8 +57,9 @@ export const recordUsage = internalMutation({
 
     if (existing) {
       await ctx.db.patch(existing._id, {
-        subscriptionUnitsUsed: args.subscriptionUnitsUsed,
-        addonUnitsUsed: args.addonUnitsUsed,
+        // Retried or concurrent alarm snapshots may arrive out of order.
+        subscriptionUnitsUsed: Math.max(existing.subscriptionUnitsUsed, args.subscriptionUnitsUsed),
+        addonUnitsUsed: Math.max(existing.addonUnitsUsed, args.addonUnitsUsed),
         periodEnd: args.periodEnd,
       });
     } else {

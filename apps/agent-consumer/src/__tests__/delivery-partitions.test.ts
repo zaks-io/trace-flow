@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sha256Hex } from '@trace-flow/utils';
 import { prepareDeliveryPartitions } from '../delivery-partitions';
-import { emptyAccumulator } from '../facts';
+import { CATEGORIES, ROW_IDENTITY_FIELDS, emptyAccumulator } from '../facts';
 import type { DeliveryRows } from '../delivery-rows';
 
 const env = {
@@ -37,6 +37,60 @@ afterEach(() => {
 });
 
 describe('delivery partition corrections', () => {
+  it('reduces six-category lookup latency from six waves to two under one connection budget', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-06T00:00:00Z'));
+    let open = 0;
+    let peak = 0;
+    const fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(
+        typeof input === 'string' ? input : input instanceof URL ? input : input.url,
+      );
+      expect(url.searchParams.get('org_id')).toBe('org');
+      expect(url.searchParams.get('oldest_day')).toBe('2025-10-06');
+      expect(url.searchParams.get('today_day')).toBe('2026-10-06');
+      expect(url.searchParams.get('identities')!.split(',').length).toBeLessThanOrEqual(32);
+      open += 1;
+      peak = Math.max(peak, open);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      open -= 1;
+      return Response.json({ data: [] });
+    });
+    vi.stubGlobal('fetch', fetch);
+    const plan = delivery();
+    const template = plan.rows.messages[0] as Record<string, unknown>;
+    for (const category of CATEGORIES) {
+      plan.rows[category] = Array.from({ length: 33 }, (_, index) => ({
+        ...template,
+        DecidedAt: template.EventAt,
+        [ROW_IDENTITY_FIELDS[category][2]!]: `${category}-${index}`,
+      }));
+    }
+    const baselineStart = Date.now();
+    const baseline = (async () => {
+      for (const category of CATEGORIES) {
+        await prepareDeliveryPartitions(env, {
+          ...plan,
+          rows: { ...emptyAccumulator(), [category]: [...plan.rows[category]] },
+        });
+      }
+    })();
+    await vi.runAllTimersAsync();
+    await baseline;
+    const baselineMs = Date.now() - baselineStart;
+    expect(baselineMs).toBe(600);
+    fetch.mockClear();
+    peak = 0;
+    const optimizedStart = Date.now();
+    const optimized = prepareDeliveryPartitions(env, plan);
+    await vi.runAllTimersAsync();
+    expect(await optimized).toEqual(['2026-09-13']);
+    expect(Date.now() - optimizedStart).toBe(200);
+    expect(fetch).toHaveBeenCalledTimes(12);
+    expect(peak).toBe(6);
+    for (const category of CATEGORIES) expect(plan.rows[category]).toHaveLength(33);
+  });
+
   it('writes a tombstone in the old partition and dirties both days', async () => {
     vi.stubGlobal(
       'fetch',

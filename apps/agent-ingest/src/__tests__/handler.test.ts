@@ -1,123 +1,26 @@
+import {
+  authHeaders,
+  responses,
+  queuedMessages,
+  interceptPolicy,
+  interceptClaim,
+  interceptAccepted,
+  resetHandlerRequestMocks,
+  post,
+} from './handler-request-fixture';
+
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
-import { loadAgentDelivery, sha256Hex } from '@trace-flow/utils';
+import { sha256Hex } from '@trace-flow/utils';
 import type {
   AgentDeliveryReference,
   AgentDeliveryStagedReference,
   AgentIngestQueuePayload,
-  AgentIngestQueueMessage,
   AgentMessageFact,
   AgentToolEventFact,
 } from '@trace-flow/types';
 import { AGENT_INGEST_LIMITS, validateAgentIngestQueueMessage } from '@trace-flow/types';
-import { app } from '../index';
-import { __resetPolicyCache } from '../policy';
-import type { AgentIngestEnv } from '../context';
-import type { ClaimStatus } from '../ownership';
 import { envelope, emptyFacts, facts, messageFact, toolEventFact } from './factories';
-import {
-  CONVEX,
-  SECRET,
-  ROOT_KEY,
-  TEST_NOW,
-  POLICY,
-  makeEnv,
-  validCredEntries,
-} from './handler-fixture';
-
-async function queuedMessages(
-  queueSend: ReturnType<typeof vi.fn>,
-  storage: R2Bucket,
-): Promise<AgentIngestQueueMessage[]> {
-  const references = queueSend.mock.calls.flatMap((call) =>
-    (call[0] as { body: AgentDeliveryReference }[]).map(({ body }) => body),
-  );
-  return Promise.all(
-    references.map((reference) =>
-      loadAgentDelivery({
-        storage,
-        reference,
-        encryption: { rootKeyBase64: ROOT_KEY },
-        now: reference.created_at,
-      }),
-    ),
-  );
-}
-
-/**
- * Per-test routing for the mocked `globalThis.fetch`. `policyResponse` answers the
- * compatibility-policy GET; `claimResponder` answers the claim-sessions POST and receives the parsed
- * request body so a test can echo back the requested `sessionPks`. Anything un-stubbed throws so
- * unexpected fetches fail loudly (net-connect disabled).
- */
-let policyResponse: { status: number; body: string } | null = null;
-let claimResponder: ((req: Request, body: string) => Response | Promise<Response>) | null = null;
-
-function interceptPolicy(status: number, body: unknown): void {
-  policyResponse = { status, body: typeof body === 'string' ? body : JSON.stringify(body) };
-}
-
-function interceptClaim(opts: { httpStatus?: number; claim?: ClaimStatus }): void {
-  if (opts.httpStatus && opts.httpStatus !== 200) {
-    claimResponder = () =>
-      new Response(JSON.stringify({ error: 'down' }), { status: opts.httpStatus });
-    return;
-  }
-  claimResponder = (_req, body) => {
-    const parsed = JSON.parse(body || '{}') as { sessionPks: string[] };
-    return new Response(
-      JSON.stringify({
-        results: parsed.sessionPks.map((sessionPk) => ({
-          sessionPk,
-          status: opts.claim ?? 'claimed',
-          ownerUserId: 'user-1',
-        })),
-      }),
-      { status: 200 },
-    );
-  };
-}
-
-function interceptAccepted(): void {
-  interceptPolicy(200, POLICY);
-  interceptClaim({ claim: 'claimed' });
-}
-
-function installFetchMock(): void {
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-    const req = new Request(input, init);
-    const url = new URL(req.url);
-    if (
-      req.method === 'GET' &&
-      url.origin === CONVEX &&
-      url.pathname === '/agent-ingest/compatibility-policy'
-    ) {
-      if (!policyResponse) throw new Error(`unexpected fetch (no policy stub): ${req.url}`);
-      return new Response(policyResponse.body, { status: policyResponse.status });
-    }
-    if (
-      req.method === 'POST' &&
-      url.origin === CONVEX &&
-      url.pathname === '/agent-ingest/claim-sessions'
-    ) {
-      if (!claimResponder) throw new Error(`unexpected fetch (no claim stub): ${req.url}`);
-      return claimResponder(req, await req.text());
-    }
-    throw new Error(`unexpected fetch: ${req.method} ${req.url}`);
-  });
-}
-
-async function post(
-  env: AgentIngestEnv,
-  body: BodyInit,
-  headers: Record<string, string>,
-): Promise<Response> {
-  const req = new Request('https://ingest.test/v1/ingest', { method: 'POST', headers, body });
-  const ctx = createExecutionContext();
-  const res = await app.fetch(req, env, ctx);
-  await waitOnExecutionContext(ctx);
-  return res;
-}
+import { SECRET, POLICY, makeEnv, validCredEntries } from './handler-fixture';
 
 /** Gzip a string the same way the Collector's api-client does, so the body is `Content-Encoding: gzip`. */
 async function gzip(text: string): Promise<Uint8Array> {
@@ -134,15 +37,9 @@ function chunkedBody(...chunkSizes: number[]): ReadableStream<Uint8Array> {
   });
 }
 
-const authHeaders = { 'X-Trace-Flow-Collector-Secret': SECRET, 'Content-Type': 'application/json' };
-
 describe('POST /v1/ingest', () => {
   beforeEach(() => {
-    vi.spyOn(Date, 'now').mockReturnValue(TEST_NOW);
-    __resetPolicyCache();
-    policyResponse = null;
-    claimResponder = null;
-    installFetchMock();
+    resetHandlerRequestMocks();
   });
 
   afterEach(() => {
@@ -333,7 +230,7 @@ describe('POST /v1/ingest', () => {
     }
 
     expect(globalThis.fetch).not.toHaveBeenCalled();
-    expect(claimResponder).toBeNull();
+    expect(responses.claim).toBeNull();
     expect(queueSend).not.toHaveBeenCalled();
   });
 
@@ -362,7 +259,7 @@ describe('POST /v1/ingest', () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: 'invalid_envelope' });
     expect(globalThis.fetch).not.toHaveBeenCalled();
-    expect(claimResponder).toBeNull();
+    expect(responses.claim).toBeNull();
     expect(queueSend).not.toHaveBeenCalled();
   });
 
@@ -383,7 +280,7 @@ describe('POST /v1/ingest', () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: 'invalid_envelope' });
     expect(globalThis.fetch).not.toHaveBeenCalled();
-    expect(claimResponder).toBeNull();
+    expect(responses.claim).toBeNull();
     expect(queueSend).not.toHaveBeenCalled();
   });
 
@@ -408,7 +305,7 @@ describe('POST /v1/ingest', () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: 'invalid_envelope' });
     expect(globalThis.fetch).not.toHaveBeenCalled();
-    expect(claimResponder).toBeNull();
+    expect(responses.claim).toBeNull();
     expect(queueSend).not.toHaveBeenCalled();
   });
 
@@ -467,7 +364,7 @@ describe('POST /v1/ingest', () => {
 
     expect(res.status).toBe(413);
     expect(await res.json()).toMatchObject({ error: 'payload_too_large' });
-    expect(claimResponder).toBeNull();
+    expect(responses.claim).toBeNull();
     expect(queueSend).not.toHaveBeenCalled();
   });
 
@@ -493,7 +390,7 @@ describe('POST /v1/ingest', () => {
   it('503s when the claim response is malformed (fails closed, never assumes ownership)', async () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
     interceptPolicy(200, POLICY);
-    claimResponder = () =>
+    responses.claim = () =>
       new Response(JSON.stringify({ results: [{ status: 'claimed' }] }), { status: 200 }); // missing sessionPk
     const res = await post(env, JSON.stringify(envelope()), authHeaders);
     expect(res.status).toBe(503);
@@ -504,7 +401,7 @@ describe('POST /v1/ingest', () => {
   it('503s when the claim response covers a session that was never requested (fails closed)', async () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
     interceptPolicy(200, POLICY);
-    claimResponder = () =>
+    responses.claim = () =>
       new Response(
         JSON.stringify({
           results: [
@@ -583,7 +480,7 @@ describe('POST /v1/ingest', () => {
     expect(res.headers.get('Retry-After')).toBe('60');
     expect(await res.json()).toEqual({ error: 'enqueue_failed' });
     expect(registerDelivery).toHaveBeenCalledOnce();
-    expect(deliveryObjects.size).toBe(1);
+    expect(deliveryObjects.size).toBe(2);
     expect(queueSend).not.toHaveBeenCalled();
   });
 
@@ -615,7 +512,7 @@ describe('POST /v1/ingest', () => {
     expect(res.status).toBe(503);
     expect(res.headers.get('Retry-After')).toBeNull();
     expect(registerDelivery).toHaveBeenCalledTimes(2);
-    expect(deliveryObjects.size).toBe(2);
+    expect(deliveryObjects.size).toBe(3);
     expect(queueSend).not.toHaveBeenCalled();
   });
 
@@ -627,15 +524,15 @@ describe('POST /v1/ingest', () => {
     async ({ openChecks, claims }) => {
       let checks = 0;
       const canAcceptDeliveries = vi.fn(async () => checks++ < openChecks);
-      const deliveryPut = vi.fn();
+      const deliveryPut = vi.fn(async (key: string) => ({ key }));
       const { env, queueSend } = makeEnv({
         creds: await validCredEntries(),
         canAcceptDeliveries,
         deliveryPut,
       });
       interceptAccepted();
-      const claim = vi.fn(claimResponder!);
-      claimResponder = claim;
+      const claim = vi.fn(responses.claim!);
+      responses.claim = claim;
 
       const res = await post(env, JSON.stringify(envelope()), authHeaders);
 
@@ -644,7 +541,7 @@ describe('POST /v1/ingest', () => {
       expect(await res.json()).toEqual({ error: 'enqueue_failed' });
       expect(canAcceptDeliveries).toHaveBeenCalledWith('org-1');
       expect(claim).toHaveBeenCalledTimes(claims);
-      expect(deliveryPut).not.toHaveBeenCalled();
+      expect(deliveryPut.mock.calls.filter(([key]) => !key.includes('/requests/'))).toHaveLength(0);
       expect(queueSend).not.toHaveBeenCalled();
     },
   );
@@ -675,7 +572,7 @@ describe('POST /v1/ingest', () => {
     const res = await post(env, JSON.stringify(envelope()), authHeaders);
 
     expect(res.status).toBe(202);
-    expect(order).toEqual(['put', 'register', 'queue']);
+    expect(order).toEqual(['put', 'put', 'register', 'queue']);
     const registration = registerDelivery.mock.calls[0]!;
     expect(registration[0]).not.toHaveProperty('delivery_revision');
     expect(registration[1]).toEqual([expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/u)]);
@@ -733,18 +630,18 @@ describe('POST /v1/ingest', () => {
     expect(canAcceptDeliveries).toHaveBeenCalledTimes(3);
     expect((queueSend.mock.calls[0]![0] as unknown[]).length).toBe(10);
     expect((queueSend.mock.calls[1]![0] as unknown[]).length).toBe(2);
-    expect(actions.indexOf('queue')).toBeLessThan(actions.indexOf('put:11'));
+    expect(actions.indexOf('queue')).toBeLessThan(actions.indexOf('put:12'));
     const secondAdmission = actions.lastIndexOf('admit');
-    expect(actions.slice(0, 2)).toEqual(['admit', 'admit']);
+    expect(actions.slice(0, 3)).toEqual(['admit', 'put:1', 'admit']);
     expect(actions.indexOf('queue')).toBeLessThan(secondAdmission);
-    expect(secondAdmission).toBeLessThan(actions.indexOf('put:11'));
+    expect(secondAdmission).toBeLessThan(actions.indexOf('put:12'));
   });
 
   it('202s the happy path and enqueues the claimed session', async () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
     interceptPolicy(200, POLICY);
     const expectedSecretHash = await sha256Hex(SECRET);
-    claimResponder = (_req, body) => {
+    responses.claim = (_req, body) => {
       const parsed = JSON.parse(body) as { hashedSecret: string; sessionPks: string[] };
       expect(parsed.hashedSecret).toBe(expectedSecretHash);
       return new Response(
@@ -768,7 +665,7 @@ describe('POST /v1/ingest', () => {
     vi.mocked(Date.now).mockImplementation(() => now);
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
     interceptPolicy(200, POLICY);
-    claimResponder = (_req, body) => {
+    responses.claim = (_req, body) => {
       now += 1_000;
       const parsed = JSON.parse(body) as { sessionPks: string[] };
       return new Response(
@@ -1051,7 +948,7 @@ describe('POST /v1/ingest', () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
     interceptPolicy(200, POLICY);
     const claim = vi.fn(() => new Response('{}', { status: 200 }));
-    claimResponder = claim;
+    responses.claim = claim;
     const overflow = envelope({
       facts: facts({
         tool_events: [

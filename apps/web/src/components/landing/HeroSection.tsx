@@ -43,12 +43,12 @@ export function HeroSection({ isWaitlistMode }: HeroSectionProps) {
             >
               Docs
             </Link>
-            <Link
+            <a
               href="/auth/login"
               className="rounded-md border border-border bg-card/70 px-3 py-2 text-sm font-medium text-foreground transition-colors hover:border-primary/30 hover:bg-card sm:px-4"
             >
               Sign in
-            </Link>
+            </a>
           </div>
         </nav>
 

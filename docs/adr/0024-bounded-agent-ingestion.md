@@ -55,10 +55,21 @@ unknown request never ran.
 
 Snapshot scheduling targets roughly five-minute dashboard freshness for ordinary batches. The
 coordinator batches dirty dates for one minute, then uses one durable alarm to dispatch each
-continuation. A Copy's first status check is after 15 seconds, followed by 30-second and then
-60-second delays. Checks use Tinybird's Jobs API (`GET /v0/jobs/:id`), not a SQL endpoint over
+continuation. A Copy's first status check is after five seconds, followed by a ten-second delay
+to retain the previous 15-second observation for jobs that are still running. Later checks use
+30-second and then 60-second delays. This adds at most one status read before the old first check;
+persisted due times remain unchanged across rollout. Checks use Tinybird's Jobs API
+(`GET /v0/jobs/:id`), not a SQL endpoint over
 `jobs_log`. The next check time and attempt count are persisted before the request, so duplicate
 queue deliveries cannot restart the polling cadence. There is no immediate continuation enqueue.
+
+The local workerd timing experiment uses real coordinator SQLite state and simulated provider
+completion. With two-second Copies, one-day and seven-day generations reduce polling wait from
+135 to 45 seconds with nine status reads; 32 linked dates reduce it from 270 to 90 seconds with
+18 reads. With seven-second Copies, the wait remains 135 seconds and reads increase from nine
+to 18. The early probe counts toward the unchanged 15-check budget. This measures scheduling
+wait only; actual Copy execution, alarm dispatch, queue delivery, and RPC latency still need
+verification against an isolated Tinybird branch before claiming a production gate-duration target.
 
 A global Durable Object admits two snapshot generations at a time. If no slot is available before
 any Copy starts, the coordinator ends that attempt, preserves dirty dates, and reopens ingestion
@@ -189,3 +200,48 @@ References: [Cloudflare Durable Object storage](https://developers.cloudflare.co
 [Tinybird Copy Pipes](https://www.tinybird.co/docs/forward/core-concepts/copy-pipes),
 [Tinybird limits](https://www.tinybird.co/docs/forward/pricing/limits), and
 [Tinybird lambda architecture](https://www.tinybird.co/docs/forward/guides/lambda-architecture).
+
+### Collector retry identity
+
+Collector retries within one POST cycle resend the same payload and `collector_batch_id`.
+Ingress records a small conditional request manifest at
+`agent-deliveries/{org}/requests/{identity}` before claiming sessions. The identity includes the
+authenticated organization, Collector and batch. Its digest covers the original validated
+request before retention or redaction changes facts. Conflicting or expired reuse returns
+`409 batch_identity_conflict`. The manifest shares the organization's erasure prefix and the
+four-day R2 lifecycle. It contains only hashes and expiry metadata, with no fact bodies.
+
+Each transport chunk uses a content digest scoped to that same organization, Collector and
+batch. The digest excludes enqueue timestamps and Sentry trace context. Retention or ownership
+changes can produce different canonical chunks on a legitimate retry, so chunk content belongs
+in the delivery identity. Chunk sizing reserves the maximum serialized trace-header budget and
+timestamp width. Headers exceeding that budget fail validation before ownership is claimed.
+
+SHA-256 supplies 122 identity bits in the currently accepted v4 UUID key shape. This preserves
+the deployed key validator during rolling upgrades; these identifiers are deterministic rather
+than random UUIDs. Legacy callers without retry identity keep their existing random key path.
+Deploy the consumer's receipt RPC before the ingest change. An older consumer missing that RPC
+causes fail-closed HTTP 503 responses rather than unsafe acceptance.
+
+Conditional R2 collisions decrypt and validate the existing object, then reuse its original
+hash, creation time, expiry and encryption metadata. They never overwrite ciphertext or renew
+retention. A read-only receipt lookup checks tenant, expiry and organization erasure before
+staging. A second lookup closes the race where completion deletes a body after the first lookup.
+When an original receipt exists and the staged immutable reference differs, ingress discards the
+recreated body and registers the original reference. Identical concurrent staged references do
+not trigger deletion. Registration failures remain failures rather than being reclassified as
+identity conflicts. Receipt reuse also remains erasure fenced at registration.
+
+New chunks require two receipt RPC reads in addition to registration. An already registered
+retry requires one receipt read. These bounded reads run within the existing ten-delivery
+window. They add a latency cost to first uploads in exchange for avoiding duplicate transport
+work and ciphertext resurrection. This change preserves the snapshot write fence and the
+64-reference admission bound. Cross-cycle retries with a newly minted batch ID remain separate
+deliveries, and canonical fact replacement continues to reconcile them.
+
+Identity-day lookups keep the existing 32-identity GET limit, tenant and retention filters,
+correction tombstones and legacy ordering. All categories share one six-connection budget,
+and lookups finish before any rows change. A deterministic fixture with six categories of
+33 identities and 100 ms per request completes in two waves, 200 ms, versus six serial
+category waves, 600 ms, with peak concurrency six. This is synthetic scheduling evidence,
+not a measured production latency improvement.

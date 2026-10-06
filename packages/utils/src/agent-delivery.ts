@@ -12,6 +12,7 @@ import {
   validateAgentIngestQueueMessage,
 } from '@trace-flow/types';
 import { decryptStoredBodyPayload, encryptStoredBodyPayload, sha256Hex } from './crypto';
+import { agentDeliveryContentDigest, agentDeliveryRetryKey } from './agent-delivery-identity';
 
 export const AGENT_DELIVERY_PREFIX = 'agent-deliveries/';
 export const MAX_AGENT_DELIVERY_AGE_MS = 4 * 24 * 60 * 60 * 1_000;
@@ -38,6 +39,7 @@ export interface StageAgentDeliveryOptions {
   message: AgentIngestQueueMessage;
   encryption: RequiredBodyEncryption;
   now?: number;
+  retryIdentity?: boolean;
 }
 
 export interface LoadAgentDeliveryOptions {
@@ -76,7 +78,6 @@ function validateReferenceBase(value: unknown, includeRevision: boolean): string
   if (unknown) return unknown;
   if (value.type !== 'agent-delivery') return 'type';
   if (value.version !== 1) return 'version';
-  if (typeof value.key !== 'string' || !DELIVERY_KEY_PATTERN.test(value.key)) return 'key';
   if (
     typeof value.org_id !== 'string' ||
     !/^[a-zA-Z0-9_-]{1,256}$/.test(value.org_id) ||
@@ -84,12 +85,19 @@ function validateReferenceBase(value: unknown, includeRevision: boolean): string
   ) {
     return 'org_id';
   }
-  if (!value.key.startsWith(`${AGENT_DELIVERY_PREFIX}${value.org_id}/`)) return 'key_org';
+  const keyError = validateAgentDeliveryKey(value.key, value.org_id);
+  if (keyError) return keyError;
   if (typeof value.sha256 !== 'string' || !SHA256_PATTERN.test(value.sha256)) return 'sha256';
   if (!isTimestamp(value.created_at)) return 'created_at';
   if (!isTimestamp(value.expires_at)) return 'expires_at';
   if (value.expires_at <= value.created_at) return 'expires_at';
   if (value.expires_at - value.created_at > MAX_AGENT_DELIVERY_AGE_MS) return 'expires_at';
+  return null;
+}
+
+export function validateAgentDeliveryKey(key: unknown, orgId: string): string | null {
+  if (typeof key !== 'string' || !DELIVERY_KEY_PATTERN.test(key)) return 'key';
+  if (!key.startsWith(`${AGENT_DELIVERY_PREFIX}${orgId}/`)) return 'key_org';
   return null;
 }
 
@@ -121,7 +129,9 @@ export async function stageAgentDelivery(
   if (!isTimestamp(createdAt)) throw new AgentDeliveryError('created_at');
   const expiresAt = createdAt + MAX_AGENT_DELIVERY_AGE_MS;
   if (!isTimestamp(expiresAt)) throw new AgentDeliveryError('expires_at');
-  const key = `${AGENT_DELIVERY_PREFIX}${options.message.tenancy.org_id}/${crypto.randomUUID()}`;
+  const key = options.retryIdentity
+    ? await agentDeliveryRetryKey(options.message)
+    : `${AGENT_DELIVERY_PREFIX}${options.message.tenancy.org_id}/${crypto.randomUUID()}`;
   const sha256 = await sha256Hex(plaintext);
   const encryptedPayload = await encryptStoredBodyPayload(plaintext, {
     ...options.encryption,
@@ -148,7 +158,35 @@ export async function stageAgentDelivery(
       expiresAt: String(expiresAt),
     },
   });
-  if (!stored) throw new AgentDeliveryError('key_collision');
+  if (!stored) {
+    if (!options.retryIdentity) throw new AgentDeliveryError('key_collision');
+    const existing = await options.storage.get(key);
+    if (!existing) throw new AgentDeliveryError('not_found');
+    if (existing.size > MAX_AGENT_DELIVERY_OBJECT_BYTES) {
+      throw new AgentDeliveryError('object_too_large');
+    }
+    const original = parseEnvelope(await existing.text());
+    const reference: AgentDeliveryStagedReference = {
+      type: 'agent-delivery',
+      version: 1,
+      key,
+      org_id: options.message.tenancy.org_id,
+      sha256: original.sha256,
+      created_at: original.created_at,
+      expires_at: original.expires_at,
+    };
+    const message = await loadAgentDelivery({
+      ...options,
+      reference: { ...reference, delivery_revision: 1 },
+    });
+    if (
+      (await agentDeliveryContentDigest(message)) !==
+      (await agentDeliveryContentDigest(options.message))
+    ) {
+      throw new AgentDeliveryError('identity_conflict');
+    }
+    return reference;
+  }
 
   return {
     type: 'agent-delivery',
