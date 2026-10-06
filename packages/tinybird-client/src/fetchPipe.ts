@@ -18,6 +18,8 @@ export interface FetchPipeOptions<T = unknown> {
   retry?: boolean;
   /** Optional zod-style validator. When present, each row in `data` is parsed. */
   schema?: { parse(value: unknown): T };
+  /** Recovery decisions require an explicit data array; a malformed response is not an empty result. */
+  requireData?: boolean;
   /** Explicit Sentry scope for runtimes where request scopes are not globally active. */
   sentryScope?: Scope;
 }
@@ -64,6 +66,9 @@ async function fetchOnce<T>(opts: FetchPipeOptions<T>): Promise<T[]> {
     }
 
     const body: PipeResponse = await response.json();
+    if (opts.requireData && !Array.isArray(body.data)) {
+      throw new TinybirdQueryError(`Tinybird pipe ${opts.pipe} response has no data array`, 502);
+    }
     recordTinybirdStatistics(span, body);
     const rows = body.data ?? [];
     const schema = opts.schema;

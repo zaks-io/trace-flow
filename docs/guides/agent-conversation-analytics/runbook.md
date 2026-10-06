@@ -270,6 +270,21 @@ Use the existing localhost ingest-recovery bridge, connected to the intended env
 4. Inspect again and verify publication. A repeat budget failure requires investigation rather than
    an automated resume loop.
 
+If a saved intent has no receipt because the Copy POST was never submitted, ordinary resume cannot
+recover it. Before retiring that intent, verify the original invocation failed before the POST,
+query the matching Tinybird job history and snapshot target, and record the evidence in the reason.
+An empty job history alone does not prove non-submission. Read-only `/inspectDeliveryStatus` accepts
+`options: {"discoverCopies":true}` to query the provider with the consumer's existing scoped token.
+
+With explicit production approval, call `/resumeSnapshot` with the inspected generation, reason,
+and `abandonUnstartedCopy: {"target":"<target>","copyAttempt":123,"startedAt":<epoch-ms>}` inside
+`options`. The private service refuses this option when provider discovery finds a job. The
+coordinator requires an expired runner claim, receipt-recovery exhaustion, and exactly one matching
+jobless intent. It atomically retires the unpublished generation, reopens ingestion, retains dirty
+days, and records a failure with the operator's reason. It does not submit another Copy. Inspect the
+failure, then use ordinary `/resumeSnapshot` for that failed generation to schedule a new generation.
+The retired generation can never be published, even if a late provider job appears.
+
 ## Release Gate
 
 A production release is valid only if all checks pass:

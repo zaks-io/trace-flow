@@ -74,6 +74,9 @@ either budget stops scheduling, emits an error, and retains the gate and capacit
 operator recovery. The private recovery service exposes inspection and an explicit, reasoned resume
 of the same generation. Large linked corrections and provider delays can exceed five minutes;
 `agent_snapshot.published` records dirty age and gate duration rather than promising a hard deadline.
+For a verified non-submission, explicit operator recovery may retire an exhausted jobless intent
+and its unpublished generation, retain dirty days, and resume them in a new generation. The exact
+intent and expired claim must match; an empty job history alone never authorizes this action.
 
 Superseded snapshot generations are deleted by the existing privileged Convex backend after a grace
 period. Consumer Workers receive scoped append, Copy, and read permissions. Tinybird datasource
