@@ -6,6 +6,7 @@
  */
 import * as Sentry from '@sentry/cloudflare';
 import type { SentryTraceContext } from '@trace-flow/types';
+export { captureSafeException } from './sentry-exception';
 
 type RequestPrivacyOptions = Pick<
   Sentry.CloudflareOptions,
@@ -166,27 +167,6 @@ export function sentryTraceLinks(
         isRemote: true,
       },
     };
-  });
-}
-
-/** Capture the original object once while preventing its message, causes or stack from exporting. */
-export function captureSafeException(
-  error: unknown,
-  details: { message: string; operation: string },
-): void {
-  Sentry.withScope((scope) => {
-    scope.addEventProcessor((event) => ({
-      ...event,
-      exception: { values: [{ type: 'Error', value: details.message }] },
-      message: undefined,
-      logentry: undefined,
-      threads: undefined,
-      extra: undefined,
-      breadcrumbs: undefined,
-      tags: { ...event.tags, operation: details.operation },
-      fingerprint: [details.operation],
-    }));
-    scope.captureException(error);
   });
 }
 

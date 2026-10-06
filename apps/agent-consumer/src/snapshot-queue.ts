@@ -1,13 +1,10 @@
 import { tracing } from 'cloudflare:workers';
 import type { SentryTraceContext } from '@trace-flow/types';
-import {
-  captureSafeException,
-  continueQueueTrace,
-  durableSentryTraceHeader,
-} from '@trace-flow/utils/sentry-tracing';
+import { continueQueueTrace, durableSentryTraceHeader } from '@trace-flow/utils/sentry-tracing';
 import { withNativeTrace } from '@trace-flow/utils/native-tracing';
 import type { AgentConsumerEnv } from './context';
 import { runAgentSnapshot } from './snapshot-runner';
+import { captureSnapshotException } from './snapshot-diagnostics';
 
 export const AGENT_SNAPSHOT_QUEUE_NAMES = new Set(['agent-snapshot-dev', 'agent-snapshot-prod']);
 
@@ -27,6 +24,7 @@ export async function processSnapshotQueue(
       { queueName: batch.queue, messageCount: 1 },
       () =>
         withNativeTrace(tracing, 'trace_flow.agent_snapshot', async () => {
+          let orgId: string | undefined;
           try {
             if (
               body?.type !== 'agent-snapshot' ||
@@ -37,14 +35,12 @@ export async function processSnapshotQueue(
             ) {
               throw new Error('Invalid agent snapshot queue message');
             }
-            const result = await runAgentSnapshot(env, body.org_id);
+            orgId = body.org_id;
+            const result = await runAgentSnapshot(env, orgId);
             if (result.status === 'retry') message.retry({ delaySeconds: 60 });
             else message.ack();
           } catch (error) {
-            captureSafeException(error, {
-              message: 'Agent snapshot processing failed',
-              operation: 'agent_snapshot',
-            });
+            captureSnapshotException(error, { stage: 'dispatch', orgId });
             message.retry({ delaySeconds: 60 });
           }
         }),

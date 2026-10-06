@@ -33,9 +33,23 @@ export interface SnapshotManifestPlan extends SnapshotPlan {
 export type SnapshotJobStatus = 'waiting' | 'working' | 'done' | 'error';
 
 export class SnapshotCopyStartRejectedError extends Error {
-  constructor(status: number) {
+  constructor(readonly status: number) {
     super(`Snapshot Copy start failed: HTTP ${status}`);
     this.name = 'SnapshotCopyStartRejectedError';
+  }
+}
+
+export class SnapshotProviderError extends Error {
+  constructor(
+    readonly status: number,
+    operation: 'start-copy' | 'read-copy-status',
+  ) {
+    super(
+      operation === 'start-copy'
+        ? `Snapshot Copy start outcome is unknown: HTTP ${status}`
+        : `Snapshot job lookup failed: HTTP ${status}`,
+    );
+    this.name = 'SnapshotProviderError';
   }
 }
 
@@ -84,7 +98,7 @@ export async function startSnapshotCopy(
     if (response.status >= 400 && response.status < 500) {
       throw new SnapshotCopyStartRejectedError(response.status);
     }
-    throw new Error(`Snapshot Copy start outcome is unknown: HTTP ${response.status}`);
+    throw new SnapshotProviderError(response.status, 'start-copy');
   }
   const body = JSON.parse(
     new TextDecoder().decode(await readBodyWithLimit(response.body, 256 * 1024)),
@@ -141,7 +155,7 @@ export async function snapshotJobStatus(
     signal: AbortSignal.timeout(30_000),
   });
   if (response.status === 404) return null;
-  if (!response.ok) throw new Error(`Snapshot job lookup failed: HTTP ${response.status}`);
+  if (!response.ok) throw new SnapshotProviderError(response.status, 'read-copy-status');
 
   let job: unknown;
   try {

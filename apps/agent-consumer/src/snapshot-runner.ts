@@ -1,4 +1,4 @@
-import { captureSafeException } from '@trace-flow/utils/sentry-tracing';
+import { captureSnapshotException, type SnapshotStage } from './snapshot-diagnostics';
 import { linkSnapshotProducers } from './snapshot-tracing';
 import { SNAPSHOT_CAPACITY_NAME } from './snapshot-capacity';
 import type { AgentConsumerEnv } from './context';
@@ -107,8 +107,13 @@ export async function runAgentSnapshot(
   }
   const capacity = env.AGENT_SNAPSHOT_CAPACITY.getByName(SNAPSHOT_CAPACITY_NAME);
   const slot = { orgId, generation: plan.generation };
-  const continueRun = (current: AgentSnapshotProgress) =>
-    continueAgentSnapshot(coordinator, orgId, current, claimId, hardDeadlineAt);
+  let stage: SnapshotStage = 'acquire-capacity';
+  let copyTarget: (typeof AGENT_SNAPSHOT_TARGETS)[number] | undefined;
+  let copyAttempt: number | undefined;
+  const continueRun = (current: AgentSnapshotProgress) => {
+    stage = 'continue-snapshot';
+    return continueAgentSnapshot(coordinator, orgId, current, claimId, hardDeadlineAt);
+  };
   // The alarm survives a crash between admission, Copy start, and the next queue wake-up.
   await coordinator.scheduleSnapshotContinuation({ orgId });
   try {
@@ -128,6 +133,8 @@ export async function runAgentSnapshot(
       const target = AGENT_SNAPSHOT_TARGETS[copyIndex % AGENT_SNAPSHOT_TARGETS.length];
       const copy = copies[Math.floor(copyIndex / AGENT_SNAPSHOT_TARGETS.length)];
       if (!copy || !target) throw new Error('snapshot Copy cursor exceeds its plan');
+      copyTarget = target;
+      copyAttempt = copy.copyAttempt;
       const key = {
         generation: plan.generation,
         target,
@@ -135,6 +142,7 @@ export async function runAgentSnapshot(
         claimId,
         copyIndex,
       };
+      stage = 'read-copy-intent';
       const intent = requireCurrentSnapshotIntent(
         await coordinator.getOutstandingSnapshotCopyIntents({}),
         key,
@@ -143,10 +151,13 @@ export async function runAgentSnapshot(
         await coordinator.assertSnapshotActive({ generation: plan.generation, claimId });
         if (Date.now() >= workDeadlineAt) return await continueRun(progress);
         // The continuation alarm is already durable. Scheduling here could strand an unsubmitted intent.
+        stage = 'record-copy-intent';
         await coordinator.recordSnapshotCopyIntent({ ...key, startedAt: Date.now() });
         try {
           // Once the intent exists, submit even if its persistence crossed the work deadline.
+          stage = 'start-copy';
           const jobId = await startSnapshotCopy(env, target, copy);
+          stage = 'attach-copy-receipt';
           await coordinator.attachSnapshotCopyJob({ ...key, jobId });
         } catch (error) {
           if (error instanceof SnapshotCopyStartRejectedError)
@@ -158,6 +169,7 @@ export async function runAgentSnapshot(
 
       const current = await coordinator.getSnapshotSchedule({});
       const recovery = !intent.jobId || current.check?.recoveryRequired === true;
+      stage = 'prepare-copy-check';
       const check = await coordinator.prepareSnapshotCheck({
         orgId,
         generation: plan.generation,
@@ -169,6 +181,7 @@ export async function runAgentSnapshot(
       let jobId = intent.jobId;
       let status;
       if (recovery) {
+        stage = 'recover-copy-receipt';
         const found = await beforeSnapshotDeadline(
           () => discoverSnapshotCopy(env, orgId, intent),
           workDeadlineAt,
@@ -179,8 +192,10 @@ export async function runAgentSnapshot(
           throw new Error('Snapshot Copy recovery changed its job receipt');
         jobId = found.id;
         status = found.status;
+        stage = 'attach-copy-receipt';
         await coordinator.attachSnapshotCopyJob({ ...key, jobId });
       } else {
+        stage = 'read-copy-status';
         status = await beforeSnapshotDeadline(
           () => snapshotJobStatus(env, jobId!),
           workDeadlineAt,
@@ -202,6 +217,7 @@ export async function runAgentSnapshot(
       });
       if (status !== 'done' && status !== 'error') return await continueRun(progress);
       if (!jobId) throw new Error('Terminal snapshot job has no receipt');
+      stage = 'settle-copy';
       await coordinator.settleSnapshotCopyIntent({ ...key, jobId, status });
       if (status === 'error') throw new Error(`Snapshot Copy job ${jobId} failed`);
       progress = await coordinator.getSnapshotProgress({
@@ -210,6 +226,9 @@ export async function runAgentSnapshot(
       });
     }
 
+    stage = 'prepare-manifest';
+    copyTarget = undefined;
+    copyAttempt = undefined;
     assertSnapshotDaysRetained(plan.dirtyDays, Date.now());
     const check = await coordinator.prepareSnapshotCheck({
       orgId,
@@ -226,16 +245,23 @@ export async function runAgentSnapshot(
     if (progress.manifestPublishedAtMs === undefined)
       throw new Error('snapshot manifest timestamp is missing');
     const publishedAtMs = progress.manifestPublishedAtMs;
+    stage = 'publish-manifest';
     await beforeSnapshotDeadline(
       () => publishSnapshotManifest(env, { ...plan, publishedAtMs }),
       workDeadlineAt,
       'publish manifest',
     );
+    stage = 'finish-snapshot';
     await coordinator.finishSnapshot({ generation: plan.generation, claimId });
   } catch (error) {
-    captureSafeException(error, {
-      message: 'Agent snapshot processing failed',
-      operation: 'agent_snapshot',
+    captureSnapshotException(error, {
+      stage,
+      orgId,
+      generation: plan.generation,
+      copyIndex: progress.nextCopyIndex,
+      target: copyTarget,
+      copyAttempt,
+      elapsedMs: Date.now() - startedAt,
     });
     const failure = (await coordinator.getSnapshotSchedule({})).failure;
     if (failure?.generation === plan.generation) {

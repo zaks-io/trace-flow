@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/cloudflare';
+import { TinybirdQueryError } from '@trace-flow/tinybird-client';
 import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentConsumerEnv } from '../context';
@@ -92,7 +93,7 @@ describe('snapshot queue tracing and settlement', () => {
     const errors = events.filter((event) => event.exception);
     expect(errors).toHaveLength(1);
     expect(errors[0]?.contexts?.trace).toMatchObject({ trace_id: TRACE_A, parent_span_id: PARENT });
-    expect(errors[0]?.exception?.values).toEqual([
+    expect(errors[0]?.exception?.values).toMatchObject([
       { type: 'Error', value: 'Agent snapshot processing failed' },
     ]);
     expect(JSON.stringify(errors)).not.toContain('private payload');
@@ -119,6 +120,29 @@ describe('snapshot queue tracing and settlement', () => {
       expect(item.retry).toHaveBeenCalledExactlyOnceWith({ delaySeconds: 60 });
       expect(item.ack).not.toHaveBeenCalled();
     }
+  });
+
+  it('exports classified provider failures and safe stack locations without messages or causes', async () => {
+    const error = new TinybirdQueryError('private provider response', 503);
+    error.stack =
+      'TinybirdQueryError: private provider response\n    at privateFunction (https://private.test/index.js?key=private:42:7)';
+    error.cause = new Error('private cause');
+    vi.mocked(runAgentSnapshot).mockRejectedValue(error);
+    const item = message({ type: 'agent-snapshot', org_id: 'org-a' });
+    const events = await process([item]);
+    const failures = events.filter((event) => event.exception);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.exception?.values).toEqual([
+      {
+        type: 'TinybirdQueryError',
+        value: 'Snapshot provider request failed',
+        stacktrace: { frames: [{ filename: 'index.js', lineno: 42, colno: 7 }] },
+      },
+    ]);
+    expect(failures[0]?.extra).toMatchObject({ stage: 'dispatch', httpStatus: 503 });
+    expect(JSON.stringify(failures)).not.toContain('private');
+    expect(item.retry).toHaveBeenCalledExactlyOnceWith({ delaySeconds: 60 });
+    expect(item.ack).not.toHaveBeenCalled();
   });
 
   it('validates the business payload inside its restored dispatcher context', async () => {

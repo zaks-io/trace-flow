@@ -523,7 +523,14 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
       Sentry.captureMessage(result.state.blockedReason, {
         level: 'error',
         tags: { operation: 'agent_snapshot_recovery' },
-        extra: { orgId: input.orgId, generation: input.generation },
+        extra: {
+          orgId: input.orgId,
+          generation: input.generation,
+          copyIndex: input.copyIndex,
+          statusChecks: result.state.statusChecks,
+          recoveryChecks: result.state.recoveryChecks,
+          recoveryRequired: result.state.recoveryRequired,
+        },
       });
     }
     return result;

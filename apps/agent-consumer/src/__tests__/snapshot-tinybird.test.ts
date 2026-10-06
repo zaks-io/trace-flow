@@ -99,7 +99,11 @@ describe('snapshot Tinybird transport', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 502 })));
     await expect(
       startSnapshotCopy(env, 'agent_session_signals_snapshots', copyPlan),
-    ).rejects.toThrow('outcome is unknown: HTTP 502');
+    ).rejects.toMatchObject({
+      name: 'SnapshotProviderError',
+      status: 502,
+      message: 'Snapshot Copy start outcome is unknown: HTTP 502',
+    });
   });
 
   it('reads a matching Copy job with the separate Jobs API token', async () => {
@@ -140,6 +144,21 @@ describe('snapshot Tinybird transport', () => {
     );
     await expect(snapshotJobStatus(env, 'job-123')).rejects.toThrow('HTTP 502');
   });
+
+  it.each([401, 429, 503])(
+    'preserves HTTP %s job-status failures without retaining the provider body',
+    async (status) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(new Response('private provider body', { status })),
+      );
+      await expect(snapshotJobStatus(env, 'job-123')).rejects.toMatchObject({
+        name: 'SnapshotProviderError',
+        status,
+        message: `Snapshot job lookup failed: HTTP ${status}`,
+      });
+    },
+  );
 
   it.each([
     ['cancelled', 'error'],
