@@ -28,6 +28,13 @@ export function reasoningShare(
   return formatPercent((row.reasoning_tokens / row.output_tokens) * 100);
 }
 
+export function successRate(
+  row: Pick<UpstreamAccountRow, 'request_count' | 'error_count'>,
+): string {
+  if (row.request_count === 0) return '-';
+  return formatPercent(((row.request_count - row.error_count) / row.request_count) * 100);
+}
+
 /** Partial gaps stay visible next to the sums they qualify. */
 export function usageGapNote(
   row: Pick<UpstreamAccountRow, 'usage_missing_count' | 'request_count' | 'unclassified_tokens'>,
