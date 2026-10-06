@@ -59,6 +59,19 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     return result;
   }
 
+  receiptReference(orgId: string): Promise<AgentDeliveryStagedReference | null> {
+    return this.exclusive(async () => {
+      const state = await this.ctx.storage.get<DeliveryState>('receipt');
+      if (!state) return null;
+      if (state.reference.org_id !== orgId) throw new Error('Delivery receipt tenant mismatch');
+      if (state.reference.expires_at <= Date.now()) throw new Error('Delivery receipt expired');
+      if ((await this.coordinator(orgId).getErasureState({})) !== null) {
+        throw new Error('Organization ingestion erasure has started');
+      }
+      return state.reference;
+    });
+  }
+
   register(
     reference: AgentDeliveryStagedReference,
     days: string[],
@@ -107,7 +120,12 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
       ) {
         throw new Error('Delivery registration conflict');
       }
-      if (state.revision !== undefined) return state.revision;
+      if (state.revision !== undefined) {
+        if ((await this.coordinator(reference.org_id).getErasureState({})) !== null) {
+          throw new Error('Organization ingestion erasure has started');
+        }
+        return state.revision;
+      }
     } else {
       state = {
         reference,

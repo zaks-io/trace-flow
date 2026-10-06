@@ -36,30 +36,39 @@ export async function prepareDeliveryPartitions(
 ): Promise<string[]> {
   const { oldestDay, today } = agentAnalyticsDayBounds(Date.now());
   const dirtyDays = new Set<string>();
+  const identityDays = new Map<(typeof CATEGORIES)[number], Map<string, IdentityDay>>();
+  const lookups: { category: (typeof CATEGORIES)[number]; identities: string[] }[] = [];
+  for (const category of CATEGORIES) {
+    const rows = delivery.rows[category] as Record<string, unknown>[];
+    identityDays.set(category, new Map());
+    for (let offset = 0; offset < rows.length; offset += IDENTITY_LOOKUP_SIZE) {
+      lookups.push({
+        category,
+        identities: rows
+          .slice(offset, offset + IDENTITY_LOOKUP_SIZE)
+          .map((row) => rowIdentity(row, ROW_IDENTITY_FIELDS[category])),
+      });
+    }
+  }
+  // Share one six-connection budget across categories. Finish every lookup before changing rows,
+  // so a failed request leaves the persisted recovery plan intact.
+  for (let offset = 0; offset < lookups.length; offset += IDENTITY_LOOKUP_CONCURRENCY) {
+    const wave = lookups.slice(offset, offset + IDENTITY_LOOKUP_CONCURRENCY);
+    const results = await Promise.all(
+      wave.map(({ category, identities }) =>
+        lookupIdentityDays(env, delivery, category, identities, oldestDay, today),
+      ),
+    );
+    for (let index = 0; index < wave.length; index++) {
+      const byIdentity = identityDays.get(wave[index]!.category)!;
+      for (const entry of results[index]!) byIdentity.set(entry.FactIdentity, entry);
+    }
+  }
   for (const category of CATEGORIES) {
     const rows = delivery.rows[category] as Record<string, unknown>[];
     const retained: Record<string, unknown>[] = [];
     const tombstones: Record<string, unknown>[] = [];
-    const byIdentity = new Map<string, IdentityDay>();
-    const chunks: string[][] = [];
-    for (let offset = 0; offset < rows.length; offset += IDENTITY_LOOKUP_SIZE) {
-      chunks.push(
-        rows
-          .slice(offset, offset + IDENTITY_LOOKUP_SIZE)
-          .map((row) => rowIdentity(row, ROW_IDENTITY_FIELDS[category])),
-      );
-    }
-    // The organization's write permit is held here, so serial lookups stall its other deliveries.
-    for (let wave = 0; wave < chunks.length; wave += IDENTITY_LOOKUP_CONCURRENCY) {
-      const lookups = await Promise.all(
-        chunks
-          .slice(wave, wave + IDENTITY_LOOKUP_CONCURRENCY)
-          .map((identities) =>
-            lookupIdentityDays(env, delivery, category, identities, oldestDay, today),
-          ),
-      );
-      for (const entry of lookups.flat()) byIdentity.set(entry.FactIdentity, entry);
-    }
+    const byIdentity = identityDays.get(category)!;
     for (const row of rows) {
       const day = factPartitionKey(category, row);
       const previous = byIdentity.get(rowIdentity(row, ROW_IDENTITY_FIELDS[category]));

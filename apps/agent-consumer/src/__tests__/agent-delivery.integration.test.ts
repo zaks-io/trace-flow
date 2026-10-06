@@ -186,6 +186,77 @@ afterEach(() => {
 });
 
 describe('bounded delivery durability', () => {
+  it('reuses deterministic staging and one acceptance revision for concurrent retries', async () => {
+    const orgId = `test-${crypto.randomUUID()}`;
+    const source = queueMessage({
+      tenancy: {
+        org_id: orgId,
+        user_id: 'user',
+        collector_id: 'collector',
+        collector_credential_id: 'credential',
+      },
+      facts: { ...emptyQueueFacts(), messages: [messageFact({ event_at: Date.now() })] },
+    });
+    const reference = await stageAgentDelivery({
+      storage: env.AGENT_DELIVERIES,
+      message: source,
+      encryption: { rootKeyBase64: env.BODY_ENCRYPTION_ROOT_KEY },
+      retryIdentity: true,
+    });
+    const host = env.AGENT_DELIVERY.getByName(reference.key);
+    const before = await env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${orgId}`).getStats({});
+    const days = [new Date().toISOString().slice(0, 10)];
+    const references = await Promise.all(
+      Array.from({ length: 4 }, (_, index) =>
+        stageAgentDelivery({
+          storage: env.AGENT_DELIVERIES,
+          message: {
+            ...source,
+            enqueued_at: Date.now() + index,
+            sentry_trace_context: { baggage: `attempt-${index}` },
+          },
+          encryption: { rootKeyBase64: env.BODY_ENCRYPTION_ROOT_KEY },
+          retryIdentity: true,
+        }),
+      ),
+    );
+    expect(references).toEqual(Array(4).fill(reference));
+    const expectedRevision = before.lastDeliverySequence + 1;
+    expect(await Promise.all(references.map((value) => host.register(value, days)))).toEqual(
+      Array(4).fill(expectedRevision),
+    );
+    expect(
+      await env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${orgId}`).getStats({}),
+    ).toMatchObject({ activeDeliveries: 1, lastDeliverySequence: expectedRevision });
+  });
+
+  it('receipt lookup remains tenant and erasure fenced after the body is deleted', async () => {
+    mockTransport();
+    const { host, reference, stagedReference, orgId } = await staged();
+    await expect(host.receiptReference(orgId)).resolves.toEqual(stagedReference);
+    await host.process(reference);
+    expect(await env.AGENT_DELIVERIES.head(reference.key)).toBeNull();
+    await expect(host.receiptReference(orgId)).resolves.toEqual(stagedReference);
+    await runInDurableObject(host, async (instance) => {
+      await expect(instance.receiptReference('another-org')).rejects.toThrow('tenant mismatch');
+    });
+    await env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${orgId}`).beginErasure({});
+    await runInDurableObject(host, async (instance) => {
+      await expect(instance.receiptReference(orgId)).rejects.toThrow('erasure');
+      await expect(
+        instance.register(stagedReference, [new Date().toISOString().slice(0, 10)]),
+      ).rejects.toThrow('erasure');
+    });
+  });
+
+  it('receipt lookup rejects the original expiry without renewing retention', async () => {
+    const { host, reference, orgId } = await staged();
+    await runInDurableObject(host, async (instance) => {
+      vi.spyOn(Date, 'now').mockReturnValue(reference.expires_at);
+      await expect(instance.receiptReference(orgId)).rejects.toThrow('expired');
+    });
+  });
+
   it('retries an out-of-order delivery without throwing or acknowledging unfinished work', async () => {
     mockTransport();
     const first = await staged();

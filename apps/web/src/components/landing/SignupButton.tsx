@@ -1,7 +1,8 @@
 'use client';
 
-import Link from 'next/link';
-import { WaitlistForm } from './WaitlistForm';
+import dynamic from 'next/dynamic';
+
+const WaitlistForm = dynamic(() => import('./WaitlistForm').then((module) => module.WaitlistForm));
 
 interface SignupButtonProps {
   isWaitlistMode: boolean;
@@ -22,12 +23,12 @@ export function SignupButton({ isWaitlistMode }: SignupButtonProps) {
   return (
     <div className="flex flex-col items-center gap-3">
       <p className="text-sm text-muted-foreground">Already invited to the private alpha?</p>
-      <Link
+      <a
         href="/auth/login"
         className="glow-primary inline-flex h-11 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-primary px-8 text-sm font-medium text-primary-foreground ring-offset-background transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       >
         Open your dashboard
-      </Link>
+      </a>
     </div>
   );
 }

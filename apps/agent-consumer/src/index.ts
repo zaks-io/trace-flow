@@ -42,7 +42,7 @@ import { requireRecoveryReason } from '@trace-flow/tinybird-client';
 import { normalizeDlqExcerptByteLimits } from './dlq-excerpt-repair';
 import type { AgentDeliveryStagedReference, AgentIngestQueueMessage } from '@trace-flow/types';
 import { validateAgentIngestQueueMessage } from '@trace-flow/types';
-import { validateAgentDeliveryStagedReference } from '@trace-flow/utils';
+import { validateAgentDeliveryKey, validateAgentDeliveryStagedReference } from '@trace-flow/utils';
 import { hasDeliveryReferenceType, processDeliveryReferences } from './delivery-queue';
 import { AGENT_SNAPSHOT_QUEUE_NAMES, processSnapshotQueue } from './snapshot-queue';
 import { agentIngestionErasureStarted, processMigratedLegacyMessages } from './legacy-delivery';
@@ -226,6 +226,15 @@ class AgentIngestionEntrypoint extends WorkerEntrypoint<AgentConsumerEnv> {
     if (validateAgentDeliveryStagedReference(reference))
       throw new Error('Invalid delivery registration');
     return this.env.AGENT_DELIVERY.getByName(reference.key).register(reference, days);
+  }
+
+  async getDeliveryReceipt(
+    key: string,
+    orgId: string,
+  ): Promise<AgentDeliveryStagedReference | null> {
+    const normalized = normalizeAgentShardId(orgId);
+    if (validateAgentDeliveryKey(key, normalized)) throw new Error('Invalid delivery receipt key');
+    return this.env.AGENT_DELIVERY.getByName(key).receiptReference(normalized);
   }
 }
 

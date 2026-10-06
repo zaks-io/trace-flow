@@ -74,6 +74,7 @@ async function makeEnv(): Promise<{
         throw new Error('Unexpected erasure');
       },
       canAcceptDeliveries: vi.fn(async () => true),
+      getDeliveryReceipt: vi.fn(async () => null),
       registerDelivery,
     },
     BODY_ENCRYPTION_ROOT_KEY: ROOT_KEY,
@@ -295,7 +296,7 @@ describe('generated fact identity conflicts', () => {
 
     expect(response.status).toBe(202);
     const queued = await firstQueued(env, queueSend);
-    expect(deliveryObjects.size).toBe(1);
+    expect(deliveryObjects.size).toBe(2);
     expect(queued.facts.messages).toHaveLength(1);
   });
 

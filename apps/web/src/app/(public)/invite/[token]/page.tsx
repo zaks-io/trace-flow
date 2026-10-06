@@ -1,7 +1,6 @@
 'use client';
 
 import { use, useEffect, useState } from 'react';
-import Link from 'next/link';
 import { useQuery } from 'convex/react';
 import { api } from '@trace-flow/convex/_generated/api';
 
@@ -47,12 +46,9 @@ export default function InviteAcceptPage({ params }: { params: Promise<{ token: 
               You&apos;ll be redirected to create your account before the invite is accepted.
             </p>
             {status === 'redirecting' ? (
-              <Link
-                className="mt-4 inline-block text-sm text-primary hover:underline"
-                href={loginUrl}
-              >
+              <a className="mt-4 inline-block text-sm text-primary hover:underline" href={loginUrl}>
                 Continue to sign up
-              </Link>
+              </a>
             ) : null}
           </div>
         )}

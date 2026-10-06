@@ -1,4 +1,4 @@
-export const SNAPSHOT_FIRST_CHECK_MS = 15_000;
+export const SNAPSHOT_FIRST_CHECK_MS = 5_000;
 const MAX_STATUS_CHECKS = 15;
 const MAX_RECOVERY_CHECKS = 3;
 
@@ -101,9 +101,12 @@ export function prepareSnapshotCheck(
     );
     return { ready: false, state: readSnapshotCheck(storage)! };
   }
+  // Keep the prior 15-second observation before backing off for slower Copies.
   const delay = recovery
     ? Math.min(60_000 * 2 ** attempts, 300_000)
-    : Math.min(SNAPSHOT_FIRST_CHECK_MS * 2 ** (attempts + 1), 60_000);
+    : attempts === 0
+      ? 10_000
+      : Math.min(30_000 * 2 ** (attempts - 1), 60_000);
   storage.sql.exec(
     `UPDATE snapshot_checks SET next_check_at_ms = ?,
     status_checks = status_checks + ?, recovery_checks = recovery_checks + ?, recovery_required = ?

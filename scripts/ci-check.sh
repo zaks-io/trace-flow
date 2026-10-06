@@ -18,4 +18,4 @@ python3 scripts/ci/ubuntu_https_sources_test.py
 bun test scripts/ingest-recovery/*.test.ts
 bunx tsc --project scripts/ingest-recovery/tsconfig.json
 bun run duplicates:check
-exec bun run check
+exec bun run check "$@"

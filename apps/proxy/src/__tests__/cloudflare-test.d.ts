@@ -1,22 +1,11 @@
-declare module 'cloudflare:test' {
-  import type {
-    DurableObjectStub,
-    ExecutionContext,
-    KVNamespace,
-    R2Bucket,
-  } from '@cloudflare/workers-types';
+/// <reference types="@cloudflare/vitest-pool-workers/types" />
 
-  export const env: {
-    API_KEYS: KVNamespace;
-    STORAGE: R2Bucket;
-    [key: string]: unknown;
-  };
+import type { ProxyEnv } from '../context';
 
-  export const SELF: {
-    fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
-  };
-
-  export function createExecutionContext(): ExecutionContext;
-  export function waitOnExecutionContext(ctx: ExecutionContext): Promise<void>;
-  export function runDurableObjectAlarm(stub: DurableObjectStub): Promise<boolean>;
+declare global {
+  namespace Cloudflare {
+    interface Env extends ProxyEnv {
+      STORAGE: ProxyEnv['STORAGE'];
+    }
+  }
 }

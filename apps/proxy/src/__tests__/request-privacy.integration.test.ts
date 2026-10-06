@@ -91,7 +91,7 @@ describe('production Proxy Sentry request privacy in workerd', () => {
           },
         ),
       ),
-      env as unknown as ProxyEnv,
+      env,
       ctx,
     );
     expect(response.status).toBe(200);

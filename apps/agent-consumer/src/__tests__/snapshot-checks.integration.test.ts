@@ -89,7 +89,7 @@ describe('durable snapshot checks', () => {
     expect(await state()).toMatchObject({
       generation,
       copyIndex: 0,
-      nextCheckAtMs: START + SNAPSHOT_FIRST_CHECK_MS,
+      nextCheckAtMs: START + 5_000,
       statusChecks: 0,
       recoveryChecks: 0,
       blockedReason: null,
@@ -101,7 +101,7 @@ describe('durable snapshot checks', () => {
     const first = await prepare(false);
     expect(first).toMatchObject({
       ready: true,
-      state: { statusChecks: 1, nextCheckAtMs: START + 45_000 },
+      state: { statusChecks: 1, nextCheckAtMs: START + 15_000 },
     });
     expect((await prepare(false)).ready).toBe(false);
     expect((await state())?.statusChecks).toBe(1);
@@ -116,13 +116,36 @@ describe('durable snapshot checks', () => {
     await advanceToDue();
     expect(await prepare(false)).toMatchObject({
       ready: true,
-      state: { statusChecks: 2, nextCheckAtMs: START + 105_000 },
+      state: { statusChecks: 2, nextCheckAtMs: START + 45_000 },
     });
     await advanceToDue();
     expect(await prepare(false)).toMatchObject({
       ready: true,
-      state: { statusChecks: 3, nextCheckAtMs: START + 165_000 },
+      state: { statusChecks: 3, nextCheckAtMs: START + 105_000 },
     });
+  });
+
+  it('keeps a persisted pre-rollout due time through scheduling and reconstruction', async () => {
+    await withCoordinator((_coordinator, object) => {
+      object.storage.sql.exec(
+        'UPDATE snapshot_checks SET next_check_at_ms = ? WHERE singleton = 1',
+        START + 15_000,
+      );
+      return object.storage.deleteAlarm();
+    });
+    vi.setSystemTime(START + SNAPSHOT_FIRST_CHECK_MS);
+    expect(await prepare(false)).toMatchObject({
+      ready: false,
+      state: { statusChecks: 0, nextCheckAtMs: START + 15_000 },
+    });
+    expect(await withCoordinator((_coordinator, object) => object.storage.getAlarm())).toBe(
+      START + 15_000,
+    );
+    expect(
+      await withCoordinator((_coordinator, object) =>
+        new AgentDeliveryCoordinator(object, env).getSnapshotSchedule({}),
+      ),
+    ).toMatchObject({ wakeAtMs: START + 15_000 });
   });
 
   it('blocks after 15 status checks, stops its alarm, and resumes only after the claim expires', async () => {

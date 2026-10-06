@@ -83,8 +83,9 @@ describe('snapshot recovery alarm', () => {
 
   it('suppresses a duplicate while a claim is live, then dispatches for crash recovery', async () => {
     await withStorage((storage) => scheduleAgentSnapshotContinuation(storage, 'org-1'));
+    expect(await withStorage((storage) => storage.getAlarm())).toBe(START + 5_000);
     await withStorage((storage) => storage.deleteAlarm());
-    vi.setSystemTime(START + 15_000);
+    vi.setSystemTime(START + 5_000);
     await withStorage((storage) =>
       publishAgentSnapshot(storage, queue, stats({ gateExpiresAtMs: START + 300_000 })),
     );

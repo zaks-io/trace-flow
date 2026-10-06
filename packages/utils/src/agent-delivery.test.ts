@@ -47,6 +47,7 @@ function memoryBucket() {
   const values = new Map<string, string>();
   const metadata = new Map<string, Record<string, string>>();
   const put = vi.fn(async (key: string, value: string, options?: R2PutOptions) => {
+    if (options?.onlyIf && values.has(key)) return null;
     values.set(key, value);
     metadata.set(key, options?.customMetadata ?? {});
     return { key };
@@ -86,6 +87,91 @@ function registered(reference: AgentDeliveryStagedReference): AgentDeliveryRefer
 }
 
 describe('agent delivery storage', () => {
+  it('concurrent retries reuse the first ciphertext, hash and expiry across attempt context changes', async () => {
+    const memory = memoryBucket();
+    const options = {
+      storage: memory.bucket,
+      message: message(),
+      encryption: { rootKeyBase64: ROOT_KEY },
+      now: NOW,
+      retryIdentity: true,
+    };
+    const first = await stageAgentDelivery(options);
+    const ciphertext = memory.values.get(first.key);
+    const retries = await Promise.all(
+      Array.from({ length: 4 }, (_, index) =>
+        stageAgentDelivery({
+          ...options,
+          now: NOW + 1000 + index,
+          message: {
+            ...message(),
+            enqueued_at: NOW + index,
+            sentry_trace_context: { baggage: 'attempt' },
+          },
+        }),
+      ),
+    );
+    expect(retries).toEqual(Array(4).fill(first));
+    expect(memory.values.size).toBe(1);
+    expect(memory.values.get(first.key)).toBe(ciphertext);
+    await expect(stageAgentDelivery({ ...options, now: first.expires_at })).rejects.toMatchObject({
+      code: 'expired',
+    });
+    expect(memory.values.get(first.key)).toBe(ciphertext);
+  });
+
+  it('scopes retry identities to the authenticated organization and Collector', async () => {
+    const memory = memoryBucket();
+    const references = await Promise.all(
+      [
+        message(),
+        { ...message(), tenancy: { ...message().tenancy, org_id: 'org-2' } },
+        { ...message(), tenancy: { ...message().tenancy, collector_id: 'collector-2' } },
+      ].map((source) =>
+        stageAgentDelivery({
+          storage: memory.bucket,
+          message: source,
+          encryption: { rootKeyBase64: ROOT_KEY },
+          now: NOW,
+          retryIdentity: true,
+        }),
+      ),
+    );
+    expect(new Set(references.map(({ key }) => key)).size).toBe(3);
+    references.forEach((reference) =>
+      expect(validateAgentDeliveryReference(registered(reference))).toBeNull(),
+    );
+  });
+
+  it('decrypts and verifies collided retry content rather than trusting a matched object key', async () => {
+    const memory = memoryBucket();
+    const options = {
+      storage: memory.bucket,
+      message: message(),
+      encryption: { rootKeyBase64: ROOT_KEY },
+      now: NOW,
+      retryIdentity: true,
+    };
+    const reference = await stageAgentDelivery(options);
+    const foreign = JSON.stringify({ ...message(), parser_version: '2.0.0' });
+    const encryptedPayload = await encryptStoredBodyPayload(foreign, {
+      rootKeyBase64: ROOT_KEY,
+      orgId: reference.org_id,
+      objectKey: reference.key,
+    });
+    memory.values.set(
+      reference.key,
+      JSON.stringify({
+        version: 1,
+        created_at: reference.created_at,
+        expires_at: reference.expires_at,
+        sha256: await sha256Hex(foreign),
+        encryptedPayload,
+      }),
+    );
+    await expect(stageAgentDelivery(options)).rejects.toMatchObject({ code: 'identity_conflict' });
+  });
+
   it('persists encrypted bytes before returning a small fact-free reference', async () => {
     const { memory, reference } = await staged();
     const stored = memory.values.get(reference.key)!;

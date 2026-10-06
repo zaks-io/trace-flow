@@ -85,6 +85,26 @@ describe('CATEGORIES', () => {
 });
 
 describe('chunkFacts', () => {
+  it('keeps retry chunk boundaries stable across trace-context size and attempt timestamp changes', () => {
+    const f = emptyQueueFacts();
+    f.messages = Array.from({ length: 500 }, (_, index) => messageQueueFact(index));
+    const first = chunkFacts(base, f, undefined, true);
+    const traced = chunkFacts(
+      {
+        ...base,
+        enqueued_at: Number.MAX_SAFE_INTEGER,
+        sentry_trace_context: { 'sentry-trace': 'a'.repeat(8192), baggage: 'b'.repeat(8192) },
+      },
+      f,
+      undefined,
+      true,
+    );
+    expect(first.map(({ facts }) => facts)).toEqual(traced.map(({ facts }) => facts));
+    expect(first.length).toBeGreaterThan(1);
+    for (const message of traced)
+      expect(size(message)).toBeLessThanOrEqual(MAX_QUEUE_MESSAGE_BYTES);
+  });
+
   it('returns no messages for empty facts', () => {
     expect(chunkFacts(base, emptyQueueFacts())).toHaveLength(0);
   });
