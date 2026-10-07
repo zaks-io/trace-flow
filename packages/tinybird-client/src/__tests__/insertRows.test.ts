@@ -1,12 +1,42 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   classifyTinybirdInsertFailure,
+  describeTinybirdInsertFailure,
   insertRows,
   shouldRetryTinybirdInsert,
 } from '../insertRows';
 import { TinybirdInsertError } from '../errors';
 
 const HOST = 'https://api.tinybird.co';
+
+describe('safe insert failure diagnostics', () => {
+  it('exposes only allowlisted HTTP metadata, never the provider body', () => {
+    const error = new TinybirdInsertError(200, 'private provider payload', 'partial-receipt');
+    expect(describeTinybirdInsertFailure(error)).toEqual({
+      errorType: 'TinybirdInsertError',
+      httpStatus: 200,
+      reason: 'partial-receipt',
+    });
+  });
+
+  it('distinguishes timeouts while excluding arbitrary error names and messages', () => {
+    expect(
+      describeTinybirdInsertFailure(new DOMException('private payload', 'TimeoutError')),
+    ).toEqual({ errorType: 'TimeoutError' });
+    const error = new Error('private payload');
+    error.name = 'private error name';
+    expect(describeTinybirdInsertFailure(error)).toEqual({ errorType: 'Error' });
+    expect(
+      describeTinybirdInsertFailure({ name: 'TimeoutError', responseText: 'private' }),
+    ).toEqual({ errorType: 'Error' });
+  });
+
+  it('excludes invalid HTTP metadata even on an insert error', () => {
+    const error = new TinybirdInsertError(999, 'private payload');
+    Object.assign(error, { reason: 'private reason' });
+    expect(describeTinybirdInsertFailure(error)).toEqual({ errorType: 'TinybirdInsertError' });
+  });
+});
 
 function receiptResponse(successfulRows: number, quarantinedRows = 0): Response {
   return Response.json(

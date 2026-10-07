@@ -77,7 +77,7 @@ export async function sweepTraceDeliveries(
   let hasMore = true;
 
   while (hasMore) {
-    const page = await storage.list({
+    const page = await listTraceDeliveryPage(storage, {
       prefix,
       limit: LIST_PAGE_SIZE,
       cursor,
@@ -121,6 +121,21 @@ export async function sweepTraceDeliveries(
   }
 
   return enqueued;
+}
+
+async function listTraceDeliveryPage(storage: R2Bucket, options: R2ListOptions) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await storage.list(options);
+    } catch (error) {
+      // Listing is read-only; retry throttles without replaying already enqueued pages.
+      if (!(error instanceof Error) || !error.message.endsWith('(10058)') || attempt >= 3) {
+        throw error;
+      }
+      const delay = 1_000 * 2 ** attempt + Math.floor(Math.random() * 250);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
 }
 
 function validateNamespace(namespace: string): string {
