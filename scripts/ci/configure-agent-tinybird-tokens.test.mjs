@@ -69,7 +69,11 @@ test('defines the exact deployed token names, Worker variables, and resource sco
     {
       name: 'trace_flow_agent_delivery_read',
       variable: 'TINYBIRD_AGENT_DELIVERY_READ_TOKEN',
-      scopes: ['PIPES:READ:agent_delivery_receipt', 'PIPES:READ:agent_fact_identity_day'],
+      scopes: [
+        'PIPES:READ:agent_delivery_receipt',
+        'PIPES:READ:agent_fact_identity_day',
+        'PIPES:READ:agent_fact_identity_day_batch',
+      ],
     },
     {
       name: 'trace_flow_agent_snapshot_worker',
@@ -235,7 +239,7 @@ test('fails without writing an export when deployed scopes are not exact', async
 
 test('adds every missing datafile binding without changing existing bytes or tokens', async () => {
   const { root, expectedBase } = await datafileFixture();
-  expect(await ensureAgentTinybirdTokenDatafiles(root)).toEqual({ added: 40, present: 0 });
+  expect(await ensureAgentTinybirdTokenDatafiles(root)).toEqual({ added: 41, present: 0 });
   const inventory = await validateAgentTinybirdTokenDatafiles(root);
   expect(inventory).toEqual(
     Object.fromEntries(AGENT_TINYBIRD_TOKENS.map(({ name, scopes }) => [name, [...scopes].sort()])),
@@ -254,7 +258,7 @@ test('keeps one existing exact datafile binding byte-for-byte', async () => {
   const before = await Promise.all(
     [...expectedBase.keys()].map(async (path) => [path, await readFile(path, 'utf8')]),
   );
-  expect(await ensureAgentTinybirdTokenDatafiles(root)).toEqual({ added: 0, present: 40 });
+  expect(await ensureAgentTinybirdTokenDatafiles(root)).toEqual({ added: 0, present: 41 });
   for (const [path, contents] of before) expect(await readFile(path, 'utf8')).toBe(contents);
 });
 

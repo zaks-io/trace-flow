@@ -266,7 +266,7 @@ function mockDeliveryTransport(): Record<string, unknown>[][] {
     'fetch',
     vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = new URL(String(input));
-      if (url.pathname.includes('agent_fact_identity_day')) {
+      if (url.pathname.endsWith('/agent_fact_identity_day_batch.json')) {
         return Response.json({ data: [] });
       }
       if (url.pathname.includes('agent_delivery_receipt')) return Response.json({ data: [] });

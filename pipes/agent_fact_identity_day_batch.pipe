@@ -1,0 +1,29 @@
+DESCRIPTION >
+    Bounded retained-day lookup for up to 512 fact identities across categories. categories[i]
+    names the category of identities[i]. PREWHERE uses only sorting-key columns, which every
+    version of an identity shares, so FINAL merges just the requested identities.
+
+NODE endpoint
+SQL >
+    %
+    SELECT Category, FactIdentity, EventDay, DeliverySequence, ContentHash, IngestedAt
+    FROM agent_fact_identity_days FINAL
+    PREWHERE OrgId = {{ String(org_id) }}
+      AND (Category, FactIdentity) IN (
+          SELECT fact.1, fact.2
+          FROM (
+              SELECT arrayJoin(arrayZip(
+                  {{ Array(categories, 'String') }},
+                  {{ Array(identities, 'String') }}
+              )) AS fact
+          )
+      )
+    WHERE EventDay >= {{ Date(oldest_day) }}
+      AND EventDay <= {{ Date(today_day) }}
+    ORDER BY Category, FactIdentity
+    LIMIT 512
+
+TYPE ENDPOINT
+
+TOKEN agent_consumer_versions_append READ
+TOKEN trace_flow_agent_delivery_read READ

@@ -1,22 +1,20 @@
-import { fetchPipe } from '@trace-flow/tinybird-client';
 import type { AgentDeliveryStagedReference } from '@trace-flow/types';
-import { agentAnalyticsDayBounds, MAX_AGENT_DELIVERY_AGE_MS } from '@trace-flow/utils';
+import { MAX_AGENT_DELIVERY_AGE_MS } from '@trace-flow/utils';
 import {
   CATEGORIES,
   ROW_IDENTITY_FIELDS,
   compareFactIngestedAt,
   emptyAccumulator,
   factIngestedAtMs,
-  factIdentityListParam,
   factPartitionKey,
   rowIdentity,
   stableHash,
   type Category,
 } from './facts';
+import { lookupFactIdentityDays, type FactIdentityDay } from './fact-identity-days';
 import type { DeliveryRows } from './delivery-rows';
 
 const CONTENT_HASH = /^[0-9a-f]{64}$/;
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 export {
   validateExpectedCanonicalProof,
@@ -51,13 +49,6 @@ export interface FrozenFactSourceMetadata extends FrozenFactIdentity {
   payloadBytes: number;
   eventDay: string;
   ingestedAt: string;
-}
-
-interface CanonicalIdentity {
-  FactIdentity: string;
-  EventDay: string;
-  DeliverySequence: number;
-  ContentHash: string;
 }
 
 interface CanonicalReadEnv {
@@ -170,34 +161,24 @@ export async function assertExpectedCanonicalFacts(
   proof: ExpectedCanonicalFact[],
 ): Promise<void> {
   proof = validateExpectedCanonicalProof(proof);
-  const { oldestDay, today } = agentAnalyticsDayBounds(Date.now());
   const liveRows = liveRowsByFact(delivery);
   if (proof.length !== liveRows.size)
     throw new Error('canonical proof does not cover the delivery');
-  for (const category of CATEGORIES) {
-    const categoryProof = proof.filter((item) => item.category === category);
-    for (let offset = 0; offset < categoryProof.length; offset += 32) {
-      const chunk = categoryProof.slice(offset, offset + 32);
-      const identities = chunk.map((item) => item.factId);
-      const current = await readCanonical(
-        env,
-        delivery.orgId,
-        category,
-        identities,
-        oldestDay,
-        today,
+  const identities: Partial<Record<Category, string[]>> = {};
+  for (const item of proof) {
+    if (!liveRows.has(factKey(item.category, item.factId))) {
+      throw new Error('canonical proof contains an unexpected identity');
+    }
+    (identities[item.category] ??= []).push(item.factId);
+  }
+  const current = await lookupFactIdentityDays(env, delivery.orgId, identities);
+  for (const item of proof) {
+    const own = liveRows.get(factKey(item.category, item.factId))!;
+    const actual = current[item.category].get(item.factId) ?? null;
+    if (!matchesCanonical(actual, item.expected) && !matchesCanonical(actual, own)) {
+      throw new Error(
+        `canonical fact changed before frozen replay: ${item.category}:${item.factId}`,
       );
-      const byIdentity = new Map(current.map((row) => [row.FactIdentity, row]));
-      for (const item of chunk) {
-        const own = liveRows.get(factKey(category, item.factId));
-        if (!own) throw new Error('canonical proof contains an unexpected identity');
-        const actual = byIdentity.get(item.factId) ?? null;
-        if (!matchesCanonical(actual, item.expected) && !matchesCanonical(actual, own)) {
-          throw new Error(
-            `canonical fact changed before frozen replay: ${category}:${item.factId}`,
-          );
-        }
-      }
     }
   }
 }
@@ -222,55 +203,8 @@ function liveRowsByFact(delivery: DeliveryRows): Map<string, ExpectedCanonicalFa
   return result;
 }
 
-async function readCanonical(
-  env: CanonicalReadEnv,
-  orgId: string,
-  category: Category,
-  identities: string[],
-  oldestDay: string,
-  today: string,
-): Promise<CanonicalIdentity[]> {
-  const rows = await fetchPipe<CanonicalIdentity>({
-    baseUrl: env.TINYBIRD_HOST,
-    token: env.TINYBIRD_AGENT_DELIVERY_READ_TOKEN,
-    pipe: 'agent_fact_identity_day',
-    params: {
-      org_id: orgId,
-      category,
-      identities: factIdentityListParam(identities),
-      oldest_day: oldestDay,
-      today_day: today,
-    },
-    schema: { parse: parseCanonicalIdentity },
-  });
-  const seen = new Set<string>();
-  for (const row of rows) {
-    if (!identities.includes(row.FactIdentity) || seen.has(row.FactIdentity)) {
-      throw new Error('unexpected or duplicate canonical fact identity');
-    }
-    seen.add(row.FactIdentity);
-  }
-  return rows;
-}
-
-function parseCanonicalIdentity(value: unknown): CanonicalIdentity {
-  assertRecord(value, 'canonical fact identity');
-  if (
-    typeof value.FactIdentity !== 'string' ||
-    typeof value.EventDay !== 'string' ||
-    !DAY.test(value.EventDay) ||
-    !Number.isSafeInteger(Number(value.DeliverySequence)) ||
-    Number(value.DeliverySequence) < 1 ||
-    typeof value.ContentHash !== 'string' ||
-    !CONTENT_HASH.test(value.ContentHash)
-  ) {
-    throw new Error('invalid canonical fact identity response');
-  }
-  return { ...value, DeliverySequence: Number(value.DeliverySequence) } as CanonicalIdentity;
-}
-
 function matchesCanonical(
-  actual: CanonicalIdentity | null,
+  actual: FactIdentityDay | null,
   expected: ExpectedCanonicalFact['expected'],
 ): boolean {
   if (!actual || !expected) return actual === null && expected === null;

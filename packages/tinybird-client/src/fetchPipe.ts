@@ -14,6 +14,11 @@ export interface FetchPipeOptions<T = unknown> {
   token: string;
   pipe: string;
   params?: Record<string, PipeParam>;
+  /**
+   * POST sends params as a form body for values too long for a URL, such as large Array parameters.
+   * https://www.tinybird.co/docs/forward/work-with-data/publish-data/endpoints (414 errors)
+   */
+  method?: 'GET' | 'POST';
   /** When true (default), a 403 response throws TinybirdAuthError and caller can retry with a fresh token. */
   retry?: boolean;
   /** Optional zod-style validator. When present, each row in `data` is parsed. */
@@ -28,16 +33,14 @@ interface PipeResponse {
   data?: unknown[];
 }
 
-function buildPipeUrl(baseUrl: string, pipe: string, params?: Record<string, PipeParam>): URL {
-  const url = new URL(`${baseUrl}/v0/pipes/${pipe}.json`);
-  if (params) {
-    for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined) {
-        url.searchParams.set(key, String(value));
-      }
+function pipeParams(params: Record<string, PipeParam> = {}): URLSearchParams {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) {
+      search.set(key, String(value));
     }
   }
-  return url;
+  return search;
 }
 
 async function fetchOnce<T>(opts: FetchPipeOptions<T>): Promise<T[]> {
@@ -49,10 +52,14 @@ async function fetchOnce<T>(opts: FetchPipeOptions<T>): Promise<T[]> {
   let succeeded = false;
 
   try {
-    const url = buildPipeUrl(opts.baseUrl, opts.pipe, opts.params);
+    const url = new URL(`${opts.baseUrl}/v0/pipes/${opts.pipe}.json`);
+    const params = pipeParams(opts.params);
+    const post = opts.method === 'POST';
+    if (!post) url.search = params.toString();
     const response = await fetch(url.toString(), {
-      method: 'GET',
+      method: post ? 'POST' : 'GET',
       headers: { Authorization: `Bearer ${opts.token}` },
+      ...(post ? { body: params } : {}),
     });
     recordTinybirdResponse(span, response);
 

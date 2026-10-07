@@ -31,29 +31,36 @@ function delivery(): DeliveryRows {
     },
   };
 }
+function lookupBody(init?: RequestInit): URLSearchParams {
+  expect(init?.body).toBeInstanceOf(URLSearchParams);
+  return init!.body as URLSearchParams;
+}
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
 describe('delivery partition corrections', () => {
-  it('reduces six-category lookup latency from six waves to two under one connection budget', async () => {
+  it('looks up every category of a delivery in one request', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-10-06T00:00:00Z'));
-    let open = 0;
-    let peak = 0;
-    const fetch = vi.fn(async (input: string | URL | Request) => {
-      const url = new URL(
-        typeof input === 'string' ? input : input instanceof URL ? input : input.url,
+    const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(String(input)).toBe(
+        'https://tinybird.test/v0/pipes/agent_fact_identity_day_batch.json',
       );
-      expect(url.searchParams.get('org_id')).toBe('org');
-      expect(url.searchParams.get('oldest_day')).toBe('2025-10-06');
-      expect(url.searchParams.get('today_day')).toBe('2026-10-06');
-      expect(url.searchParams.get('identities')!.split(',').length).toBeLessThanOrEqual(32);
-      open += 1;
-      peak = Math.max(peak, open);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      open -= 1;
+      expect(init?.method).toBe('POST');
+      const body = lookupBody(init);
+      expect(body.get('org_id')).toBe('org');
+      expect(body.get('oldest_day')).toBe('2025-10-06');
+      expect(body.get('today_day')).toBe('2026-10-06');
+      const categories = body.get('categories')!.split(',');
+      const identities = body.get('identities')!.split(',');
+      expect(categories).toHaveLength(CATEGORIES.length * 33);
+      expect(identities).toHaveLength(categories.length);
+      expect(new Set(categories)).toEqual(new Set(CATEGORIES));
+      for (const [index, category] of categories.entries()) {
+        expect(identities[index]).toMatch(new RegExp(`\\x1f${category}-\\d+$`));
+      }
       return Response.json({ data: [] });
     });
     vi.stubGlobal('fetch', fetch);
@@ -66,28 +73,9 @@ describe('delivery partition corrections', () => {
         [ROW_IDENTITY_FIELDS[category][2]!]: `${category}-${index}`,
       }));
     }
-    const baselineStart = Date.now();
-    const baseline = (async () => {
-      for (const category of CATEGORIES) {
-        await prepareDeliveryPartitions(env, {
-          ...plan,
-          rows: { ...emptyAccumulator(), [category]: [...plan.rows[category]] },
-        });
-      }
-    })();
-    await vi.runAllTimersAsync();
-    await baseline;
-    const baselineMs = Date.now() - baselineStart;
-    expect(baselineMs).toBe(600);
-    fetch.mockClear();
-    peak = 0;
-    const optimizedStart = Date.now();
-    const optimized = prepareDeliveryPartitions(env, plan);
-    await vi.runAllTimersAsync();
-    expect(await optimized).toEqual(['2026-09-13']);
-    expect(Date.now() - optimizedStart).toBe(200);
-    expect(fetch).toHaveBeenCalledTimes(12);
-    expect(peak).toBe(6);
+
+    expect(await prepareDeliveryPartitions(env, plan)).toEqual(['2026-09-13']);
+    expect(fetch).toHaveBeenCalledTimes(1);
     for (const category of CATEGORIES) expect(plan.rows[category]).toHaveLength(33);
   });
 
@@ -98,6 +86,7 @@ describe('delivery partition corrections', () => {
         Response.json({
           data: [
             {
+              Category: 'messages',
               FactIdentity: 'org\x1fs\x1fm',
               EventDay: '2026-09-12',
               DeliverySequence: 2,
@@ -142,6 +131,7 @@ describe('delivery partition corrections', () => {
         Response.json({
           data: [
             {
+              Category: 'messages',
               FactIdentity: 'org\x1fs\x1fm',
               EventDay: '2026-09-13',
               DeliverySequence: '2',
@@ -160,13 +150,12 @@ describe('delivery partition corrections', () => {
   it('bounds identity lookups to the exact retained calendar days', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2024-02-29T12:00:00.000Z'));
-    const fetch = vi.fn(async (input: string | URL | Request) => {
-      const url = new URL(
-        typeof input === 'string' ? input : input instanceof URL ? input : input.url,
-      );
-      expect(url.searchParams.get('oldest_day')).toBe('2023-03-01');
-      expect(url.searchParams.get('today_day')).toBe('2024-02-29');
-      expect(url.searchParams.get('identities')).toBe('org\x1fs\x1fm');
+    const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const body = lookupBody(init);
+      expect(body.get('oldest_day')).toBe('2023-03-01');
+      expect(body.get('today_day')).toBe('2024-02-29');
+      expect(body.get('categories')).toBe('messages');
+      expect(body.get('identities')).toBe('org\x1fs\x1fm');
       return Response.json({ data: [] });
     });
     vi.stubGlobal('fetch', fetch);
@@ -176,22 +165,14 @@ describe('delivery partition corrections', () => {
     expect(fetch).toHaveBeenCalled();
   });
 
-  it('looks up large deliveries six chunks at a time and keeps row order', async () => {
-    let open = 0;
-    let peak = 0;
-    const fetch = vi.fn(async (input: string | URL | Request) => {
-      const url = new URL(
-        typeof input === 'string' ? input : input instanceof URL ? input : input.url,
-      );
-      open += 1;
-      peak = Math.max(peak, open);
-      await new Promise((resolve) => setTimeout(resolve, 1));
-      open -= 1;
-      const identities = url.searchParams.get('identities')!.split(',');
+  it('keeps row order and appends the tombstone for a large delivery', async () => {
+    const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const identities = lookupBody(init).get('identities')!.split(',');
       return Response.json({
         data: identities
           .filter((identity) => identity.endsWith('\x1fm-300'))
           .map((FactIdentity) => ({
+            Category: 'messages',
             FactIdentity,
             EventDay: '2026-09-12',
             DeliverySequence: 2,
@@ -209,8 +190,7 @@ describe('delivery partition corrections', () => {
     }));
 
     expect(await prepareDeliveryPartitions(env, plan)).toEqual(['2026-09-12', '2026-09-13']);
-    expect(fetch).toHaveBeenCalledTimes(11);
-    expect(peak).toBe(6);
+    expect(fetch).toHaveBeenCalledTimes(1);
     const messages = plan.rows.messages as Record<string, unknown>[];
     expect(messages).toHaveLength(322);
     expect(messages.slice(0, 321).map((row) => row.message_pk)).toEqual(
@@ -219,19 +199,19 @@ describe('delivery partition corrections', () => {
     expect(messages[321]).toMatchObject({ message_pk: 'm-300', IsDeleted: 1 });
   });
 
-  it('leaves the plan untouched when a later lookup wave fails', async () => {
+  it('leaves the plan untouched when a later lookup batch fails', async () => {
     let calls = 0;
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => {
         calls += 1;
-        if (calls === 9) return new Response('unavailable', { status: 503 });
+        if (calls === 3) return new Response('unavailable', { status: 503 });
         return Response.json({ data: [] });
       }),
     );
     const plan = delivery();
     const template = plan.rows.messages[0] as Record<string, unknown>;
-    plan.rows.messages = Array.from({ length: 321 }, (_, index) => ({
+    plan.rows.messages = Array.from({ length: 1100 }, (_, index) => ({
       ...template,
       message_pk: `m-${index}`,
     }));
@@ -244,6 +224,7 @@ describe('delivery partition corrections', () => {
   it('rejects a later revision or foreign identity before changing the plan', async () => {
     for (const entry of [
       {
+        Category: 'messages',
         FactIdentity: 'org\x1fs\x1fm',
         EventDay: '2026-09-12',
         DeliverySequence: 4,
@@ -251,6 +232,7 @@ describe('delivery partition corrections', () => {
         IngestedAt: '2026-09-13 00:00:00.000',
       },
       {
+        Category: 'messages',
         FactIdentity: 'another-org\x1fs\x1fm',
         EventDay: '2026-09-12',
         DeliverySequence: 2,
@@ -275,6 +257,7 @@ describe('delivery partition corrections', () => {
         Response.json({
           data: [
             {
+              Category: 'messages',
               FactIdentity: 'org\x1fs\x1fm',
               EventDay: '2026-09-13',
               DeliverySequence: 2,
@@ -314,6 +297,7 @@ describe('delivery partition corrections', () => {
     const currentVersion: Record<string, unknown> = { ...row, DeliverySequence: 2, IsDeleted: 0 };
     delete currentVersion.ContentHash;
     const current = {
+      Category: 'messages',
       FactIdentity: 'org\x1fs\x1fm',
       EventDay: '2026-09-13',
       DeliverySequence: 2,

@@ -1,0 +1,22 @@
+# Each identity matches only under the category it was requested with, inside one organization and
+# the caller's retention bounds.
+
+- name: paired_categories
+  description: paired categories
+  expected_http_status: 200
+  parameters: org_id=org_native&categories=messages,tool_events,messages&identities=org_native%1Fchild-pk-6%1Fm6,org_native%1Fchild-pk-7%1Fm7,org_native%1Fchild-pk-7%1Fm7&oldest_day=2025-10-02&today_day=2026-10-02
+  expected_result: |
+    {"Category":"messages","FactIdentity":"org_native\u001Fchild-pk-6\u001Fm6","EventDay":"2026-10-02","DeliverySequence":2,"ContentHash":"hash_m6_2","IngestedAt":"2026-10-02 12:00:00.000"}
+    {"Category":"messages","FactIdentity":"org_native\u001Fchild-pk-7\u001Fm7","EventDay":"2026-10-02","DeliverySequence":2,"ContentHash":"hash_m7_2","IngestedAt":"2026-10-02 12:00:00.000"}
+
+- name: other_organization
+  description: other organization
+  expected_http_status: 200
+  parameters: org_id=org_native&categories=messages&identities=org_other%1Fchild-pk-6%1Fother-m6&oldest_day=2025-10-02&today_day=2026-10-02
+  expected_result: ''
+
+- name: outside_retention
+  description: outside retention
+  expected_http_status: 200
+  parameters: org_id=org_native&categories=messages&identities=org_native%1Fchild-pk-6%1Fm6&oldest_day=2025-10-01&today_day=2026-10-01
+  expected_result: ''

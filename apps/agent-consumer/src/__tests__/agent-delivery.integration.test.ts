@@ -144,9 +144,10 @@ function mockTransport(
     'fetch',
     vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = new URL(String(input));
-      if (url.pathname.includes('agent_fact_identity_day')) {
+      if (url.pathname.endsWith('/agent_fact_identity_day_batch.json')) {
         return Response.json({
           data: identityDays.map((row) => ({
+            Category: 'messages',
             ContentHash: 'f'.repeat(64),
             IngestedAt: '2026-05-20 00:00:00.000',
             ...row,
@@ -782,7 +783,9 @@ describe('bounded delivery durability', () => {
       );
       const identityReadsBeforeRetry = vi
         .mocked(fetch)
-        .mock.calls.filter(([input]) => String(input).includes('agent_fact_identity_day')).length;
+        .mock.calls.filter(([input]) =>
+          String(input).endsWith('/agent_fact_identity_day_batch.json'),
+        ).length;
       identityDays.push({
         FactIdentity: `${recovery.orgId}\x1fs1\x1fmsg_1`,
         EventDay: recovery.days[0]!,
@@ -795,7 +798,9 @@ describe('bounded delivery durability', () => {
       expect(
         vi
           .mocked(fetch)
-          .mock.calls.filter(([input]) => String(input).includes('agent_fact_identity_day')),
+          .mock.calls.filter(([input]) =>
+            String(input).endsWith('/agent_fact_identity_day_batch.json'),
+          ),
       ).toHaveLength(identityReadsBeforeRetry);
       expect(await state.storage.get('receipt')).toMatchObject({ phase: 'complete' });
     });

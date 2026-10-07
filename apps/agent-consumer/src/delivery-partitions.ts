@@ -1,31 +1,18 @@
-import { fetchPipe } from '@trace-flow/tinybird-client';
-import { agentAnalyticsDayBounds, sha256Hex } from '@trace-flow/utils';
+import { sha256Hex } from '@trace-flow/utils';
 import {
   CATEGORIES,
   ROW_IDENTITY_FIELDS,
   factIngestedAtMs,
-  factIdentityListParam,
   factPartitionKey,
   rowIdentity,
+  type Category,
 } from './facts';
+import { lookupFactIdentityDays } from './fact-identity-days';
 import type { DeliveryRows } from './delivery-rows';
 
 interface PartitionLookupEnv {
   TINYBIRD_HOST: string;
   TINYBIRD_AGENT_DELIVERY_READ_TOKEN: string;
-}
-
-// agent_fact_identity_day is a GET endpoint capped at 32 identities per call.
-const IDENTITY_LOOKUP_SIZE = 32;
-// Workers allow six simultaneous outbound connections per invocation.
-const IDENTITY_LOOKUP_CONCURRENCY = 6;
-
-interface IdentityDay {
-  FactIdentity: string;
-  EventDay: string;
-  DeliverySequence: number;
-  ContentHash: string;
-  IngestedAt: string;
 }
 
 /** The caller holds the organization's write permit until this exact plan is committed. */
@@ -34,41 +21,28 @@ export async function prepareDeliveryPartitions(
   delivery: DeliveryRows,
   options: { legacySourceOrder?: boolean } = {},
 ): Promise<string[]> {
-  const { oldestDay, today } = agentAnalyticsDayBounds(Date.now());
   const dirtyDays = new Set<string>();
-  const identityDays = new Map<(typeof CATEGORIES)[number], Map<string, IdentityDay>>();
-  const lookups: { category: (typeof CATEGORIES)[number]; identities: string[] }[] = [];
+  const identities: Partial<Record<Category, string[]>> = {};
   for (const category of CATEGORIES) {
-    const rows = delivery.rows[category] as Record<string, unknown>[];
-    identityDays.set(category, new Map());
-    for (let offset = 0; offset < rows.length; offset += IDENTITY_LOOKUP_SIZE) {
-      lookups.push({
-        category,
-        identities: rows
-          .slice(offset, offset + IDENTITY_LOOKUP_SIZE)
-          .map((row) => rowIdentity(row, ROW_IDENTITY_FIELDS[category])),
-      });
-    }
-  }
-  // Share one six-connection budget across categories. Finish every lookup before changing rows,
-  // so a failed request leaves the persisted recovery plan intact.
-  for (let offset = 0; offset < lookups.length; offset += IDENTITY_LOOKUP_CONCURRENCY) {
-    const wave = lookups.slice(offset, offset + IDENTITY_LOOKUP_CONCURRENCY);
-    const results = await Promise.all(
-      wave.map(({ category, identities }) =>
-        lookupIdentityDays(env, delivery, category, identities, oldestDay, today),
-      ),
+    identities[category] = (delivery.rows[category] as Record<string, unknown>[]).map((row) =>
+      rowIdentity(row, ROW_IDENTITY_FIELDS[category]),
     );
-    for (let index = 0; index < wave.length; index++) {
-      const byIdentity = identityDays.get(wave[index]!.category)!;
-      for (const entry of results[index]!) byIdentity.set(entry.FactIdentity, entry);
+  }
+  // Finish every lookup before changing rows, so a failed request leaves the persisted recovery
+  // plan intact.
+  const identityDays = await lookupFactIdentityDays(env, delivery.orgId, identities);
+  for (const category of CATEGORIES) {
+    for (const entry of identityDays[category].values()) {
+      if (entry.DeliverySequence >= delivery.revision) {
+        throw new Error('Fact identity already has this or a later delivery revision');
+      }
     }
   }
   for (const category of CATEGORIES) {
     const rows = delivery.rows[category] as Record<string, unknown>[];
     const retained: Record<string, unknown>[] = [];
     const tombstones: Record<string, unknown>[] = [];
-    const byIdentity = identityDays.get(category)!;
+    const byIdentity = identityDays[category];
     for (const row of rows) {
       const day = factPartitionKey(category, row);
       const previous = byIdentity.get(rowIdentity(row, ROW_IDENTITY_FIELDS[category]));
@@ -101,59 +75,6 @@ export async function prepareDeliveryPartitions(
     rows.splice(0, rows.length, ...retained, ...tombstones);
   }
   return [...dirtyDays].sort();
-}
-
-async function lookupIdentityDays(
-  env: PartitionLookupEnv,
-  delivery: DeliveryRows,
-  category: (typeof CATEGORIES)[number],
-  identities: string[],
-  oldestDay: string,
-  today: string,
-): Promise<IdentityDay[]> {
-  const entries = await fetchPipe<IdentityDay>({
-    baseUrl: env.TINYBIRD_HOST,
-    token: env.TINYBIRD_AGENT_DELIVERY_READ_TOKEN,
-    pipe: 'agent_fact_identity_day',
-    params: {
-      org_id: delivery.orgId,
-      category,
-      identities: factIdentityListParam(identities),
-      oldest_day: oldestDay,
-      today_day: today,
-    },
-    schema: {
-      parse(value: unknown): IdentityDay {
-        const entry = value as IdentityDay;
-        if (
-          !entry ||
-          typeof entry.FactIdentity !== 'string' ||
-          typeof entry.EventDay !== 'string' ||
-          !/^\d{4}-\d{2}-\d{2}$/.test(entry.EventDay) ||
-          !Number.isSafeInteger(Number(entry.DeliverySequence)) ||
-          Number(entry.DeliverySequence) < 1 ||
-          typeof entry.ContentHash !== 'string' ||
-          !/^[0-9a-f]{64}$/.test(entry.ContentHash) ||
-          typeof entry.IngestedAt !== 'string'
-        ) {
-          throw new Error('Invalid fact identity day response');
-        }
-        factIngestedAtMs(entry);
-        return { ...entry, DeliverySequence: Number(entry.DeliverySequence) };
-      },
-    },
-  });
-  const seen = new Set<string>();
-  for (const entry of entries) {
-    if (!identities.includes(entry.FactIdentity) || seen.has(entry.FactIdentity)) {
-      throw new Error('Unexpected or duplicate identity day response');
-    }
-    if (entry.DeliverySequence >= delivery.revision) {
-      throw new Error('Fact identity already has this or a later delivery revision');
-    }
-    seen.add(entry.FactIdentity);
-  }
-  return entries;
 }
 
 async function contentHashAtRevision(

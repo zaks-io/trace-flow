@@ -191,6 +191,16 @@ The isolated branch produced these measurements on 2026-09-13:
   delivery sequence. Identity lookups also receive the consumer's exact calendar retention bounds
   so asynchronous TTL cleanup cannot expose an expired prior day. A 32-identity lookup against the
   two-million-row fixture read 16,384 index rows and 2,533,522 bytes in 8.307 milliseconds.
+- Delivery and frozen-replay identity lookups pair each identity with its category in one POST
+  request, splitting only at 512 identities or 64 KiB of identity text; Tinybird rejects queries
+  above its maximum size. Production had issued one 200 to 450 millisecond request per 32 identities
+  per category ([TRACE-FLOW-2Y](https://zaksio.sentry.io/issues/TRACE-FLOW-2Y)). On a
+  three-million-row Tinybird Local index with 13 monthly partitions, one 261-identity, six-category
+  lookup read 1,140,219 rows in 23 to 28 milliseconds and peaked at 93 MiB or less. The same identities
+  as twelve per-category requests read about 2.7 million rows, each request peaking near 138 MiB.
+  The sorting-key filter runs in `PREWHERE`, which is safe under `FINAL` because every version of an
+  identity shares those columns; filtering after `FINAL` instead merged every scanned row and used
+  567 MiB and 95 milliseconds.
 - Frozen-fact verification pages use the event date and native identity tuple. On the two-million-row
   fixture, a 5,000-row message page read 10,960 rows and 4,306,206 bytes in 44.075 milliseconds. The
   remaining 464-row page used the same bounded scan and completed in 24.741 milliseconds.
