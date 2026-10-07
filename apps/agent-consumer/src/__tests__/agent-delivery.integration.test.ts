@@ -312,6 +312,31 @@ describe('bounded delivery durability', () => {
     });
   });
 
+  it('commits a delivery in three coordinator round trips', async () => {
+    mockTransport();
+    const { host, reference } = await staged();
+    await runInDurableObject(host, async (instance) => {
+      const calls: string[] = [];
+      const target = instance as unknown as { coordinator(orgId: string): object };
+      const original = target.coordinator.bind(instance);
+      vi.spyOn(target, 'coordinator').mockImplementation(
+        (orgId) =>
+          new Proxy(original(orgId), {
+            get(stub, method, receiver) {
+              const value: unknown = Reflect.get(stub, method, receiver);
+              if (typeof value !== 'function') return value;
+              return (...args: unknown[]) => {
+                calls.push(String(method));
+                return (value as (...rpcArgs: unknown[]) => unknown).apply(stub, args);
+              };
+            },
+          }),
+      );
+      await expect(instance.process(reference)).resolves.toBe('complete');
+      expect(calls).toEqual(['beginWrite', 'planWrite', 'finishDelivery']);
+    });
+  });
+
   it('reconciles an ambiguous committed insert without a second write', async () => {
     mockTransport(true);
     const { host, reference } = await staged();
@@ -765,15 +790,14 @@ describe('bounded delivery durability', () => {
         ...env,
         AGENT_DELIVERY_COORDINATOR: {
           getByName: vi.fn(() => ({
-            getReservation: vi.fn(async () => reservation),
-            acquireWrite: vi.fn(async () => true),
-            replaceDirtyDays: vi.fn(async ({ dirtyDays }) => ({ dirtyDays })),
-            linkDirtyDays: vi.fn(async () => undefined),
-            complete: vi.fn(async () => {
-              reservation = null;
+            beginWrite: vi.fn(async () => ({ reservation, writePermit: reservation !== null })),
+            planWrite: vi.fn(async ({ dirtyDays }) => ({ dirtyDays })),
+            // Completion commits before scheduling, so an interrupted schedule loses the reservation.
+            finishDelivery: vi.fn(async ({ hasReservation }) => {
+              if (hasReservation) reservation = null;
+              await scheduleSnapshot();
+              return { next: null };
             }),
-            scheduleSnapshot,
-            getNextDelivery: vi.fn(async () => null),
           })),
         } as unknown as typeof env.AGENT_DELIVERY_COORDINATOR,
         AGENT_QUEUE: { send } as unknown as typeof env.AGENT_QUEUE,

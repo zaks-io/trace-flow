@@ -211,6 +211,86 @@ describe('AgentDeliveryCoordinator', () => {
     ).resolves.toBe(true);
   });
 
+  it('runs each combined delivery step with the guards of the calls it replaces', async () => {
+    await withCoordinator((coordinator) =>
+      coordinator.reserve(reservation('delivery-1', HASH_A, ['2026-09-12'])),
+    );
+    await withCoordinator((coordinator) =>
+      coordinator.reserve(reservation('delivery-2', HASH_B, ['2026-09-13'])),
+    );
+
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.beginWrite({ deliveryId: 'delivery-missing', payloadSha256: HASH_A }),
+      ),
+    ).resolves.toEqual({ reservation: null, writePermit: false });
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.beginWrite({ deliveryId: 'delivery-2', payloadSha256: HASH_B }),
+      ),
+    ).resolves.toMatchObject({ reservation: { deliveryId: 'delivery-2' }, writePermit: false });
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.beginWrite({ deliveryId: 'delivery-2', payloadSha256: HASH_A }),
+      ),
+    ).rejects.toThrow('payload hash mismatch');
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.beginWrite({ deliveryId: 'delivery-1', payloadSha256: HASH_A }),
+      ),
+    ).resolves.toMatchObject({ writePermit: true });
+
+    await withCoordinator((coordinator, state) => {
+      expect(
+        coordinator.planWrite({
+          deliveryId: 'delivery-1',
+          payloadSha256: HASH_A,
+          dirtyDays: ['2026-09-12', '2026-09-11'],
+          links: [{ oldDay: '2026-09-11', newDay: '2026-09-12' }],
+        }),
+      ).toEqual({ dirtyDays: ['2026-09-11', '2026-09-12'] });
+      expect(state.storage.sql.exec('SELECT day_a, day_b FROM dirty_day_links').toArray()).toEqual([
+        { day_a: '2026-09-11', day_b: '2026-09-12' },
+      ]);
+    });
+    await expect(
+      withCoordinator((coordinator) =>
+        coordinator.planWrite({
+          deliveryId: 'delivery-2',
+          payloadSha256: HASH_B,
+          dirtyDays: ['2026-09-13'],
+          links: [],
+        }),
+      ),
+    ).rejects.toThrow('does not hold write permit');
+
+    await withCoordinator(async (coordinator) => {
+      const scheduleSnapshot = vi.spyOn(coordinator, 'scheduleSnapshot');
+      await expect(
+        coordinator.finishDelivery({
+          deliveryId: 'delivery-1',
+          payloadSha256: HASH_A,
+          orgId: 'org-1',
+          hasReservation: true,
+          plannedDirtyDays: ['2026-09-11', '2026-09-12'],
+        }),
+      ).resolves.toMatchObject({ next: { deliveryId: 'delivery-2' } });
+      expect(scheduleSnapshot).toHaveBeenCalledExactlyOnceWith({ orgId: 'org-1' });
+
+      scheduleSnapshot.mockClear();
+      await expect(
+        coordinator.finishDelivery({
+          deliveryId: 'delivery-2',
+          payloadSha256: HASH_B,
+          orgId: 'org-1',
+          hasReservation: true,
+          plannedDirtyDays: ['2026-09-12'],
+        }),
+      ).rejects.toThrow('do not match its persisted plan');
+      expect(scheduleSnapshot).not.toHaveBeenCalled();
+    });
+  });
+
   it('gates reservations until a successful snapshot clears captured days', async () => {
     await completeOne('delivery-1', ['2026-09-11', '2026-09-13']);
     const snapshot = await withCoordinator((coordinator) =>

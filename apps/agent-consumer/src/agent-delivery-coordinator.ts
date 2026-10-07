@@ -88,6 +88,7 @@ import {
   assertExactKeys,
   assertNewReservationWindow,
   assertRetainedDaySet,
+  sameStrings,
   validateDaySet,
   validateDeliveryPlanDays,
   validateDeliveryId,
@@ -341,6 +342,60 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
       pruneRetainedDayMetadata(this.ctx.storage, Date.now());
       return { deliverySequence: reservation.delivery_sequence, dirtyDays };
     });
+  }
+
+  // The three delivery-step methods below each replace a sequence of separate RPCs, because every
+  // round trip from AgentDelivery costs about 100 ms while the organization's write permit is held.
+  // Each one runs the same calls in the same order, so a lost reply retries exactly as before.
+
+  beginWrite(input: { deliveryId: string; payloadSha256: string }): {
+    reservation: AgentDeliveryReservation | null;
+    writePermit: boolean;
+  } {
+    assertExactKeys(input, ['deliveryId', 'payloadSha256'], 'begin write');
+    const reservation = this.getReservation({ deliveryId: input.deliveryId });
+    return { reservation, writePermit: reservation !== null && this.acquireWrite(input) };
+  }
+
+  planWrite(input: {
+    deliveryId: string;
+    payloadSha256: string;
+    dirtyDays: string[];
+    links: AgentDirtyDayLink[];
+  }): { dirtyDays: string[] } {
+    assertExactKeys(input, ['deliveryId', 'dirtyDays', 'links', 'payloadSha256'], 'plan write');
+    const { deliveryId, payloadSha256, dirtyDays, links } = input;
+    if (!Array.isArray(links)) throw new Error('plan write links must be an array');
+    const planned = this.replaceDirtyDays({ deliveryId, payloadSha256, dirtyDays });
+    if (!sameStrings(planned.dirtyDays, validateDeliveryPlanDays(dirtyDays))) {
+      throw new Error('Coordinator delivery plan dirty days mismatch');
+    }
+    if (links.length > 0) this.linkDirtyDays({ deliveryId, payloadSha256, links });
+    return planned;
+  }
+
+  async finishDelivery(input: {
+    deliveryId: string;
+    payloadSha256: string;
+    orgId: string;
+    hasReservation: boolean;
+    plannedDirtyDays: string[];
+  }): Promise<{ next: AgentDeliveryReservation | null }> {
+    assertExactKeys(
+      input,
+      ['deliveryId', 'hasReservation', 'orgId', 'payloadSha256', 'plannedDirtyDays'],
+      'finish delivery',
+    );
+    const { deliveryId, payloadSha256, orgId, hasReservation } = input;
+    const plannedDirtyDays = validateDeliveryPlanDays(input.plannedDirtyDays);
+    if (hasReservation) {
+      const completed = this.complete({ deliveryId, payloadSha256 });
+      if (!sameStrings(completed.dirtyDays, plannedDirtyDays)) {
+        throw new Error('Completed delivery dirty days do not match its persisted plan');
+      }
+    }
+    if (plannedDirtyDays.length > 0) await this.scheduleSnapshot({ orgId });
+    return { next: this.getNextDelivery() };
   }
 
   expire(input: { deliveryId: string; payloadSha256: string }): {

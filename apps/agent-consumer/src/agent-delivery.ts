@@ -278,7 +278,10 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     source?: AgentIngestQueueMessage,
   ): Promise<'complete' | 'retry'> {
     const coordinator = this.coordinator(reference.org_id);
-    const reservation = await coordinator.getReservation({ deliveryId: reference.key });
+    const { reservation, writePermit } = await coordinator.beginWrite({
+      deliveryId: reference.key,
+      payloadSha256: reference.sha256,
+    });
     if (
       state.phase !== 'committing' &&
       (reservation?.payloadSha256 !== reference.sha256 ||
@@ -286,14 +289,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     ) {
       throw new Error('Agent delivery reservation is missing or inconsistent');
     }
-    if (
-      reservation &&
-      !(await coordinator.acquireWrite({
-        deliveryId: reference.key,
-        payloadSha256: reference.sha256,
-      }))
-    )
-      return 'retry';
+    if (reservation && !writePermit) return 'retry';
     if (state.phase === 'committing') {
       await this.finishCommit(state, reference, coordinator, reservation !== null);
       return 'complete';
@@ -337,22 +333,12 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     } else if (JSON.stringify(state.plannedDirtyDays) !== JSON.stringify(dirtyDays)) {
       throw new Error('Stored delivery plan dirty days changed');
     }
-    if (reservation) {
-      const replaced = await coordinator.replaceDirtyDays({
+    if (reservation)
+      await coordinator.planWrite({
         deliveryId: reference.key,
         payloadSha256: reference.sha256,
         dirtyDays,
-      });
-      if (JSON.stringify(replaced.dirtyDays) !== JSON.stringify(dirtyDays)) {
-        throw new Error('Coordinator delivery plan dirty days mismatch');
-      }
-    }
-    const links = deliveryPartitionLinks(delivery);
-    if (reservation && links.length > 0)
-      await coordinator.linkDirtyDays({
-        deliveryId: reference.key,
-        payloadSha256: reference.sha256,
-        links,
+        links: deliveryPartitionLinks(delivery),
       });
     for (const category of CATEGORIES) {
       const rows = delivery.rows[category];
@@ -446,22 +432,13 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     if (state.plannedDirtyDays === undefined) {
       throw new Error('Committing delivery has no persisted dirty day plan');
     }
-    const completed = hasReservation
-      ? await coordinator.complete({
-          deliveryId: reference.key,
-          payloadSha256: reference.sha256,
-        })
-      : undefined;
-    if (
-      completed &&
-      JSON.stringify(completed.dirtyDays) !== JSON.stringify(state.plannedDirtyDays)
-    ) {
-      throw new Error('Completed delivery dirty days do not match its persisted plan');
-    }
-    if (state.plannedDirtyDays.length > 0) {
-      await coordinator.scheduleSnapshot({ orgId: reference.org_id });
-    }
-    const next = await coordinator.getNextDelivery();
+    const { next } = await coordinator.finishDelivery({
+      deliveryId: reference.key,
+      payloadSha256: reference.sha256,
+      orgId: reference.org_id,
+      hasReservation,
+      plannedDirtyDays: state.plannedDirtyDays,
+    });
     if (next) {
       const wake: AgentDeliveryReference = {
         type: 'agent-delivery',
