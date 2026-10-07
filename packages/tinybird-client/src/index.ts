@@ -19,6 +19,7 @@ export { TinybirdAuthError, TinybirdQueryError, TinybirdInsertError } from './er
 export type { TinybirdInsertFailureReason } from './errors';
 export {
   TinybirdRecoveryStore,
+  requireReconcileAction,
   requireRecoveryReason,
   serializeTinybirdFailure,
   splitUtf8Chunks,

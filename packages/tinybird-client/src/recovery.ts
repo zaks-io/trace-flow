@@ -29,9 +29,15 @@ export interface RecoveryPage {
   nextAfterId: number | null;
 }
 
+export type ReconcileRecoveryAction =
+  | 'confirm-written'
+  | 'confirm-not-written'
+  | 'retain-original'
+  | 'discard-dead-letter';
+
 export interface ReconcileRecoveryInput {
   recoveryId: number;
-  action: 'confirm-written' | 'confirm-not-written' | 'retain-original';
+  action: ReconcileRecoveryAction;
   reason: string;
 }
 
@@ -528,6 +534,29 @@ export class TinybirdRecoveryStore {
       resolution: row.resolution,
       resolutionReason: row.resolution_reason,
     };
+  }
+}
+
+const RECONCILE_ACTIONS: Record<RecoveryKind, readonly ReconcileRecoveryAction[]> = {
+  tinybird_insert: ['confirm-written', 'confirm-not-written'],
+  repair: ['retain-original'],
+  // Retiring keeps the payload as a resolved record; replaying can be worse than
+  // dropping, e.g. rows whose retention columns predate the schema.
+  dlq: ['discard-dead-letter'],
+};
+
+export function requireReconcileAction(
+  record: RecoveryRecord,
+  action: ReconcileRecoveryAction,
+): void {
+  if (!Object.values(RECONCILE_ACTIONS).some((actions) => actions.includes(action))) {
+    throw new Error('invalid recovery action');
+  }
+  if (record.state !== 'blocked') throw new Error('recovery record is not blocked');
+  if (!RECONCILE_ACTIONS[record.kind].includes(action)) {
+    throw new Error(
+      `${record.kind} recovery records allow ${RECONCILE_ACTIONS[record.kind].join(' or ')}`,
+    );
   }
 }
 

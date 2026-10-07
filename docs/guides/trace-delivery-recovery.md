@@ -86,6 +86,12 @@ inserted no rows. Timeouts, malformed receipts, partial ingestion, and other amb
 outcomes remain in durable recovery storage. They are not blindly resent to a
 non-idempotent endpoint.
 
+A consumer deploy resets busy Durable Objects. An insert in flight at that moment is
+retained as `uncertain` with `reason=worker_restarted_with_in_flight_insert`, whether or
+not Tinybird committed it. Cloudflare can also retire an instance mid-request, so the
+stored reason may hide the real response, such as a 520. Reconcile these records like
+any other uncertain insert.
+
 Rejected and uncertain batches do not block later healthy work. Recovery records
 retain complete payloads and outcomes. Changed content under an existing span or fact
 identity is retained as a repair record; replaying it as an ordinary append would
@@ -150,11 +156,8 @@ curl --fail-with-body -H 'Content-Type: application/json' \
 
 Follow `nextAfterId` using `options.afterId` until it is null. Payloads are complete
 and can contain private analytics metadata. Keep the files private.
-Use `options.kind` with `tinybird_insert`, `repair`, or `dlq` to inspect one recovery
-kind without materializing nonmatching payloads. This read uses the existing state and
-row-ID traversal because adding an index to a near-capacity recovery object is unsafe.
-It can still scan nonmatching record metadata in a large blocked history; count, byte,
-state, and cursor bounds remain unchanged.
+Pages return every recovery kind; filter on each record's `kind` locally. Count, byte,
+state, and cursor bounds apply to every page.
 
 ## Reconciliation
 
@@ -172,6 +175,11 @@ submitted rows, including when replaying legacy credentials.
 - For a changed-content repair, `retain-original` explicitly accepts the stored version.
   If the correction should replace it, rebuild the affected analytical data from the
   retained payload first. An append cannot safely replace previously aggregated facts.
+- For a DLQ record that must not be replayed, use `discard-dead-letter`. The record
+  stays as a resolved audit entry with its payload; nothing is written to Tinybird.
+  Prefer it when replay would write rows that are no longer valid, such as messages
+  older than the retention columns, which would default `RetentionExpiresAt` to 0 and
+  feed materialized rollups while the rows expire immediately.
 
 Example reconciliation request:
 
@@ -189,8 +197,8 @@ Example reconciliation request:
 ```
 
 POST it to `/reconcileRecovery`. The reason and resolution are retained for audit.
-For a DLQ record, POST the same shape without `action` to `/replayDlq` after fixing
-the underlying failure. A failed replay remains blocked. Do not repeatedly replay
+To replay a DLQ record instead of discarding it, POST the same shape without `action`
+to `/replayDlq` after fixing the underlying failure. A failed replay remains blocked. Do not repeatedly replay
 unchanged malformed messages.
 
 Inspect blocked recovery counts even when the normal queue is draining. A healthy
@@ -330,7 +338,7 @@ SQLite allocation failure or measured database growth aborts and rolls back the 
 stops the command with the private journal intact.
 
 Resolve blocked `tinybird_insert` records before this repair command. Enumerate them through
-`listRecovery` with `options.kind="tinybird_insert"`, prove the exact submitted rows are fully
+`listRecovery`, keep records whose `kind` is `tinybird_insert`, prove the exact submitted rows are fully
 present at the target, and use the existing `confirm-written` reconciliation. If any row is absent
 or partial, stop without resolving the record. Do not use `confirm-not-written` or attempt a legacy
 flush after freeze. Require a separate reviewed recovery plan that writes and verifies the current
