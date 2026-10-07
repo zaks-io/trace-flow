@@ -72,6 +72,10 @@ class_name = "UsageTracker"
 tag = "v1"
 new_sqlite_classes = ["UsageTracker"]
 
+[[durable_objects.bindings]]
+name = "TRACE_DELIVERY_SWEEP"
+class_name = "TraceDeliverySweep"
+
 # Preserve the applied dev capture migration history before retiring its namespace.
 [[migrations]]
 tag = "v2"
@@ -81,6 +85,10 @@ new_sqlite_classes = ["CaptureLedger"]
 tag = "v3"
 deleted_classes = ["CaptureLedger"]
 
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = ["TraceDeliverySweep"]
+
 [env.production]
 name = "trace-flow-proxy"
 workers_dev = false
@@ -88,6 +96,10 @@ workers_dev = false
 [[env.production.migrations]]
 tag = "v1"
 new_sqlite_classes = ["UsageTracker"]
+
+[[env.production.migrations]]
+tag = "v2"
+new_sqlite_classes = ["TraceDeliverySweep"]
 
 [env.production.triggers]
 crons = ["*/5 * * * *"]
@@ -135,6 +147,10 @@ simple = { limit = 600, period = 60 }
 name = "USAGE_TRACKER"
 class_name = "UsageTracker"
 
+[[env.production.durable_objects.bindings]]
+name = "TRACE_DELIVERY_SWEEP"
+class_name = "TraceDeliverySweep"
+
 [env.preview]
 name = "trace-flow-proxy-preview"
 workers_dev = true
@@ -146,6 +162,10 @@ custom_domain = true
 [[env.preview.migrations]]
 tag = "v1"
 new_sqlite_classes = ["UsageTracker"]
+
+[[env.preview.migrations]]
+tag = "v2"
+new_sqlite_classes = ["TraceDeliverySweep"]
 
 [env.preview.triggers]
 crons = ["*/5 * * * *"]
@@ -188,3 +208,7 @@ simple = { limit = 600, period = 60 }
 [[env.preview.durable_objects.bindings]]
 name = "USAGE_TRACKER"
 class_name = "UsageTracker"
+
+[[env.preview.durable_objects.bindings]]
+name = "TRACE_DELIVERY_SWEEP"
+class_name = "TraceDeliverySweep"

@@ -35,6 +35,44 @@ Do not roll the consumer back to a version that cannot read delivery references 
 the queue or outbox still contains them. A proxy rollback can stop producing new
 references, but the compatible consumer must finish existing deliveries.
 
+## Proxy recovery sweep limits
+
+The five-minute cron invokes one `TraceDeliverySweep` Durable Object per producer
+namespace. An in-flight guard skips overlapping calls. Each run scans at most ten
+pages of up to 1,000 envelopes. It checks a 30-second elapsed-time budget between
+pages; the current page and its bounded listing retries finish before stopping.
+Recovery references use Queue `sendBatch` in groups of up to 100 messages, keeping
+publication at most 100 batch calls per run. See the
+[Queues batch limits](https://developers.cloudflare.com/queues/configuration/javascript-apis/#queue).
+
+After every fully published page, the coordinator durably saves the last scanned
+key. Subsequent runs use R2 `startAfter`, so progress survives a restart and consumer
+deletion of that key. A complete pass clears the position and the next cron starts
+from the beginning. Keys inserted before the saved position, and envelopes that
+were too young when scanned, are considered on the next pass. Large backlogs
+therefore increase recovery latency; `passAgeMs` exposes that delay. The retained
+envelopes remain the source of truth, with no recovery expiration.
+
+A failed queue batch stops the sweep without advancing that page's position. The
+next cron retries the page; successful earlier batches may be published again.
+Consumers already deduplicate those references. No sweep deletes an envelope or
+changes the consumer acknowledgement boundary.
+
+`proxy.delivery_sweep_completed` and `proxy.delivery_sweep_failed` report the producer
+`environment`, `pages`, `listAttempts`, `throttles`, `scanned`, `enqueued`,
+`queueBatchAttempts`, `enqueueFailures`, `latencyMs`, `passAgeMs`, `resumed`, `hasMore`,
+and `stopReason`. `enqueueFailures` counts rejected batch calls; an uncertain failed
+publication is not counted as confirmed `enqueued`. A bounded run has
+`stopReason=page_limit` or `time_budget` and `hasMore=true`; it is a successful partial
+scan. `proxy.delivery_sweep_skipped` records `reason=already_running`.
+
+For a recurring R2 throttle, compare `listAttempts` and `throttles` against `pages`
+in the same environment. Rising `passAgeMs`, repeated partial scans, queue failures,
+or overlap skips need investigation even when ordinary request processing succeeds.
+The baseline empty scan remains one R2 listing every five minutes. This change
+bounds outage recovery work; it does not establish why R2 throttled a low-volume
+listing or replace the outbox with a delivery index.
+
 ## Tinybird delivery
 
 Both consumers use `wait=true` and require HTTP 200 with a receipt confirming every

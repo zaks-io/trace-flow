@@ -7,8 +7,8 @@ import {
   buildTraceDeliveryEnvelope,
   enqueueTraceDelivery,
   persistTraceDelivery,
-  sweepTraceDeliveries,
 } from '../delivery';
+import { createSweepMetrics, sweepTraceDeliveries } from '../delivery-sweep';
 
 const ROOT_KEY = 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
 const noopLogger: Logger = {
@@ -111,6 +111,7 @@ describe('trace delivery producer', () => {
       })),
     } as unknown as R2Bucket;
     const queue = {
+      sendBatch: vi.fn().mockResolvedValue(undefined),
       send: vi
         .fn()
         .mockRejectedValueOnce(new Error('queue unavailable'))
@@ -127,9 +128,16 @@ describe('trace delivery producer', () => {
     );
     expect(JSON.parse(persisted.get(key) ?? '')).toEqual({ version: 1, message: otlpMessage });
     await expect(
-      sweepTraceDeliveries(storage, queue as never, noopLogger, 'dev', 600_001),
-    ).resolves.toBe(1);
-    expect(queue.send).toHaveBeenLastCalledWith({ type: 'delivery', key });
+      sweepTraceDeliveries(
+        storage,
+        queue as never,
+        noopLogger,
+        'dev',
+        { metrics: createSweepMetrics(false), checkpoint: async () => {} },
+        600_001,
+      ),
+    ).resolves.toMatchObject({ enqueued: 1 });
+    expect(queue.sendBatch).toHaveBeenCalledWith([{ body: { type: 'delivery', key } }]);
   });
 
   it('fails when the initial durable write is not accepted', async () => {
@@ -231,23 +239,28 @@ describe('trace delivery producer', () => {
           truncated: false,
         }),
     } as unknown as R2Bucket;
-    const queue = { send: vi.fn().mockResolvedValue(undefined) };
+    const queue = { sendBatch: vi.fn().mockResolvedValue(undefined) };
 
     await expect(
-      sweepTraceDeliveries(storage, queue as never, noopLogger, 'dev', 601_000),
-    ).resolves.toBe(2);
+      sweepTraceDeliveries(
+        storage,
+        queue as never,
+        noopLogger,
+        'dev',
+        { metrics: createSweepMetrics(false), checkpoint: async () => {} },
+        601_000,
+      ),
+    ).resolves.toMatchObject({ enqueued: 2, scanned: 3, pages: 2 });
     expect(storage.list).toHaveBeenNthCalledWith(2, {
       prefix: 'trace-deliveries/dev-',
       limit: 1_000,
-      cursor: 'next',
+      startAfter: 'trace-deliveries/first',
     });
-    expect(queue.send).toHaveBeenCalledWith({
-      type: 'delivery',
-      key: 'trace-deliveries/second',
-    });
-    expect(queue.send).not.toHaveBeenCalledWith({
-      type: 'delivery',
-      key: 'trace-deliveries/recent',
+    expect(queue.sendBatch).toHaveBeenCalledWith([
+      { body: { type: 'delivery', key: 'trace-deliveries/second' } },
+    ]);
+    expect(queue.sendBatch.mock.calls.flatMap(([batch]) => batch)).not.toContainEqual({
+      body: { type: 'delivery', key: 'trace-deliveries/recent' },
     });
   });
 
@@ -262,50 +275,60 @@ describe('trace delivery producer', () => {
         truncated: false,
       })),
     } as unknown as R2Bucket;
-    const devQueue = { send: vi.fn().mockResolvedValue(undefined) };
-    const previewQueue = { send: vi.fn().mockResolvedValue(undefined) };
+    const devQueue = { sendBatch: vi.fn().mockResolvedValue(undefined) };
+    const previewQueue = { sendBatch: vi.fn().mockResolvedValue(undefined) };
 
-    await sweepTraceDeliveries(storage, devQueue as never, noopLogger, 'dev', 600_001);
-    await sweepTraceDeliveries(storage, previewQueue as never, noopLogger, 'preview', 600_001);
+    await sweepTraceDeliveries(
+      storage,
+      devQueue as never,
+      noopLogger,
+      'dev',
+      { metrics: createSweepMetrics(false), checkpoint: async () => {} },
+      600_001,
+    );
+    await sweepTraceDeliveries(
+      storage,
+      previewQueue as never,
+      noopLogger,
+      'preview',
+      { metrics: createSweepMetrics(false), checkpoint: async () => {} },
+      600_001,
+    );
 
-    expect(devQueue.send).toHaveBeenCalledTimes(1);
-    expect(devQueue.send).toHaveBeenCalledWith({
-      type: 'delivery',
-      key: 'trace-deliveries/dev-first',
-    });
-    expect(previewQueue.send).toHaveBeenCalledTimes(1);
-    expect(previewQueue.send).toHaveBeenCalledWith({
-      type: 'delivery',
-      key: 'trace-deliveries/preview-first',
-    });
+    expect(devQueue.sendBatch).toHaveBeenCalledTimes(1);
+    expect(devQueue.sendBatch).toHaveBeenCalledWith([
+      { body: { type: 'delivery', key: 'trace-deliveries/dev-first' } },
+    ]);
+    expect(previewQueue.sendBatch).toHaveBeenCalledTimes(1);
+    expect(previewQueue.sendBatch).toHaveBeenCalledWith([
+      { body: { type: 'delivery', key: 'trace-deliveries/preview-first' } },
+    ]);
   });
 
-  it('bounds enqueue concurrency without limiting page progress', async () => {
+  it('publishes references in batches within the Queue API limit', async () => {
     const storage = {
-      list: vi.fn(async () => ({
-        objects: Array.from({ length: 25 }, (_, index) => ({
-          key: `trace-deliveries/dev-${index}`,
+      list: vi.fn().mockResolvedValue({
+        objects: Array.from({ length: 225 }, (_, i) => ({
+          key: `trace-deliveries/dev-${i}`,
           uploaded: new Date(1),
         })),
         truncated: false,
-      })),
-    } as unknown as R2Bucket;
-    let active = 0;
-    let maxActive = 0;
-    const queue = {
-      send: vi.fn(async () => {
-        active++;
-        maxActive = Math.max(maxActive, active);
-        await Promise.resolve();
-        active--;
       }),
-    };
-
+    } as unknown as R2Bucket;
+    const queue = { sendBatch: vi.fn().mockResolvedValue(undefined) };
     await expect(
-      sweepTraceDeliveries(storage, queue as never, noopLogger, 'dev', 600_001),
-    ).resolves.toBe(25);
-
-    expect(queue.send).toHaveBeenCalledTimes(25);
-    expect(maxActive).toBe(10);
+      sweepTraceDeliveries(
+        storage,
+        queue as never,
+        noopLogger,
+        'dev',
+        {
+          metrics: createSweepMetrics(false),
+          checkpoint: async () => {},
+        },
+        600_001,
+      ),
+    ).resolves.toMatchObject({ enqueued: 225, queueBatchAttempts: 3 });
+    expect(queue.sendBatch.mock.calls.map(([batch]) => batch.length)).toEqual([100, 100, 25]);
   });
 });

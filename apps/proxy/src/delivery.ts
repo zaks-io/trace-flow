@@ -8,17 +8,7 @@ import type {
   TraceDeliveryPayload,
 } from '@trace-flow/types';
 import { buildStoredBodyKey } from '@trace-flow/types';
-import {
-  buildTraceDeliveryKey,
-  encryptStoredBodyPayload,
-  TRACE_DELIVERY_PREFIX,
-} from '@trace-flow/utils';
-import type { Logger } from '@trace-flow/logging';
-
-const LIST_PAGE_SIZE = 1_000;
-const SWEEP_SEND_CONCURRENCY = 10;
-const MAX_SWEEP_PAGES = 10_000;
-const SWEEP_MIN_AGE_MS = 5 * 60 * 1_000;
+import { buildTraceDeliveryKey, encryptStoredBodyPayload } from '@trace-flow/utils';
 
 interface BodyInput {
   requestId: string;
@@ -63,82 +53,7 @@ export async function enqueueTraceDelivery(
   });
 }
 
-export async function sweepTraceDeliveries(
-  storage: R2Bucket,
-  queue: Queue<TraceDeliveryMessage>,
-  logger: Logger,
-  namespace: string,
-  now = Date.now(),
-): Promise<number> {
-  const prefix = `${TRACE_DELIVERY_PREFIX}${validateNamespace(namespace)}-`;
-  let cursor: string | undefined;
-  let pageCount = 0;
-  let enqueued = 0;
-  let hasMore = true;
-
-  while (hasMore) {
-    const page = await listTraceDeliveryPage(storage, {
-      prefix,
-      limit: LIST_PAGE_SIZE,
-      cursor,
-    });
-    pageCount++;
-    if (pageCount > MAX_SWEEP_PAGES) throw new Error('Trace delivery sweep exceeded page bound');
-
-    const pending = page.objects.filter(
-      (object) => now - object.uploaded.getTime() >= SWEEP_MIN_AGE_MS,
-    );
-    for (let offset = 0; offset < pending.length; offset += SWEEP_SEND_CONCURRENCY) {
-      const batch = pending.slice(offset, offset + SWEEP_SEND_CONCURRENCY);
-      const results = await Promise.allSettled(
-        batch.map((object) =>
-          queue.send({
-            type: 'delivery',
-            key: object.key,
-          }),
-        ),
-      );
-      for (let index = 0; index < results.length; index++) {
-        const result = results[index];
-        if (result?.status === 'fulfilled') {
-          enqueued++;
-        } else {
-          logger.error('proxy.delivery_sweep_enqueue_failed', result?.reason, {
-            key: batch[index]?.key,
-          });
-        }
-      }
-    }
-
-    if (page.truncated) {
-      if (!page.cursor || page.cursor === cursor) {
-        throw new Error('Trace delivery sweep cursor did not advance');
-      }
-      cursor = page.cursor;
-    } else {
-      hasMore = false;
-    }
-  }
-
-  return enqueued;
-}
-
-async function listTraceDeliveryPage(storage: R2Bucket, options: R2ListOptions) {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await storage.list(options);
-    } catch (error) {
-      // Listing is read-only; retry throttles without replaying already enqueued pages.
-      if (!(error instanceof Error) || !error.message.endsWith('(10058)') || attempt >= 3) {
-        throw error;
-      }
-      const delay = 1_000 * 2 ** attempt + Math.floor(Math.random() * 250);
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-  }
-}
-
-function validateNamespace(namespace: string): string {
+export function validateNamespace(namespace: string): string {
   if (typeof namespace !== 'string' || !/^[a-z0-9][a-z0-9_-]*$/i.test(namespace)) {
     throw new Error('Trace delivery namespace must be a non-empty path-safe identifier');
   }
