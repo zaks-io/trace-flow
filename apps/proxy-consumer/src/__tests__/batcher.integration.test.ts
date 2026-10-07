@@ -385,6 +385,64 @@ describe('TraceBatcher logic', () => {
     expect(insertIntoTinybirdWithRetry).not.toHaveBeenCalled();
   });
 
+  it('retires a dead-lettered message without replaying it and keeps its payload', async () => {
+    const payload = JSON.stringify({ messageId: 'dead', body: { type: 'otlp', traces: [] } });
+    const dlq = await runInDurableObject(batcher, (instance: TraceBatcherInstance) =>
+      instance.preserveDlq(payload, '{"reason":"dead_letter_queue_delivery"}', 'dead'),
+    );
+    expect((await getStats()).blockedRecoveryRecords).toBe(1);
+
+    await expect(
+      runInDurableObject(batcher, (instance: TraceBatcherInstance) =>
+        instance.reconcileRecovery({
+          recoveryId: dlq.id,
+          action: 'confirm-not-written',
+          reason: 'DLQ messages are not inserts',
+        }),
+      ),
+    ).rejects.toThrow('dlq recovery records allow retire-dead-letter');
+
+    const resolved = await runInDurableObject(batcher, (instance: TraceBatcherInstance) =>
+      instance.reconcileRecovery({
+        recoveryId: dlq.id,
+        action: 'retire-dead-letter',
+        reason: 'replay would write rows without retention columns',
+      }),
+    );
+    expect(resolved).toMatchObject({
+      state: 'resolved',
+      resolution: 'retire-dead-letter',
+      resolutionReason: 'replay would write rows without retention columns',
+      payload,
+    });
+    expect((await getStats()).blockedRecoveryRecords).toBe(0);
+    expect(insertIntoTinybirdWithRetry).not.toHaveBeenCalled();
+  });
+
+  it('only retires dead-lettered messages', async () => {
+    await addTraces([{ messageId: 'msg-rejected', traces: [createMockTrace('rejected')] }]);
+    vi.mocked(insertIntoTinybirdWithRetry).mockRejectedValueOnce(
+      new TinybirdInsertError(400, 'rejected'),
+    );
+    await forceFlush();
+    const recovery = await runInDurableObject(batcher, (instance: TraceBatcherInstance) =>
+      instance.listRecovery(),
+    );
+
+    await expect(
+      runInDurableObject(batcher, (instance: TraceBatcherInstance) =>
+        instance.reconcileRecovery({
+          recoveryId: recovery.records[0]!.id,
+          action: 'retire-dead-letter',
+          reason: 'inserts need a write confirmation',
+        }),
+      ),
+    ).rejects.toThrow(
+      'tinybird_insert recovery records allow confirm-written or confirm-not-written',
+    );
+    expect((await getStats()).blockedRecoveryRows).toBe(1);
+  });
+
   it('retains a multi-megabyte individual row as rejected without sending it', async () => {
     const trace = { ...createMockTrace('oversized'), StatusMessage: 'x'.repeat(2_100_000) };
     await addTraces([{ messageId: 'msg-oversized', traces: [trace] }]);

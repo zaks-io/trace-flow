@@ -322,6 +322,40 @@ describe('AgentFactBatcher logic', () => {
     expect(insertRows).not.toHaveBeenCalled();
   });
 
+  it('retires a dead-lettered message without replaying it and keeps its payload', async () => {
+    const payload = JSON.stringify({ messageId: 'dead', body: { orgId: 'org-1' } });
+    const dlq = await runInDurableObject(batcher, (instance: AgentFactBatcherInstance) =>
+      instance.preserveDlq(payload, '{"reason":"dead_letter_queue_delivery"}', 'dead'),
+    );
+    await expect(
+      runInDurableObject(batcher, (instance: AgentFactBatcherInstance) =>
+        instance.reconcileRecovery({
+          recoveryId: dlq.id,
+          action: 'retain-original',
+          reason: 'DLQ messages are not repairs',
+        }),
+      ),
+    ).rejects.toThrow('dlq recovery records allow retire-dead-letter');
+
+    const resolved = await runInDurableObject(batcher, (instance: AgentFactBatcherInstance) =>
+      instance.reconcileRecovery({
+        recoveryId: dlq.id,
+        action: 'retire-dead-letter',
+        reason: 'operator chose not to replay',
+      }),
+    );
+    expect(resolved).toMatchObject({
+      state: 'resolved',
+      resolution: 'retire-dead-letter',
+      payload,
+    });
+    const stats = await runInDurableObject(batcher, (instance: AgentFactBatcherInstance) =>
+      instance.getStats(),
+    );
+    expect(stats.blockedRecoveryRecords).toBe(0);
+    expect(insertRows).not.toHaveBeenCalled();
+  });
+
   it('leaves 429 work healthy for the next alarm retry', async () => {
     await runInDurableObject(batcher, async (instance: AgentFactBatcherInstance, state) => {
       await instance.addFacts(sparseBatch);

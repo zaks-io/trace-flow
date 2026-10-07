@@ -6,6 +6,7 @@ import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import {
   classifyTinybirdInsertFailure,
   insertRows,
+  requireReconcileAction,
   requireRecoveryReason,
   serializeTinybirdFailure,
   TinybirdRecoveryStore,
@@ -876,20 +877,12 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     this.legacyState.assertNotErasing();
     this.ensureStartupRecovery();
     this.maintenance.assertUnlocked();
-    if (!['confirm-written', 'confirm-not-written', 'retain-original'].includes(input.action)) {
-      throw new Error('invalid recovery action');
-    }
     requireRecoveryReason(input.reason);
     const record = this.recovery.get(input.recoveryId);
-    if (record.state !== 'blocked') throw new Error('recovery record is not blocked');
-    if (record.kind === 'repair') {
-      if (input.action !== 'retain-original')
-        throw new Error('repair records can only retain-original');
+    requireReconcileAction(record, input.action);
+    if (record.kind !== 'tinybird_insert') {
       return this.recovery.resolve(record.id, input.action, input.reason);
     }
-    if (record.kind !== 'tinybird_insert') throw new Error('DLQ records must use replayDlq');
-    if (input.action === 'retain-original')
-      throw new Error('insert recovery requires a write confirmation');
     const target = parseFactTargetKey(this.recovery.getTargetKey(record.id));
     const ids = this.recovery.rowIds(record.id);
     if (input.action === 'confirm-not-written') {

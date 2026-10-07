@@ -13,6 +13,7 @@ import type { OTLPQueueMessage, TinybirdTrace } from '@trace-flow/types';
 import {
   classifyTinybirdInsertFailure,
   describeTinybirdInsertFailure,
+  requireReconcileAction,
   requireRecoveryReason,
   serializeTinybirdFailure,
   splitUtf8Chunks,
@@ -673,27 +674,15 @@ class TraceBatcherBase extends DurableObject<Env> {
   }
 
   async reconcileRecovery(input: ReconcileRecoveryInput): Promise<RecoveryRecord> {
-    if (!['confirm-written', 'confirm-not-written', 'retain-original'].includes(input.action)) {
-      throw new Error('invalid recovery action');
-    }
     requireRecoveryReason(input.reason);
     const record = this.recovery.get(input.recoveryId);
-    if (record.state !== 'blocked') throw new Error('recovery record is not blocked');
-    if (record.kind === 'repair') {
-      if (input.action !== 'retain-original')
-        throw new Error('repair records can only retain-original');
-    } else if (record.kind === 'tinybird_insert') {
-      if (input.action === 'retain-original')
-        throw new Error('insert recovery requires a write confirmation');
-    } else {
-      throw new Error('DLQ records must use replayDlq');
+    requireReconcileAction(record, input.action);
+    if (record.kind !== 'tinybird_insert') {
+      return this.recovery.resolve(record.id, input.action, input.reason);
     }
 
-    const targetKey =
-      record.kind === 'tinybird_insert'
-        ? requireTargetKey(this.recovery.getTargetKey(record.id))
-        : null;
-    const ids = record.kind === 'tinybird_insert' ? this.recovery.rowIds(record.id) : [];
+    const targetKey = requireTargetKey(this.recovery.getTargetKey(record.id));
+    const ids = this.recovery.rowIds(record.id);
     if (input.action === 'confirm-not-written') {
       await this.durableState.storage.setAlarm(Date.now() + 1000);
       this.flushAlarmScheduled = true;
@@ -703,7 +692,7 @@ class TraceBatcherBase extends DurableObject<Env> {
       input.action,
       input.reason,
       () => {
-        if (input.action === 'confirm-written' && targetKey) {
+        if (input.action === 'confirm-written') {
           this.markTraceTargetSentSync(ids, targetKey);
         }
       },
