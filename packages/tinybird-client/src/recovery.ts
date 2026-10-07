@@ -33,7 +33,7 @@ export type ReconcileRecoveryAction =
   | 'confirm-written'
   | 'confirm-not-written'
   | 'retain-original'
-  | 'discard-dead-letter';
+  | 'retire-dead-letter';
 
 export interface ReconcileRecoveryInput {
   recoveryId: number;
@@ -542,7 +542,7 @@ const RECONCILE_ACTIONS: Record<RecoveryKind, readonly ReconcileRecoveryAction[]
   repair: ['retain-original'],
   // Retiring keeps the payload as a resolved record; replaying can be worse than
   // dropping, e.g. rows whose retention columns predate the schema.
-  dlq: ['discard-dead-letter'],
+  dlq: ['retire-dead-letter'],
 };
 
 export function requireReconcileAction(

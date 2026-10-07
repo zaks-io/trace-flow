@@ -175,7 +175,7 @@ submitted rows, including when replaying legacy credentials.
 - For a changed-content repair, `retain-original` explicitly accepts the stored version.
   If the correction should replace it, rebuild the affected analytical data from the
   retained payload first. An append cannot safely replace previously aggregated facts.
-- For a DLQ record that must not be replayed, use `discard-dead-letter`. The record
+- For a DLQ record that must not be replayed, use `retire-dead-letter`. The record
   stays as a resolved audit entry with its payload; nothing is written to Tinybird.
   Prefer it when replay would write rows that are no longer valid, such as messages
   older than the retention columns, which would default `RetentionExpiresAt` to 0 and
@@ -197,7 +197,7 @@ Example reconciliation request:
 ```
 
 POST it to `/reconcileRecovery`. The reason and resolution are retained for audit.
-To replay a DLQ record instead of discarding it, POST the same shape without `action`
+To replay a DLQ record instead of retiring it, POST the same shape without `action`
 to `/replayDlq` after fixing the underlying failure. A failed replay remains blocked. Do not repeatedly replay
 unchanged malformed messages.
 

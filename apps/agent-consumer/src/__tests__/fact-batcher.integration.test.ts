@@ -335,18 +335,18 @@ describe('AgentFactBatcher logic', () => {
           reason: 'DLQ messages are not repairs',
         }),
       ),
-    ).rejects.toThrow('dlq recovery records allow discard-dead-letter');
+    ).rejects.toThrow('dlq recovery records allow retire-dead-letter');
 
     const resolved = await runInDurableObject(batcher, (instance: AgentFactBatcherInstance) =>
       instance.reconcileRecovery({
         recoveryId: dlq.id,
-        action: 'discard-dead-letter',
+        action: 'retire-dead-letter',
         reason: 'operator chose not to replay',
       }),
     );
     expect(resolved).toMatchObject({
       state: 'resolved',
-      resolution: 'discard-dead-letter',
+      resolution: 'retire-dead-letter',
       payload,
     });
     const stats = await runInDurableObject(batcher, (instance: AgentFactBatcherInstance) =>

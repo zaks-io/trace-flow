@@ -400,18 +400,18 @@ describe('TraceBatcher logic', () => {
           reason: 'DLQ messages are not inserts',
         }),
       ),
-    ).rejects.toThrow('dlq recovery records allow discard-dead-letter');
+    ).rejects.toThrow('dlq recovery records allow retire-dead-letter');
 
     const resolved = await runInDurableObject(batcher, (instance: TraceBatcherInstance) =>
       instance.reconcileRecovery({
         recoveryId: dlq.id,
-        action: 'discard-dead-letter',
+        action: 'retire-dead-letter',
         reason: 'replay would write rows without retention columns',
       }),
     );
     expect(resolved).toMatchObject({
       state: 'resolved',
-      resolution: 'discard-dead-letter',
+      resolution: 'retire-dead-letter',
       resolutionReason: 'replay would write rows without retention columns',
       payload,
     });
@@ -419,7 +419,7 @@ describe('TraceBatcher logic', () => {
     expect(insertIntoTinybirdWithRetry).not.toHaveBeenCalled();
   });
 
-  it('only discards dead-lettered messages', async () => {
+  it('only retires dead-lettered messages', async () => {
     await addTraces([{ messageId: 'msg-rejected', traces: [createMockTrace('rejected')] }]);
     vi.mocked(insertIntoTinybirdWithRetry).mockRejectedValueOnce(
       new TinybirdInsertError(400, 'rejected'),
@@ -433,7 +433,7 @@ describe('TraceBatcher logic', () => {
       runInDurableObject(batcher, (instance: TraceBatcherInstance) =>
         instance.reconcileRecovery({
           recoveryId: recovery.records[0]!.id,
-          action: 'discard-dead-letter',
+          action: 'retire-dead-letter',
           reason: 'inserts need a write confirmation',
         }),
       ),
