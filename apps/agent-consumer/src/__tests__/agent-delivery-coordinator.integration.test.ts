@@ -240,16 +240,19 @@ describe('AgentDeliveryCoordinator', () => {
       ),
     ).resolves.toMatchObject({ writePermit: true });
 
-    await expect(
-      withCoordinator((coordinator) =>
+    await withCoordinator((coordinator, state) => {
+      expect(
         coordinator.planWrite({
           deliveryId: 'delivery-1',
           payloadSha256: HASH_A,
           dirtyDays: ['2026-09-12', '2026-09-11'],
           links: [{ oldDay: '2026-09-11', newDay: '2026-09-12' }],
         }),
-      ),
-    ).resolves.toEqual({ dirtyDays: ['2026-09-11', '2026-09-12'] });
+      ).toEqual({ dirtyDays: ['2026-09-11', '2026-09-12'] });
+      expect(state.storage.sql.exec('SELECT day_a, day_b FROM dirty_day_links').toArray()).toEqual([
+        { day_a: '2026-09-11', day_b: '2026-09-12' },
+      ]);
+    });
     await expect(
       withCoordinator((coordinator) =>
         coordinator.planWrite({
