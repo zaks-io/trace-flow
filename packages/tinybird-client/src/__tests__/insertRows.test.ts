@@ -201,6 +201,28 @@ describe('insertRows', () => {
       expect(classifyTinybirdInsertFailure(error)).toBe('uncertain');
       expect(describeTinybirdInsertFailure(error)).toEqual({ errorType: 'TimeoutError' });
     });
+
+    it('aborts a receipt body that stalls after the headers arrive', async () => {
+      // Mirrors workerd, which cancels the response body when the fetch signal aborts.
+      vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (_url, init) => {
+        const body = new ReadableStream({
+          start(stream) {
+            init?.signal?.addEventListener('abort', () => stream.error(init.signal?.reason));
+          },
+        });
+        return new Response(body, { status: 200 });
+      });
+
+      const settled = insertRows([{ a: 1 }], 'tok', 'agent_message_facts', HOST).catch(
+        (error: unknown) => error,
+      );
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      const error = await settled;
+      expect(error).toMatchObject({ name: 'TimeoutError' });
+      expect(classifyTinybirdInsertFailure(error)).toBe('uncertain');
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 });
 
