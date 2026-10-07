@@ -8,7 +8,12 @@ export {
   startTinybirdQuerySpan,
 } from './tracing';
 export type { StartTinybirdQuerySpanOptions } from './tracing';
-export { classifyTinybirdInsertFailure, insertRows, shouldRetryTinybirdInsert } from './insertRows';
+export {
+  classifyTinybirdInsertFailure,
+  describeTinybirdInsertFailure,
+  insertRows,
+  shouldRetryTinybirdInsert,
+} from './insertRows';
 export type { TinybirdInsertFailureClassification } from './insertRows';
 export { TinybirdAuthError, TinybirdQueryError, TinybirdInsertError } from './errors';
 export type { TinybirdInsertFailureReason } from './errors';

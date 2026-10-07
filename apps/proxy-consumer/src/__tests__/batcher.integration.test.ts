@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type * as SentryCloudflare from '@sentry/cloudflare';
+import type * as SentryTracing from '@trace-flow/utils/sentry-tracing';
 import { env as workerEnv } from 'cloudflare:workers';
 import { evictDurableObject, runInDurableObject } from 'cloudflare:test';
 import type { TraceBatcherInstance, MessageTraceBatchItem, MessageTraceResult } from '../batcher';
@@ -13,6 +14,12 @@ import { TinybirdInsertError, TinybirdRecoveryStore } from '@trace-flow/tinybird
 import { analyticsKeyId } from '@trace-flow/utils';
 import { CLI_PROXY, IMPORTED_EXECUTION, TRACE_FLOW } from '@trace-flow/otel-conventions';
 import { insertIntoTinybirdWithRetry } from '../tinybird';
+import { captureSafeException } from '@trace-flow/utils/sentry-tracing';
+
+vi.mock('@trace-flow/utils/sentry-tracing', async (importOriginal) => ({
+  ...(await importOriginal<typeof SentryTracing>()),
+  captureSafeException: vi.fn(),
+}));
 
 const env = workerEnv as unknown as {
   TRACE_BATCHER: DurableObjectNamespace<TraceBatcherInstance>;
@@ -258,6 +265,43 @@ describe('TraceBatcher logic', () => {
     expect(recovered).toEqual(vi.mocked(insertIntoTinybirdWithRetry).mock.calls[0]?.[0]);
     expect(recovered[0]?.ApiKey).toBe(expectedApiKey);
     expect(page.records[0]?.payload).not.toContain(trace.ApiKey);
+  });
+
+  it('preserves a timed-out batch without reposting it and reports safe failure diagnostics', async () => {
+    await addTraces([{ messageId: 'msg-timeout', traces: [createMockTrace('timeout')] }]);
+    const timeout = new DOMException('private provider detail', 'TimeoutError');
+    vi.mocked(insertIntoTinybirdWithRetry).mockImplementationOnce(async () => {
+      vi.setSystemTime(Date.now() + 60_000);
+      throw timeout;
+    });
+
+    await forceFlush();
+    await forceFlush();
+
+    expect(insertIntoTinybirdWithRetry).toHaveBeenCalledOnce();
+    const page = await runInDurableObject(batcher, (instance: TraceBatcherInstance) =>
+      instance.listRecovery(),
+    );
+    expect(page.records[0]).toMatchObject({ classification: 'uncertain', state: 'blocked' });
+    expect(JSON.parse(page.records[0]!.outcome)).toMatchObject({ name: 'TimeoutError' });
+    expect(captureSafeException).toHaveBeenCalledWith(timeout, {
+      message: 'Tinybird insert failed',
+      operation: 'trace_batcher.flush',
+      diagnostics: {
+        type: 'TimeoutError',
+        context: {
+          errorType: 'TimeoutError',
+          batchSize: 1,
+          classification: 'uncertain',
+          datasource: 'otel_trace_spans',
+          elapsedMs: 60_000,
+        },
+        stackFilenames: ['index.js', 'batcher.ts', 'tinybird.ts', 'insertRows.ts'],
+      },
+    });
+    const diagnostics = vi.mocked(captureSafeException).mock.calls[0]?.[1];
+    expect(JSON.stringify(diagnostics)).not.toContain('private provider detail');
+    expect(JSON.stringify(diagnostics)).not.toContain('responseText');
   });
 
   it('preserves malformed pending traces as rejected recovery records', async () => {

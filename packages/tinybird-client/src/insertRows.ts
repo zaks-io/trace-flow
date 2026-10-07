@@ -4,6 +4,30 @@ const TINYBIRD_TIMEOUT_MS = 60_000;
 
 export type TinybirdInsertFailureClassification = 'retryable' | 'rejected' | 'uncertain';
 
+/** Only allowlisted metadata may leave durable recovery storage for logs or Sentry. */
+export function describeTinybirdInsertFailure(error: unknown): {
+  errorType: string;
+  httpStatus?: number;
+  reason?: string;
+} {
+  if (error instanceof TinybirdInsertError) {
+    return {
+      errorType: 'TinybirdInsertError',
+      ...(Number.isInteger(error.status) && error.status >= 100 && error.status <= 599
+        ? { httpStatus: error.status }
+        : {}),
+      ...(['http', 'unconfirmed', 'malformed-receipt', 'partial-receipt'].includes(error.reason)
+        ? { reason: error.reason }
+        : {}),
+    };
+  }
+  const errorType =
+    error instanceof Error && ['TimeoutError', 'AbortError', 'TypeError'].includes(error.name)
+      ? error.name
+      : 'Error';
+  return { errorType };
+}
+
 interface TinybirdInsertReceipt {
   successful_rows: number;
   quarantined_rows: number;

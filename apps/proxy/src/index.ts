@@ -189,7 +189,7 @@ const handler = {
   fetch(request, env, ctx) {
     return withNativeTrace(tracing, 'trace_flow.proxy_request', () => app.fetch(request, env, ctx));
   },
-  async scheduled(controller, env) {
+  async scheduled(controller, env, _ctx) {
     const logger = createLogger({
       service: 'proxy',
       runtime: 'cloudflare-worker',

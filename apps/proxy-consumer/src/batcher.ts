@@ -12,6 +12,7 @@ import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import type { OTLPQueueMessage, TinybirdTrace } from '@trace-flow/types';
 import {
   classifyTinybirdInsertFailure,
+  describeTinybirdInsertFailure,
   requireRecoveryReason,
   serializeTinybirdFailure,
   splitUtf8Chunks,
@@ -522,6 +523,7 @@ class TraceBatcherBase extends DurableObject<Env> {
       payload,
       rowIds,
     );
+    const startedAt = Date.now();
     try {
       await insertIntoTinybirdWithRetry(
         traces,
@@ -534,17 +536,25 @@ class TraceBatcherBase extends DurableObject<Env> {
       return 'confirmed';
     } catch (error) {
       const classification = classifyTinybirdInsertFailure(error);
+      const diagnostics = {
+        ...describeTinybirdInsertFailure(error),
+        batchSize: rows.length,
+        classification,
+        datasource: target.datasource,
+        elapsedMs: Date.now() - startedAt,
+      };
       const sanitizedError = new Error('Tinybird insert failed');
       this.logger
         .child({ traceId: firstTraceId(rows) })
-        .error('consumer.tinybird_flush_failed', sanitizedError, {
-          batchSize: rows.length,
-          classification,
-          datasource: target.datasource,
-        });
+        .error('consumer.tinybird_flush_failed', sanitizedError, diagnostics);
       captureSafeException(error, {
         message: 'Tinybird insert failed',
         operation: 'trace_batcher.flush',
+        diagnostics: {
+          type: diagnostics.errorType,
+          context: diagnostics,
+          stackFilenames: ['index.js', 'batcher.ts', 'tinybird.ts', 'insertRows.ts'],
+        },
       });
 
       if (classification === 'retryable') {
