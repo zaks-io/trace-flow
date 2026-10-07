@@ -15,7 +15,6 @@ import { withNativeTrace } from '@trace-flow/utils/native-tracing';
 import { normalizeTraceRequest } from '@trace-flow/utils/ingress-tracing';
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { HTTPException } from 'hono/http-exception';
-import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import { applySecurityHeaders } from '@trace-flow/utils';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import type { ProxyEnv } from './context';
@@ -26,7 +25,6 @@ import { forwardToUpstream, UpstreamFetchError } from './pipeline/forwardToUpstr
 import { attachCapture } from './pipeline/attachCapture';
 import { respond } from './pipeline/respond';
 import { startupConfigGuard } from './startup';
-import { sweepTraceDeliveries } from './delivery';
 import {
   buildTransaction,
   buildUpstreamFailureTransaction,
@@ -37,6 +35,7 @@ import {
   recordSkippedExchange,
 } from './transaction';
 export { UsageTracker } from './usage-tracker';
+export { TraceDeliverySweep } from './trace-delivery-sweep';
 
 export const app = new OpenAPIHono<{ Bindings: ProxyEnv }>();
 
@@ -190,26 +189,10 @@ const handler = {
     return withNativeTrace(tracing, 'trace_flow.proxy_request', () => app.fetch(request, env, ctx));
   },
   async scheduled(controller, env, _ctx) {
-    const logger = createLogger({
-      service: 'proxy',
-      runtime: 'cloudflare-worker',
-      axiom: axiomConfigFromEnv(env),
-      context: { component: 'trace-delivery-sweep' },
-    });
-    try {
-      const enqueued = await sweepTraceDeliveries(
-        env.STORAGE,
-        env.REQUEST_QUEUE,
-        logger,
-        env.TRACE_DELIVERY_NAMESPACE,
-      );
-      logger.info('proxy.delivery_sweep_completed', { cron: controller.cron, enqueued });
-    } catch (error) {
-      logger.error('proxy.delivery_sweep_failed', error, { cron: controller.cron });
-      throw error;
-    } finally {
-      await logger.flush();
-    }
+    const coordinator = env.TRACE_DELIVERY_SWEEP.get(
+      env.TRACE_DELIVERY_SWEEP.idFromName(env.TRACE_DELIVERY_NAMESPACE),
+    );
+    await coordinator.run(controller.cron);
   },
 } satisfies ExportedHandler<ProxyEnv>;
 
@@ -219,6 +202,7 @@ export function proxySentryOptions(env: ProxyEnv): Sentry.CloudflareOptions {
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
     tracesSampleRate: 1.0,
+    enableRpcTracePropagation: true,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
     ...sentryRequestPrivacy(),
   };

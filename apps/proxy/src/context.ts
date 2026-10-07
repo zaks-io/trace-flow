@@ -1,10 +1,12 @@
 import type { QueueMessageUnion, SubscriptionTier } from '@trace-flow/types';
+import type { TraceDeliverySweep } from './trace-delivery-sweep';
 
 export interface ProxyEnv {
   REQUEST_QUEUE: Queue<QueueMessageUnion>;
   STORAGE: R2Bucket;
   API_KEYS: KVNamespace;
   USAGE_TRACKER: DurableObjectNamespace;
+  TRACE_DELIVERY_SWEEP: DurableObjectNamespace<InstanceType<typeof TraceDeliverySweep>>;
   ORG_LIMITER: RateLimit;
   IP_LIMITER: RateLimit;
   CONVEX_SITE_URL: string;
