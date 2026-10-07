@@ -232,7 +232,7 @@ for (const name of identityViews)
     'identity-day index must retain source ordering for legacy deliveries',
   );
 requireMatch(
-  'pipes/agent_fact_identity_day.pipe',
+  'pipes/agent_fact_identity_day_batch.pipe',
   /DeliverySequence, ContentHash, IngestedAt/,
   'identity-day endpoint must return the current content proof',
 );
@@ -247,12 +247,22 @@ requireMatch(
   'identity-day metadata must retain the canonical source ingest time',
 );
 requireMatch(
-  'pipes/agent_fact_identity_day.pipe',
+  'pipes/agent_fact_identity_day_batch.pipe',
+  /\(Category, FactIdentity\) IN/,
+  'identity-day endpoint must match each identity only within its requested category',
+);
+requireMatch(
+  'pipes/agent_fact_identity_day_batch.pipe',
+  /FINAL\s+PREWHERE OrgId = [^\n]*\n\s+AND \(Category, FactIdentity\) IN/,
+  'identity-day endpoint must filter sorting-key columns before FINAL merges versions',
+);
+requireMatch(
+  'pipes/agent_fact_identity_day_batch.pipe',
   /FROM agent_fact_identity_days FINAL/,
   'identity-day endpoint must reconcile versions across event-month partitions',
 );
 requireMatch(
-  'pipes/agent_fact_identity_day.pipe',
+  'pipes/agent_fact_identity_day_batch.pipe',
   /EventDay >= \{\{ Date\(oldest_day\) \}\}[\s\S]*EventDay <= \{\{ Date\(today_day\) \}\}/,
   'identity-day endpoint must exclude asynchronously retained rows outside caller retention bounds',
 );

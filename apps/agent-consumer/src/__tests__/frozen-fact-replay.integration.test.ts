@@ -24,17 +24,19 @@ function mockTinybird() {
     'fetch',
     vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = new URL(String(input));
-      if (url.pathname.includes('agent_fact_identity_day')) {
-        const identities = (url.searchParams.get('identities') ?? '').split(',');
+      if (url.pathname.endsWith('/agent_fact_identity_day_batch.json')) {
+        const identities = (init?.body as URLSearchParams).get('identities')!.split(',');
         return Response.json({
           data: writes
             .filter((row) => row.IsDeleted === 0)
             .filter((row) => identities.includes(String(row.FactIdentity)))
             .map((row) => ({
+              Category: 'messages',
               FactIdentity: row.FactIdentity,
               EventDay: String(row.EventAt).slice(0, 10),
               DeliverySequence: row.DeliverySequence,
               ContentHash: row.ContentHash,
+              IngestedAt: row.IngestedAt,
             })),
         });
       }

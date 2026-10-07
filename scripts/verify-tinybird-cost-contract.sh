@@ -14,7 +14,7 @@ check() {
 }
 
 final_violations="$(rg -n '\bFINAL\b' materializations pipes \
-  | grep -Ev '^(pipes/agent_(context_call_buckets_hourly|repositories|session_file_signals|session_signals|session_summaries|tool_usage_daily|tool_usage_hourly|usage_daily|usage_hourly)_published|pipes/agent_(cost_by_depth|review_unit_costs|session_identity|delivery_receipt|fact_identity_day|snapshot_manifest_latest|priced_usage))\.pipe:' || true)"
+  | grep -Ev '^(pipes/agent_(context_call_buckets_hourly|repositories|session_file_signals|session_signals|session_summaries|tool_usage_daily|tool_usage_hourly|usage_daily|usage_hourly)_published|pipes/agent_(cost_by_depth|review_unit_costs|session_identity|delivery_receipt|fact_identity_day(_batch)?|snapshot_manifest_latest|priced_usage))\.pipe:' || true)"
 if [[ -n "$final_violations" ]]; then
   printf 'Tinybird cost contract failed: FINAL is limited to bounded version/snapshot reads\n%s\n' "$final_violations" >&2
   failed=1

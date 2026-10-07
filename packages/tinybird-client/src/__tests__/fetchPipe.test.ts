@@ -53,6 +53,27 @@ describe('fetchPipe', () => {
     expect(parsed.searchParams.has('missing')).toBe(false);
   });
 
+  it('sends params as a form body when method is POST', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(mockJsonResponse({ data: [] }));
+
+    await fetchPipe({
+      baseUrl: BASE,
+      token: 't',
+      pipe: 'lookup',
+      method: 'POST',
+      params: { identities: 'a\x1fb,c', missing: undefined },
+    });
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe(`${BASE}/v0/pipes/lookup.json`);
+    expect(init?.method).toBe('POST');
+    const body = init?.body as URLSearchParams;
+    expect(body.get('identities')).toBe('a\x1fb,c');
+    expect(body.has('missing')).toBe(false);
+  });
+
   it('returns rows from response.data', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       mockJsonResponse({ data: [{ id: 1 }, { id: 2 }] }),

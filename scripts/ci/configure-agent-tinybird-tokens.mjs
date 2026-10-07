@@ -38,7 +38,11 @@ export const AGENT_TINYBIRD_TOKENS = [
   {
     name: 'trace_flow_agent_delivery_read',
     variable: 'TINYBIRD_AGENT_DELIVERY_READ_TOKEN',
-    scopes: ['PIPES:READ:agent_delivery_receipt', 'PIPES:READ:agent_fact_identity_day'],
+    scopes: [
+      'PIPES:READ:agent_delivery_receipt',
+      'PIPES:READ:agent_fact_identity_day',
+      'PIPES:READ:agent_fact_identity_day_batch',
+    ],
   },
   {
     name: 'trace_flow_agent_snapshot_worker',
