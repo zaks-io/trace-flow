@@ -80,17 +80,30 @@ export async function insertRows(
   const url = `${host}/v0/events?name=${encodeURIComponent(datasource)}&wait=true`;
   const body = rows.map((row) => JSON.stringify(row)).join('\n');
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body,
-    signal: AbortSignal.timeout(TINYBIRD_TIMEOUT_MS),
-  });
-
-  const responseText = await response.text();
+  // AbortSignal.timeout() cannot be cancelled, and its pending timer held each batcher alarm
+  // open for up to 60 seconds after the insert finished. Own the timer and clear it once the
+  // body has been read so the timeout still covers a stalled body.
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new DOMException('Tinybird insert timed out', 'TimeoutError')),
+    TINYBIRD_TIMEOUT_MS,
+  );
+  let response: Response;
+  let responseText: string;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body,
+      signal: controller.signal,
+    });
+    responseText = await response.text();
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (response.status !== 200) {
     if (response.ok) {

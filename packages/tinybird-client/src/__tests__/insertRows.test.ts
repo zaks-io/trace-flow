@@ -159,6 +159,71 @@ describe('insertRows', () => {
       'Network error',
     );
   });
+
+  describe('timeout', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      return () => vi.useRealTimers();
+    });
+
+    it('leaves no pending timer after the receipt is read', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(receiptResponse(1));
+
+      await insertRows([{ a: 1 }], 'tok', 'agent_message_facts', HOST);
+
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('leaves no pending timer after a failed request', async () => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('Network error'));
+
+      await expect(insertRows([{ a: 1 }], 'tok', 'agent_message_facts', HOST)).rejects.toThrow();
+
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('aborts a stalled insert after 60 seconds as an uncertain timeout', async () => {
+      vi.spyOn(globalThis, 'fetch').mockImplementationOnce(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init.signal?.reason as Error));
+          }),
+      );
+
+      const insert = insertRows([{ a: 1 }], 'tok', 'agent_message_facts', HOST);
+      const settled = insert.catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(vi.getTimerCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+
+      const error = await settled;
+      expect(error).toMatchObject({ name: 'TimeoutError' });
+      expect(classifyTinybirdInsertFailure(error)).toBe('uncertain');
+      expect(describeTinybirdInsertFailure(error)).toEqual({ errorType: 'TimeoutError' });
+    });
+
+    it('aborts a receipt body that stalls after the headers arrive', async () => {
+      // Mirrors workerd, which cancels the response body when the fetch signal aborts.
+      vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (_url, init) => {
+        const body = new ReadableStream({
+          start(stream) {
+            init?.signal?.addEventListener('abort', () => stream.error(init.signal?.reason));
+          },
+        });
+        return new Response(body, { status: 200 });
+      });
+
+      const settled = insertRows([{ a: 1 }], 'tok', 'agent_message_facts', HOST).catch(
+        (error: unknown) => error,
+      );
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      const error = await settled;
+      expect(error).toMatchObject({ name: 'TimeoutError' });
+      expect(classifyTinybirdInsertFailure(error)).toBe('uncertain');
+      expect(vi.getTimerCount()).toBe(0);
+    });
+  });
 });
 
 describe('classifyTinybirdInsertFailure', () => {
