@@ -1,6 +1,6 @@
 import { query } from './_generated/server';
 import { v } from 'convex/values';
-import { getCurrentUser } from './auth/users';
+import { getCurrentUser, getActiveOrganizationMembership } from './auth/userHelpers';
 import { userValidator, subscriptionValidator } from './validators';
 
 export const sessionContext = query({
@@ -24,16 +24,13 @@ export const sessionContext = query({
 
     let subscription = null;
     let onboardingCompletedAt: number | undefined;
-    if (isEnabled && user?.orgId) {
-      const [sub, org] = await Promise.all([
-        ctx.db
-          .query('subscriptions')
-          .withIndex('by_org_id', (q) => q.eq('orgId', user.orgId!))
-          .first(),
-        ctx.db.get(user.orgId),
-      ]);
-      subscription = sub;
-      onboardingCompletedAt = org?.onboardingCompletedAt;
+    const active = await getActiveOrganizationMembership(ctx, user);
+    if (active) {
+      subscription = await ctx.db
+        .query('subscriptions')
+        .withIndex('by_org_id', (q) => q.eq('orgId', active.orgId))
+        .first();
+      onboardingCompletedAt = active.organization.onboardingCompletedAt;
     }
 
     return { user, isAdmin, subscription, onboardingCompletedAt };

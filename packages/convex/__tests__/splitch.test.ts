@@ -43,6 +43,7 @@ function makeQueryCtx(
 ): QueryCtx {
   const authenticated = options.authenticated ?? true;
   const user = {
+    _id: 'user-123',
     tokenIdentifier: 'auth0|user-123',
     email: 'user@example.com',
     name: 'Test User',
@@ -64,10 +65,17 @@ function makeQueryCtx(
       ),
     },
     db: {
+      get: vi.fn().mockResolvedValue({ _id: user.orgId, ownerId: user._id }),
       query: vi.fn((table: string) => {
-        const result = table === 'users' ? user : subscription;
+        const result =
+          table === 'users'
+            ? user
+            : table === 'organizationMembers'
+              ? { status: 'active' }
+              : subscription;
         const query = {
           withIndex: vi.fn().mockReturnThis(),
+          filter: vi.fn().mockReturnThis(),
           first: vi.fn().mockResolvedValue(result),
         };
         return query;

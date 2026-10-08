@@ -1,7 +1,7 @@
 import { query, internalMutation, internalQuery } from '../_generated/server';
 import { v } from 'convex/values';
 import { requireAuthenticated } from '../auth/auth';
-import { getCurrentEnabledUser } from '../auth/users';
+import { getCurrentEnabledUser, getActiveOrganizationMembership } from '../auth/userHelpers';
 import { internal } from '../_generated/api';
 import { TIER_CONFIG } from '@trace-flow/types';
 import { getCurrentBillingPeriod, getSubscriptionByOrgId, mutationReadCtx } from './currentPeriod';
@@ -25,8 +25,9 @@ export const getCurrentUsage = query({
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
     const user = await getCurrentEnabledUser(ctx);
-    if (!user?.orgId) return null;
-    return (await getCurrentBillingPeriod(ctx, user.orgId))?.usage ?? null;
+    const active = await getActiveOrganizationMembership(ctx, user);
+    if (!active) return null;
+    return (await getCurrentBillingPeriod(ctx, active.orgId))?.usage ?? null;
   },
 });
 

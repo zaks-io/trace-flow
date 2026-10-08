@@ -3,7 +3,7 @@ import { v } from 'convex/values';
 import { components } from '../_generated/api';
 import { internalAction, internalQuery, query } from '../_generated/server';
 import type { QueryCtx } from '../_generated/server';
-import { getCurrentUser } from '../auth/userHelpers';
+import { getCurrentUser, getActiveOrganizationMembership } from '../auth/userHelpers';
 
 const flags = new Splitch(components.splitch);
 
@@ -75,10 +75,12 @@ export const proSubscriptionEnabled = query({
 
     const user = await getCurrentUser(ctx);
     if (user && !user.enabled) return false;
-    const subscription = user?.orgId
+    const active = await getActiveOrganizationMembership(ctx, user);
+    if (user && !active) return false;
+    const subscription = active
       ? await ctx.db
           .query('subscriptions')
-          .withIndex('by_org_id', (q) => q.eq('orgId', user.orgId!))
+          .withIndex('by_org_id', (q) => q.eq('orgId', active.orgId))
           .first()
       : null;
 

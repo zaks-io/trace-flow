@@ -11,7 +11,10 @@ import {
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { paginationOptsValidator } from 'convex/server';
 import { v } from 'convex/values';
-import { requireEnabledUser } from './auth/users';
+import {
+  getActiveOrganizationMembership,
+  requireActiveOrganizationMembership,
+} from './auth/userHelpers';
 import { openRouterCost } from './analystUsage';
 import { accumulateLedger, readThreadLedger } from './analystUsageLedger';
 import {
@@ -30,7 +33,7 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from './_generated/server';
-import { api, components, internal } from './_generated/api';
+import { components, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { rateLimiter } from './rateLimits';
 import { isActiveProSubscription } from './billing/subscriptions';
@@ -246,17 +249,7 @@ function sleep(ms: number) {
 export type EnabledOrgUser = Doc<'users'> & { orgId: Id<'organizations'> };
 
 export async function getEnabledActionUser(ctx: ActionCtx): Promise<EnabledOrgUser> {
-  const user = await ctx.runQuery(api.auth.users.getCurrentUserQuery, {});
-  if (!user) {
-    throw new Error('User not found. Please log in again.');
-  }
-  if (!user.enabled) {
-    throw new Error('User account is not enabled. Please contact support.');
-  }
-  if (!user.orgId) {
-    throw new Error('User is not attached to an organization.');
-  }
-  return user as EnabledOrgUser;
+  return (await requireActiveOrganizationMembership(ctx)).user;
 }
 
 export async function getEnabledUserById(
@@ -291,8 +284,14 @@ export async function getOwnedThread(
   userId: Id<'users'>,
   threadId: Id<'analystThreads'>,
 ) {
+  const active = await getActiveOrganizationMembership(ctx, await ctx.db.get(userId));
+  if (!active) return null;
   const thread = await ctx.db.get(threadId);
-  if (thread?.creatorUserId !== userId || thread?.status !== 'active') {
+  if (
+    thread?.orgId !== active.orgId ||
+    thread?.creatorUserId !== userId ||
+    thread?.status !== 'active'
+  ) {
     return null;
   }
   return thread;
@@ -369,7 +368,7 @@ export function buildPiCompletionPrompt(run: { _id: string; prompt: string; resu
 export const listThreads = query({
   args: {},
   handler: async (ctx) => {
-    const user = await requireEnabledUser(ctx);
+    const { user, orgId } = await requireActiveOrganizationMembership(ctx);
     const threads = await ctx.db
       .query('analystThreads')
       .withIndex('by_creator_status_updated', (q) =>
@@ -378,6 +377,7 @@ export const listThreads = query({
       .collect();
 
     return threads
+      .filter((thread) => thread.orgId === orgId)
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(0, 50)
       .map((thread) => ({
@@ -398,9 +398,9 @@ export const listMessages = query({
     streamArgs: vStreamArgs,
   },
   handler: async (ctx, args) => {
-    const user = await requireEnabledUser(ctx);
+    const { user, orgId } = await requireActiveOrganizationMembership(ctx);
     const thread = await getOwnedThread(ctx, user._id, args.threadId);
-    if (!thread) {
+    if (thread?.orgId !== orgId) {
       throw new Error('Conversation not found');
     }
 
@@ -428,9 +428,9 @@ export const listMessages = query({
 export const conversationUsageSummary = query({
   args: { threadId: v.id('analystThreads') },
   handler: async (ctx, args) => {
-    const user = await requireEnabledUser(ctx);
+    const { user, orgId } = await requireActiveOrganizationMembership(ctx);
     const thread = await getOwnedThread(ctx, user._id, args.threadId);
-    if (!thread) throw new Error('Conversation not found');
+    if (thread?.orgId !== orgId) throw new Error('Conversation not found');
     if (!user.isAdmin) return null;
 
     return readThreadLedger(ctx, args.threadId);
@@ -815,6 +815,10 @@ export const insertThread = internalMutation({
     now: v.number(),
   },
   handler: async (ctx, args): Promise<Id<'analystThreads'>> => {
+    const active = await getActiveOrganizationMembership(ctx, await ctx.db.get(args.creatorUserId));
+    if (active?.orgId !== args.orgId) {
+      throw new Error('Active organization membership required');
+    }
     return ctx.db.insert('analystThreads', {
       creatorUserId: args.creatorUserId,
       orgId: args.orgId,

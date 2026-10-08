@@ -2,7 +2,13 @@ import { query, mutation, internalQuery, internalMutation } from '../_generated/
 import type { MutationCtx } from '../_generated/server';
 import { v } from 'convex/values';
 import { requireAuthenticated } from './auth';
-import { getCurrentEnabledUser, isLiveOrganization, requireEnabledUser } from './userHelpers';
+import {
+  getActiveOrganizationMembership,
+  getCurrentEnabledUser,
+  isLiveOrganization,
+  requireActiveOrganizationMembership,
+  requireOrganizationOwner,
+} from './userHelpers';
 import { organizationValidator } from '../validators';
 import { internal } from '../_generated/api';
 import { TIER_CONFIG } from '@trace-flow/types';
@@ -14,14 +20,10 @@ export const completeOnboarding = mutation({
   returns: v.null(),
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
-    const user = await requireEnabledUser(ctx);
-    if (!user.orgId) throw new Error('No organization found');
+    const { organization, orgId } = await requireActiveOrganizationMembership(ctx);
+    if (organization.onboardingCompletedAt) return null;
 
-    const org = await ctx.db.get(user.orgId);
-    if (!org) throw new Error('Organization not found');
-    if (org.onboardingCompletedAt) return null;
-
-    await ctx.db.patch(user.orgId, { onboardingCompletedAt: Date.now() });
+    await ctx.db.patch(orgId, { onboardingCompletedAt: Date.now() });
     return null;
   },
 });
@@ -32,8 +34,8 @@ export const get = query({
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
     const user = await getCurrentEnabledUser(ctx);
-    if (!user?.orgId) return null;
-    return await ctx.db.get(user.orgId);
+    const active = await getActiveOrganizationMembership(ctx, user);
+    return active?.organization ?? null;
   },
 });
 
@@ -55,11 +57,17 @@ export const getMembers = query({
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
     const user = await getCurrentEnabledUser(ctx);
-    if (!user?.orgId) return [];
-    return await ctx.db
+    const active = await getActiveOrganizationMembership(ctx, user);
+    if (!active) return [];
+    const members = await ctx.db
       .query('organizationMembers')
-      .withIndex('by_org_id', (q) => q.eq('orgId', user.orgId!))
+      .withIndex('by_org_id', (q) => q.eq('orgId', active.orgId))
       .collect();
+    return members.map((member) => ({
+      ...member,
+      role:
+        member.userId === active.organization.ownerId ? ('owner' as const) : ('member' as const),
+    }));
   },
 });
 
@@ -68,14 +76,8 @@ export const rename = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
-    const user = await requireEnabledUser(ctx);
-    if (!user.orgId) throw new Error('No organization found');
-
-    const org = await ctx.db.get(user.orgId);
-    if (!org) throw new Error('Organization not found');
-    if (org.ownerId !== user._id) throw new Error('Only the owner can rename the organization');
-
-    await ctx.db.patch(user.orgId, { name: args.name });
+    const { orgId } = await requireOrganizationOwner(ctx);
+    await ctx.db.patch(orgId, { name: args.name });
     return null;
   },
 });
@@ -107,6 +109,7 @@ export const setStripeCustomerId = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    if (await ctx.auth.getUserIdentity()) await requireOrganizationOwner(ctx, args.orgId);
     const org = await ctx.db.get(args.orgId);
     if (!org) throw new Error('Organization not found');
     await ctx.db.patch(args.orgId, { stripeCustomerId: args.stripeCustomerId });
