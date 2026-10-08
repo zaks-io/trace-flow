@@ -43,9 +43,7 @@ const organization = {
 function makeActionCtx(proEnabled: boolean): ActionCtx {
   const runQuery = vi
     .fn()
-    .mockResolvedValueOnce(user)
-    .mockResolvedValueOnce(true)
-    .mockResolvedValueOnce(organization)
+    .mockResolvedValueOnce({ user, organization, orgId: user.orgId, membership: null })
     .mockResolvedValueOnce(null)
     .mockResolvedValueOnce(proEnabled);
 

@@ -132,7 +132,8 @@ export const getBillingSummaryForCurrentUser = query({
       totalAvailable: usage.totalAvailable,
       remaining: usage.remaining,
       currentPeriodEnd: subscription.currentPeriodEnd,
-      role: active.organization.ownerId === active.user._id ? 'owner' : 'member',
+      role:
+        active.organization.ownerId === active.user._id ? ('owner' as const) : ('member' as const),
     };
   },
 });

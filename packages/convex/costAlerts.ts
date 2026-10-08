@@ -48,6 +48,7 @@ const costAlertSettingsValidator = v.object({
   isOwner: v.boolean(),
 });
 
+type OrgContext = QueryCtx | MutationCtx;
 type CostAlert = Doc<'costAlerts'>;
 type CostAlertScope = NonNullable<CostAlert['scope']>;
 

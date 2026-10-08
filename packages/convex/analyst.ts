@@ -9,7 +9,7 @@ import {
   vStreamArgs,
 } from '@convex-dev/agent';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { makeFunctionReference, paginationOptsValidator } from 'convex/server';
+import { paginationOptsValidator } from 'convex/server';
 import { v } from 'convex/values';
 import {
   getActiveOrganizationMembership,
@@ -256,15 +256,17 @@ export async function getEnabledUserById(
   ctx: ActionCtx,
   userId: Id<'users'>,
 ): Promise<EnabledOrgUser> {
-  const active = await ctx.runQuery(
-    makeFunctionReference<
-      'query',
-      { ownerOnly: boolean; userId: Id<'users'> },
-      { user: EnabledOrgUser }
-    >('auth/userHelpers:requireMembershipForAction'),
-    { userId, ownerOnly: false },
-  );
-  return active.user;
+  const user = await ctx.runQuery(internal.auth.users.getUserById, { id: userId });
+  if (!user) {
+    throw new Error('User not found. Please log in again.');
+  }
+  if (!user.enabled) {
+    throw new Error('User account is not enabled. Please contact support.');
+  }
+  if (!user.orgId) {
+    throw new Error('User is not attached to an organization.');
+  }
+  return user as EnabledOrgUser;
 }
 
 export async function requireAnalystProEntitlement(
