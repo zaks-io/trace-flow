@@ -11,6 +11,7 @@ import {
   getCurrentUser,
   isLiveOrganization,
   requireEnabledUser,
+  requireOrganizationOwner,
 } from './userHelpers';
 import { userValidator } from '../validators';
 import { rateLimiter } from '../rateLimits';
@@ -147,8 +148,10 @@ async function ensureOrgMembership(
   ctx: MutationCtx,
   orgId: Id<'organizations'>,
   userId: Id<'users'>,
-  role: 'owner' | 'member',
 ) {
+  const organization = await ctx.db.get(orgId);
+  if (!isLiveOrganization(organization)) throw new Error('Organization is not active');
+  const role = organization.ownerId === userId ? 'owner' : 'member';
   const existing = await ctx.db
     .query('organizationMembers')
     .withIndex('by_user_id', (q) => q.eq('userId', userId))
@@ -220,7 +223,7 @@ async function reconcileAcceptedInvite(
 
   if (user.inviteId === acceptedInvite._id) {
     if (acceptedInvite.orgId) {
-      await ensureOrgMembership(ctx, acceptedInvite.orgId, userId, 'member');
+      await ensureOrgMembership(ctx, acceptedInvite.orgId, userId);
       await ensureOrgHasSubscription(ctx, acceptedInvite.orgId);
     }
     return;
@@ -238,7 +241,7 @@ async function reconcileAcceptedInvite(
   });
 
   if (acceptedInvite.orgId) {
-    await ensureOrgMembership(ctx, acceptedInvite.orgId, userId, 'member');
+    await ensureOrgMembership(ctx, acceptedInvite.orgId, userId);
   }
 
   if (nextOrgId) {
@@ -264,24 +267,13 @@ export const removeMember = mutation({
   args: { memberId: v.id('organizationMembers') },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const caller = await requireEnabledUser(ctx);
-    if (!caller.orgId) throw new Error('No organization');
-
-    // Verify caller is an active owner before revealing anything about the target
-    const callerMembership = await ctx.db
-      .query('organizationMembers')
-      .withIndex('by_user_id', (q) => q.eq('userId', caller._id))
-      .filter((q) => q.eq(q.field('orgId'), caller.orgId!))
-      .first();
-    if (callerMembership?.role !== 'owner' || callerMembership?.status !== 'active') {
-      throw new Error('Only the organization owner can remove members');
-    }
+    const { organization, orgId } = await requireOrganizationOwner(ctx);
 
     const membership = await ctx.db.get(args.memberId);
-    if (membership?.orgId !== caller.orgId) {
+    if (membership?.orgId !== orgId) {
       throw new Error('Member not found');
     }
-    if (membership.role === 'owner') {
+    if (membership.userId === organization.ownerId) {
       throw new Error('Cannot remove the organization owner');
     }
 
@@ -400,7 +392,7 @@ export const initializeUser = mutation({
 
     if (acceptedInvite?.orgId) {
       await ctx.db.patch(userId, { orgId: acceptedInvite.orgId });
-      await ensureOrgMembership(ctx, acceptedInvite.orgId, userId, 'member');
+      await ensureOrgMembership(ctx, acceptedInvite.orgId, userId);
       await scheduleUserOrgSync(ctx, userId, userInfo.tokenIdentifier, acceptedInvite.orgId);
       await ensureOrgHasSubscription(ctx, acceptedInvite.orgId);
     } else {
@@ -511,7 +503,7 @@ export const findOrCreateUser = internalMutation({
 
     if (acceptedInvite?.orgId) {
       await ctx.db.patch(userId, { orgId: acceptedInvite.orgId });
-      await ensureOrgMembership(ctx, acceptedInvite.orgId, userId, 'member');
+      await ensureOrgMembership(ctx, acceptedInvite.orgId, userId);
       await scheduleUserOrgSync(ctx, userId, args.tokenIdentifier, acceptedInvite.orgId);
       await ensureOrgHasSubscription(ctx, acceptedInvite.orgId);
     } else {

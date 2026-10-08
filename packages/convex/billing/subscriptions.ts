@@ -9,8 +9,11 @@ import {
 import type { MutationCtx, ActionCtx } from '../_generated/server';
 import { v } from 'convex/values';
 import { requireAuthenticated } from '../auth/auth';
-import { getCurrentEnabledUser, requireEnabledUser } from '../auth/userHelpers';
-import { requireEnabledActionUser } from '../auth/actionUser';
+import {
+  getCurrentEnabledUser,
+  getActiveOrganizationMembership,
+  requireOrganizationOwner,
+} from '../auth/userHelpers';
 import { internal } from '../_generated/api';
 import { TIER_CONFIG, UNITS_PER_ADDON } from '@trace-flow/types';
 import type { Id } from '../_generated/dataModel';
@@ -50,29 +53,10 @@ export function mapStripeStatusToInternal(
   }
 }
 
-async function requireOrgOwner(ctx: Parameters<typeof requireEnabledUser>[0]) {
-  const user = await requireEnabledUser(ctx);
-  const orgId = user.orgId;
-  if (!orgId) throw new Error('Organization not found');
-  const org = await ctx.db.get(orgId);
-  if (!org) throw new Error('Organization not found');
-  if (org.ownerId !== user._id) {
-    throw new Error('Only organization owners can manage billing');
-  }
-  return { user: { ...user, orgId }, org };
-}
-
 async function requireOrgOwnerAction(ctx: ActionCtx) {
-  const user = await requireEnabledActionUser(ctx);
-  if (!user.orgId) throw new Error('Organization not found');
-  const orgId = user.orgId;
-  const org = await ctx.runQuery(internal.auth.organizations.getByIdInternal, { id: orgId });
-  if (!org) throw new Error('Organization not found');
-  if (org.ownerId !== user._id) {
-    throw new Error('Only organization owners can manage billing');
-  }
+  const { user, organization: org, orgId } = await requireOrganizationOwner(ctx);
   const subscription = await ctx.runQuery(internal.billing.subscriptions.getByOrgId, { orgId });
-  return { user: { ...user, orgId }, org, subscription };
+  return { user, org, subscription };
 }
 
 export async function scheduleKVSync(ctx: MutationCtx, subscriptionId: Id<'subscriptions'>) {
@@ -98,9 +82,10 @@ export const getForCurrentUser = query({
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
     const user = await getCurrentEnabledUser(ctx);
-    if (!user?.orgId) return null;
+    const active = await getActiveOrganizationMembership(ctx, user);
+    if (!active) return null;
 
-    return getSubscriptionByOrgId(ctx, user.orgId);
+    return getSubscriptionByOrgId(ctx, active.orgId);
   },
 });
 
@@ -109,8 +94,9 @@ export const ensureBillingForCurrentUser = mutation({
   returns: v.null(),
   handler: async (ctx) => {
     const user = await getCurrentEnabledUser(ctx);
-    if (!user?.orgId) return null;
-    await ensureOrgHasSubscription(ctx, user.orgId);
+    const active = await getActiveOrganizationMembership(ctx, user);
+    if (!active) return null;
+    await ensureOrgHasSubscription(ctx, active.orgId);
     return null;
   },
 });
@@ -131,19 +117,14 @@ export const getBillingSummaryForCurrentUser = query({
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
     const user = await getCurrentEnabledUser(ctx);
-    if (!user?.orgId) return null;
+    const active = await getActiveOrganizationMembership(ctx, user);
+    if (!active) return null;
 
-    const currentPeriod = await getCurrentBillingPeriod(ctx, user.orgId);
+    const currentPeriod = await getCurrentBillingPeriod(ctx, active.orgId);
     if (!currentPeriod) return null;
 
     const { subscription } = currentPeriod;
     const usage = summarizeCurrentUsage(subscription, currentPeriod.usage);
-
-    const membership = await ctx.db
-      .query('organizationMembers')
-      .withIndex('by_user_id', (q) => q.eq('userId', user._id))
-      .filter((q) => q.eq(q.field('orgId'), user.orgId!))
-      .first();
 
     return {
       subscription,
@@ -151,7 +132,7 @@ export const getBillingSummaryForCurrentUser = query({
       totalAvailable: usage.totalAvailable,
       remaining: usage.remaining,
       currentPeriodEnd: subscription.currentPeriodEnd,
-      role: membership?.role ?? 'member',
+      role: active.organization.ownerId === active.user._id ? 'owner' : 'member',
     };
   },
 });
@@ -393,7 +374,7 @@ export const updateAutoOverageSettings = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
-    const { user } = await requireOrgOwner(ctx);
+    const { user } = await requireOrganizationOwner(ctx);
     const subscription = await getSubscriptionByOrgId(mutationReadCtx(ctx), user.orgId);
     if (!subscription) throw new Error('Subscription not found');
     if (subscription.tier !== 'pro') throw new Error('Auto-topup requires Pro');

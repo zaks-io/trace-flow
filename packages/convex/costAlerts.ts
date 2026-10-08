@@ -10,7 +10,7 @@ import { paginationOptsValidator } from 'convex/server';
 import { v, ConvexError } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import { requireAuthenticated } from './auth/auth';
-import { getCurrentEnabledUser, requireEnabledUser } from './auth/users';
+import { getCurrentEnabledUser } from './auth/userHelpers';
 import { internal } from './_generated/api';
 import {
   apiKeyValidator,
@@ -25,7 +25,11 @@ import {
 } from './validators';
 import { normalizeWebhookHeaders, parseWebhookDeliveryUrl } from './costAlertWebhookSecurity';
 import { analyticsKeyId } from '@trace-flow/utils';
-import { isLiveOrganization } from './auth/userHelpers';
+import {
+  isLiveOrganization,
+  getActiveOrganizationMembership,
+  requireOrganizationOwner,
+} from './auth/userHelpers';
 
 const CONFIG_CHANGE_RECHECK_MS = 5 * 1000;
 const MAX_ALERT_STRING_LENGTH = 200;
@@ -44,32 +48,8 @@ const costAlertSettingsValidator = v.object({
   isOwner: v.boolean(),
 });
 
-type OrgContext = QueryCtx | MutationCtx;
 type CostAlert = Doc<'costAlerts'>;
 type CostAlertScope = NonNullable<CostAlert['scope']>;
-
-async function requireOrgMember(ctx: OrgContext) {
-  const user = await requireEnabledUser(ctx);
-  if (!user.orgId) {
-    throw new ConvexError('Organization not found');
-  }
-
-  const org = await ctx.db.get(user.orgId);
-  if (!org) {
-    throw new ConvexError('Organization not found');
-  }
-
-  return { user, org };
-}
-
-async function requireOrgOwner(ctx: OrgContext) {
-  const { user, org } = await requireOrgMember(ctx);
-  if (!isOrgOwner(user._id, org.ownerId)) {
-    throw new ConvexError('Only organization owners can manage cost alerts');
-  }
-
-  return { user, org };
-}
 
 export function isOrgOwner(userId: Id<'users'>, ownerId: Id<'users'>): boolean {
   return userId === ownerId;
@@ -401,7 +381,8 @@ export const listForCurrentOrg = query({
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
     const user = await getCurrentEnabledUser(ctx);
-    if (!user?.orgId) {
+    const active = await getActiveOrganizationMembership(ctx, user);
+    if (!active) {
       return {
         rules: [],
         channels: [],
@@ -411,9 +392,8 @@ export const listForCurrentOrg = query({
       };
     }
 
-    const org = await ctx.db.get(user.orgId);
-    const isOwner = org?.ownerId === user._id;
-    return getSettingsForOrg(ctx, user.orgId, isOwner);
+    const isOwner = active.organization.ownerId === active.user._id;
+    return getSettingsForOrg(ctx, active.orgId, isOwner);
   },
 });
 
@@ -422,13 +402,14 @@ export const listDeliveries = query({
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
     const user = await getCurrentEnabledUser(ctx);
-    if (!user?.orgId) {
+    const active = await getActiveOrganizationMembership(ctx, user);
+    if (!active) {
       return { page: [], isDone: true, continueCursor: '' };
     }
 
     return ctx.db
       .query('costAlertDeliveries')
-      .withIndex('by_org_id_attempted_at', (q) => q.eq('orgId', user.orgId!))
+      .withIndex('by_org_id_attempted_at', (q) => q.eq('orgId', active.orgId))
       .order('desc')
       .paginate(args.paginationOpts);
   },
@@ -442,7 +423,7 @@ export const createChannel = mutation({
   returns: v.id('costAlertChannels'),
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
-    const { user, org } = await requireOrgOwner(ctx);
+    const { user, organization: org } = await requireOrganizationOwner(ctx);
     const name = args.name.trim();
     if (name.length === 0) {
       throw new ConvexError('Channel name is required');
@@ -473,7 +454,7 @@ export const updateChannel = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
-    const { org } = await requireOrgOwner(ctx);
+    const { organization: org } = await requireOrganizationOwner(ctx);
     const channel = await ctx.db.get(args.id);
     if (channel?.orgId !== org._id) {
       throw new ConvexError('Channel not found');
@@ -506,7 +487,7 @@ export const toggleChannel = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
-    const { org } = await requireOrgOwner(ctx);
+    const { organization: org } = await requireOrganizationOwner(ctx);
     const channel = await ctx.db.get(args.id);
     if (channel?.orgId !== org._id) {
       throw new ConvexError('Channel not found');
@@ -527,7 +508,7 @@ export const removeChannel = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
-    const { user, org } = await requireOrgOwner(ctx);
+    const { user, organization: org } = await requireOrganizationOwner(ctx);
     const channel = await ctx.db.get(args.id);
     if (channel?.orgId !== org._id) {
       throw new ConvexError('Channel not found');
@@ -561,7 +542,7 @@ export const testChannel = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
-    const { org } = await requireOrgOwner(ctx);
+    const { organization: org } = await requireOrganizationOwner(ctx);
     const channel = await ctx.db.get(args.channelId);
     if (channel?.orgId !== org._id) {
       throw new ConvexError('Channel not found');
@@ -589,7 +570,7 @@ export const createAlert = mutation({
   returns: v.id('costAlerts'),
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
-    const { user, org } = await requireOrgOwner(ctx);
+    const { user, organization: org } = await requireOrganizationOwner(ctx);
     const condition = normalizeAlertCondition(args.condition);
     await assertApiKeysBelongToOrg(ctx, org._id, args.apiKeyIds);
     await assertChannelsBelongToOrg(ctx, org._id, args.channelIds);
@@ -641,7 +622,7 @@ export const updateAlert = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
-    const { user, org } = await requireOrgOwner(ctx);
+    const { user, organization: org } = await requireOrganizationOwner(ctx);
     const alert = await ctx.db.get(args.id);
     if (alert?.orgId !== org._id) {
       throw new ConvexError('Alert not found');
@@ -683,7 +664,7 @@ export const toggleAlert = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
-    const { user, org } = await requireOrgOwner(ctx);
+    const { user, organization: org } = await requireOrganizationOwner(ctx);
     const alert = await ctx.db.get(args.id);
     if (alert?.orgId !== org._id) {
       throw new ConvexError('Alert not found');
@@ -705,7 +686,7 @@ export const removeAlert = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
-    const { org } = await requireOrgOwner(ctx);
+    const { organization: org } = await requireOrganizationOwner(ctx);
     const alert = await ctx.db.get(args.id);
     if (alert?.orgId !== org._id) {
       throw new ConvexError('Alert not found');

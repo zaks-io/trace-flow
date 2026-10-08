@@ -1,7 +1,9 @@
 import { mutation, query } from '../_generated/server';
 import { v } from 'convex/values';
 import { internal } from '../_generated/api';
-import { getCurrentEnabledUser, requireAdmin, requireEnabledUser } from './users';
+import { getCurrentEnabledUser, requireAdmin } from './users';
+
+import { requireActiveOrganizationMembership, requireOrganizationOwner } from './userHelpers';
 
 const INVITE_EXPIRY_DAYS = 7;
 
@@ -14,6 +16,7 @@ export const createInvite = mutation({
   returns: v.id('invites'),
   handler: async (ctx, args) => {
     const admin = await requireAdmin(ctx);
+    const { orgId } = await requireActiveOrganizationMembership(ctx);
     const email = normalizeEmail(args.email);
 
     const existing = await ctx.db
@@ -32,7 +35,7 @@ export const createInvite = mutation({
     const inviteId = await ctx.db.insert('invites', {
       email,
       invitedBy: admin._id,
-      orgId: admin.orgId,
+      orgId,
       status: 'pending',
       token,
       expiresAt,
@@ -51,15 +54,7 @@ export const createOrgInvite = mutation({
   args: { email: v.string() },
   returns: v.id('invites'),
   handler: async (ctx, args) => {
-    const user = await requireEnabledUser(ctx);
-    const orgId = user.orgId;
-    if (!orgId) throw new Error('No organization found');
-
-    const org = await ctx.db.get(orgId);
-    if (!org) throw new Error('Organization not found');
-    if (org.ownerId !== user._id) {
-      throw new Error('Only organization owners can invite members');
-    }
+    const { user, orgId } = await requireOrganizationOwner(ctx);
 
     const email = normalizeEmail(args.email);
     const existing = await ctx.db
