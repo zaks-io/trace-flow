@@ -131,7 +131,7 @@ ensure_tinybird_local_container() {
     fi
   fi
 
-  log "starting Tinybird Local (memory limit ${TRACE_FLOW_TINYBIRD_MEMORY:-4g})"
+  log "starting Tinybird Local (memory limit ${TRACE_FLOW_TINYBIRD_MEMORY:-3g})"
   TRACE_FLOW_TINYBIRD_VOLUMES="$volumes_path" docker compose \
     --file "$TRACE_FLOW_DEV_DIR/tinybird-local.compose.yml" \
     up --detach --wait --wait-timeout 600

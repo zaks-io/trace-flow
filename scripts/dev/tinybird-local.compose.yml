@@ -16,6 +16,18 @@ services:
       TB_LOCAL_WORKSPACE_TOKEN: ${TB_LOCAL_WORKSPACE_TOKEN:?}
       # Tinybird starts ceil(cpus / 2) CSV worker processes of ~350 MB each, from host CPUs by default.
       PYTHON_CPU_COUNT: ${TRACE_FLOW_TINYBIRD_CPU_COUNT:-2}
+    # The image always starts an MCP server and a Kafka connector, ~340 MB that nothing here uses, and
+    # has no setting to turn them off. Supervisor skips autostart=false programs; the copy keeps the
+    # edit idempotent when a stopped container starts again. Fixture appends need the object store.
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        conf=/etc/supervisor/conf.d/supervisord.conf
+        [ -f "$$conf.image" ] || cp "$$conf" "$$conf.image"
+        sed -E '/^\[program:(tinybird-mcp|tinybird-kafka)\]$$/a autostart=false' "$$conf.image" >"$$conf"
+        exec /usr/bin/supervisord
     volumes:
       # Docker must create these directories: ClickHouse refuses data owned by another user.
       - ${TRACE_FLOW_TINYBIRD_VOLUMES:?}/data:/var/lib/clickhouse
@@ -23,5 +35,5 @@ services:
       - ./tinybird-local-clickhouse.xml:/etc/clickhouse-server/config.d/trace-flow-dev.xml:ro
     # ClickHouse caps itself at 90% of this limit, measured against the whole container's usage, so
     # queries fail with MEMORY_LIMIT_EXCEEDED before the kernel OOM-kills a service.
-    mem_limit: ${TRACE_FLOW_TINYBIRD_MEMORY:-4g}
-    memswap_limit: ${TRACE_FLOW_TINYBIRD_MEMORY:-4g}
+    mem_limit: ${TRACE_FLOW_TINYBIRD_MEMORY:-3g}
+    memswap_limit: ${TRACE_FLOW_TINYBIRD_MEMORY:-3g}
