@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { getFunctionName } from 'convex/server';
 import { deleteOrgData, deleteOrgDataScheduled } from '../admin/admin';
+import { internal } from '../_generated/api';
+import { initConvexTest } from './convexTest.setup';
 
 interface DeleteCounts {
   apiKeys: number;
@@ -71,6 +73,28 @@ const scheduledHandler = (deleteOrgDataScheduled as unknown as { _handler: Delet
   ._handler;
 
 describe('admin.deleteOrgData', () => {
+  it('starts deletion when the retained migration schema field is still present', async () => {
+    const t = initConvexTest();
+    const orgId = await t.run(async (ctx) => {
+      const ownerId = await ctx.db.insert('users', {
+        email: 'owner@example.com',
+        tokenIdentifier: 'deletion-owner',
+        enabled: true,
+      });
+      return ctx.db.insert('organizations', {
+        name: 'Deletion',
+        ownerId,
+        agentIngestionMigrationId: 'bounded-agent-ingestion-v1',
+      });
+    });
+
+    await t.mutation(internal.admin.admin.beginOrgDeletion, { orgId });
+    const organization = await t.run((ctx) => ctx.db.get(orgId));
+
+    expect(organization?.deletionStartedAt).toEqual(expect.any(Number));
+    expect(organization?.agentIngestionMigrationId).toBe('bounded-agent-ingestion-v1');
+  });
+
   it('reports zero Collector Credentials when scheduled deletion finds an already-deleted org', async () => {
     const ctx = makeDeleteCtx([]);
     ctx.runQuery.mockResolvedValueOnce(null);

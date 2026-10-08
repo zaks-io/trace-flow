@@ -34,19 +34,25 @@ Client/SDK -> Proxy Worker -> LLM Provider
 Agent conversation path:
 
 ```text
-Trace Flow CLI/Desktop -> Agent Ingest Worker -> agent-ingest Queue
-          |                       |                    |
-          |                       |                    v
-          |                       |           Agent Consumer Worker
-          |                       |                    |
-          |                       |                    v
-          |                       |          AgentFactBatcher Durable Object
-          |                       |                    |
-          |                       |                    v
-          |                       |          Tinybird agent_* tables
+Trace Flow CLI/Desktop -> Agent Ingest Worker
           |                       |
-          |                       +-> Convex compatibility policy
-          |                       +-> Convex session ownership claims
+          |                       +-> Convex compatibility policy and session ownership
+          |                       v
+          |              Encrypted R2 Agent Delivery
+          |                       |
+          |              Registered delivery reference
+          |                       v
+          |               agent-ingest Queue
+          |                       |
+          |                       v
+          |               Agent Consumer Worker
+          |                       |
+          |              AgentDelivery Durable Object
+          |                       |
+          |              AgentDeliveryCoordinator
+          |                       |
+          |                       v
+          |          Tinybird versioned facts and snapshots
           +-> Collector Credential in COLLECTOR_CREDS KV
 ```
 
@@ -80,14 +86,15 @@ The proxy and agent ingest paths are decoupled from their consumers via Cloudfla
 - **Retry semantics**: Automatic retries with dead-letter queues for failed messages
 - **Independent scaling**: Proxy and ingest workers scale for request volume; consumers scale for processing load
 
-### Append-Clean Analytics
+### Canonical analytics
 
 Analytics data flows in one direction: ingest worker to queue to Tinybird. There are no distributed transactions in the hot path.
 
 - The LLM path writes OTel-shaped spans into `otel_*` datasources.
-- The agent path writes typed facts plus derived rollups into `agent_*` datasources.
-- The agent consumer dedupes exact duplicate fact deliveries through `AGENT_FACT_BATCHER` before Tinybird insert.
-- Changed same-key agent facts become repair signals instead of silent overwrites.
+- The agent path writes versioned canonical facts and bounded snapshots into `agent_*` datasources.
+- Agent delivery receipts keep retries from repeating completed writes.
+- Later accepted revisions replace same-identity facts; cross-date corrections include old-day tombstones.
+- Product endpoints select the latest published snapshot generation per date.
 
 ## Data Flow
 
@@ -130,17 +137,19 @@ The local collector in the CLI or desktop app parses supported local transcript 
 3. **Rate limiting**: Apply the per-org `AGENT_INGEST_LIMITER`
 4. **Validation and redaction**: Validate the envelope, inflate gzip bodies, and re-redact free-text excerpts as a server-side backstop
 5. **Session ownership**: Claim `OrgId + session_pk` in Convex so duplicate uploads from another user do not overwrite ownership
-6. **Queue chunking**: Assemble stable `*_pk` row identities and enqueue sub-128 KiB messages to the agent queue
+6. **Durable staging**: Assemble stable row identities, store bounded encrypted R2 deliveries, and reserve their acceptance revisions
+7. **Queue publication**: Enqueue small tenant-bound delivery references
 
 ### 5. Agent Fact Processing
 
 The agent consumer receives queue batches and:
 
-1. **Validate queue contract**: Malformed messages retry and eventually dead-letter
+1. **Validate queue contract**: Off-contract messages log an error, retry, and eventually dead-letter
 2. **Price messages**: Read `MODEL_PRICING` KV and compute `cost_usd` only where usage and pricing coverage are sufficient
-3. **Map rows**: Convert typed facts into Tinybird row shapes for messages, tool events, file events, capability snapshots, and pull request links
-4. **Dedupe and batch**: Route rows by org to `AGENT_FACT_BATCHER`, which stores a fact ledger in Durable Object SQLite
-5. **Insert facts**: Flush clean rows to the `agent_*` Tinybird datasources
+3. **Map rows**: Convert typed facts into Tinybird row shapes for messages, tool events, file events, capability snapshots, pull request links, and review-unit attributions
+4. **Serialize writes**: Use the organization coordinator to acquire a canonical write permit
+5. **Insert facts**: Write immutable versioned rows, reconciling uncertain outcomes through delivery receipts
+6. **Publish snapshots**: Capture dirty dates and publish their manifest after every Copy succeeds
 
 ### 6. Visualization (Web Dashboard)
 
@@ -183,16 +192,15 @@ const batcher = env.TRACE_BATCHER.get(batcherId);
 await batcher.addTraces(traces);
 ```
 
-### Agent Fact Ledger
+### Agent delivery coordination
 
-Agent facts are already batched by the collector, so the Durable Object boundary serves a different purpose from `TraceBatcher`: it is a ledger for stable fact identity.
+Each encrypted delivery has bounded receipt metadata in `AgentDelivery`. The organization
+coordinator assigns its revision and serializes canonical writes. It tracks dirty dates and
+coordinates snapshot publication without retaining historical fact bodies.
 
-```typescript
-const batcher = env.AGENT_FACT_BATCHER.getByName(`org:${orgId}`);
-await batcher.addFacts({ rows });
-```
-
-Exact duplicate rows are skipped before Tinybird. Same fact identity with changed content is recorded as a repair signal, which keeps query-time `FINAL` out of the product path.
+`AgentDeadLetters` preserves agent DLQ records in the shared `__dlq__` instance. Recovery accepts
+only shardId `"__dlq__"`; `retire-dead-letter` resolves a record while keeping its payload. The
+retirement migration permanently deletes the old fact-ledger class and its storage.
 
 ### Row-Level Security
 
@@ -217,14 +225,15 @@ Collector Credentials are not API keys. They do not appear in API-key filters an
 | ----------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------ |
 | Workers           | Proxy, Proxy Consumer, Agent Ingest, Agent Consumer, Pipes API, Raw API, MCP, Analyst Sandbox, Web | Env-specific names and bindings      |
 | Queue             | LLM trace message passing                                                                          | `trace-flow-requests-{env}`          |
-| Queue             | Agent fact message passing                                                                         | `agent-ingest-{env}`                 |
+| Queue             | Agent delivery references                                                                          | `agent-ingest-{env}`                 |
 | Dead Letter Queue | Failed LLM trace messages                                                                          | `trace-flow-requests-dlq-{env}`      |
-| Dead Letter Queue | Failed agent fact messages                                                                         | `agent-ingest-dlq-{env}`             |
-| R2 Bucket         | Request/response body storage                                                                      | `trace-flow-storage-{env}`           |
+| Dead Letter Queue | Failed agent deliveries or off-contract messages                                                   | `agent-ingest-dlq-{env}`             |
+| R2 Bucket         | Request/response bodies                                                                            | `trace-flow-storage-{env}`           |
+| R2 Bucket         | Encrypted agent deliveries                                                                         | `trace-flow-agent-deliveries-{env}`  |
 | KV Namespace      | API key validation                                                                                 | `trace-flow-api-keys-{env}`          |
 | KV Namespace      | Model pricing cache                                                                                | Separate namespace                   |
 | KV Namespace      | Collector Credential lookup                                                                        | Separate `COLLECTOR_CREDS` namespace |
-| Durable Objects   | Trace batching, agent fact ledger                                                                  | Per-worker instances                 |
+| Durable Objects   | Trace batching, agent delivery and snapshot coordination, shared dead-letter recovery              | Per-worker instances                 |
 | Rate Limit        | Agent ingest org burst guard                                                                       | `AGENT_INGEST_LIMITER`               |
 
 ### External Services

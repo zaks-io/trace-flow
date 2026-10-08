@@ -2,7 +2,6 @@ import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test'
 import type {
   AgentDeliveryReference,
   AgentIngestQueueFacts,
-  AgentIngestQueuePayload,
   AgentIngestQueueMessage,
 } from '@trace-flow/types';
 import { loadAgentDelivery, sha256Hex } from '@trace-flow/utils';
@@ -46,7 +45,6 @@ async function makeEnv(): Promise<{
   const registerDelivery = vi.fn(async () => 1);
   const queueSend = vi.fn(async () => {});
   const env = {
-    AGENT_INGEST_MAINTENANCE: 'false',
     COLLECTOR_CREDS: {
       get: async (key: string) =>
         key === credentialKey
@@ -60,7 +58,7 @@ async function makeEnv(): Promise<{
             })
           : null,
     } as unknown as KVNamespace,
-    AGENT_QUEUE: { sendBatch: queueSend } as unknown as Queue<AgentIngestQueuePayload>,
+    AGENT_QUEUE: { sendBatch: queueSend } as unknown as Queue<AgentDeliveryReference>,
     AGENT_DELIVERIES: {
       put: deliveryPut,
       get: async (key: string) => {

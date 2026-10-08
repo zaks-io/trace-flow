@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 import { sha256Hex } from '@trace-flow/utils';
-import type { AgentDeliveryStagedReference, AgentIngestQueuePayload } from '@trace-flow/types';
+import type { AgentDeliveryReference, AgentDeliveryStagedReference } from '@trace-flow/types';
 import type { AgentConsumerService, AgentIngestEnv } from '../context';
 import type { CompatibilityPolicy } from '../policy';
 
@@ -100,10 +100,9 @@ export function makeEnv(over: EnvOverrides = {}): {
     }),
   } as unknown as R2Bucket;
   const env = {
-    AGENT_INGEST_MAINTENANCE: 'false',
     COLLECTOR_CREDS: makeKv(over.creds ?? {}),
     // The handler enqueues via sendBatch (one call per <=100-message group). Tests assert on it.
-    AGENT_QUEUE: { sendBatch: queueSend } as unknown as Queue<AgentIngestQueuePayload>,
+    AGENT_QUEUE: { sendBatch: queueSend } as unknown as Queue<AgentDeliveryReference>,
     AGENT_DELIVERIES: deliveries,
     AGENT_CONSUMER: {
       canAcceptDeliveries,

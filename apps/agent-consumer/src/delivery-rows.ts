@@ -91,24 +91,6 @@ export async function storeDeliveryRows(
   key: string,
   delivery: DeliveryRows,
 ): Promise<string> {
-  return persistDeliveryRows(env, key, delivery, false);
-}
-
-/** Create an immutable recovery source, accepting an exact prior write for idempotent retries. */
-export async function storeDeliveryRowsOnce(
-  env: DeliveryRowsStorage,
-  key: string,
-  delivery: DeliveryRows,
-): Promise<string> {
-  return persistDeliveryRows(env, key, delivery, true);
-}
-
-async function persistDeliveryRows(
-  env: DeliveryRowsStorage,
-  key: string,
-  delivery: DeliveryRows,
-  immutable: boolean,
-): Promise<string> {
   const plaintext = JSON.stringify(delivery);
   if (new TextEncoder().encode(plaintext).byteLength > MAX_PRICED_DELIVERY_BYTES) {
     throw new Error('Priced delivery exceeds storage limit');
@@ -119,19 +101,10 @@ async function persistDeliveryRows(
     objectKey: key,
   });
   const sha256 = await sha256Hex(plaintext);
-  const result = await env.AGENT_DELIVERIES.put(key, JSON.stringify(encrypted), {
-    ...(immutable ? { onlyIf: { etagDoesNotMatch: '*' } } : {}),
+  await env.AGENT_DELIVERIES.put(key, JSON.stringify(encrypted), {
     customMetadata: { expiresAt: String(delivery.expiresAt) },
     httpMetadata: { contentType: 'application/json' },
   });
-  if (!result) {
-    await loadDeliveryRows(env, key, {
-      orgId: delivery.orgId,
-      revision: delivery.revision,
-      expiresAt: delivery.expiresAt,
-      sha256,
-    });
-  }
   return sha256;
 }
 

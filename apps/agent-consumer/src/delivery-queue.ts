@@ -1,3 +1,5 @@
+import * as Sentry from '@sentry/cloudflare';
+import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import { isAgentDeliveryReference } from '@trace-flow/utils';
 import { captureSafeException } from '@trace-flow/utils/sentry-tracing';
 import type { AgentConsumerEnv } from './context';
@@ -38,4 +40,31 @@ export function hasDeliveryReferenceType(value: unknown): boolean {
     'type' in value &&
     value.type === 'agent-delivery'
   );
+}
+
+export async function retryOffContractMessages(
+  messages: readonly Message<unknown>[],
+  queue: string,
+  env: AgentConsumerEnv,
+): Promise<void> {
+  const logger = createLogger({
+    service: 'agent-consumer',
+    runtime: 'cloudflare-worker',
+    axiom: axiomConfigFromEnv(env),
+    context: { component: 'queue-consumer' },
+  });
+  try {
+    for (const message of messages) {
+      const extra = { messageId: message.id, queue };
+      logger.error('agent_consumer.message_off_contract', undefined, extra);
+      Sentry.captureMessage('agent_consumer.message_off_contract', {
+        level: 'error',
+        tags: { operation: 'guard' },
+        extra,
+      });
+      message.retry();
+    }
+  } finally {
+    await logger.flush();
+  }
 }

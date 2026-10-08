@@ -73,15 +73,18 @@ A single TraceBatcher instance. Queue Messages fan out across Trace Shards to am
 _Avoid_: "shard" (unqualified), "partition", "batcher worker".
 
 **Agent Ingest**:
-`apps/agent-ingest`. Public Collector intake worker for Agent Conversation Analytics. It accepts gzip fact envelopes from the CLI/Desktop Collector, authenticates **Collector Credentials**, applies compatibility and rate-limit checks, claims **Agent Session** ownership through Convex, and enqueues agent fact messages.
+`apps/agent-ingest`. Public Collector intake worker for Agent Conversation Analytics. It accepts gzip fact envelopes from the CLI/Desktop Collector, authenticates **Collector Credentials**, applies compatibility and rate-limit checks, claims **Agent Session** ownership through Convex, stores encrypted deliveries in R2, and enqueues tenant-bound delivery references.
 _Avoid_: "agent proxy", "desktop API", "collector backend".
 
 **Agent Consumer**:
-`apps/agent-consumer`. Queue consumer that drains agent fact messages, prices **Agent Message** facts from `MODEL_PRICING`, dedupes through **AgentFactBatcher**, and writes `agent_*` Tinybird datasources.
+`apps/agent-consumer`. Queue consumer that resolves encrypted agent delivery references, prices **Agent Message** facts once from `MODEL_PRICING`, writes versioned canonical facts, and publishes bounded Tinybird snapshots through **AgentDeliveryCoordinator**.
 _Avoid_: "Consumer" without the "Agent" qualifier.
 
-**AgentFactBatcher**:
-The Durable Object class (`apps/agent-consumer/src/fact-batcher.ts`) that owns cross-delivery dedupe for agent fact rows before Tinybird insert. Same-key changed facts are repair signals, not blind overwrites.
+**AgentDeadLetters**:
+The Durable Object class (`apps/agent-consumer/src/dead-letters.ts`) that preserves agent dead letters in one shared instance named `__dlq__`. Recovery uses shardId `"__dlq__"` and resolves records with `retire-dead-letter` while retaining their payloads.
+
+**AgentDeliveryCoordinator**:
+The per-Organization Durable Object that assigns delivery revisions, serializes canonical writes, tracks dirty dates, and coordinates snapshot publication.
 
 **Pipes API Worker**:
 `apps/pipes-api`. Read-side worker for Tinybird Pipe passthrough used by the Web app. It forwards Convex-minted Pipe Tokens to Tinybird and does not bind raw-object credentials or `TINYBIRD_ADMIN_TOKEN`.
@@ -462,8 +465,8 @@ _Avoid_: "hung" or "crashed" (the Supervisor observes silence, not process death
 - **Trace Flow Analyst** conversations happen in the **Analyst Sidebar** and are represented by creator-private **Analyst Threads**, which use the **Analyst Runtime** to answer user questions through approved **Analyst Tools**.
 - **Context Selection Mode** adds one or more **Page Context References** to the next **Analyst Thread** message.
 - The **Collector** parses local **Source** transcripts into agent facts and uploads them to **Agent Ingest** with a **Collector Credential**.
-- **Agent Ingest** validates the upload, claims **Agent Session** ownership through Convex, and sends agent fact messages to the agent queue.
-- **Agent Consumer** prices, dedupes, and writes agent facts to `agent_*` **Datasources** for `/app/agents`.
+- **Agent Ingest** validates the upload, claims **Agent Session** ownership through Convex, stores encrypted R2 deliveries, and sends their references to the agent queue.
+- **Agent Consumer** prices deliveries once, writes versioned agent facts, and publishes snapshots to `agent_*` **Datasources** for `/app/agents`.
 - A **Pipe Token** is scoped to an **Organization**'s **API Keys** and **Retention Window**.
 - Agent-analytics reads are scoped by **Organization** and do not use user-facing **API Keys** as identity; the separate **Provider Usage Tracking** feature adds **User** scope for user-private **Provider Usage Snapshots**.
 - **Context Bloat** consumes part of an **Agent Session**'s working context and can increase **Context Rot Exposure**, but it is not the same signal.

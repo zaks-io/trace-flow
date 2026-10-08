@@ -5,7 +5,7 @@ import type { AgentConsumerEnv } from '../context';
 declare global {
   namespace Cloudflare {
     interface Env extends AgentConsumerEnv {
-      AGENT_FACT_BATCHER: AgentConsumerEnv['AGENT_FACT_BATCHER'];
+      AGENT_DEAD_LETTERS: AgentConsumerEnv['AGENT_DEAD_LETTERS'];
     }
   }
 }

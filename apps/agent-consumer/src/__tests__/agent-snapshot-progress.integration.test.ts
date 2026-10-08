@@ -8,21 +8,21 @@ import {
   type AgentDeliveryCoordinatorInstance,
 } from '../agent-delivery-coordinator';
 import type { AgentConsumerEnv } from '../context';
-import type { AgentFactBatcherInstance } from '../fact-batcher';
+import type { AgentDeadLettersInstance } from '../dead-letters';
 import { AGENT_SNAPSHOT_TARGETS } from '../snapshot-tinybird';
 
 const env = workerEnv as unknown as {
-  AGENT_FACT_BATCHER: DurableObjectNamespace<AgentFactBatcherInstance>;
+  AGENT_DEAD_LETTERS: DurableObjectNamespace<AgentDeadLettersInstance>;
 };
 const payloadSha256 = 'a'.repeat(64);
 
 describe('agent snapshot progress', () => {
-  let storageHost: DurableObjectStub<AgentFactBatcherInstance>;
+  let storageHost: DurableObjectStub<AgentDeadLettersInstance>;
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-13T12:00:00.000Z'));
-    storageHost = env.AGENT_FACT_BATCHER.get(env.AGENT_FACT_BATCHER.newUniqueId());
+    storageHost = env.AGENT_DEAD_LETTERS.get(env.AGENT_DEAD_LETTERS.newUniqueId());
   });
 
   afterEach(() => vi.useRealTimers());

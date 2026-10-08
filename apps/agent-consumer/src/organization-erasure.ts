@@ -1,3 +1,4 @@
+import { AGENT_DEAD_LETTERS_INSTANCE_NAME } from './dead-letters';
 import type { AgentConsumerEnv } from './context';
 import { discoverSnapshotCopy } from './snapshot-tinybird';
 
@@ -46,9 +47,9 @@ export async function eraseAgentOrganization(
     state = await coordinator.getErasureState({});
   }
   if (!state?.ready) return { ready: false };
-  const legacy = await env.AGENT_FACT_BATCHER.getByName(`org:${orgId}`).eraseOrganizationData();
-  if (!legacy.erased) return { ready: false };
-  const dlq = await env.AGENT_FACT_BATCHER.getByName('org:__dlq__').discardOrganizationDlq(orgId, {
+  const dlq = await env.AGENT_DEAD_LETTERS.getByName(
+    AGENT_DEAD_LETTERS_INSTANCE_NAME,
+  ).discardOrganizationDlq(orgId, {
     afterId,
     limit: 100,
   });
@@ -61,4 +62,12 @@ export async function eraseAgentOrganization(
     remaining ||= page.truncated;
   }
   return { ready: !remaining };
+}
+
+export async function organizationErasureStarted(
+  env: AgentConsumerEnv,
+  orgId: string,
+): Promise<boolean> {
+  const coordinator = env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${orgId}`);
+  return (await coordinator.getErasureState({})) !== null;
 }

@@ -1,7 +1,6 @@
 import type { DurableObjectStorage } from '@cloudflare/workers-types';
 import type { TinybirdRecoveryStore } from '@trace-flow/tinybird-client';
 import { sha256Hex } from '@trace-flow/utils';
-import { dlqPayloadOrgId } from './fact-batcher-helpers';
 
 export class DlqCleanup {
   constructor(
@@ -65,4 +64,15 @@ export class DlqCleanup {
       this.storage.sql.exec('DELETE FROM recovery_records WHERE id = ? AND kind = ?', id, 'dlq');
     }
   }
+}
+
+function dlqPayloadOrgId(payload: string): string | null {
+  const parsed: unknown = JSON.parse(payload);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const body = (parsed as Record<string, unknown>).body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const tenancy = (body as Record<string, unknown>).tenancy;
+  if (!tenancy || typeof tenancy !== 'object' || Array.isArray(tenancy)) return null;
+  const orgId = (tenancy as Record<string, unknown>).org_id;
+  return typeof orgId === 'string' ? orgId : null;
 }

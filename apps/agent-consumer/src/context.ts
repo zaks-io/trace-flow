@@ -1,18 +1,18 @@
-import type { AgentIngestQueuePayload, AgentSnapshotQueueMessage } from '@trace-flow/types';
-import type { AgentFactBatcherInstance } from './fact-batcher';
+import type { AgentDeliveryReference, AgentSnapshotQueueMessage } from '@trace-flow/types';
+import type { AgentDeadLettersInstance } from './dead-letters';
 import type { AgentDeliveryInstance } from './agent-delivery';
 import type { AgentDeliveryCoordinatorInstance } from './agent-delivery-coordinator';
 import type { SnapshotCapacityInstance } from './snapshot-capacity';
 
 /**
- * Bindings for the agent-consumer Worker. All bindings are required — a misconfigured deploy must
+ * Bindings for the agent-consumer Worker. All bindings are required; a misconfigured deploy must
  * fail loudly rather than silently degrade (no defensive optionals). SENTRY_DSN, CF_VERSION_METADATA,
  * and the Axiom vars are the only optionals: Sentry/Axiom are absent in local/dev and the version
  * binding is injected by the platform.
  */
 export interface AgentConsumerEnv {
   /** The agent ingest queue the worker (2b) produces to; this consumer prices + writes its facts. */
-  AGENT_QUEUE: Queue<AgentIngestQueuePayload>;
+  AGENT_QUEUE: Queue<AgentDeliveryReference>;
   AGENT_SNAPSHOT_QUEUE: Queue<AgentSnapshotQueueMessage>;
   AGENT_DELIVERIES: R2Bucket;
   BODY_ENCRYPTION_ROOT_KEY: string;
@@ -25,17 +25,12 @@ export interface AgentConsumerEnv {
   TINYBIRD_AGENT_SNAPSHOT_JOBS_TOKEN: string;
   /** Shared model pricing catalog, keyed `pricing:<provider>:<model>` (models.dev import, 2d). */
   MODEL_PRICING: KVNamespace;
-  /** Durable Object ledger that dedupes and batches facts before Tinybird insert. */
-  AGENT_FACT_BATCHER: DurableObjectNamespace<AgentFactBatcherInstance>;
+  /** Shared dead-letter preservation and recovery. */
+  AGENT_DEAD_LETTERS: DurableObjectNamespace<AgentDeadLettersInstance>;
   /** Tinybird Events API token with DATASOURCE:APPEND scope. */
   TINYBIRD_TOKEN: string;
   /** Tinybird regional API host, e.g. `https://api.us-west-2.aws.tinybird.co`. */
   TINYBIRD_HOST: string;
-  /**
-   * Tinybird write mode. `clean` is steady state; `legacy` and `dual` are rollback-only rollout
-   * modes for keeping the old ReplacingMergeTree path available during incident response.
-   */
-  TINYBIRD_AGENT_WRITE_MODE?: string;
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
   CF_VERSION_METADATA?: { id: string };

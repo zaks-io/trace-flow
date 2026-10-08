@@ -1,6 +1,6 @@
 # Agent Ingest Worker
 
-The Agent Ingest Worker is the public collector intake boundary for Agent Conversation Analytics. It accepts parsed fact envelopes from Trace Flow CLI/Desktop, authenticates the Collector Credential, validates the upload, stamps tenancy and stable row identities, claims Agent Session ownership, and enqueues agent fact messages.
+The Agent Ingest Worker is the public collector intake boundary for Agent Conversation Analytics. It accepts parsed fact envelopes from Trace Flow CLI/Desktop, authenticates the Collector Credential, validates the upload, stamps tenancy and stable row identities, claims Agent Session ownership, stores encrypted fact deliveries in R2, and enqueues their references.
 
 Agent analytics is still not production-ready until the gates in `docs/guides/agent-conversation-analytics/ROADMAP.md` are complete.
 
@@ -15,7 +15,9 @@ Agent analytics is still not production-ready until the gates in `docs/guides/ag
 7. Re-redacts free-text excerpts as a server-side backstop.
 8. Assembles `session_pk`, row `*_pk` values, and `repo_fingerprint`.
 9. Claims first-writer session ownership through Convex.
-10. Chunks facts into sub-128 KiB queue messages and calls `AGENT_QUEUE.sendBatch`.
+10. Splits facts into bounded encrypted R2 deliveries using stable collector retry identities.
+11. Registers each delivery with the organization coordinator to reserve its acceptance revision.
+12. Calls `AGENT_QUEUE.sendBatch` with small `AgentDeliveryReference` messages.
 
 ## What It Does Not Do
 
@@ -30,7 +32,10 @@ Agent analytics is still not production-ready until the gates in `docs/guides/ag
 | Binding                      | Type       | Purpose                                            |
 | ---------------------------- | ---------- | -------------------------------------------------- |
 | `COLLECTOR_CREDS`            | KV         | Convex-synced Collector Credential hash lookup     |
-| `AGENT_QUEUE`                | Queue      | Agent fact message producer                        |
+| `AGENT_QUEUE`                | Queue      | Agent delivery reference producer                  |
+| `AGENT_DELIVERIES`           | R2         | Encrypted bounded fact deliveries                  |
+| `AGENT_CONSUMER`             | Service    | Delivery registration and admission checks         |
+| `BODY_ENCRYPTION_ROOT_KEY`   | Secret     | Delivery encryption                                |
 | `AGENT_INGEST_LIMITER`       | RateLimit  | Per-org burst guard                                |
 | `CONVEX_SITE_URL`            | Secret/var | Compatibility policy and session ownership routes  |
 | `AGENT_INGEST_SHARED_SECRET` | Secret     | Authenticates worker-to-Convex agent ingest routes |
@@ -43,9 +48,12 @@ Agent analytics is still not production-ready until the gates in `docs/guides/ag
 - `413`: request exceeds body-size limits
 - `426`: collector desktop/parser version is unsupported
 - `429`: org ingest burst limit exceeded
-- `503`: compatibility policy, session claim, or queue enqueue is unavailable
+- `503`: compatibility policy, session claim, durable staging, or queue enqueue is unavailable; snapshot admission closure returns `Retry-After: 60`
 
-Retryable failures do not advance collector cursors. The collector resubmits and the downstream fact ledger dedupes stable row identities.
+Retryable failures do not advance collector cursors. Retries within one POST cycle reuse the collector
+batch identity and the registered delivery receipt. Later deliveries replace matching canonical fact
+identities through their accepted revision. The existing 124,000-byte chunk bound remains part of the
+retry identity; fact bodies travel in R2 rather than inline queue messages.
 
 ## Key Files
 
@@ -55,5 +63,6 @@ Retryable failures do not advance collector cursors. The collector resubmits and
 - `apps/agent-ingest/src/policy.ts` - Convex compatibility policy
 - `apps/agent-ingest/src/ownership.ts` - Agent Session ownership claims
 - `apps/agent-ingest/src/ids.ts` - stable ID assembly
-- `apps/agent-ingest/src/chunker.ts` - queue message splitting
+- `apps/agent-ingest/src/chunker.ts` - bounded fact splitting
+- `apps/agent-ingest/src/retry-request.ts` - collector batch identity manifests
 - `apps/agent-ingest/src/redaction.ts` - server-side redaction backstop

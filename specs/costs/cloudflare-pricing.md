@@ -97,7 +97,10 @@ The current runtime uses Cloudflare in two ingestion paths.
 - `COLLECTOR_CREDS` KV reads for Collector Credential auth
 - `agent-ingest-*` queue operations, charged per 64 KiB chunk
 - Agent Consumer CPU for validation, pricing, row mapping, and Tinybird inserts
-- `AGENT_FACT_BATCHER` Durable Object requests/storage for fact dedupe before Tinybird writes
+- R2 writes and reads for encrypted delivery buffers and priced row plans
+- Durable Object requests/storage for delivery receipts, organization coordination, and snapshot capacity
+- `AGENT_DEAD_LETTERS` requests/storage for shared DLQ preservation and recovery. The retirement
+  migration permanently deletes the old fact-ledger class and its accumulated storage.
 - `MODEL_PRICING` KV reads for server-side cost calculation
 
 ## Sources

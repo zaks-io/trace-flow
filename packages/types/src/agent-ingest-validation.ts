@@ -1,4 +1,4 @@
-import type { AgentIngestEnvelope, AgentIngestQueueMessage } from './agent-ingest';
+import type { AgentIngestEnvelope } from './agent-ingest';
 import { AGENT_INGEST_LIMITS, type FieldSpec } from './agent-ingest-schema';
 import {
   BATCH_FIELDS,
@@ -273,8 +273,4 @@ export function validateAgentIngestQueueMessage(value: unknown): string | null {
 
 export function isAgentIngestEnvelope(value: unknown): value is AgentIngestEnvelope {
   return validateAgentIngestEnvelope(value) === null;
-}
-
-export function isAgentIngestQueueMessage(value: unknown): value is AgentIngestQueueMessage {
-  return validateAgentIngestQueueMessage(value) === null;
 }

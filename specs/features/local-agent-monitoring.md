@@ -10,14 +10,14 @@ Running many concurrent local coding agents means no ability to micromanage any 
 There is no near-realtime view of what they are doing, and the only feedback loop is
 post-hoc analytics with minutes-to-an-hour lag.
 
-Measured end-to-end latency from "agent does something" to "a human could see it":
+Current stages between "agent does something" and dashboard visibility:
 
-| Hop                     | Cost                                             | Source                                           |
-| ----------------------- | ------------------------------------------------ | ------------------------------------------------ |
-| Transcript to Collector | manual `Sync --since`; watcher designed, unbuilt | `apps/cli/src/main.rs:64`                        |
-| Ingest to Consumer      | 5s batch timeout                                 | `apps/agent-consumer/wrangler.jsonc:51`          |
-| Consumer to Tinybird    | up to 60s Durable Object flush                   | `apps/agent-consumer/src/fact-batcher.ts:19`     |
-| Alert evaluation        | hourly                                           | `packages/convex/integrations/costAlerts.ts:870` |
+| Hop                     | Cost                                                     | Source                                           |
+| ----------------------- | -------------------------------------------------------- | ------------------------------------------------ |
+| Transcript to Collector | manual `Sync --since`; watcher designed, unbuilt         | `apps/cli/src/main.rs:64`                        |
+| Ingest to Consumer      | 5s batch timeout                                         | `apps/agent-consumer/wrangler.jsonc:51`          |
+| Consumer to Tinybird    | canonical writes followed by bounded snapshot generation | `apps/agent-consumer/src/snapshot-schedule.ts`   |
+| Alert evaluation        | hourly                                                   | `packages/convex/integrations/costAlerts.ts:870` |
 
 The target is sub-10s visibility using deterministic detection only, with no model in the
 monitoring loop.
@@ -282,10 +282,10 @@ does not satisfy the requirement. Forensics has to work across machines, which i
 durable answer is the existing organization-scoped fact tables rather than anything local.
 
 **Ceiling constraint.** `apps/agent-ingest/src/chunker.ts:7` sets
-`MAX_QUEUE_MESSAGE_BYTES = 124_000` under Cloudflare's 128 KiB per-message limit, and
-`chunker.ts:42` states the invariant "a single fact never exceeds the cap — excerpts are
-length-capped upstream." Raising the caps is what threatens that invariant. A test must assert
-that a maximum-sized Tool Event fact serializes under the ceiling.
+`MAX_QUEUE_MESSAGE_BYTES = 124_000` as the existing bounded fact chunk size. The same chunking
+feeds collector retry identity, even though fact bodies now travel in encrypted R2 deliveries
+and queue messages carry small references. A single fact must still fit the chunk bound.
+Raising excerpt caps needs a test that a maximum-sized Tool Event fact serializes under that ceiling.
 
 ## Divergence detection
 

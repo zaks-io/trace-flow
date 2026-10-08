@@ -2,7 +2,7 @@ import { env as workerEnv } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentConsumerEnv } from '../context';
-import type { AgentFactBatcherInstance } from '../fact-batcher';
+import type { AgentDeadLettersInstance } from '../dead-letters';
 import { finishSnapshotCopies } from './snapshot-coordinator-helpers';
 import {
   AgentDeliveryCoordinator,
@@ -14,18 +14,18 @@ import {
 const CLAIM_ID = 'claim-a';
 
 const env = workerEnv as unknown as {
-  AGENT_FACT_BATCHER: DurableObjectNamespace<AgentFactBatcherInstance>;
+  AGENT_DEAD_LETTERS: DurableObjectNamespace<AgentDeadLettersInstance>;
 };
 const HASH_A = 'a'.repeat(64);
 const HASH_B = 'b'.repeat(64);
 
 describe('AgentDeliveryCoordinator dirty day links', () => {
-  let storageHost: DurableObjectStub<AgentFactBatcherInstance>;
+  let storageHost: DurableObjectStub<AgentDeadLettersInstance>;
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-13T12:00:00.000Z'));
-    storageHost = env.AGENT_FACT_BATCHER.get(env.AGENT_FACT_BATCHER.newUniqueId());
+    storageHost = env.AGENT_DEAD_LETTERS.get(env.AGENT_DEAD_LETTERS.newUniqueId());
   });
 
   const withCoordinator = <T>(

@@ -125,277 +125,100 @@ test('forwards confirmed reconciliation to the agent service', async () => {
   assert.equal(response.status, 200);
 });
 
-test('fact rebuild methods require agent pipeline and explicit mutation confirmation', async () => {
-  let calls = 0;
-  const env = {
-    AGENT_RECOVERY: {
-      beginFactRebuild: async () => {
-        calls++;
-        return { status: 'quiescent' };
-      },
-    },
-  };
-  const body = {
-    pipeline: 'agent',
-    shardId: 'org-1',
-    options: { operationId: 'op-1', reason: 'verified' },
-  };
-  assert.equal((await worker.fetch(request('beginFactRebuild', body), env)).status, 400);
-  assert.equal(
-    (
-      await worker.fetch(
-        request('beginFactRebuild', { ...body, pipeline: 'proxy', confirm: 'apply-recovery' }),
-        env,
-      )
-    ).status,
-    400,
-  );
-  assert.equal(
-    (await worker.fetch(request('beginFactRebuild', { ...body, confirm: 'apply-recovery' }), env))
-      .status,
-    200,
-  );
-  assert.equal(calls, 1);
-});
-
-test('legacy retirement requires explicit mutation confirmation', async () => {
+test('forwards proxy dead-letter replay only with mutation confirmation', async () => {
   const calls = [];
   const env = {
-    AGENT_RECOVERY: {
-      retireFrozenLedger: async (orgId, proof) => {
-        calls.push([orgId, proof]);
-        return { ...proof, state: 'complete', completedAtMs: 1 };
-      },
-    },
-  };
-  const options = {
-    verificationSha256: 'a'.repeat(64),
-    migrationProofSha256: 'b'.repeat(64),
-    deliverySequence: 42,
-    oldestDay: '2025-09-14',
-    todayDay: '2026-09-13',
-    frozenFactCount: 9,
-  };
-  const body = { pipeline: 'agent', shardId: 'org-1', options };
-
-  assert.equal((await worker.fetch(request('retireFrozenLedger', body), env)).status, 400);
-  assert.equal(calls.length, 0);
-  assert.equal(
-    (await worker.fetch(request('retireFrozenLedger', { ...body, confirm: 'apply-recovery' }), env))
-      .status,
-    200,
-  );
-  assert.deepEqual(calls, [['org-1', options]]);
-});
-
-test('frozen repair reconciliation requires explicit mutation confirmation', async () => {
-  const calls = [];
-  const env = {
-    AGENT_RECOVERY: {
-      reconcileFrozenRepairs: async (orgId, batch) => {
-        calls.push([orgId, batch]);
-        return { resolved: batch.repairs.length };
-      },
-    },
-  };
-  const options = { repairs: [{ recoveryId: 7 }] };
-  const body = { pipeline: 'agent', shardId: 'org-1', options };
-
-  assert.equal((await worker.fetch(request('reconcileFrozenRepairs', body), env)).status, 400);
-  assert.equal(calls.length, 0);
-  assert.equal(
-    (
-      await worker.fetch(
-        request('reconcileFrozenRepairs', { ...body, confirm: 'apply-recovery' }),
-        env,
-      )
-    ).status,
-    200,
-  );
-  assert.deepEqual(calls, [['org-1', options]]);
-});
-
-test('persists the baseline migration window only through a confirmed agent mutation', async () => {
-  const calls = [];
-  const env = {
-    AGENT_RECOVERY: {
-      beginBaselineMigrationWindow: async (shardId, options) => {
+    PROXY_RECOVERY: {
+      replayDlq: async (shardId, options) => {
         calls.push([shardId, options]);
-        return options;
+        return { replayed: true };
       },
     },
   };
-  const body = {
-    pipeline: 'agent',
-    shardId: '__migration__',
-    options: { startDay: '2025-09-13', endDay: '2026-09-13' },
-  };
+  const options = { recoveryId: 7, reason: 'Verified delivery can resume' };
+  const body = { pipeline: 'proxy', shardId: '3', options };
+  assert.equal((await worker.fetch(request('replayDlq', body), env)).status, 400);
+  assert.deepEqual(calls, []);
 
-  assert.equal(
-    (await worker.fetch(request('beginBaselineMigrationWindow', body), env)).status,
-    400,
+  const response = await worker.fetch(
+    request('replayDlq', { ...body, confirm: 'apply-recovery' }),
+    env,
   );
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { replayed: true });
+  assert.deepEqual(calls, [['3', options]]);
+});
+
+test('rejects agent dead-letter replay before calling a recovery service', async () => {
+  const response = await worker.fetch(
+    request('replayDlq', {
+      pipeline: 'agent',
+      shardId: 'org-test',
+      options: { recoveryId: 7 },
+      confirm: 'apply-recovery',
+    }),
+    {
+      AGENT_RECOVERY: {
+        replayDlq() {
+          assert.fail('must not call');
+        },
+      },
+    },
+  );
+  assert.equal(response.status, 400);
+  assert.equal(
+    await response.text(),
+    'Recovery method replayDlq is not offered by the agent pipeline',
+  );
+});
+
+test('guards local JSON requests and rejects unknown methods', async () => {
+  const env = {
+    PROXY_RECOVERY: {
+      listRecovery() {
+        assert.fail('must not call');
+      },
+    },
+  };
+  const body = { pipeline: 'proxy', shardId: '3' };
   assert.equal(
     (
       await worker.fetch(
-        request('beginBaselineMigrationWindow', { ...body, confirm: 'apply-recovery' }),
+        new Request('https://example.com/listRecovery', request('listRecovery', body)),
         env,
       )
     ).status,
-    200,
+    403,
   );
-  assert.deepEqual(calls, [['__migration__', body.options]]);
-});
-
-test('exposes baseline retry only through the confirmed agent recovery service', async () => {
-  const calls = [];
-  const env = {
-    AGENT_RECOVERY: {
-      retryBaselineCopy: async (shardId, options) => {
-        calls.push([shardId, options]);
-        return { ...options, complete: false };
-      },
-    },
-  };
-  const options = {
-    category: 'tool_events',
-    expectedJobId: 'job-failed',
-    expectedCopyAttempt: 10,
-    nextCopyAttempt: 11,
-    observedAt: 11,
-    providerErrorSha256: 'a'.repeat(64),
-    journalSha256: 'b'.repeat(64),
-  };
-  const body = { pipeline: 'agent', shardId: 'org-1', options };
-
-  assert.equal((await worker.fetch(request('retryBaselineCopy', body), env)).status, 400);
   assert.equal(
-    (
-      await worker.fetch(
-        request('retryBaselineCopy', { ...body, pipeline: 'proxy', confirm: 'apply-recovery' }),
-        env,
-      )
-    ).status,
+    (await worker.fetch(new Request('http://127.0.0.1:8799/listRecovery'), env)).status,
     400,
   );
   assert.equal(
-    (await worker.fetch(request('retryBaselineCopy', { ...body, confirm: 'apply-recovery' }), env))
-      .status,
-    200,
-  );
-  assert.deepEqual(calls, [['org-1', options]]);
-});
-
-test('forwards bounded frozen source inspection and reads without mutation confirmation', async () => {
-  const calls = [];
-  const env = {
-    AGENT_RECOVERY: {
-      inspectFrozenFactSources: async (shardId, options) => {
-        calls.push(['inspect', shardId, options]);
-        return [
-          { category: 'messages', factId: 'fact', sourceHash: 'a'.repeat(16), payloadBytes: 42 },
-        ];
-      },
-      readFrozenFactSources: async (shardId, options) => {
-        calls.push(['read', shardId, options]);
-        return [{ category: 'messages', factId: 'fact', payload: '{"private":true}' }];
-      },
-    },
-  };
-  const body = {
-    pipeline: 'agent',
-    shardId: 'org-1',
-    options: { facts: [{ category: 'messages', factId: 'fact' }] },
-  };
-
-  assert.deepEqual(
-    await (await worker.fetch(request('inspectFrozenFactSources', body), env)).json(),
-    [{ category: 'messages', factId: 'fact', sourceHash: 'a'.repeat(16), payloadBytes: 42 }],
-  );
-  assert.deepEqual(await (await worker.fetch(request('readFrozenFactSources', body), env)).json(), [
-    { category: 'messages', factId: 'fact', payload: '{"private":true}' },
-  ]);
-  assert.deepEqual(calls, [
-    ['inspect', 'org-1', body.options],
-    ['read', 'org-1', body.options],
-  ]);
-});
-
-test('fact repair inspection is agent-only and compaction requires mutation confirmation', async () => {
-  const calls = [];
-  const env = {
-    AGENT_RECOVERY: {
-      inspectFactRepairCapacity: async (shardId, options) => {
-        calls.push(['inspect', shardId, options]);
-        return { databaseSizeBytes: 10 };
-      },
-      compactFactRepairDuplicates: async (shardId, options) => {
-        calls.push(['compact', shardId, options]);
-        return { compacted: [] };
-      },
-      quiesceFactRepairCapacity: async (shardId, options) => {
-        calls.push(['quiesce', shardId, options]);
-        return { alarmScheduledAtMs: null };
-      },
-    },
-  };
-  const body = {
-    pipeline: 'agent',
-    shardId: 'org-1',
-    options: { candidates: [{ repairId: 1, proofSha256: 'a'.repeat(64) }] },
-  };
-  const quiescenceBody = {
-    ...body,
-    options: { expectedAlarmScheduledAtMs: 123, reason: 'clear the exact reviewed alarm' },
-  };
-  assert.equal((await worker.fetch(request('inspectFactRepairCapacity', body), env)).status, 200);
-  assert.equal(
-    (await worker.fetch(request('inspectFactRepairCapacity', { ...body, pipeline: 'proxy' }), env))
+    (await worker.fetch(request('listRecovery', body, { 'Content-Type': 'text/plain' }), env))
       .status,
     400,
   );
-  assert.equal((await worker.fetch(request('compactFactRepairDuplicates', body), env)).status, 400);
+  assert.equal((await worker.fetch(request('unknown', body), env)).status, 404);
   assert.equal(
-    (await worker.fetch(request('quiesceFactRepairCapacity', quiescenceBody), env)).status,
+    (await worker.fetch(request('listRecovery', { pipeline: 'other', shardId: '3' }), env)).status,
+    400,
+  );
+  assert.equal(
+    (await worker.fetch(request('listRecovery', { pipeline: 'proxy' }), env)).status,
     400,
   );
   assert.equal(
     (
       await worker.fetch(
-        request('quiesceFactRepairCapacity', {
-          ...quiescenceBody,
-          pipeline: 'proxy',
-          confirm: 'apply-recovery',
+        new Request('http://127.0.0.1:8799/listRecovery', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{',
         }),
         env,
       )
     ).status,
     400,
   );
-  assert.equal(
-    (
-      await worker.fetch(
-        request('compactFactRepairDuplicates', { ...body, confirm: 'apply-recovery' }),
-        env,
-      )
-    ).status,
-    200,
-  );
-  assert.equal(
-    (
-      await worker.fetch(
-        request('quiesceFactRepairCapacity', {
-          ...quiescenceBody,
-          confirm: 'apply-recovery',
-        }),
-        env,
-      )
-    ).status,
-    200,
-  );
-  assert.deepEqual(calls, [
-    ['inspect', 'org-1', body.options],
-    ['compact', 'org-1', body.options],
-    ['quiesce', 'org-1', quiescenceBody.options],
-  ]);
 });

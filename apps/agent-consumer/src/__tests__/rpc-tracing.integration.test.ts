@@ -4,6 +4,7 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { AgentIngestion, TraceRecovery } from '../index';
+import { AGENT_DEAD_LETTERS_INSTANCE_NAME } from '../dead-letters';
 import type { AgentConsumerEnv } from '../context';
 
 const TRACE_ID = '11111111111111111111111111111111';
@@ -85,11 +86,11 @@ describe('named RPC instrumentation in workerd', () => {
     };
     const coordinator = {
       getStats: record,
-      getIngestionMigrationState: (...args: unknown[]) => {
+      getOutstandingSnapshotCopyIntents: (...args: unknown[]) => {
         record(...args);
-        return null;
+        return [];
       },
-      getBaselineCopy: record,
+      getSnapshotSchedule: record,
     };
     const env = {
       SENTRY_DSN: 'https://public@example.test/1',
@@ -104,19 +105,39 @@ describe('named RPC instrumentation in workerd', () => {
       true,
     );
     const recovery = new TraceRecovery(ctx, env);
-    await Reflect.apply(recovery.getBaselineCopy, recovery, [
-      'org',
-      { category: 'messages' },
-      metadata,
-    ]);
-    expect(seen).toHaveLength(3);
+    await Reflect.apply(recovery.inspectDeliveryStatus, recovery, ['org', {}, metadata]);
+    expect(seen).toHaveLength(4);
     expect(seen.every((entry) => entry.traceId === TRACE_ID)).toBe(true);
     for (const entry of seen) {
       expect(entry.args.at(-1)).toMatchObject({
         __sentry_rpc_meta__: { 'sentry-trace': expect.stringMatching(new RegExp(`^${TRACE_ID}-`)) },
       });
     }
-    expect(seen[2]?.args[0]).toEqual({ category: 'messages' });
+    expect(seen[1]?.args[0]).toEqual({});
+    await waitOnExecutionContext(ctx);
+  });
+
+  it('passes traced recovery calls to the real shared dead-letter DO', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 200 }));
+    const ctx = createExecutionContext();
+    const service = new TraceRecovery(ctx, {
+      ...runtimeEnv,
+      SENTRY_DSN: 'https://public@example.test/1',
+    });
+    const store = runtimeEnv.AGENT_DEAD_LETTERS.getByName(AGENT_DEAD_LETTERS_INSTANCE_NAME);
+    const record = await store.preserveDlq('{"complete":true}', '{}', crypto.randomUUID());
+    const page = await Reflect.apply(service.listRecovery, service, [
+      AGENT_DEAD_LETTERS_INSTANCE_NAME,
+      { afterId: record.id - 1 },
+      metadata,
+    ]);
+    expect(page.records).toEqual([record]);
+    const resolved = await Reflect.apply(service.reconcileRecovery, service, [
+      AGENT_DEAD_LETTERS_INSTANCE_NAME,
+      { recoveryId: record.id, action: 'retire-dead-letter', reason: 'operator decision' },
+      metadata,
+    ]);
+    expect(resolved).toMatchObject({ state: 'resolved', payload: record.payload });
     await waitOnExecutionContext(ctx);
   });
 

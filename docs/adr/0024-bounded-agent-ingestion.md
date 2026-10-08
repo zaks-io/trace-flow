@@ -105,6 +105,16 @@ extend canonical fact retention.
 
 ## Migration and erasure
 
+Retirement note, 2026-10-08: TRA-391 retired the migration, baseline Copy, and frozen-ledger
+tooling after the ingestion migration completed. The design and verification record below
+describes the completed cutover. Isaac wrote off the retained legacy records on 2026-10-08
+instead of replaying or retiring them (TRA-298). When TRA-391 deploys, a Wrangler
+`deleted_classes` migration permanently deletes the AgentFactBatcher class and all its storage,
+including preserved recovery records and dead letters. A new AgentDeadLetters class preserves
+future dead letters in the shared `__dlq__` instance. TRA-298 completes after deployment by
+confirming the storage drop. Cloudflare documents the permanent deletion in its
+[legacy class migration reference](https://developers.cloudflare.com/durable-objects/reference/durable-object-class-migrations-legacy/).
+
 CI first expands the Tinybird schema while preserving the exact previously deployed endpoints. It
 deploys the compatible consumer, pauses producer acceptance, drains and freezes the old batchers,
 and copies retained baseline facts at revision 1. New deliveries start at revision 2. A durable

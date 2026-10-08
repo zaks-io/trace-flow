@@ -299,8 +299,6 @@ jobs:
       - name: Test ingest recovery tooling
         run: |
           node --test scripts/ci/body-retention.test.mjs scripts/ingest-recovery/worker.test.mjs
-          bun test scripts/ingest-recovery/*.test.ts
-          bunx tsc --project scripts/ingest-recovery/tsconfig.json
 
       - name: Check duplicate code
         run: bun run duplicates:check

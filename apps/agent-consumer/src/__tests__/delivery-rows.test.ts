@@ -3,7 +3,6 @@ import {
   loadDeliveryRows,
   priceDelivery,
   storeDeliveryRows,
-  storeDeliveryRowsOnce,
   versionDeliveryRows,
 } from '../delivery-rows';
 import { emptyQueueFacts, messageFact, queueMessage } from './factories';
@@ -14,8 +13,7 @@ const encryptionKey = btoa('a'.repeat(32));
 function memoryStorage() {
   const objects = new Map<string, string>();
   const bucket = {
-    async put(key: string, value: string, options?: R2PutOptions) {
-      if (options?.onlyIf && objects.has(key)) return null;
+    async put(key: string, value: string) {
       objects.set(key, value);
       return { key };
     },
@@ -79,32 +77,7 @@ describe('priced delivery persistence', () => {
     ).rejects.toThrow('expired');
   });
 
-  it('never overwrites an immutable recovery source with a reused delivery key', async () => {
-    const { kv } = makeKv({});
-    const original = await priceDelivery(queueMessage(), 1, Date.now() + 60_000, kv);
-    const { env } = memoryStorage();
-    const key = 'agent-deliveries/org-1/2c345e67-e89b-42d3-a456-426614174000';
-    const sha256 = await storeDeliveryRowsOnce(env, key, original);
-    await expect(storeDeliveryRowsOnce(env, key, original)).resolves.toBe(sha256);
-    const changed = {
-      ...original,
-      rows: {
-        ...original.rows,
-        messages: [{ ...(original.rows.messages[0] as object), cost_usd: 99 }],
-      },
-    };
-    await expect(storeDeliveryRowsOnce(env, key, changed)).rejects.toThrow('integrity');
-    await expect(
-      loadDeliveryRows(env, key, {
-        orgId: original.orgId,
-        revision: original.revision,
-        expiresAt: original.expiresAt,
-        sha256,
-      }),
-    ).resolves.toEqual(original);
-  });
-
-  it('reversions priced recovery rows and validates tenant, identity, and partition day', async () => {
+  it('versions delivery rows and validates tenant, identity, and partition day', async () => {
     const { kv } = makeKv({});
     const source = await priceDelivery(queueMessage(), 1, Date.now() + 60_000, kv);
     const row = source.rows.messages[0] as Record<string, unknown>;
@@ -150,7 +123,7 @@ describe('priced delivery persistence', () => {
     ).rejects.toThrow('invalid EventAt');
   });
 
-  it('rejects conflicting priced recovery rows with the same identity', async () => {
+  it('rejects conflicting delivery rows with the same identity', async () => {
     const { kv } = makeKv({});
     const source = await priceDelivery(queueMessage(), 1, Date.now() + 60_000, kv);
     const row = source.rows.messages[0] as Record<string, unknown>;

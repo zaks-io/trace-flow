@@ -1,7 +1,7 @@
 {
   // Agent Collector ingest Worker. Authenticates the Collector Credential, assembles canonical
-  // *_pk surrogates + repo_fingerprint, claims session ownership, and enqueues sub-128KB messages
-  // for the agent consumer. Default deploys use the dev-named worker and dev resources; the
+  // *_pk surrogates + repo_fingerprint, claims session ownership, and stages encrypted R2 deliveries
+  // before enqueuing references. Default deploys use the dev-named worker and dev resources; the
   // production env block below binds prod resources. Production readiness still depends on the
   // gates in docs/guides/agent-conversation-analytics/ROADMAP.md.
   "$schema": "node_modules/wrangler/config-schema.json",
@@ -24,7 +24,6 @@
   },
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
   "vars": {
-    "AGENT_INGEST_MAINTENANCE": "false",
     "SENTRY_ENVIRONMENT": "development",
   },
   // CONVEX_SITE_URL is injected by deploy workflows from the Convex deployment output.
@@ -88,7 +87,6 @@
       },
       "version_metadata": { "binding": "CF_VERSION_METADATA" },
       "vars": {
-        "AGENT_INGEST_MAINTENANCE": "false",
         "SENTRY_ENVIRONMENT": "preview",
       },
       "kv_namespaces": [{ "binding": "COLLECTOR_CREDS", "id": "422b54e456c7446ea5ba4f9ef9a8c84e" }],
@@ -130,7 +128,6 @@
       },
       "version_metadata": { "binding": "CF_VERSION_METADATA" },
       "vars": {
-        "AGENT_INGEST_MAINTENANCE": "false",
         "SENTRY_ENVIRONMENT": "prod",
       },
       "routes": [{ "pattern": "collector.trace-flow.dev/*", "zone_name": "trace-flow.dev" }],
