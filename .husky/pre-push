@@ -1,2 +1,2 @@
 bun run knip
-bun turbo run type-check test
+bun turbo run type-check test --concurrency=2

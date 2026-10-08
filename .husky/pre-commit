@@ -1,2 +1,2 @@
-bun turbo run lint
+bun run lint
 bun run prettier --check .
