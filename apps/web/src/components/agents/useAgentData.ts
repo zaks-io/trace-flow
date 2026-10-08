@@ -223,20 +223,6 @@ export function useAgentData({
     failuresQuery.isLoading ||
     deltaQuery.isLoading;
 
-  const hasError =
-    timeseriesQuery.error ??
-    burnSeriesQuery.error ??
-    priorBurnSeriesQuery.error ??
-    usageSeriesQuery.error ??
-    summaryQuery.error ??
-    costDistributionQuery.error ??
-    costByDepthQuery.error ??
-    reviewUnitCostsQuery.error ??
-    notableTotalQuery.error ??
-    notableByRepoQuery.error ??
-    contextQuery.error ??
-    failuresQuery.error ??
-    deltaQuery.error;
   const failureCandidates: Array<{ id: string; label: string; error: Error | null }> = [
     { id: 'summary', label: 'summary cards', error: summaryQuery.error },
     { id: 'timeseries', label: 'chart', error: timeseriesQuery.error },
@@ -276,6 +262,7 @@ export function useAgentData({
   const failedSurfaces: AgentDataFailure[] = failureCandidates.filter(
     (failure): failure is AgentDataFailure => failure.error instanceof Error,
   );
+  const hasError = failedSurfaces[0]?.error ?? null;
 
   // The summary aggregates billable (assistant) turns over the window, so no billable
   // turns and no sessions is the "no agent activity" signal. A loaded summary response

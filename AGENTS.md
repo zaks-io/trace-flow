@@ -39,7 +39,6 @@ Other scripts, bindings, and environment values belong in `package.json` and eac
 
 ## Rules that prevent regressions
 
-- Consume both branches of every stream `tee()` or the Worker can hang.
 - Captured responses must persist the encrypted `trace-deliveries/` envelope before
   terminal EOF. Use `waitUntil()` for queue publication and recovery, not to defer
   that durability gate. Consumers copy bodies to `bodies/${requestId}`, durably
@@ -71,8 +70,7 @@ For desktop changes, preserve these macOS and persistence constraints:
 - Implementation, tracker, PR, or orchestration work: read
   [workflow config](docs/agents/workflow/config.md) before using `ziw-*` skills.
 - Before any commit or PR: run local `ziw-code-review` and read
-  [review invariants](docs/agents/review-invariants.md). The durability rule above
-  supersedes that file's older instruction to defer all R2 storage with `waitUntil()`.
+  [review invariants](docs/agents/review-invariants.md).
   CodeRabbit is on-demand only for high-risk changes under the review rubric.
 - Collector or desktop work: [analytics guide](docs/guides/agent-conversation-analytics/README.md)
   and [desktop guide](apps/desktop/README.md).

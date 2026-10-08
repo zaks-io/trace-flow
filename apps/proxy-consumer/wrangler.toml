@@ -83,8 +83,8 @@ dataset = "trace-flow-consumer-dev"
 # Tinybird configuration
 # TINYBIRD_TOKEN - Auth token with DATASOURCE:APPEND scope (set via wrangler secret)
 # TINYBIRD_DATASOURCE - Data source name (optional, defaults to "otel_trace_spans")
-# TINYBIRD_LEGACY_DATASOURCE - rollout fallback datasource (optional, defaults to "otel_traces")
-# TINYBIRD_TRACE_WRITE_MODE - clean, legacy, or dual (prod uses clean; legacy is rollback-only)
+# TINYBIRD_LEGACY_DATASOURCE - explicit existing rollback datasource, required for legacy/dual
+# TINYBIRD_TRACE_WRITE_MODE - clean (default), legacy, or dual; rollback modes need the datasource above
 # TINYBIRD_HOST - API host (regional endpoint, e.g. "https://api.us-west-2.aws.tinybird.co")
 # AXIOM_TOKEN - Auth token for Axiom ingest (set via wrangler secret)
 

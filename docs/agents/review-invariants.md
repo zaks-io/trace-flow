@@ -6,14 +6,13 @@ the skill's checklist when reviewing Trace Flow diffs or PRs.
 
 ## CF Workers stream handling
 
-- **Always `tee()` request/response streams; both branches must be consumed.** CF Workers
-  streams are read-once. If one tee branch is dropped, the Worker hangs. Flag any capture
-  path that reads a stream without ensuring both consumers run.
 - **Persist the encrypted `trace-deliveries/` envelope before terminal response EOF.**
-  Queue publication and recovery can run in `c.executionCtx.waitUntil()`, but the response
-  durability gate must wait for R2 persistence. Flag capture paths that release terminal
-  EOF before persistence succeeds. See `apps/proxy/src/index.ts` and
-  `apps/proxy/src/streaming/capture.ts`.
+  The response-capture `TransformStream` withholds the final byte until R2 persistence
+  succeeds. Release the capture only after that write; fail the stream if persistence
+  fails. Queue publication and recovery can run in `c.executionCtx.waitUntil()`;
+  deferring durability without holding the final byte and EOF is unsafe. See
+  `apps/proxy/src/index.ts`, `apps/proxy/src/streaming/capture.ts`, and the release-gate
+  regression in `apps/proxy/src/__tests__/streaming/capture.test.ts`.
 
 ## Queue consumer
 
@@ -73,6 +72,6 @@ SKIP after a clean local review. Escalate (CLI `coderabbit review --agent` or
 - destructive data paths
 - Tinybird or Convex schema changes
 - queue concurrency / ack behavior
-- proxy streaming or capture (`tee`/`waitUntil`)
+- proxy streaming or capture (final-byte release / R2 durability)
 - public contracts (`@trace-flow/types`)
 - broad refactors, or unresolved local-review uncertainty
