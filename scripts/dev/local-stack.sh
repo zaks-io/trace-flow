@@ -249,9 +249,13 @@ start_convex() {
     [[ "$PUBLIC_HOST" =~ ^[0-9.]+$ ]] || add_hosts+=(--add-host "$PUBLIC_HOST:$host_address")
     printf 'INSTANCE_SECRET=%s\n' "$CONVEX_INSTANCE_SECRET" >"$STACK_DIR/convex-container.env"
     chmod 600 "$STACK_DIR/convex-container.env"
+    # The backend sizes its Tokio and V8 thread pools from host cores; four of each
+    # serve one developer, and the limit keeps a runaway backend from starving other stacks.
     docker run -d \
       --name "$CONVEX_CONTAINER" \
       --label "trace-flow.local-stack.root=$TRACE_FLOW_ROOT" \
+      --memory 1g \
+      --memory-swap 1g \
       --network "$DOCKER_NETWORK" \
       "${add_hosts[@]}" \
       -p "0.0.0.0:$CONVEX_PORT:3210" \
@@ -262,6 +266,8 @@ start_convex() {
       -e CONVEX_CLOUD_ORIGIN="$CONVEX_URL" \
       -e CONVEX_SITE_ORIGIN="$CONVEX_SITE_URL" \
       -e DISABLE_BEACON=true \
+      -e RUNTIME_WORKER_THREADS=4 \
+      -e V8_THREADS=4 \
       "$CONVEX_IMAGE" >/dev/null
   fi
   wait_for_http convex "$LOCAL_CONVEX_URL/version" 120

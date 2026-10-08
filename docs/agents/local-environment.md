@@ -35,8 +35,10 @@ env vars (`TRACE_FLOW_TINYBIRD_HOST` + `TINYBIRD_TOKEN`, `TRACE_FLOW_CONVEX_URL`
 - Starts Tinybird Local in Docker and builds the committed `datasources/`, `pipes/`, and `tests/`
   project files against it.
 - Runs Tinybird Local from `scripts/dev/tinybird-local.compose.yml` with a memory limit, one CSV
-  worker, and smaller ClickHouse caches and schedule pools, instead of `tb local start`. Unbounded,
-  the image sizes itself from host RAM and CPUs and idles near 4 GB. The container keeps the
+  worker, smaller ClickHouse caches and schedule pools, and without the image's MCP server and Kafka
+  connector, instead of `tb local start`. Unbounded, the image sizes itself from host RAM and CPUs
+  and idles near 4 GB; this setup idles near 1.8 GB. Fixture appends stage uploads in the image's
+  object store, so that service stays. The container keeps the
   `tinybird-local` name, ports, and `.trace-flow/tinybird` data, so `tb local status`/`stop` still
   work. Restart with `start.sh`, not `tb local restart`, which recreates the container without
   limits or data. Setup replaces an older `tb local start` container that uses the same data
@@ -104,7 +106,8 @@ What it runs:
   any email, and `/auth/login?login_hint=<email>` signs in with no form. The same email always
   maps to the same user.
 - A self-hosted Convex backend in Docker (`trace-flow-local-convex`), configured to trust the mock
-  issuer.
+  issuer. It runs four Tokio and four V8 threads instead of one of each per host core, under a 1 GiB
+  memory limit.
 - Tinybird Local, with the project deployed to the workspace named after the project path. This
   holds regardless of the current git branch.
 - The Workers in four `wrangler dev` processes, plus the KV bridge below in a fifth, all sharing
@@ -147,10 +150,11 @@ consumer's one-minute flush. Live Collector uploads do not complete locally: the
 `TINYBIRD_AGENT_*` tokens are not configured, as in `start.sh`. Organization erasure does not run
 locally, because Convex requires an HTTPS agent ingest URL.
 
-The stack needs about 8 GiB of memory, half of it the Tinybird Local container that `start.sh`
-also uses, and about 2,000 processes and threads. ClickHouse inside Tinybird Local aborts when
-systemd limits Docker scopes to the default 15% of the task limit. Hosts that cap container tasks
-need `TasksMax=infinity` for `docker-*.scope` units.
+After signing in and opening the main pages, the stack holds about 6.5 GiB: the five `wrangler dev`
+processes about 2.7 GiB, `next dev` 1.3 to 2.3 GiB (more after a cold compile), Tinybird Local about
+1.85 GiB, and Convex about 0.35 GiB. It runs about 1,100 processes and threads. ClickHouse inside
+Tinybird Local aborts when systemd limits Docker scopes to the default 15% of the task limit. Hosts
+that cap container tasks need `TasksMax=infinity` for `docker-*.scope` units.
 
 ## Convex Gotchas
 
@@ -187,8 +191,8 @@ cloud workflows with explicit credentials and cleanup requirements.
 - `TRACE_FLOW_SKIP_TINYBIRD=1`: skip Tinybird Local and token discovery when only code checks are
   needed.
 - `TRACE_FLOW_SKIP_TB_BUILD=1`: start Tinybird Local without building the Tinybird project.
-- `TRACE_FLOW_TINYBIRD_MEMORY=4g`: Tinybird Local container memory limit. ClickHouse fails queries
-  at 90% of it. The build and fixture tests peak near 3.2 GB; 3g passes but fails background merges.
+- `TRACE_FLOW_TINYBIRD_MEMORY=3g`: Tinybird Local container memory limit. ClickHouse fails queries
+  at 90% of it. `bun run test:tinybird` peaks near 2.2 GiB of anonymous memory in the container.
 - `TRACE_FLOW_TINYBIRD_CPU_COUNT=2`: CPU count Tinybird Local sizes its Python worker pools from.
   `start.sh` leaves a running container alone, so to apply either Tinybird setting run
   `tb local stop && docker rm tinybird-local` and rerun `start.sh`. Data persists in `.trace-flow/tinybird`.
