@@ -930,24 +930,26 @@ interface TinybirdTraceWriteEnv {
   TINYBIRD_TRACE_WRITE_MODE?: string;
 }
 
-function tinybirdWriteTargets(env: TinybirdTraceWriteEnv): TinybirdTraceTarget[] {
+export function tinybirdWriteTargets(env: TinybirdTraceWriteEnv): TinybirdTraceTarget[] {
   const clean = env.TINYBIRD_DATASOURCE ?? 'otel_trace_spans';
-  const legacy = env.TINYBIRD_LEGACY_DATASOURCE ?? 'otel_traces';
   const mode = env.TINYBIRD_TRACE_WRITE_MODE ?? 'clean';
 
   if (mode === 'clean') return [{ datasource: clean, sentColumn: 'clean_sent_at_ms' }];
-  if (mode === 'legacy') return [{ datasource: legacy, sentColumn: 'legacy_sent_at_ms' }];
-  if (mode === 'dual') {
-    if (legacy === clean) {
-      return [{ datasource: clean, sentColumn: 'clean_sent_at_ms' }];
-    }
-    return [
-      { datasource: legacy, sentColumn: 'legacy_sent_at_ms' },
-      { datasource: clean, sentColumn: 'clean_sent_at_ms' },
-    ];
+  if (mode !== 'legacy' && mode !== 'dual') {
+    throw new Error(`invalid TINYBIRD_TRACE_WRITE_MODE: ${mode}`);
   }
-
-  throw new Error(`invalid TINYBIRD_TRACE_WRITE_MODE: ${mode}`);
+  const legacy = env.TINYBIRD_LEGACY_DATASOURCE;
+  if (!legacy?.trim()) {
+    throw new Error(`TINYBIRD_LEGACY_DATASOURCE is required for ${mode} write mode`);
+  }
+  if (mode === 'legacy') return [{ datasource: legacy, sentColumn: 'legacy_sent_at_ms' }];
+  if (legacy === clean) {
+    return [{ datasource: clean, sentColumn: 'clean_sent_at_ms' }];
+  }
+  return [
+    { datasource: legacy, sentColumn: 'legacy_sent_at_ms' },
+    { datasource: clean, sentColumn: 'clean_sent_at_ms' },
+  ];
 }
 
 export const TraceBatcher = Sentry.instrumentDurableObjectWithSentry(
