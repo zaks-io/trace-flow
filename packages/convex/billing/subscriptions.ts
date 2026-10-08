@@ -145,6 +145,7 @@ export const setTier = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    if (await ctx.auth.getUserIdentity()) await requireOrganizationOwner(ctx, args.orgId);
     const subscription = await getSubscriptionByOrgId(mutationReadCtx(ctx), args.orgId);
 
     if (!subscription) throw new Error('Subscription not found');
@@ -604,6 +605,7 @@ export const setStripeCustomerId = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    if (await ctx.auth.getUserIdentity()) await requireOrganizationOwner(ctx, args.orgId);
     const subscription = await getSubscriptionByOrgId(mutationReadCtx(ctx), args.orgId);
     if (!subscription) throw new Error('Subscription not found');
     await ctx.db.patch(subscription._id, {
@@ -630,6 +632,7 @@ export const upsertStripeSubscriptionState = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    if (await ctx.auth.getUserIdentity()) await requireOrganizationOwner(ctx, args.orgId);
     const subscription = await getSubscriptionByOrgId(mutationReadCtx(ctx), args.orgId);
     if (!subscription) throw new Error('Subscription not found');
 

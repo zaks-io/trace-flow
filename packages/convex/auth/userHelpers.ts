@@ -67,7 +67,7 @@ type ActiveMembership = NonNullable<Awaited<ReturnType<typeof getActiveOrganizat
 
 const membershipForAction = makeFunctionReference<
   'query',
-  { ownerOnly: boolean; userId?: Id<'users'> },
+  { ownerOnly: boolean },
   ActiveMembership
 >('auth/userHelpers:requireMembershipForAction');
 
@@ -83,9 +83,17 @@ export async function requireActiveOrganizationMembership(
 
 export async function requireOrganizationOwner(
   ctx: AuthContext | ActionCtx,
+  expectedOrgId?: Id<'organizations'>,
 ): Promise<ActiveMembership> {
-  if (!('db' in ctx)) return ctx.runQuery(membershipForAction, { ownerOnly: true });
+  if (!('db' in ctx)) {
+    const active = await ctx.runQuery(membershipForAction, { ownerOnly: true });
+    if (expectedOrgId && active.orgId !== expectedOrgId)
+      throw new Error('Organization access denied');
+    return active;
+  }
   const active = await requireActiveOrganizationMembership(ctx);
+  if (expectedOrgId && active.orgId !== expectedOrgId)
+    throw new Error('Organization access denied');
   if (active.organization.ownerId !== active.user._id) {
     throw new Error('Only the organization owner can manage the organization');
   }
@@ -93,14 +101,8 @@ export async function requireOrganizationOwner(
 }
 
 export const requireMembershipForAction = internalQuery({
-  args: { ownerOnly: v.boolean(), userId: v.optional(v.id('users')) },
+  args: { ownerOnly: v.boolean() },
   handler: async (ctx, args): Promise<ActiveMembership> => {
-    if (args.userId) {
-      const user = await ctx.db.get(args.userId);
-      const active = await getActiveOrganizationMembership(ctx, user);
-      if (!active) throw new Error('Active organization membership required');
-      return active;
-    }
     return args.ownerOnly
       ? requireOrganizationOwner(ctx)
       : requireActiveOrganizationMembership(ctx);

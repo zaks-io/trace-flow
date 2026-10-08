@@ -109,6 +109,7 @@ export const setStripeCustomerId = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    if (await ctx.auth.getUserIdentity()) await requireOrganizationOwner(ctx, args.orgId);
     const org = await ctx.db.get(args.orgId);
     if (!org) throw new Error('Organization not found');
     await ctx.db.patch(args.orgId, { stripeCustomerId: args.stripeCustomerId });
