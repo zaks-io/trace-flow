@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api } from '../_generated/api';
+import { api, internal } from '../_generated/api';
 import { seedOrganizationMembership, type MembershipWorld } from './organizationMembership.setup';
 
 const mocks = vi.hoisted(() => ({ flag: vi.fn(), portal: vi.fn(), retrieve: vi.fn() }));
@@ -281,6 +281,44 @@ describe('organization membership authorization across public handlers', () => {
     expect(await world.t.run((ctx) => ctx.db.get(world.subscriptionId))).toMatchObject({
       tier: 'pro',
       status: 'grace',
+    });
+  });
+
+  it('keeps trusted billing mutations working without a user identity', async () => {
+    const world = await seedOrganizationMembership();
+    await world.t.mutation(internal.billing.subscriptions.setTier, {
+      orgId: world.orgId,
+      tier: 'hobby',
+    });
+    await world.t.mutation(internal.billing.subscriptions.setStripeCustomerId, {
+      orgId: world.orgId,
+      stripeCustomerId: 'cus_service',
+    });
+    await world.t.mutation(internal.auth.organizations.setStripeCustomerId, {
+      orgId: world.orgId,
+      stripeCustomerId: 'cus_service',
+    });
+    await world.t.mutation(internal.billing.subscriptions.upsertStripeSubscriptionState, {
+      orgId: world.orgId,
+      status: 'grace',
+      stripeSubscriptionId: 'sub_service',
+      stripePlanItemId: 'item_service',
+      currentPeriodStart: 20,
+      currentPeriodEnd: 40,
+      cancelAtPeriodEnd: true,
+    });
+    await world.t.run(async (ctx) => {
+      expect(await ctx.db.get(world.orgId)).toMatchObject({ stripeCustomerId: 'cus_service' });
+      expect(await ctx.db.get(world.subscriptionId)).toMatchObject({
+        tier: 'hobby',
+        status: 'grace',
+        stripeCustomerId: 'cus_service',
+        stripeSubscriptionId: 'sub_service',
+        stripePlanItemId: 'item_service',
+        currentPeriodStart: 20,
+        currentPeriodEnd: 40,
+        cancelAtPeriodEnd: true,
+      });
     });
   });
 
