@@ -2,7 +2,6 @@ import { sha256Hex } from '@trace-flow/utils';
 import {
   CATEGORIES,
   ROW_IDENTITY_FIELDS,
-  factIngestedAtMs,
   factPartitionKey,
   rowIdentity,
   type Category,
@@ -19,7 +18,6 @@ interface PartitionLookupEnv {
 export async function prepareDeliveryPartitions(
   env: PartitionLookupEnv,
   delivery: DeliveryRows,
-  options: { legacySourceOrder?: boolean } = {},
 ): Promise<string[]> {
   const dirtyDays = new Set<string>();
   const identities: Partial<Record<Category, string[]>> = {};
@@ -40,25 +38,11 @@ export async function prepareDeliveryPartitions(
   }
   for (const category of CATEGORIES) {
     const rows = delivery.rows[category] as Record<string, unknown>[];
-    const retained: Record<string, unknown>[] = [];
     const tombstones: Record<string, unknown>[] = [];
     const byIdentity = identityDays[category];
     for (const row of rows) {
       const day = factPartitionKey(category, row);
       const previous = byIdentity.get(rowIdentity(row, ROW_IDENTITY_FIELDS[category]));
-      if (previous && options.legacySourceOrder) {
-        const order = factIngestedAtMs(row) - factIngestedAtMs(previous);
-        if (order < 0) continue;
-        if (order === 0) {
-          if (
-            (await contentHashAtRevision(row, previous.DeliverySequence)) === previous.ContentHash
-          ) {
-            continue;
-          }
-          throw new Error(`Conflicting equal-time ${category} fact in legacy delivery`);
-        }
-      }
-      retained.push(row);
       dirtyDays.add(day);
       if (!previous || previous.EventDay === day) continue;
       const timestampField = category === 'review_unit_attributions' ? 'DecidedAt' : 'EventAt';
@@ -72,18 +56,9 @@ export async function prepareDeliveryPartitions(
       tombstones.push(tombstone);
       dirtyDays.add(previous.EventDay);
     }
-    rows.splice(0, rows.length, ...retained, ...tombstones);
+    rows.push(...tombstones);
   }
   return [...dirtyDays].sort();
-}
-
-async function contentHashAtRevision(
-  row: Record<string, unknown>,
-  revision: number,
-): Promise<string> {
-  const versioned: Record<string, unknown> = { ...row, DeliverySequence: revision, IsDeleted: 0 };
-  delete versioned.ContentHash;
-  return sha256Hex(JSON.stringify(versioned));
 }
 
 export function deliveryPartitionLinks(

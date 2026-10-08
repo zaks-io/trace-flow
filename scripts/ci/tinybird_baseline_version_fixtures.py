@@ -2,7 +2,6 @@
 
 import json
 import re
-import subprocess
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -204,59 +203,4 @@ def verify_baseline_versions(client, sources, query_rows, run_copy) -> None:
         count = query_rows(client, f"SELECT count() AS n FROM {table} WHERE OrgId='{org}'")
         if int(count[0]["n"]) != 5:
             raise RuntimeError(f"Baseline Copy changed preserved source rows in {category}")
-    verify_resumed_proof(client, org, previous, today, query_rows)
     print("Baseline Copy version regressions passed for all six categories")
-
-
-def verify_resumed_proof(client, org, previous, today, query_rows) -> None:
-    renderer = """
-        import {inspectBaseline,verifyBaseline} from './scripts/ingest-recovery/agent-migration-proof';
-        import {CATEGORIES} from './scripts/ingest-recovery/agent-data';
-        const {org,copyWindow,retainedWindow}=JSON.parse(await Bun.stdin.text());
-        const queries=[];
-        let currentCategory;
-        const capture={sql:async query=>{
-            const kind=query.includes('HAVING uniqExact')?'conflict':query.includes('argMax(')?'inspection':'parity';
-            queries.push({kind,query,category:currentCategory});
-            return {data:kind==='conflict'?[]:kind==='inspection'?[]:[
-                {source_rows:0,target_rows:0,invalid_metadata:0,missing_target:0,unexpected_target:0}
-            ],meta:[]};
-        }};
-        await inspectBaseline(capture,org,retainedWindow,copyWindow);
-        for(const category of CATEGORIES) {
-            currentCategory=category;
-            await verifyBaseline(capture,org,retainedWindow,{category,rows:0,days:[],dailyStats:[]},copyWindow);
-        }
-        console.log(JSON.stringify(queries));
-    """
-    inputs = {
-        "org": org,
-        "copyWindow": {"startDay": previous.strftime("%Y-%m-%d"), "endDay": today.strftime("%Y-%m-%d")},
-        "retainedWindow": {
-            "startDay": (previous + timedelta(days=1)).strftime("%Y-%m-%d"),
-            "endDay": today.strftime("%Y-%m-%d"),
-        },
-    }
-    rendered = subprocess.check_output(["bun", "-e", renderer], input=json.dumps(inputs), text=True)
-    totals = {}
-    for entry in json.loads(rendered):
-        rows = query_rows(client, entry["query"])
-        if entry["kind"] == "conflict":
-            valid = rows == []
-        elif entry["kind"] == "inspection":
-            valid = (
-                len(rows) == 1
-                and int(rows[0]["rows"]) == 1
-                and rows[0]["day"] == today.strftime("%Y-%m-%d")
-                and int(rows[0]["projected_bytes"]) > 0
-            )
-        else:
-            valid = len(rows) == 1 and int(rows[0]["source_rows"]) == int(rows[0]["target_rows"])
-            valid = valid and not any(int(rows[0].get(field, 0)) for field in ["invalid_metadata", "missing_target", "unexpected_target"])
-            kind = "content" if "invalid_metadata" in entry["query"] else "index"
-            key = (entry["category"], kind)
-            totals[key] = totals.get(key, 0) + int(rows[0]["source_rows"])
-        if not valid:
-            raise RuntimeError(f"Resumed baseline {entry['kind']} revived an aged-out correction")
-    if totals != {(category, kind): 1 for category in BASELINE_KEYS for kind in ["content", "index"]}:
-        raise RuntimeError("Resumed baseline proof did not cover every retained winner")

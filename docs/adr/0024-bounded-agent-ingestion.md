@@ -105,6 +105,12 @@ extend canonical fact retention.
 
 ## Migration and erasure
 
+Retirement note, 2026-10-08: TRA-391 retired the migration, baseline Copy, and frozen-ledger
+tooling after the ingestion migration completed. The design and verification record below
+describes the completed cutover. TRA-298 resolves remaining legacy recovery records before
+the retirement change merges. Durable Object classes and stored legacy tables remain intact
+unless organization erasure is explicitly requested.
+
 CI first expands the Tinybird schema while preserving the exact previously deployed endpoints. It
 deploys the compatible consumer, pauses producer acceptance, drains and freezes the old batchers,
 and copies retained baseline facts at revision 1. New deliveries start at revision 2. A durable

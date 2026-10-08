@@ -79,25 +79,25 @@ Both consumers use `wait=true` and require HTTP 200 with a receipt confirming ev
 row and zero quarantined rows. HTTP 202 is not a database acknowledgement. See the
 [Tinybird Events API](https://www.tinybird.co/docs/api-reference/events-api).
 
-Before attempting an insert, the batcher persists an in-flight record. If the process
-stops during the request, the next run treats its outcome as uncertain. Only 429 and
-503 are automatically retryable, because Tinybird documents those responses as having
-inserted no rows. Timeouts, malformed receipts, partial ingestion, and other ambiguous
-outcomes remain in durable recovery storage. They are not blindly resent to a
-non-idempotent endpoint.
+Before attempting an insert, the proxy batcher persists an in-flight recovery record.
+Only 429 and 503 are automatically retryable, because Tinybird documents those responses
+as having inserted no rows. Timeouts, malformed receipts, partial ingestion, and other
+ambiguous outcomes remain in durable proxy recovery storage. They are not blindly resent
+to a non-idempotent endpoint.
 
-A consumer deploy resets busy Durable Objects. An insert in flight at that moment is
-retained as `uncertain` with `reason=worker_restarted_with_in_flight_insert`, whether or
-not Tinybird committed it. Cloudflare can also retire an instance mid-request, so the
+A consumer deploy resets busy Durable Objects. A proxy insert in flight at that moment
+is retained as `uncertain` with `reason=worker_restarted_with_in_flight_insert`, whether
+or not Tinybird committed it. Cloudflare can also retire an instance mid-request, so the
 stored reason may hide the real response, such as a 520. Reconcile these records like
-any other uncertain insert.
+any other uncertain proxy insert.
 
-Rejected and uncertain batches do not block later healthy work. Recovery records
-retain complete payloads and outcomes. Changed content under an existing span or fact
-identity is retained as a repair record; replaying it as an ordinary append would
-corrupt aggregate counts, so it requires reconciliation. DLQ messages are likewise
-preserved for explicit replay instead of relying on finite queue retention.
-Message deduplication records remain durable for that same unbounded recovery lifetime.
+Proxy recovery records retain rejected and uncertain payloads and outcomes without
+blocking later healthy work. Changed content under an existing proxy span identity is
+retained as a repair record because an ordinary append would corrupt aggregate counts.
+Agent deliveries write versioned canonical facts and reconcile uncertain writes
+through delivery receipts. Agent snapshots publish only after all captured dates succeed.
+Both pipelines preserve DLQ messages instead of relying on finite queue retention.
+Proxy dead letters support replay; agent dead letters support explicit retirement only.
 
 If DLQ preservation itself fails, the message remains unacknowledged. Agent delivery
 preservation reports the original exception at fatal level with `operation=dlq_preserve`.
@@ -106,7 +106,7 @@ Its first retry waits 60 seconds, then delays double up to four hours. This
 recovers brief failures quickly while retaining a long retry window during outages.
 Proxy delivery preservation emits a fatal `dead_letter_preservation_failed` event
 and uses the configured four-hour retry delay. Both DLQ consumers allow 100 retries.
-Until preservation succeeds, legacy and agent DLQ messages remain subject to
+Until preservation succeeds, proxy and agent DLQ messages remain subject to
 [Cloudflare queue retention](https://developers.cloudflare.com/queues/platform/limits/).
 An outage lasting through that retention window can still lose those messages;
 new proxy deliveries retain their R2 envelope independently. Treat preservation
@@ -141,10 +141,10 @@ Create a local JSON request file:
 ```
 
 Proxy shard IDs are decimal shard numbers. For `"pipeline": "agent"`, use the
-Organization ID for non-DLQ recovery. New agent DLQ messages are retained under
-`"__dlq__"` so their preservation remains independent of Organization fact-batcher
-capacity. Agent DLQ records written before this routing change may remain under their
-Organization ID; the same list and replay operations remain supported there.
+Organization ID for delivery and snapshot inspection. Agent DLQ records are retained
+in the shared `org:__dlq__` object; use `"shardId": "__dlq__"` to list them. Resolve
+an agent dead letter with `retire-dead-letter` after investigating its payload. Agent
+dead letters cannot be replayed through this service.
 Fetch records into a protected local file, not logs or chat:
 
 ```sh
@@ -161,8 +161,9 @@ state, and cursor bounds apply to every page.
 
 ## Reconciliation
 
-Use the Tinybird console to verify the exact target datasource and every identity in
-the recovery payload. A missing HTTP response is not proof of a missing write.
+For proxy insert recovery, use the Tinybird console to verify the exact target
+datasource and every identity in the recovery payload. A missing HTTP response is not
+proof of a missing write.
 Proxy recovery rows use the internal flat `Events.*` and `Links.*` fields; the insert
 transport nests those fields for Tinybird. Their analytics identifiers match the
 submitted rows, including when replaying legacy credentials.
@@ -197,15 +198,17 @@ Example reconciliation request:
 ```
 
 POST it to `/reconcileRecovery`. The reason and resolution are retained for audit.
-To replay a DLQ record instead of retiring it, POST the same shape without `action`
-to `/replayDlq` after fixing the underlying failure. A failed replay remains blocked. Do not repeatedly replay
-unchanged malformed messages.
+For the proxy pipeline only, replay a DLQ record by posting the same shape without
+`action` to `/replayDlq` after fixing the underlying failure. A failed replay remains
+blocked. Do not repeatedly replay unchanged malformed messages. The agent pipeline
+offers `listRecovery`, `reconcileRecovery`, `inspectDeliveryStatus`, and `resumeSnapshot`;
+it rejects `/replayDlq`. All mutations require `"confirm": "apply-recovery"`.
 
 Inspect blocked recovery counts even when the normal queue is draining. A healthy
 queue depth does not mean all historical deliveries were committed. Never delete
 pending outbox or recovery records as cleanup.
 
-## Agent fact replacement and collector replay
+## Collector replay
 
 Claude and Codex parser upgrades reparse previously known local transcripts, including
 Codex `archived_sessions`. New history still follows the selected import window. An
@@ -217,163 +220,3 @@ without a hash trigger one reparse. Set the collector endpoints to dev for
 verification. Running that command against a saved production connection requires
 production approval. It does not prove that an asynchronously accepted fact reached
 Tinybird; compare persisted identities afterward.
-
-Changes received before an original fact is flushed can replace that pending fact.
-Corrections to already delivered or uncertain facts remain durable repair records.
-Use the agent rebuild tool to apply those corrections and recover missing ledger facts.
-The rebuild is an operator action, not an automatic recurring job.
-
-First inspect the exact target without changing it:
-
-```sh
-bun scripts/ingest-recovery/rebuild-agent.ts \
-  --org ORGANIZATION_ID --tinybird-config /private/path/to/.tinyb
-```
-
-This reports organization-scoped fact and dependent-table counts and checks the deployed
-materialization definitions against this checkout. It never prints the token. Before
-applying, deploy the compatible consumer through CI, replay the updated collector, and
-resolve preserved DLQ messages through the normal recovery flow. Snapshot capture fails
-before deletion if ledger payloads are missing, a stored column is absent, or the materialization graph differs from the reviewed graph. Oversized individual
-rows travel alone without truncation.
-
-After production approval, start the local bridge for the approved environment, then run:
-
-```sh
-bun scripts/ingest-recovery/rebuild-agent.ts \
-  --org ORGANIZATION_ID --tinybird-config /private/path/to/.tinyb \
-  --apply --confirm-org ORGANIZATION_ID \
-  --operation STABLE_OPERATION_UUID --reason 'Verified ingestion parity repair' \
-  --backup /private/new-rebuild-directory
-```
-
-The tool checks workspace-scoped [Tinybird token fingerprints](https://www.tinybird.co/docs/api-reference/token-api)
-against the consumer's configured credential before maintenance starts. Tokens stay private.
-A persistent executor identity and an exclusive operating-system lock prevent concurrent
-executors from sharing an organization or backup. The lock uses Python 3's standard
-[`fcntl.flock`](https://docs.python.org/3/library/fcntl.html); Python 3 is required on macOS or Linux.
-The deployed materialization graph is checked again before deletion and before completion.
-
-The consumer durably pauses this organization and waits for any in-flight insert to
-finish. New queue deliveries retry while paused; other organizations continue. The
-tool saves every original fact row, ledger replacement, and blocked recovery payload
-in a private SQLite backup using [Bun’s SQLite driver](https://bun.sh/docs/runtime/sqlite). It keeps the latest recorded repair for each identity,
-deduplicates physical copies, and restores missing ledger identities. Legacy tables
-retain their existing coverage plus explicitly pending legacy rows; clean-only history
-is not copied into them.
-
-Tinybird does not cascade row deletion into materialized views. The tool therefore
-awaits organization-scoped deletion jobs for all source and dependent tables before
-appending the replacement facts once. It verifies every persisted identity and value,
-then checks every daily/hourly usage and tool aggregate at its stored grouping grain
-against canonical facts. Counts and tokens must match exactly; cost permits one
-nanodollar of Float64 merge-order rounding. Only
-then does it confirm ledger rows and recovery records and release maintenance. The
-operation retains the backup digest and verification fingerprints. See the
-[Tinybird delete API](https://www.tinybird.co/docs/api-reference/datasource-api) and
-[Jobs API](https://www.tinybird.co/docs/api-reference/jobs-api).
-
-Keep the backup and journal. Resume with the same operation and directory after a
-known failure. For a delete whose receipt was lost, inspect the Tinybird job and resume with
-`--delete-job TABLE=JOB_ID` on the same command. The tool checks the job's type,
-datasource, organization condition, and creation time against the recorded submission,
-then durably records that receipt before waiting for completion. It never repeats the
-delete request. A mismatched receipt stops the operation. A resumed insert
-checks every intended stored row, including its timestamp; it proceeds without another
-insert only when that entire batch already matches exactly. Partial or conflicting
-batches stop for investigation. A failed rebuild leaves
-maintenance enabled. Never discard that lock or edit the journal to force progress.
-If capture failed before any deletion, preserve `snapshot.sqlite` under a different filename in that same backup directory,
-then retry the same operation and directory. Keep `executor.json` unchanged. Never move
-a snapshot aside after a deletion journal has been created.
-
-After the bounded-ingestion migration, recover identities from a local parity census
-through the frozen-ledger replay command. Its private SQLite journal fixes each batch UUID
-and creation time before replay, so resume with the same census and journal after an
-uncertain response. This targeted recovery is not evidence that the complete legacy ledger
-can be retired.
-
-```sh
-bun scripts/ingest-recovery/recover-frozen-agent.ts \
-  --org ORGANIZATION_ID --census /private/parity.sqlite \
-  --journal /private/frozen-recovery.sqlite
-```
-
-The full frozen-ledger verification requires producer maintenance for its entire run.
-The command verifies the production ingest endpoint returns the maintenance response,
-both agent queues are drained, and the organization's active delivery count is zero. It
-then exports the retained canonical year into a private local SQLite hash index with
-native day and fact-key pagination. It fails if the delivery sequence or retention window
-changes before verification finishes. The index contains identities, timestamps,
-revisions, content hashes, and typed-row hashes; it does not retain fact payloads.
-
-```sh
-bun scripts/ingest-recovery/recover-frozen-agent.ts \
-  --org ORGANIZATION_ID --verify-all-frozen \
-  --canonical-index /private/frozen-canonical.sqlite
-```
-
-Zero missing and conflicting facts is necessary for legacy-ledger retirement. The command
-reports exact matches, facts safely superseded by a newer canonical `IngestedAt`, and facts
-expired from the one-year analytics window separately. Reconcile every blocked recovery
-record in the organization's legacy batcher first. Those records can contain a newer repair
-source than the ledger row, so they cannot be discarded as queue residue. Records in the shared
-`org:__dlq__` batcher require their own verified replay or organization-scoped cleanup and are
-never deleted by legacy-ledger retirement.
-
-Blocked repair reconciliation is an explicit destructive operator action. Get owner approval,
-then dispatch the existing Deploy workflow on `main` with `agent_ingest_maintenance=true`. After
-the maintenance response is live, run the command below from a reviewed checkout. It inventories
-every blocked record into a private `0600` SQLite journal and validates the complete journal before
-the first mutation. The journal may require several gigabytes, and the command refuses to start or
-drain records unless at least 1 GiB remains free. Each proof-bound batch leaves a compact resolution
-tombstone while releasing that record's recovery payload and outcome copies; the full originals
-remain in the journal. Preserve and reuse the same journal after an uncertain response. Once the
-reconciliation and later retirement checks finish, dispatch the same Deploy workflow with
-`agent_ingest_maintenance=false` to resume ingestion.
-
-Each batch must release at least as many logical recovery bytes as it adds through repair hydration
-and tombstone metadata. Logical release does not guarantee that SQLite immediately reuses pages. A
-SQLite allocation failure or measured database growth aborts and rolls back the whole batch, then
-stops the command with the private journal intact.
-
-Resolve blocked `tinybird_insert` records before this repair command. Enumerate them through
-`listRecovery`, keep records whose `kind` is `tinybird_insert`, prove the exact submitted rows are fully
-present at the target, and use the existing `confirm-written` reconciliation. If any row is absent
-or partial, stop without resolving the record. Do not use `confirm-not-written` or attempt a legacy
-flush after freeze. Require a separate reviewed recovery plan that writes and verifies the current
-canonical target before confirming the record written. Verify the resulting frozen source against
-canonical storage afterward.
-`confirm-written` marks the linked pending rows sent and may delete them, so a recovery record or
-HTTP outcome alone is not sufficient proof. The repair command remains blocked while insert
-recovery items exist and does not reconcile them.
-
-```sh
-bun scripts/ingest-recovery/recover-frozen-agent.ts \
-  --org ORGANIZATION_ID --reconcile-blocked-repairs --apply \
-  --confirm-org ORGANIZATION_ID \
-  --canonical-index /private/frozen-canonical.sqlite \
-  --journal /private/frozen-repair-reconciliation.sqlite
-```
-
-After the read-only report is clean, run the same full verification and retirement in one
-invocation. `--retire` requires the producer maintenance check, drained queues, zero active
-deliveries, `--apply`, and the exact organization confirmation. It stores the verified digest,
-migration proof, delivery sequence, retention window, and frozen source count in an external
-Durable Object before deleting the legacy database. A retry after an uncertain response resumes
-only from that matching durable intent.
-
-```sh
-bun scripts/ingest-recovery/recover-frozen-agent.ts \
-  --org ORGANIZATION_ID --retire --apply --confirm-org ORGANIZATION_ID \
-  --canonical-index /private/frozen-canonical.sqlite
-```
-
-This operation preserves the new delivery coordinator, canonical Tinybird facts, delivery
-objects, R2 buffers, and shared DLQ.
-
-Run the local repair checks with `bun test scripts/ingest-recovery/agent-*.test.ts`.
-After `tb --local build`, the integration check is
-`bun scripts/ingest-recovery/agent-rebuild.smoke.ts /private/tinybird-local-config.json`.
-It refuses a remote host and uses unique test organizations to exercise actual Tinybird
-insertion, deletion jobs, aggregate rebuild, and cross-organization isolation.

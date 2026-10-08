@@ -62,3 +62,11 @@ export async function eraseAgentOrganization(
   }
   return { ready: !remaining };
 }
+
+export async function organizationErasureStarted(
+  env: AgentConsumerEnv,
+  orgId: string,
+): Promise<boolean> {
+  const coordinator = env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${orgId}`);
+  return (await coordinator.getErasureState({})) !== null;
+}

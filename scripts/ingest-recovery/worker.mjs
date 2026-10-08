@@ -1,47 +1,9 @@
-const AGENT_METHODS = new Set([
-  'inspectDeliveryStatus',
-  'resumeSnapshot',
-  'inspectGlobalIngestionMigration',
-  'inspectIngestionMigration',
-  'getBaselineCopy',
-  'listFrozenFacts',
-  'inspectFrozenFactSources',
-  'readFrozenFactSources',
-  'replayFrozenFacts',
-  'retireFrozenLedger',
-  'reconcileFrozenRepairs',
-  'freezeIngestionMigration',
-  'seedIngestionMigration',
-  'beginBaselineMigrationWindow',
-  'confirmBaselineCopy',
-  'retryBaselineCopy',
-  'beginBoundedBaselineCopy',
-  'armBoundedBaselineCopyChunk',
-  'confirmBoundedBaselineCopyChunk',
-  'completeBoundedBaselineCopyChunk',
-  'completeBoundedBaselineCopy',
-  'completeIngestionMigration',
-  'completeGlobalIngestionMigration',
-  'beginFactRebuild',
-  'listRebuildFacts',
-  'completeFactRebuild',
-  'inspectFactRepairCapacity',
-  'compactFactRepairDuplicates',
-  'quiesceFactRepairCapacity',
-]);
-const READ_METHODS = new Set([
-  'inspectDeliveryStatus',
-  'inspectGlobalIngestionMigration',
-  'inspectIngestionMigration',
-  'getBaselineCopy',
-  'listFrozenFacts',
-  'inspectFrozenFactSources',
-  'readFrozenFactSources',
-  'listRecovery',
-  'listRebuildFacts',
-  'inspectFactRepairCapacity',
-]);
-const METHODS = new Set(['listRecovery', 'reconcileRecovery', 'replayDlq', ...AGENT_METHODS]);
+const PIPELINE_METHODS = {
+  proxy: new Set(['listRecovery', 'reconcileRecovery', 'replayDlq']),
+  agent: new Set(['listRecovery', 'reconcileRecovery', 'inspectDeliveryStatus', 'resumeSnapshot']),
+};
+const READ_METHODS = new Set(['listRecovery', 'inspectDeliveryStatus']);
+const METHODS = new Set(Object.values(PIPELINE_METHODS).flatMap((methods) => [...methods]));
 
 export default {
   async fetch(request, env) {
@@ -69,8 +31,13 @@ export default {
     ) {
       return new Response('pipeline and shardId are required', { status: 400 });
     }
-    if (AGENT_METHODS.has(method) && input.pipeline !== 'agent') {
-      return new Response('Fact rebuild requires the agent pipeline', { status: 400 });
+    if (!PIPELINE_METHODS[input.pipeline].has(method)) {
+      return new Response(
+        `Recovery method ${method} is not offered by the ${input.pipeline} pipeline`,
+        {
+          status: 400,
+        },
+      );
     }
     if (!READ_METHODS.has(method) && input.confirm !== 'apply-recovery') {
       return new Response('Explicit apply-recovery confirmation is required', { status: 400 });

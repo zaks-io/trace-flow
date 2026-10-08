@@ -1727,26 +1727,6 @@ export declare const internal: {
       null
     >;
   };
-  agentIngestionMigration: {
-    begin: FunctionReference<
-      "mutation",
-      "internal",
-      { migrationId: string; orgId: Id<"organizations"> },
-      boolean
-    >;
-    complete: FunctionReference<
-      "mutation",
-      "internal",
-      { migrationId: string; orgId: Id<"organizations"> },
-      null
-    >;
-    listOrganizations: FunctionReference<
-      "query",
-      "internal",
-      { cursor: string | null },
-      { continueCursor: string; isDone: boolean; organizations: Array<string> }
-    >;
-  };
   agentSessionOwners: {
     claimSession: FunctionReference<
       "mutation",

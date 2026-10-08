@@ -1,7 +1,6 @@
 {
   // Agent deliveries are encrypted in R2, priced once, and written as versioned Tinybird facts.
-  // Durable Objects retain bounded delivery receipts and snapshot progress. The legacy batcher
-  // remains available for the verified migration and frozen-fact recovery.
+  // Durable Objects retain bounded delivery receipts, snapshot progress and dead-letter recovery.
   // Default bindings use dev resources; production binds its own queues, buckets, and pricing KV.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "trace-flow-agent-consumer-dev",
@@ -25,7 +24,6 @@
   "vars": {
     "SENTRY_ENVIRONMENT": "development",
     "TINYBIRD_HOST": "https://api.us-west-2.aws.tinybird.co",
-    "TINYBIRD_AGENT_WRITE_MODE": "clean",
   },
   // CI provisions append-only TINYBIRD_TOKEN, scoped delivery/snapshot tokens, a separate
   // TINYBIRD_AGENT_SNAPSHOT_JOBS_TOKEN with DATASOURCES:CREATE for Copy job status reads,
@@ -109,7 +107,6 @@
       "vars": {
         "SENTRY_ENVIRONMENT": "prod",
         "TINYBIRD_HOST": "https://api.us-west-2.aws.tinybird.co",
-        "TINYBIRD_AGENT_WRITE_MODE": "clean",
       },
       "kv_namespaces": [{ "binding": "MODEL_PRICING", "id": "45dd0d5e619d44fc831ccab01ed428a4" }],
       "r2_buckets": [

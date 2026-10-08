@@ -410,9 +410,6 @@ const PAGE_SIZE = 500;
 async function markOrgDeletionStarted(ctx: MutationCtx, orgId: Id<'organizations'>): Promise<void> {
   const org = await ctx.db.get(orgId);
   if (!org || org.deletedAt !== undefined) throw new Error('Organization not found');
-  if (org.agentIngestionMigrationId !== undefined) {
-    throw new Error('Organization analytics migration must finish before deletion');
-  }
   if (org.deletionStartedAt === undefined) {
     await ctx.db.patch(orgId, { deletionStartedAt: Date.now() });
   }

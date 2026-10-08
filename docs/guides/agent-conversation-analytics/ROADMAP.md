@@ -16,7 +16,7 @@ Status legend: `☐ todo` · `🚧 in progress` · `✅ done` · `⛔ blocked`
 | Types / parser libraries | Claude Code, Codex CLI, and macOS Cursor parsers are invoked by the shared CLI/Desktop sync path. Cursor snapshots `state.vscdb` read-only and emits typed facts. | Cursor still needs a normal-user production sync and dashboard verification; Windows/Linux Cursor paths are not implemented. |
 | Cloud ingest             | The production workflow has deployed the prod Agent Ingest/Consumer configs, Tinybird schema, Convex control plane, and dev-resource guard from `main`.           | No green normal-user collector smoke proves credential minting, queue/consumer delivery, and dashboard visibility together.  |
 | Credentials              | Convex can mint hidden Collector Credentials, sync them to KV, and the CLI/Desktop paths can store/use them locally.                                              | Needs production release evidence and revoke/list UX polish.                                                                 |
-| Queue / consumer         | Dev queue and consumer can process E2E harness data; production config exists for ingest queue, DLQ, consumer, and dedupe DO.                                     | No green production queue/DLQ/consumer verification from a real collector.                                                   |
+| Queue / consumer         | Dev queue and consumer can process E2E harness data; production config exists for delivery references, DLQ preservation, consumer, and snapshot coordination.     | No green production queue/DLQ/consumer verification from a real collector.                                                   |
 | Tinybird                 | Agent datasources and pipes exist; the production schema deploy is green and runs before proxy/agent consumers.                                                   | Needs a normal-user collector smoke proving production agent rows and read pipes together.                                   |
 | Dashboard                | `/app/agents` exists and has chart/table surfaces.                                                                                                                | Needs live authenticated walkthrough and honest empty/setup/data states before launch.                                       |
 | Observability            | Logging/Sentry hooks and a runbook exist.                                                                                                                         | Live alerts are not provisioned as a verified production gate.                                                               |
@@ -136,8 +136,8 @@ the fastest production path that proves users can ingest without admin-only tool
 - CLI logs never print secrets, absolute home paths, transcript text, command excerpts, or Tinybird
   credentials.
 - Failed uploads do not advance cursors.
-- Re-running sync is idempotent before Tinybird through local fact checksums and the server-side fact
-  ledger.
+- Re-running sync uses local fact checksums and stable delivery receipts. Later deliveries replace
+  matching canonical facts by accepted revision without inflating published snapshot totals.
 - The CLI can be installed from a release artifact or documented package command. This remains open:
   the source build exists, but the tagged public installer asset is absent.
 

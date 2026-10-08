@@ -1,4 +1,3 @@
-import type { AgentIngestQueueMessage } from './agent-ingest';
 import type { EncryptedStoredBodiesPayload } from './storage';
 import type { SentryTraceContext } from './sentry';
 
@@ -25,9 +24,6 @@ export interface AgentDeliveryEnvelope {
   sha256: string;
   encryptedPayload: EncryptedStoredBodiesPayload;
 }
-
-/** Rolling-deploy Queue contract. Consumers must accept old inline messages until they drain. */
-export type AgentIngestQueuePayload = AgentIngestQueueMessage | AgentDeliveryReference;
 
 export interface AgentSnapshotQueueMessage {
   type: 'agent-snapshot';

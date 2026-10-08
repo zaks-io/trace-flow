@@ -1,4 +1,4 @@
-import type { AgentDeliveryStagedReference, AgentIngestQueuePayload } from '@trace-flow/types';
+import type { AgentDeliveryReference, AgentDeliveryStagedReference } from '@trace-flow/types';
 
 export interface AgentConsumerService {
   eraseOrganization(
@@ -11,18 +11,16 @@ export interface AgentConsumerService {
 }
 
 /**
- * Bindings for the agent-ingest Worker. All bindings are required — a misconfigured deploy must
+ * Bindings for the agent-ingest Worker. All bindings are required: a misconfigured deploy must
  * fail loudly rather than silently degrade (no defensive optionals). SENTRY_DSN and
  * CF_VERSION_METADATA are the only optionals: Sentry is absent in local/dev and the version
  * binding is injected by the platform.
  */
 export interface AgentIngestEnv {
-  /** Explicit cutover gate. Missing or invalid values fail closed. */
-  AGENT_INGEST_MAINTENANCE: 'true' | 'false';
   /** Convex-synced Collector Credential records, keyed `collector:<sha256-hex-of-secret>`. */
   COLLECTOR_CREDS: KVNamespace;
   /** Producer for the agent ingest queue; the consumer (2c) prices + writes to Tinybird. */
-  AGENT_QUEUE: Queue<AgentIngestQueuePayload>;
+  AGENT_QUEUE: Queue<AgentDeliveryReference>;
   /** Encrypted, bounded queue payloads. Queue messages carry references to these durable objects. */
   AGENT_DELIVERIES: R2Bucket;
   /** Assigns the per-organization acceptance revision before a delivery reaches the Queue. */

@@ -96,9 +96,11 @@ datasource.
 
 ### Agent Consumer
 
-`apps/agent-consumer` drains `agent-ingest-*`, prices message facts, dedupes through
-`AGENT_FACT_BATCHER`, and writes rows to the base `agent_*` fact datasources. Materialized views build
-session, usage, tool, and repository read models.
+`apps/agent-consumer` resolves encrypted R2 delivery references from `agent-ingest-*`, prices message
+facts once, and writes versioned canonical facts under an organization write permit. Bounded Copy
+jobs build snapshots, and a manifest publishes captured dates after every target succeeds. Delivery
+receipts reconcile uncertain writes without blind retries. `AGENT_FACT_BATCHER` retains only DLQ,
+recovery, and organization erasure operations.
 
 The collector does not write Tinybird directly and never receives a Tinybird token.
 

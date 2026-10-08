@@ -484,7 +484,7 @@ describe('preview credential boundary', () => {
 });
 
 describe('credentialed CI checks', () => {
-  test('Tinybird fixtures have the runtimes and workspace dependencies used by migration proofs', () => {
+  test('Tinybird fixtures have their runtimes and workspace dependencies', () => {
     const steps = ci.jobs['tinybird-schema-check'].steps;
     const fixture = steps.findIndex(
       (step) => step.name === 'Build and test against Tinybird Local',
@@ -564,9 +564,7 @@ describe('production Worker secret boundary', () => {
     let checkedJobs = 0;
     for (const job of Object.values(deploy.jobs)) {
       const wranglerIndex = job.steps?.findIndex((step) =>
-        /wrangler|assert-agent-prod-resources|migrate-agent-ingestion/.test(
-          `${step.uses ?? ''} ${step.run ?? ''}`,
-        ),
+        /wrangler|assert-agent-prod-resources/.test(`${step.uses ?? ''} ${step.run ?? ''}`),
       );
       if (wranglerIndex === undefined || wranglerIndex < 0) continue;
       const setupIndex = job.steps.findIndex((step) =>
@@ -580,7 +578,7 @@ describe('production Worker secret boundary', () => {
     expect(checkedJobs).toBeGreaterThan(0);
   });
 
-  test('keeps ingest in maintenance until the automatic migration and endpoint switch pass', () => {
+  test('deploys the consumer before switching endpoints and starting ingest', () => {
     const currentRefJob = deploy.jobs['agent-delivery-current-ref'];
     const release = deploy.jobs['agent-delivery-current-ref'].steps.find(
       (step) => step.name === 'Resolve current deployed ref',
@@ -601,34 +599,9 @@ describe('production Worker secret boundary', () => {
     );
     expect(expand.env.TINYBIRD_LEGACY_REF).toBe('11613a4619444adb0e27abc3df958cebb43cc280');
     expect(expand.env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_DEPLOY_TOKEN }}');
-    const pause = deploy.jobs['deploy-agent-ingest-maintenance'].steps.find(
-      (step) => step.name === 'Deploy retryable maintenance response',
-    );
-    expect(pause.with.command).toContain('AGENT_INGEST_MAINTENANCE:true');
-    const status = deploy.jobs['agent-delivery-migration-status'].steps.find(
-      (step) => step.name === 'Read migration status',
-    );
-    for (const jobName of ['agent-delivery-migration-status', 'migrate-agent-ingestion']) {
-      const setupNode = deploy.jobs[jobName].steps.find((step) =>
-        step.uses?.startsWith('actions/setup-node@'),
-      );
-      expect(setupNode.with['node-version']).toBe(24);
-    }
-    expect(status.run).toContain('--status');
-    expect(status.run).toContain('migration_required');
-    expect(status.env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_OPERATOR_TOKEN }}');
-    expect(deploy.jobs['deploy-agent-ingest-maintenance'].if).toContain(
-      "migration_required == 'true'",
-    );
-    const migrate = deploy.jobs['migrate-agent-ingestion'].steps.find(
-      (step) => step.name === 'Drain, build revision-1 baseline, index, and initial snapshots',
-    );
-    expect(migrate.run).toContain('migrate-agent-ingestion.ts');
-    expect(migrate.run).toContain('--apply');
-    expect(deploy.jobs['migrate-agent-ingestion'].if).toContain("migration_required == 'true'");
-    expect(migrate.env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_OPERATOR_TOKEN }}');
     const switchJob = deploy.jobs['switch-agent-tinybird'];
-    expect(switchJob.needs).toContain('migrate-agent-ingestion');
+    expect(switchJob.needs).toEqual(['ci', 'deploy-agent-consumer']);
+    expect(switchJob).not.toHaveProperty('if');
     expect(switchJob.permissions.deployments).toBe('write');
     const marker = switchJob.steps.find(
       (step) => step.name === 'Record deployed Agent Tinybird ref',
@@ -636,9 +609,7 @@ describe('production Worker secret boundary', () => {
     const switchProof = switchJob.steps.find(
       (step) => step.name === 'Verify switched endpoint definitions',
     );
-    const switchDeploy = switchJob.steps.find(
-      (step) => step.name === 'Switch endpoints after verified migration',
-    );
+    const switchDeploy = switchJob.steps.find((step) => step.name === 'Switch endpoints');
     expect(switchDeploy.env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_DEPLOY_TOKEN }}');
     expect(switchProof.env.REQUESTED_CURRENT_REF).toBe('${{ github.sha }}');
     expect(switchProof.env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_OPERATOR_TOKEN }}');
@@ -647,17 +618,7 @@ describe('production Worker secret boundary', () => {
     expect(marker.with.script).toContain("task: 'deploy-agent-tinybird'");
     expect(marker.with.script).toContain("state: 'success'");
     expect(deploy.jobs['deploy-agent-ingest'].needs).toContain('switch-agent-tinybird');
-    const resume = deploy.jobs['deploy-agent-ingest'].steps.find(
-      (step) => step.name === 'Deploy Agent Ingest Worker',
-    );
-    expect(deploy.on.workflow_dispatch.inputs.agent_ingest_maintenance).toMatchObject({
-      type: 'boolean',
-      required: false,
-      default: false,
-    });
-    expect(resume.with.command).toContain(
-      "AGENT_INGEST_MAINTENANCE:${{ github.event_name == 'workflow_dispatch' && inputs.agent_ingest_maintenance && 'true' || 'false' }}",
-    );
+    expect(deploy.jobs['deploy-agent-ingest']).not.toHaveProperty('if');
   });
 
   test('maps the dedicated delivery key to both Workers and scoped tokens to the consumer', () => {

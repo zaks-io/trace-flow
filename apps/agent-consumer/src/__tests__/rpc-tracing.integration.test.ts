@@ -85,11 +85,11 @@ describe('named RPC instrumentation in workerd', () => {
     };
     const coordinator = {
       getStats: record,
-      getIngestionMigrationState: (...args: unknown[]) => {
+      getOutstandingSnapshotCopyIntents: (...args: unknown[]) => {
         record(...args);
-        return null;
+        return [];
       },
-      getBaselineCopy: record,
+      getSnapshotSchedule: record,
     };
     const env = {
       SENTRY_DSN: 'https://public@example.test/1',
@@ -104,19 +104,15 @@ describe('named RPC instrumentation in workerd', () => {
       true,
     );
     const recovery = new TraceRecovery(ctx, env);
-    await Reflect.apply(recovery.getBaselineCopy, recovery, [
-      'org',
-      { category: 'messages' },
-      metadata,
-    ]);
-    expect(seen).toHaveLength(3);
+    await Reflect.apply(recovery.inspectDeliveryStatus, recovery, ['org', {}, metadata]);
+    expect(seen).toHaveLength(4);
     expect(seen.every((entry) => entry.traceId === TRACE_ID)).toBe(true);
     for (const entry of seen) {
       expect(entry.args.at(-1)).toMatchObject({
         __sentry_rpc_meta__: { 'sentry-trace': expect.stringMatching(new RegExp(`^${TRACE_ID}-`)) },
       });
     }
-    expect(seen[2]?.args[0]).toEqual({ category: 'messages' });
+    expect(seen[1]?.args[0]).toEqual({});
     await waitOnExecutionContext(ctx);
   });
 

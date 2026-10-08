@@ -18,7 +18,6 @@ import type {
   AgentIngestEnvelope,
   AgentIngestQueueFacts,
   AgentIngestQueueMessage,
-  AgentIngestQueuePayload,
 } from '@trace-flow/types';
 import type { AgentIngestEnv } from './context';
 import { authenticateCollector } from './auth';
@@ -53,10 +52,8 @@ const COLLECTOR_SECRET_HEADER = 'X-Trace-Flow-Collector-Secret';
 /** Hard cap on the request body. */
 const MAX_INGEST_BYTES = 10 * 1024 * 1024;
 
-// Cloudflare Queues `sendBatch` limits: ≤100 messages AND ≤256 KB total per call (each message also
-// ≤128 KB, already enforced upstream by MAX_QUEUE_MESSAGE_BYTES). Grouping by message COUNT alone blew
-// the 256 KB total — a few ~124 KB chunked messages exceed it — so we group by cumulative bytes with
-// headroom for the batch's own JSON framing.
+// Cloudflare Queues limits each sendBatch to 100 messages and 256 KB total. Bound the serialized
+// delivery references by both limits with headroom for the batch's own JSON framing.
 const QUEUE_SEND_BATCH_MAX_MESSAGES = 100;
 const QUEUE_SEND_BATCH_MAX_BYTES = 240 * 1024;
 const DELIVERY_GROUP_SIZE = 10;
@@ -80,9 +77,9 @@ const decoder = new TextDecoder();
  * caps. A single message already fits the per-message limit, so a message larger than the byte budget
  * still ships alone in its own batch rather than being dropped.
  */
-function groupForSendBatch(messages: AgentIngestQueuePayload[]): AgentIngestQueuePayload[][] {
-  const groups: AgentIngestQueuePayload[][] = [];
-  let current: AgentIngestQueuePayload[] = [];
+function groupForSendBatch(messages: AgentDeliveryReference[]): AgentDeliveryReference[][] {
+  const groups: AgentDeliveryReference[][] = [];
+  let current: AgentDeliveryReference[] = [];
   let currentBytes = 0;
 
   for (const message of messages) {

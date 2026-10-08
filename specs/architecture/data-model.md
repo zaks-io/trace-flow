@@ -173,37 +173,45 @@ Span events capture significant moments within a span:
 
 Agent Conversation Analytics uses separate typed datasources. Agent conversations are not proxied LLM requests, so they are not forced through `otel_trace_spans`.
 
-### Base Fact Tables
+### Canonical fact tables
 
-The agent consumer writes five base fact tables:
+The agent consumer writes six versioned `ReplacingMergeTree` fact tables:
 
-| Datasource                        | Grain                                           | Purpose                                                               |
-| --------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------- |
-| `agent_message_facts`             | one agent message or model-call turn            | Tokens, model labels, coverage, estimated cost                        |
-| `agent_tool_event_facts`          | one reconciled tool invocation                  | Tool names, command families, status, duration, redacted excerpts     |
-| `agent_file_event_facts`          | one repo-relative file touch                    | File attention and hotspots without absolute local paths              |
-| `agent_capability_snapshot_facts` | one conversation-visible capability observation | Privacy-safe counts and hashes for later context-surface analysis     |
-| `agent_pull_request_facts`        | one canonical Pull Request link observation     | Passive PR attribution evidence without local GitHub or provider auth |
+| Datasource                                | Grain                                           | Purpose                                                               |
+| ----------------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------- |
+| `agent_message_fact_versions`             | one agent message or model-call turn            | Tokens, model labels, coverage, estimated cost                        |
+| `agent_tool_event_fact_versions`          | one reconciled tool invocation                  | Tool names, command families, status, duration, redacted excerpts     |
+| `agent_file_event_fact_versions`          | one repo-relative file touch                    | File attention and hotspots without absolute local paths              |
+| `agent_capability_snapshot_fact_versions` | one conversation-visible capability observation | Privacy-safe counts and hashes for later context-surface analysis     |
+| `agent_pull_request_fact_versions`        | one canonical Pull Request link observation     | Passive PR attribution evidence without local GitHub or provider auth |
+| `agent_review_unit_attribution_versions`  | one review-unit attribution decision            | Versioned attribution evidence                                        |
 
-The ingest worker stamps `OrgId`, `UserId`, `collector_id`, stable `session_pk`, row `*_pk`, and `repo_fingerprint` before enqueueing. The collector sends source-visible IDs and parsed facts only; it never sends trusted tenancy, final primary keys, or cost.
+The ingest worker stamps `OrgId`, `UserId`, `collector_id`, stable `session_pk`, row `*_pk`, and `repo_fingerprint` before staging encrypted R2 deliveries and enqueueing their references. The collector sends source-visible IDs and parsed facts only; it never sends trusted tenancy, final primary keys, or cost.
 
 ### Agent Serving Tables
 
-Derived tables keep dashboard and MCP reads bounded:
+Nine snapshot targets keep dashboard and MCP reads bounded. Their published generations provide
+session summaries, usage, tool, repository, context-health, and file-attention serving data. Representative
+read models include:
 
-| Datasource                           | Grain                                | Purpose                                           |
-| ------------------------------------ | ------------------------------------ | ------------------------------------------------- |
-| `agent_session_summaries`            | one Agent Session                    | Session outliers, cost totals, duration, coverage |
-| `agent_usage_hourly` / `_daily`      | time bucket by org/source/repo/model | Cost, token, cache, message, and session trends   |
-| `agent_tool_usage_hourly` / `_daily` | time bucket by org/source/repo/tool  | Tool mix and failure-rate trends                  |
-| `agent_repositories`                 | one normalized repo identity         | Repo lookup and filter support                    |
+| Datasource                                                               | Grain                                       | Purpose                                           |
+| ------------------------------------------------------------------------ | ------------------------------------------- | ------------------------------------------------- |
+| `agent_session_summaries_snapshots`                                      | one Agent Session per event date            | Session outliers, cost totals, duration, coverage |
+| `agent_usage_hourly_snapshots` / `agent_usage_daily_snapshots`           | time bucket by org/source/repo/model        | Cost, token, cache, message, and session trends   |
+| `agent_tool_usage_hourly_snapshots` / `agent_tool_usage_daily_snapshots` | time bucket by org/source/repo/tool         | Tool mix and failure-rate trends                  |
+| `agent_repositories_snapshots`                                           | one normalized repo identity per event date | Repo lookup and filter support                    |
 
 ADR 0019 adds the next derived signal layer (`agent_session_signals`, file-attention signals, repo rollups, and daily baselines). Product endpoints should read bounded serving models instead of broad raw fact scans.
 
 ### Agent Schema Decisions
 
 - Agent fact tables use stable source-derived identities so duplicate collector uploads do not inflate counts.
-- `AGENT_FACT_BATCHER` keeps a Durable Object SQLite ledger keyed by `(OrgId, fact type, fact id)`. Exact duplicates are skipped; same-key changed facts become repair signals.
+- The organization coordinator assigns accepted delivery revisions. Later revisions replace the same
+  natural fact identity; event-date corrections tombstone the previous date.
+- Canonical snapshot reads apply `FINAL` within the organization and captured dates. Product reads
+  select the latest published snapshot generation per date.
+- `AGENT_FACT_BATCHER` retains dead letters, recovery records, and erasure of the retired fact ledger.
+  It no longer accepts or flushes facts.
 - Numeric token and cache columns are non-null. Missing source data is represented by `token_coverage` and `cache_coverage`.
 - `cost_usd` is the only nullable metric column because pricing can be missing or coverage can be insufficient.
 - File paths are repo-relative or coarse categories such as `outside_repo`; no stored path should contain a home directory or username.
@@ -474,10 +482,11 @@ Agent dashboard and MCP surfaces should prefer serving tables and bounded pipes 
 
 ### Agent Facts
 
-1. **Creation**: Agent Consumer inserts via Tinybird Events API after `AGENT_FACT_BATCHER` dedupe
-2. **Retention**: Base facts and serving aggregates follow the one-year agent analytics retention model
-3. **Duplication**: Same-key same-content facts are skipped before Tinybird
-4. **Repair**: Same-key changed-content facts are recorded as repair signals for explicit rebuild paths
+1. **Creation**: Agent Consumer inserts versioned facts under an organization write permit
+2. **Retention**: Canonical facts and snapshots follow the one-year agent analytics retention model
+3. **Retries**: Delivery receipts prevent repeating completed writes
+4. **Corrections**: Later revisions replace matching identities and tombstone old event dates
+5. **Publication**: A manifest exposes captured dates only after every snapshot target succeeds
 
 ### Collector Credentials
 

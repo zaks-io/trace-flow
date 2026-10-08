@@ -82,15 +82,12 @@ describe('AgentDeliveryCoordinator', () => {
     ) => T | Promise<T>,
   ): Promise<T> => runInDurableObject(storageHost, (instance, state) => callback(instance, state));
 
-  it('allocates monotonic sequences and supports an explicit migration bootstrap', async () => {
+  it('allocates monotonic sequences starting after the migrated baseline', async () => {
     await expect(withCoordinator((coordinator) => coordinator.getStats({}))).resolves.toMatchObject(
       {
         lastDeliverySequence: 1,
       },
     );
-    await expect(
-      withCoordinator((coordinator) => coordinator.bootstrapSequence({ lastAssignedSequence: 1 })),
-    ).resolves.toEqual({ nextDeliverySequence: 2 });
 
     const first = await withCoordinator((coordinator) =>
       coordinator.reserve(reservation('delivery-1', HASH_A, ['2026-09-13'])),
@@ -101,9 +98,6 @@ describe('AgentDeliveryCoordinator', () => {
 
     expect(first).toEqual({ status: 'reserved', deliverySequence: 2 });
     expect(second).toEqual({ status: 'reserved', deliverySequence: 3 });
-    await expect(
-      withCoordinator((coordinator) => coordinator.bootstrapSequence({ lastAssignedSequence: 1 })),
-    ).rejects.toThrow('requires an empty coordinator');
   });
 
   it('returns the same reservation only for an exact idempotent retry', async () => {

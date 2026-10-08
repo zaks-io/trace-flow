@@ -21,26 +21,13 @@ import {
 } from '@trace-flow/utils';
 import type { AgentConsumerEnv } from './context';
 import { CATEGORIES, factPartitionKey, type Category } from './facts';
-import {
-  loadDeliveryRows,
-  priceDelivery,
-  storeDeliveryRows,
-  versionDeliveryRows,
-} from './delivery-rows';
+import { loadDeliveryRows, priceDelivery, storeDeliveryRows } from './delivery-rows';
 import { deliveryCategoryIsPresent, writeDeliveryCategory } from './delivery-write';
 import { deliveryPartitionLinks, prepareDeliveryPartitions } from './delivery-partitions';
-import {
-  assertExpectedCanonicalFacts,
-  validateExpectedCanonicalProof,
-  type ExpectedCanonicalFact,
-} from './frozen-fact-recovery';
 
 interface DeliveryState {
   reference: AgentDeliveryStagedReference;
   days: string[];
-  inputFormat: 'queue' | 'priced';
-  legacySourceOrder?: true;
-  canonicalProof?: ExpectedCanonicalFact[];
   revision?: number;
   rowsSha256?: string;
   plannedDirtyDays?: string[];
@@ -72,39 +59,13 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     });
   }
 
-  register(
-    reference: AgentDeliveryStagedReference,
-    days: string[],
-    options?: { legacySourceOrder?: boolean },
-  ): Promise<number | null> {
-    if (
-      options?.legacySourceOrder !== undefined &&
-      typeof options.legacySourceOrder !== 'boolean'
-    ) {
-      throw new Error('Invalid delivery registration options');
-    }
-    return this.exclusive(() =>
-      this.registerInner(reference, days, 'queue', undefined, options?.legacySourceOrder === true),
-    );
-  }
-
-  registerPricedRecovery(
-    reference: AgentDeliveryStagedReference,
-    days: string[],
-    canonicalProof?: ExpectedCanonicalFact[],
-  ): Promise<number | null> {
-    const validatedProof = canonicalProof
-      ? validateExpectedCanonicalProof(canonicalProof)
-      : undefined;
-    return this.exclusive(() => this.registerInner(reference, days, 'priced', validatedProof));
+  register(reference: AgentDeliveryStagedReference, days: string[]): Promise<number | null> {
+    return this.exclusive(() => this.registerInner(reference, days));
   }
 
   private async registerInner(
     reference: AgentDeliveryStagedReference,
     days: string[],
-    inputFormat: DeliveryState['inputFormat'],
-    canonicalProof?: ExpectedCanonicalFact[],
-    legacySourceOrder = false,
   ): Promise<number | null> {
     if (validateAgentDeliveryStagedReference(reference))
       throw new Error('Invalid delivery registration');
@@ -113,10 +74,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     if (state) {
       if (
         JSON.stringify(state.reference) !== JSON.stringify(reference) ||
-        JSON.stringify(state.days) !== JSON.stringify(days) ||
-        state.inputFormat !== inputFormat ||
-        JSON.stringify(state.canonicalProof) !== JSON.stringify(canonicalProof) ||
-        (state.legacySourceOrder === true) !== legacySourceOrder
+        JSON.stringify(state.days) !== JSON.stringify(days)
       ) {
         throw new Error('Delivery registration conflict');
       }
@@ -130,9 +88,6 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
       state = {
         reference,
         days,
-        inputFormat,
-        ...(canonicalProof ? { canonicalProof } : {}),
-        ...(legacySourceOrder ? { legacySourceOrder: true as const } : {}),
         categories: {},
         phase: 'registered',
       };
@@ -228,11 +183,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
       throw new Error('Agent delivery expired before completion');
     }
     let source: AgentIngestQueueMessage | undefined;
-    if (
-      state.inputFormat === 'queue' &&
-      !state.rowsSha256 &&
-      state.sentryTraceHeader === undefined
-    ) {
+    if (!state.rowsSha256 && state.sentryTraceHeader === undefined) {
       source = await this.loadQueueDelivery(reference);
       state.sentryTraceHeader = durableSentryTraceHeader(source.sentry_trace_context);
       await this.ctx.storage.put('receipt', state);
@@ -250,7 +201,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
         throw failure;
       }
     };
-    // Old priced/committing receipts may outlive their source. Never require it just for tracing.
+    // Committing receipts may outlive their source. Tracing must not require a deleted body.
     if (!state.sentryTraceHeader) return process();
     const invokingSpan = Sentry.getActiveSpan();
     return continueQueueTrace(
@@ -261,7 +212,6 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
         attributes: {
           'trace_flow.delivery.key': reference.key,
           'trace_flow.delivery.revision': reference.delivery_revision,
-          'trace_flow.delivery.input_format': state.inputFormat,
         },
         links: invokingSpan ? [{ context: invokingSpan.spanContext() }] : undefined,
       },
@@ -295,19 +245,9 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
       return 'complete';
     }
     const rowsKey = this.rowsKey(reference.key);
-    let canonicalProofChecked = false;
     if (!state.rowsSha256) {
-      const priced =
-        state.inputFormat === 'queue'
-          ? await this.priceQueueDelivery(reference, source)
-          : await this.loadPricedRecovery(reference);
-      if (state.canonicalProof) {
-        await assertExpectedCanonicalFacts(this.env, priced, state.canonicalProof);
-        canonicalProofChecked = true;
-      }
-      await prepareDeliveryPartitions(this.env, priced, {
-        legacySourceOrder: state.legacySourceOrder === true,
-      });
+      const priced = await this.priceQueueDelivery(reference, source);
+      await prepareDeliveryPartitions(this.env, priced);
       state.rowsSha256 = await storeDeliveryRows(this.env, rowsKey, priced);
       await this.ctx.storage.put('receipt', state);
     }
@@ -317,9 +257,6 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
       expiresAt: reference.expires_at,
       sha256: state.rowsSha256,
     });
-    if (state.canonicalProof && !canonicalProofChecked) {
-      await assertExpectedCanonicalFacts(this.env, delivery, state.canonicalProof);
-    }
     const dirtyDays = [
       ...new Set(
         CATEGORIES.flatMap((category) =>
@@ -410,15 +347,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
       return;
     }
     await this.ctx.storage.setAlarm(Math.min(Date.now() + 60_000, state.reference.expires_at));
-    const revision =
-      state.revision ??
-      (await this.registerInner(
-        state.reference,
-        state.days,
-        state.inputFormat,
-        state.canonicalProof,
-        state.legacySourceOrder === true,
-      ));
+    const revision = state.revision ?? (await this.registerInner(state.reference, state.days));
     if (revision === null) return;
     await this.env.AGENT_QUEUE.send({ ...state.reference, delivery_revision: revision });
   }
@@ -482,20 +411,6 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
       reference.expires_at,
       this.env.MODEL_PRICING,
     );
-  }
-
-  private async loadPricedRecovery(reference: AgentDeliveryReference) {
-    const source = await loadDeliveryRows(this.env, reference.key, {
-      orgId: reference.org_id,
-      revision: 1,
-      expiresAt: reference.expires_at,
-      sha256: reference.sha256,
-    });
-    return versionDeliveryRows(source.rows, {
-      orgId: reference.org_id,
-      revision: reference.delivery_revision,
-      expiresAt: reference.expires_at,
-    });
   }
 
   private rowsKey(key: string): string {

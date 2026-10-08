@@ -1,7 +1,7 @@
-import { captureException } from '@sentry/cloudflare';
+import { captureException, captureMessage } from '@sentry/cloudflare';
 import { env as workerEnv } from 'cloudflare:test';
 import type * as SentryCloudflare from '@sentry/cloudflare';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentConsumerEnv } from '../context';
 import worker from '../index';
 import { queueMessage } from './factories';
@@ -14,6 +14,82 @@ vi.mock('@sentry/cloudflare', async (importOriginal) => ({
   captureMessage: vi.fn(),
   withSentry: <T>(_options: unknown, handler: T): T => handler,
 }));
+
+afterEach(() => {
+  vi.clearAllMocks();
+  vi.restoreAllMocks();
+});
+
+describe('agent consumer delivery contract', () => {
+  it.each([
+    { description: 'retries an inline message and logs the contract error', mixed: false },
+    { description: 'dispatches a reference while retrying an inline message', mixed: true },
+  ])('$description', async ({ mixed }) => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const inline = {
+      id: 'off-contract-message',
+      timestamp: new Date(),
+      body: queueMessage(),
+      attempts: 1,
+      ack: vi.fn(),
+      retry: vi.fn(),
+    };
+    const createdAt = Date.now();
+    const reference = {
+      type: 'agent-delivery',
+      version: 1,
+      key: `agent-deliveries/org-1/${crypto.randomUUID()}`,
+      org_id: 'org-1',
+      sha256: 'a'.repeat(64),
+      created_at: createdAt,
+      expires_at: createdAt + 60_000,
+      delivery_revision: 2,
+    };
+    const delivery = {
+      ...inline,
+      id: 'delivery-reference',
+      body: reference,
+      ack: vi.fn(),
+      retry: vi.fn(),
+    };
+    const process = vi.fn(async () => 'complete');
+    const getByName = vi.fn(() => ({ process }));
+    const batch = {
+      queue: 'agent-ingest-dev',
+      messages: mixed ? [delivery, inline] : [inline],
+      retryAll: vi.fn(),
+      ackAll: vi.fn(),
+    } as unknown as MessageBatch<unknown>;
+    await worker.queue(batch, {
+      ...env,
+      AGENT_DELIVERY: { getByName },
+    } as unknown as AgentConsumerEnv);
+
+    expect(inline.retry).toHaveBeenCalledExactlyOnceWith();
+    expect(inline.ack).not.toHaveBeenCalled();
+    expect(captureMessage).toHaveBeenCalledExactlyOnceWith('agent_consumer.message_off_contract', {
+      level: 'error',
+      tags: { operation: 'guard' },
+      extra: { messageId: inline.id, queue: batch.queue },
+    });
+    expect(logged).toHaveBeenCalledOnce();
+    expect(JSON.parse(logged.mock.calls[0]![0] as string)).toMatchObject({
+      level: 'error',
+      event: 'agent_consumer.message_off_contract',
+      service: 'agent-consumer',
+      component: 'queue-consumer',
+      data: { messageId: inline.id, queue: batch.queue },
+    });
+    if (mixed) {
+      expect(getByName).toHaveBeenCalledExactlyOnceWith(reference.key);
+      expect(process).toHaveBeenCalledExactlyOnceWith(reference);
+      expect(delivery.ack).toHaveBeenCalledOnce();
+      expect(delivery.retry).not.toHaveBeenCalled();
+    } else {
+      expect(getByName).not.toHaveBeenCalled();
+    }
+  });
+});
 
 describe('agent consumer DLQ', () => {
   it('acknowledges a valid deleted-organization message without preserving another copy', async () => {

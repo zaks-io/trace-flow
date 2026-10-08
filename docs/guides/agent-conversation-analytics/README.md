@@ -8,7 +8,7 @@ Not production-ready.
 
 What exists today:
 
-- agent ingestion contracts and Cloudflare Worker code
+- encrypted R2 agent deliveries, versioned canonical facts, and Workers that coordinate snapshots
 - dev and production-configured queue/consumer wiring
 - Tinybird `agent_*` datasources and read pipes
 - Rust parser/sync libraries for Claude Code, Codex CLI, and macOS Cursor
@@ -46,7 +46,7 @@ The feature is production-ready only when a normal Trace Flow user can:
 2. Authenticate through Trace Flow.
 3. Mint a hidden Collector Credential.
 4. Sync a supported Claude Code, Codex CLI, or macOS Cursor source through the cloud ingest Worker.
-5. Have the queue and consumer process those facts server-side.
+5. Have the queue and consumer process durable delivery references and publish those facts server-side.
 6. See the data in `/app/agents`.
 7. Revoke the collector.
 
@@ -73,6 +73,7 @@ Rules:
 | [`0015-trace-flow-desktop-collector.md`](../../adr/0015-trace-flow-desktop-collector.md)                             | Desktop product design. Amended: CLI ships first as the production bridge. |
 | [`0017-otto-extraction-reference.md`](../../adr/0017-otto-extraction-reference.md)                                   | Reference map for vendored parser/sync code.                               |
 | [`0019-agent-analytics-derived-signal-read-models.md`](../../adr/0019-agent-analytics-derived-signal-read-models.md) | Derived signal read models for dashboard and MCP guidance.                 |
+| [`0024-bounded-agent-ingestion.md`](../../adr/0024-bounded-agent-ingestion.md)                                       | Current delivery, canonical fact replacement, and snapshot design.         |
 | [`runbook.md`](./runbook.md)                                                                                         | Production operations contract and current dev-only limitations.           |
 | [`signal-catalog.md`](./signal-catalog.md)                                                                           | Evidence-based signal confidence, non-signals, and parser gaps.            |
 

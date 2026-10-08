@@ -6,8 +6,8 @@ import {
 } from '@trace-flow/types';
 
 /**
- * Cloudflare Queues cap a single message at 128 KiB. We pack to a lower ceiling so the JSON envelope
- * (tenancy, batch metadata, array punctuation) always fits under the hard limit with headroom.
+ * Keep the established chunk ceiling because chunk boundaries determine durable retry identities.
+ * Delivery references go through the Queue; these fact chunks are encrypted and stored in R2.
  */
 export const MAX_QUEUE_MESSAGE_BYTES = 124_000;
 
@@ -15,7 +15,7 @@ type QueueFactCategory = keyof AgentIngestQueueFacts;
 
 /**
  * The fact arrays the chunker walks. Exported so a test can assert it stays in lockstep with
- * {@link AgentIngestQueueFacts} — a category missing here would silently drop that fact array.
+ * {@link AgentIngestQueueFacts}. A category missing here would silently drop that fact array.
  */
 export const CATEGORIES: QueueFactCategory[] = [
   'messages',
@@ -85,10 +85,10 @@ function assertFactsFitQueueMessages(
 }
 
 /**
- * Greedily packs the fact arrays into one or more queue messages, each under
+ * Greedily packs the fact arrays into one or more delivery chunks, each under
  * {@link MAX_QUEUE_MESSAGE_BYTES}. Facts are independent at rest (the consumer dedups on the
  * deterministic `*_pk`s), so a session may straddle messages without affecting correctness. A
- * single oversized fact is rejected instead of producing a queue message Cloudflare will refuse.
+ * single oversized fact is rejected to preserve the established chunk-size contract.
  */
 export function chunkFacts(
   base: Omit<AgentIngestQueueMessage, 'facts'>,

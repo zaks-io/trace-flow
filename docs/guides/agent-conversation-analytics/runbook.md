@@ -18,9 +18,10 @@ ingestion. The client only ever holds a Collector Credential.
 collector CLI / desktop
   -> POST /v1/ingest with X-Trace-Flow-Collector-Secret
   -> agent-ingest production Worker
-  -> production agent ingest queue
+  -> encrypted R2 delivery and bounded registration
+  -> production agent ingest queue carrying a delivery reference
   -> agent-consumer production Worker
-  -> Tinybird production agent_* datasources
+  -> Tinybird versioned agent facts and published snapshots
   -> /app/agents via org_id-scoped JWT
 ```
 
@@ -125,98 +126,43 @@ run` (the `tests/*.yaml` fixture/output tests, offline against a `tinybirdco/tin
   delete legacy Tinybird resources.
 
 Schema deployment authenticates via the `TINYBIRD_DEPLOY_TOKEN` repo secret, which has only the
-`WORKSPACE:DEPLOY` scope. Trusted migration, token provisioning, and live-definition proof jobs use a
+`WORKSPACE:DEPLOY` scope. Token provisioning and live-definition proof jobs use a
 separate non-personal `TINYBIRD_OPERATOR_TOKEN` with the `ADMIN` scope. Neither credential is the
 append-only `TINYBIRD_TOKEN` used by the consumer or is exposed on a client/collector path. The live
 definition proof checks that the operator credential resolves to `trace_flow_prod` before allowing
 the deployment workflow to continue. The local build/test steps need no token. When adding or changing
 a pipe, add a matching `tests/<pipe>.yaml` so the PR gate verifies its output.
 
-### Tinybird cost-refactor rollout
+### Tinybird schema rollout
 
-The cost refactor is an expand/contract rollout. `main` keeps clean final resource names, but the deploy
-script can generate temporary deploy trees that preserve legacy prod resources during rollout.
+The production workflow expands the schema while preserving deployed endpoints, deploys the Agent
+Consumer, switches endpoints, and then deploys Agent Ingest. The consumer must be available before
+the endpoint switch. Agent ingestion uses encrypted R2 delivery references and versioned canonical
+facts. The legacy write mode and producer maintenance settings are retired.
 
-1. Expansion deploy: automatic on merge.
-   - `TINYBIRD_DEPLOY_PHASE=expand`
-   - Adds clean fact/serving resources.
-   - Preserves legacy datasources, legacy endpoint pipe definitions, and legacy copy pipes.
-   - Does not pass `--allow-destructive-operations`.
-2. Backfill clean facts:
-   - `TINYBIRD_BACKFILL_APPROVED=trace_flow_prod_YYYYMMDD TB_TARGET_WORKSPACE=trace_flow_prod bun run tinybird:backfill`
-   - The script only exports legacy rows missing from clean targets by stable identity, so it is safe
-     after dual-write starts.
-3. Parity:
-   - `TB_TARGET_WORKSPACE=trace_flow_prod bun run tinybird:parity -- 24`
-   - Missing clean identities must be zero for the soak window.
-   - Serving aggregate totals must match clean fact totals.
-   - Copy jobs are still expected before the read switch.
-4. Read switch:
-   - `TINYBIRD_DEPLOY_PHASE=switch TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh`
-   - Deploys clean endpoint pipe definitions.
-   - Keeps legacy datasources and non-copy legacy pipes for rollback/parity.
-   - Stops restoring legacy copy pipes, so rebuild CPU should drop during soak.
-5. Soak:
-   - Keep agent and proxy consumers in `dual` write mode for 24-48h.
-   - Copy job CPU should be zero after the switch deploy.
-   - Rollback remains a schema deploy back to legacy endpoint pipe definitions; if rollback is needed,
-     run the expansion deploy and refresh legacy rollups before treating old dashboards as current.
-6. Cleanup:
-   - Set consumer write modes to `clean`.
-   - Run final parity and performance reports.
-   - `TINYBIRD_DEPLOY_PHASE=cleanup TINYBIRD_CLEANUP_APPROVED=trace_flow_prod_YYYYMMDD TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh`
-   - This is the only phase allowed to pass `--allow-destructive-operations`.
+The schema deployment script still preserves legacy Tinybird resources. Removing those datasources
+and Copy pipes is a separate change requiring explicit production approval. Do not use their
+presence as evidence that the retired inline ingestion path remains supported.
 
-### Agent incremental rollups
+### Agent canonical facts and snapshots
 
-`agent_usage_hourly`, `agent_usage_daily`, `agent_tool_usage_hourly`, and
-`agent_tool_usage_daily` are canonical incremental serving tables. They are maintained by
-materialized pipes from append-clean fact tables. There are no scheduled replacement copy jobs in the
-steady-state path.
+Agent deliveries write six versioned fact tables. Later accepted revisions replace the same natural
+fact identity, and an event-date correction writes an old-day tombstone plus a new-day live row.
+Pricing runs once per delivery, and the encrypted row plan remains stable across retries.
 
-Deploy schema changes through the normal PR/merge Tinybird path. For a repair or backfill, use a
-bounded, explicitly approved Tinybird branch/dev operation first, then promote through CI. Any
+Nine snapshot targets read canonical facts for captured dirty dates. Product endpoints select the
+latest published generation per date. The coordinator publishes one manifest only after every target
+and captured date succeeds. Uncertain delivery writes and unresolved Copy starts need receipt-based
+reconciliation before affected dates can be published.
+
+Deploy schema changes through the normal CI path. For a repair or backfill, verify a bounded dev
+operation first, then promote the reviewed change through CI with production approval. Any
 repo-backed repair pipe must live under `copies/`, be unscheduled, and use a `repair_*` name.
 
-Context-health uses `agent_context_call_buckets_hourly`, an incremental serving table maintained from
-`agent_message_facts`. When introducing that table into a workspace that already has message facts,
-run the one-shot repair before treating `/app/agents` context health as current:
-
-```sh
-TINYBIRD_CONTEXT_HEALTH_BACKFILL_APPROVED=trace_flow_prod_YYYYMMDD \
-  TB_TARGET_WORKSPACE=trace_flow_prod \
-  bun run tinybird:backfill:context-health
-```
-
-The repair replaces only `agent_context_call_buckets_hourly` from clean message facts and then checks
-call count, session count, context tokens, output tokens, and estimated cost parity. If parity fails,
-pause agent ingestion and rerun the repair.
-
-Verify before calling the rollout healthy:
-
-- canonical datasources have expected row counts and bucket bounds.
-- materialized totals match clean fact totals for the same window.
-- changed endpoints return data for a real org and match serving-table totals where exact.
-- scheduled `COPY_MODE replace` job count is zero.
-- `agent_session_summaries` remains canonical after the daily cleanup (`count() = uniqExact(session_pk)`).
-
-### Rollup cleanup
-
-The rolling snapshot rollout passed production soak on 2026-06-08 and the canonical rollup names now
-own the optimized serving schemas. The follow-up cost refactor removes scheduled replacement copies
-from the steady-state design.
-
-Done: endpoints read canonical rollup names, raw fact tables are append-clean, and replacement-copy CPU
-is zero in the normal path.
-
-**Break-glass (manual fallback only):** if CI is unavailable, deploy from a local `tb` cloud login.
-This is the opt-in escape hatch, not the normal path:
-
-```sh
-TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh --check   # validate only
-TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh           # expansion deploy
-TINYBIRD_DEPLOY_PHASE=switch TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh
-```
+Verify canonical identities, event-date corrections, published snapshot totals, and org-scoped
+endpoint results before calling a rollout healthy. Legacy fact-ledger rebuild and replay commands
+are retired. Agent DLQ payloads remain in `org:__dlq__` for inspection and explicit
+`retire-dead-letter` reconciliation; they are not replayed.
 
 ### Snapshot scheduling and recovery
 

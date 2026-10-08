@@ -14,7 +14,6 @@ import { sha256Hex } from '@trace-flow/utils';
 import type {
   AgentDeliveryReference,
   AgentDeliveryStagedReference,
-  AgentIngestQueuePayload,
   AgentMessageFact,
   AgentToolEventFact,
 } from '@trace-flow/types';
@@ -44,28 +43,6 @@ describe('POST /v1/ingest', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-  });
-
-  it('503s before the ingest handler while maintenance is active', async () => {
-    const { env, rateLimit } = makeEnv();
-    env.AGENT_INGEST_MAINTENANCE = 'true';
-
-    const res = await post(env, JSON.stringify(envelope()), { 'Content-Type': 'application/json' });
-
-    expect(res.status).toBe(503);
-    expect(res.headers.get('Retry-After')).toBe('60');
-    expect(await res.json()).toEqual({ error: 'ingestion_maintenance' });
-    expect(rateLimit).not.toHaveBeenCalled();
-  });
-
-  it.each([undefined, 'TRUE'])('500s for maintenance configuration %s', async (value) => {
-    const { env, rateLimit } = makeEnv();
-    (env as { AGENT_INGEST_MAINTENANCE?: unknown }).AGENT_INGEST_MAINTENANCE = value;
-
-    const res = await post(env, JSON.stringify(envelope()), { 'Content-Type': 'application/json' });
-
-    expect(res.status).toBe(500);
-    expect(rateLimit).not.toHaveBeenCalled();
   });
 
   it('401s when the collector secret is missing', async () => {
@@ -558,7 +535,7 @@ describe('POST /v1/ingest', () => {
         return 7;
       },
     );
-    const queueSend = vi.fn(async (_messages: { body: AgentIngestQueuePayload }[]) => {
+    const queueSend = vi.fn(async (_messages: { body: AgentDeliveryReference }[]) => {
       order.push('queue');
     });
     const { env } = makeEnv({
@@ -602,7 +579,7 @@ describe('POST /v1/ingest', () => {
         return actions.filter((action) => action === 'register').length;
       },
     );
-    const queueSend = vi.fn(async (_messages: { body: AgentIngestQueuePayload }[]) => {
+    const queueSend = vi.fn(async (_messages: { body: AgentDeliveryReference }[]) => {
       actions.push('queue');
     });
     const link = facts().pull_request_links[0]!;

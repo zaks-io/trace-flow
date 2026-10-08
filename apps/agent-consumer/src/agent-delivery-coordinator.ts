@@ -14,37 +14,6 @@ import {
   readSnapshotFailure,
   recordSnapshotFailure,
 } from './snapshot-failure';
-import {
-  baselineCopyCheckpoint,
-  beginBaselineCopy,
-  beginBaselineMigrationWindow,
-  confirmBaselineCopy,
-  retryBaselineCopy,
-  type BaselineCopyCheckpoint,
-  type BaselineMigrationWindow,
-  type BeginBaselineCopyInput,
-  type ConfirmBaselineCopyInput,
-  type RetryBaselineCopyInput,
-} from './baseline-copy-migration';
-import {
-  armBoundedBaselineCopyChunk,
-  beginBoundedBaselineCopy,
-  completeBoundedBaselineCopy,
-  completeBoundedBaselineCopyChunk,
-  confirmBoundedBaselineCopyChunk,
-} from './bounded-baseline-copy';
-import type {
-  BaselineCopyChunkInput,
-  BeginBoundedBaselineCopyInput,
-  CompleteBoundedBaselineCopyInput,
-  ConfirmBaselineCopyChunkInput,
-} from './baseline-copy-contract';
-import {
-  initializeIngestionMigration,
-  ingestionMigrationState,
-  seedIngestionMigration,
-  completeIngestionMigration,
-} from './ingestion-migration';
 import * as Sentry from '@sentry/cloudflare';
 import { recordSnapshotProducer, snapshotProducerHeaders } from './snapshot-tracing';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
@@ -128,113 +97,18 @@ import {
   renewAgentSnapshotClaim,
   validateSnapshotClaimId,
 } from './agent-snapshot-progress';
-import {
-  beginLegacyRetirement,
-  completeLegacyRetirement,
-  initializeLegacyRetirement,
-  readLegacyRetirement,
-  type LegacyRetirementProof,
-} from './legacy-retirement';
 
 export * from './agent-delivery-coordinator-contract';
 export * from './agent-ingestion-erasure';
-export * from './legacy-retirement';
 
 class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
   constructor(state: DurableObjectState, env: AgentConsumerEnv) {
     super(state, env);
     initializeCoordinatorSchema(this.ctx.storage);
-    initializeIngestionMigration(this.ctx.storage);
     initializeAgentIngestionErasure(this.ctx.storage);
     initializeAgentSnapshotProgress(this.ctx.storage);
     initializeSnapshotChecks(this.ctx.storage);
     initializeSnapshotFailure(this.ctx.storage);
-    initializeLegacyRetirement(this.ctx.storage);
-  }
-
-  getBaselineCopy(input: { category: BaselineCopyCheckpoint['category'] }) {
-    return baselineCopyCheckpoint(this.ctx.storage, input.category);
-  }
-  beginBaselineCopy(input: BeginBaselineCopyInput) {
-    return beginBaselineCopy(this.ctx.storage, input);
-  }
-  confirmBaselineCopy(input: ConfirmBaselineCopyInput) {
-    return confirmBaselineCopy(this.ctx.storage, input);
-  }
-  retryBaselineCopy(input: RetryBaselineCopyInput) {
-    return retryBaselineCopy(this.ctx.storage, input);
-  }
-  beginBoundedBaselineCopy(input: BeginBoundedBaselineCopyInput) {
-    return beginBoundedBaselineCopy(this.ctx.storage, input);
-  }
-  armBoundedBaselineCopyChunk(input: BaselineCopyChunkInput) {
-    return armBoundedBaselineCopyChunk(this.ctx.storage, input);
-  }
-  confirmBoundedBaselineCopyChunk(input: ConfirmBaselineCopyChunkInput) {
-    return confirmBoundedBaselineCopyChunk(this.ctx.storage, input);
-  }
-  completeBoundedBaselineCopyChunk(input: ConfirmBaselineCopyChunkInput) {
-    return completeBoundedBaselineCopyChunk(this.ctx.storage, input);
-  }
-  completeBoundedBaselineCopy(input: CompleteBoundedBaselineCopyInput) {
-    return completeBoundedBaselineCopy(this.ctx.storage, input);
-  }
-  beginBaselineMigrationWindow(input: BaselineMigrationWindow) {
-    return beginBaselineMigrationWindow(this.ctx.storage, input);
-  }
-
-  getIngestionMigrationState() {
-    return ingestionMigrationState(this.ctx.storage);
-  }
-
-  getLegacyRetirement(input: Record<string, never>) {
-    assertExactKeys(input, [], 'get legacy retirement');
-    return readLegacyRetirement(this.ctx.storage);
-  }
-
-  beginLegacyRetirement(input: LegacyRetirementProof) {
-    return beginLegacyRetirement(this.ctx.storage, input);
-  }
-
-  completeLegacyRetirement(input: { verificationSha256: string }) {
-    assertExactKeys(input, ['verificationSha256'], 'complete legacy retirement');
-    return completeLegacyRetirement(this.ctx.storage, input.verificationSha256, Date.now());
-  }
-
-  seedIngestionMigration(input: { proofSha256: string; dirtyDays: string[] }) {
-    assertExactKeys(input, ['proofSha256', 'dirtyDays'], 'seed ingestion migration');
-    return seedIngestionMigration(this.ctx.storage, input);
-  }
-
-  completeIngestionMigration(input: { proofSha256: string }) {
-    assertExactKeys(input, ['proofSha256'], 'complete ingestion migration');
-    return completeIngestionMigration(this.ctx.storage, input.proofSha256);
-  }
-
-  bootstrapSequence(input: { lastAssignedSequence: 1 }): { nextDeliverySequence: 2 } {
-    assertExactKeys(input, ['lastAssignedSequence'], 'bootstrap sequence');
-    if (input.lastAssignedSequence !== 1) {
-      throw new Error('bootstrap lastAssignedSequence must be 1');
-    }
-    this.ctx.storage.transactionSync(() => {
-      const state = readCoordinatorState(this.ctx.storage);
-      if (
-        state.last_delivery_sequence !== 1 ||
-        state.last_snapshot_generation !== 0 ||
-        state.gate_phase !== 'open' ||
-        state.active_snapshot_generation !== null ||
-        state.gate_expires_at_ms !== null ||
-        countRows(this.ctx.storage, 'active_deliveries') !== 0 ||
-        countRows(this.ctx.storage, 'dirty_days') !== 0 ||
-        countRows(this.ctx.storage, 'incomplete_days') !== 0 ||
-        countRows(this.ctx.storage, 'snapshot_days') !== 0 ||
-        agentIngestionErasureStarted(this.ctx.storage) ||
-        listSnapshotCopyIntents(this.ctx.storage).length !== 0
-      ) {
-        throw new Error('delivery sequence bootstrap requires an empty coordinator');
-      }
-    });
-    return { nextDeliverySequence: 2 };
   }
 
   reserve(input: ReserveAgentDeliveryInput): {
@@ -242,8 +116,6 @@ class AgentDeliveryCoordinatorBase extends DurableObject<AgentConsumerEnv> {
     deliverySequence: number;
   } | null {
     const reservation = validateReservationInput(input);
-    const migration = ingestionMigrationState(this.ctx.storage);
-    if (migration && !migration.complete) return null;
     const now = Date.now();
     recoverExpiredSnapshotGate(this.ctx.storage, now);
     this.ctx.storage.transactionSync(() => pruneRetainedDayMetadata(this.ctx.storage, now));

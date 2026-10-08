@@ -8,21 +8,11 @@ export const DATASOURCES = {
   review_unit_attributions: 'agent_review_unit_attributions',
 } as const;
 
-export const LEGACY_DATASOURCES = {
-  messages: 'agent_messages',
-  tool_events: 'agent_tool_events',
-  file_events: 'agent_file_events',
-  capability_snapshots: 'agent_capability_snapshots',
-  pull_request_links: 'agent_pull_request_links',
-} as const;
-
 export type Category = keyof typeof DATASOURCES;
-type LegacyCategory = keyof typeof LEGACY_DATASOURCES;
 // Tinybird rejects one insert that creates parts in more than 30 MergeTree partitions.
 export const MAX_FACT_INSERT_PARTITIONS = 30;
 
 export const CATEGORIES = Object.keys(DATASOURCES) as Category[];
-export const LEGACY_CATEGORIES = Object.keys(LEGACY_DATASOURCES) as LegacyCategory[];
 
 export type Accumulator = Record<Category, unknown[]>;
 
@@ -51,25 +41,6 @@ export function rowIdentity(row: unknown, keyFields: string[]): string {
     return stableStringify(row);
   }
   return keyFields.map((field) => identityPart(row[field])).join('\x1f');
-}
-
-export function rowOrgId(row: unknown): string {
-  return isRecord(row) && typeof row.OrgId === 'string' ? row.OrgId : '';
-}
-
-export function stableHash(value: unknown): string {
-  const input = stableStringify(value);
-  let hash = 0xcbf29ce484222325n;
-  const prime = 0x100000001b3n;
-  for (let i = 0; i < input.length; i++) {
-    hash ^= BigInt(input.charCodeAt(i));
-    hash = BigInt.asUintN(64, hash * prime);
-  }
-  return hash.toString(16).padStart(16, '0');
-}
-
-export function compareFactIngestedAt(left: unknown, right: unknown): number {
-  return factIngestedAtMs(left) - factIngestedAtMs(right);
 }
 
 export function factIngestedAtMs(value: unknown): number {

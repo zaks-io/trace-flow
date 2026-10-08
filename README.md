@@ -270,9 +270,8 @@ promise availability. Use your own endpoints and credentials for an independent 
 
 Production deploys run through `.github/workflows/deploy.yml` after changes land on `main`. The
 workflow runs TypeScript and Rust checks, then deploys the Tinybird schema, then Convex and the
-Proxy Consumer, then the remaining Workers in dependency order. When an agent-ingestion migration is
-required, the workflow pauses Agent Ingest, migrates, and switches Tinybird before it deploys the
-new Agent Ingest.
+Proxy Consumer, then the remaining Workers in dependency order. Agent Consumer deploys before the
+Tinybird endpoint switch, and Agent Ingest deploys after the switch.
 
 PR previews run through `.github/workflows/preview.yml`, which the repository owner dispatches
 manually. Desktop builds publish through `.github/workflows/desktop-release.yml`.

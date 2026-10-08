@@ -150,7 +150,7 @@ const batcherId = env.TRACE_BATCHER.idFromName(`batcher-${shardId}`);
 
 **Location**: `apps/agent-ingest/`
 
-**Responsibility**: Accept collector uploads, authenticate Collector Credentials, validate and normalize agent fact envelopes, claim session ownership, and enqueue sub-128 KiB fact messages for the agent consumer.
+**Responsibility**: Accept collector uploads, authenticate Collector Credentials, validate and normalize agent fact envelopes, claim session ownership, stage encrypted R2 deliveries, and enqueue tenant-bound references for the agent consumer.
 
 Agent analytics is still not production-ready until the gates in `docs/guides/agent-conversation-analytics/ROADMAP.md` are complete.
 
@@ -164,7 +164,9 @@ Agent analytics is still not production-ready until the gates in `docs/guides/ag
 - Server-side re-redaction of free-text excerpts
 - Stable `session_pk`, row `*_pk`, and `repo_fingerprint` assembly
 - First-writer Agent Session ownership claims through Convex
-- Queue chunking and `sendBatch` enqueue to `AGENT_QUEUE`
+- Bounded encrypted R2 delivery staging and stable retry identities
+- Delivery admission checks and registration through `AGENT_CONSUMER`
+- Reference publication through `AGENT_QUEUE.sendBatch`
 
 ### What It Does NOT Own
 
@@ -180,7 +182,9 @@ Agent analytics is still not production-ready until the gates in `docs/guides/ag
   - KV for Collector Credential lookup
   - Convex HTTP routes for compatibility policy and session ownership claims
   - Cloudflare Rate Limiting for per-org burst control
-  - Cloudflare Queue for agent fact messages
+  - R2 for encrypted fact deliveries
+  - Agent Consumer service for admission, receipt reuse, and registration
+  - Cloudflare Queue for agent delivery references
 
 ### Configuration
 
@@ -200,17 +204,19 @@ Production uses `trace-flow-agent-ingest`, `collector.trace-flow.dev`, the produ
 
 **Location**: `apps/agent-consumer/`
 
-**Responsibility**: Drain the agent ingest queue, price Agent Message facts, map typed facts into Tinybird rows, dedupe by stable fact identity, and write `agent_*` datasources.
+**Responsibility**: Resolve encrypted agent deliveries, price Agent Message facts once, write versioned canonical facts, and publish bounded snapshots.
 
 ### What It Owns
 
 - Queue consumption and message acknowledgment/retry
-- Queue contract validation
+- Delivery reference validation and off-contract message rejection
 - Agent Message pricing through the shared `MODEL_PRICING` KV catalog
-- Row mapping for messages, tool events, file events, capability snapshots, and pull request links
-- Org-sharded `AGENT_FACT_BATCHER` Durable Object coordination
-- Tinybird Events API insertion for `agent_*` datasources
-- Repair-signal detection for same-key changed facts
+- Row mapping for messages, tool events, file events, capability snapshots, pull request links, and review-unit attributions
+- Bounded delivery receipts and organization write coordination
+- Tinybird Events API insertion for versioned canonical facts
+- Cross-date correction tombstones and uncertain-write receipt reconciliation
+- Dirty-date tracking, bounded snapshot Copies, and atomic manifest publication
+- Shared DLQ preservation and retained recovery records in `AGENT_FACT_BATCHER`
 
 ### What It Does NOT Own
 
@@ -222,15 +228,21 @@ Production uses `trace-flow-agent-ingest`, `collector.trace-flow.dev`, the produ
 
 ### Communication
 
-- **Inbound**: Queue messages from Agent Ingest
+- **Inbound**: Delivery references from Agent Ingest and separate snapshot queue messages
 - **Outbound**:
   - KV for model pricing lookup
-  - Durable Objects for fact dedupe and insert batching
-  - Tinybird Events API for `agent_*` datasources
+  - R2 for encrypted delivery bodies and immutable priced row plans
+  - Durable Objects for delivery receipts, organization revisions, and snapshot capacity
+  - Tinybird Events API for canonical fact versions and manifests
+  - Tinybird Copy and Jobs APIs for snapshot generation
 
 ### Scaling Characteristics
 
-The consumer scales with `agent-ingest-{env}` queue depth. It processes up to 100 messages per batch, uses bounded concurrency, and retries contributing messages when the fact ledger or Tinybird insert path fails. Duplicate redelivery is absorbed by the Durable Object ledger before Tinybird insert.
+The consumer scales with `agent-ingest-{env}` queue depth and dispatches up to six deliveries at a
+time. The organization coordinator serializes canonical writes and bounds active delivery references.
+Delivery receipt state makes repeated references safe. Snapshot work uses a separate queue and admits
+at most two generations globally. Off-contract ingest messages log an error and retry until they
+dead-letter; DLQ acknowledgement waits for durable preservation.
 
 ### Configuration
 
@@ -242,14 +254,19 @@ Defined in `apps/agent-consumer/wrangler.jsonc`:
     "queue": "agent-ingest-dev",
     "max_batch_size": 100,
     "max_batch_timeout": 5,
-    "max_concurrency": 10,
+    "max_concurrency": 6,
     "max_retries": 5,
     "dead_letter_queue": "agent-ingest-dlq-dev"
   }]
 },
 "kv_namespaces": [{ "binding": "MODEL_PRICING", "id": "..." }],
 "durable_objects": {
-  "bindings": [{ "name": "AGENT_FACT_BATCHER", "class_name": "AgentFactBatcher" }]
+  "bindings": [
+    { "name": "AGENT_DELIVERY", "class_name": "AgentDelivery" },
+    { "name": "AGENT_DELIVERY_COORDINATOR", "class_name": "AgentDeliveryCoordinator" },
+    { "name": "AGENT_SNAPSHOT_CAPACITY", "class_name": "SnapshotCapacity" },
+    { "name": "AGENT_FACT_BATCHER", "class_name": "AgentFactBatcher" }
+  ]
 }
 ```
 
@@ -358,27 +375,26 @@ messages remain readable during the delivery-reference cutover.
 
 ### Agent Queue Messages (Agent Ingest to Agent Consumer)
 
-The agent ingest worker accepts `AgentIngestEnvelope` uploads from collectors and enqueues `AgentIngestQueueMessage` chunks:
+The agent ingest worker accepts `AgentIngestEnvelope` uploads from collectors, stamps tenancy and
+stable fact identities, and stores bounded encrypted deliveries in R2. The queue carries only a
+registered reference:
 
 ```typescript
-interface AgentIngestQueueMessage {
-  type: 'agent';
-  source: 'claude' | 'codex' | 'cursor';
-  parser_version: string;
-  desktop_version: string;
-  collector_batch_id: string;
-  tenancy: {
-    org_id: string;
-    user_id: string;
-    collector_id: string;
-    collector_credential_id: string;
-  };
-  facts: AgentIngestQueueFacts;
-  enqueued_at: number;
+interface AgentDeliveryReference {
+  type: 'agent-delivery';
+  version: 1;
+  key: string;
+  org_id: string;
+  sha256: string;
+  created_at: number;
+  expires_at: number;
+  delivery_revision: number;
 }
 ```
 
-The ingest worker stamps tenancy and final row identities. The collector never sends trusted org/user IDs, cost, or final Tinybird primary keys.
+`AgentIngestQueueMessage` remains the validated decrypted fact payload inside the delivery. It is not
+accepted as an inline queue message. The collector never sends trusted org/user IDs, cost, or final
+Tinybird primary keys.
 
 ### R2 Keys (Proxy to API)
 
@@ -399,7 +415,8 @@ The `@trace-flow/types` package defines interfaces used across worker boundaries
 - `TinybirdTrace`: OpenTelemetry-format trace for storage
 - `SSEStreamData`: Parsed SSE events and timing
 - `AgentIngestEnvelope`: Collector upload contract
-- `AgentIngestQueueMessage`: Agent ingest to agent consumer contract
+- `AgentDeliveryReference`: Agent Ingest to Agent Consumer queue contract
+- `AgentIngestQueueMessage`: Validated fact payload inside an encrypted agent delivery
 
 ## Failure Handling
 
@@ -432,10 +449,12 @@ The `@trace-flow/types` package defines interfaces used across worker boundaries
 
 ### Agent Consumer Failures
 
-- Malformed queue messages retry and then dead-letter
+- Off-contract queue messages report an error, retry, and then dead-letter
+- Invalid references and delivery dispatch failures retry
 - Pricing misses produce null `cost_usd` when usage or pricing coverage is insufficient
-- Fact ledger failures retry all contributing queue messages
-- Tinybird insert failures keep rows pending in `AGENT_FACT_BATCHER` SQLite and retry on the next flush
+- Uncertain Tinybird inserts wait for receipt reconciliation rather than blind retries
+- Snapshot failures prevent publication of incomplete captured dates
+- DLQ preservation failures retry; agent dead letters support explicit retirement without replay
 
 ### API Failures
 

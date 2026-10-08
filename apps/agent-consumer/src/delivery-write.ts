@@ -7,7 +7,7 @@ import {
   type Category,
 } from './facts';
 
-export const FACT_VERSION_DATASOURCES: Record<Category, string> = {
+const FACT_VERSION_DATASOURCES: Record<Category, string> = {
   messages: 'agent_message_fact_versions',
   tool_events: 'agent_tool_event_fact_versions',
   file_events: 'agent_file_event_fact_versions',
