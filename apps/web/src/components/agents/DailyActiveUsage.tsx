@@ -3,35 +3,13 @@
 import { useMemo } from 'react';
 import { Bar, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from 'recharts';
 import type { AnalystPageContextReference } from '@/components/analyst/pageContext';
-import { formatCurrency, formatNumber, parseTinybirdDate } from '@/lib/format';
+import { formatCurrency, formatNumber } from '@/lib/format';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { BentoCell } from './BentoCell';
 import { DeltaBadge } from './DeltaBadge';
 import type { BurnRateStats } from './burnRate';
 import type { AgentTimeseriesRow } from './types';
-
-interface DayPoint {
-  /** ISO date (YYYY-MM-DD); the day bucket key. */
-  label: string;
-  tokens: number;
-  cost: number;
-}
-
-/**
- * Per-day (NON-cumulative) totals from the daily burn series. Unlike the cost hero, which plots
- * a cumulative run-rate, this is "what did each day cost / process on its own".
- */
-function buildDays(burnSeries: AgentTimeseriesRow[]): DayPoint[] {
-  const byDay = new Map<string, DayPoint>();
-  for (const row of burnSeries) {
-    const label = parseTinybirdDate(row.bucket_start).toISOString().slice(0, 10);
-    const point = byDay.get(label) ?? { label, tokens: 0, cost: 0 };
-    point.tokens += row.total_tokens;
-    point.cost += row.cost_usd;
-    byDay.set(label, point);
-  }
-  return [...byDay.values()].sort((a, b) => a.label.localeCompare(b.label));
-}
+import { buildDailyUsage } from './dailyUsage';
 
 const CHART_CONFIG = {
   tokens: { label: 'Tokens', color: 'var(--color-chart-2)' },
@@ -46,14 +24,16 @@ const CHART_CONFIG = {
 export function DailyActiveUsage({
   burnSeries,
   stats,
+  timezone,
   contextReference,
 }: {
   burnSeries: AgentTimeseriesRow[];
   /** null until daily buckets exist; the headline averages and deltas come from here. */
   stats: BurnRateStats | null;
+  timezone: string;
   contextReference?: AnalystPageContextReference;
 }) {
-  const days = useMemo(() => buildDays(burnSeries), [burnSeries]);
+  const days = useMemo(() => buildDailyUsage(burnSeries, timezone), [burnSeries, timezone]);
 
   return (
     <BentoCell

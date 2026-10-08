@@ -250,6 +250,7 @@ export function AgentBentoGrid({
         <DailyActiveUsage
           burnSeries={burnSeries}
           stats={stats}
+          timezone={timezone}
           contextReference={contextFor('daily-active-usage', 'Daily active usage')}
         />
       </div>
