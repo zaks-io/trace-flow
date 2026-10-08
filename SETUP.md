@@ -60,15 +60,15 @@ switches.
 
 The production runtime uses these Cloudflare resource families:
 
-| Resource         | Model request path                          | Agent conversation path                                                              | Shared/read path                                    |
-| ---------------- | ------------------------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------- |
-| Workers          | `proxy`, `proxy-consumer`                   | `agent-ingest`, `agent-consumer`                                                     | `web`, `pipes-api`, `api`, `mcp`, `analyst-sandbox` |
-| Queues           | `trace-flow-requests-*` + DLQ               | `agent-ingest-*` + DLQ                                                               | None                                                |
-| R2               | `trace-flow-storage-*` Body Objects         | `trace-flow-agent-deliveries-*` encrypted facts                                      | Sandbox workspace backups                           |
-| KV               | `API_KEYS`, `MODEL_PRICING`                 | `COLLECTOR_CREDS`, `MODEL_PRICING`                                                   | None                                                |
-| Durable Objects  | `USAGE_TRACKER`, `TRACE_BATCHER`            | Delivery receipts, org coordinator, snapshot capacity, retained `AGENT_FACT_BATCHER` | `Sandbox`                                           |
-| Rate limiters    | org and IP ingest limits                    | `AGENT_INGEST_LIMITER`                                                               | read and token-refresh limits                       |
-| Analytics Engine | proxy and consumer operational measurements | Worker logs and Sentry                                                               | Worker logs and Sentry                              |
+| Resource         | Model request path                          | Agent conversation path                                                            | Shared/read path                                    |
+| ---------------- | ------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Workers          | `proxy`, `proxy-consumer`                   | `agent-ingest`, `agent-consumer`                                                   | `web`, `pipes-api`, `api`, `mcp`, `analyst-sandbox` |
+| Queues           | `trace-flow-requests-*` + DLQ               | `agent-ingest-*` + DLQ                                                             | None                                                |
+| R2               | `trace-flow-storage-*` Body Objects         | `trace-flow-agent-deliveries-*` encrypted facts                                    | Sandbox workspace backups                           |
+| KV               | `API_KEYS`, `MODEL_PRICING`                 | `COLLECTOR_CREDS`, `MODEL_PRICING`                                                 | None                                                |
+| Durable Objects  | `USAGE_TRACKER`, `TRACE_BATCHER`            | Delivery receipts, org coordinator, snapshot capacity, shared `AGENT_DEAD_LETTERS` | `Sandbox`                                           |
+| Rate limiters    | org and IP ingest limits                    | `AGENT_INGEST_LIMITER`                                                             | read and token-refresh limits                       |
+| Analytics Engine | proxy and consumer operational measurements | Worker logs and Sentry                                                             | Worker logs and Sentry                              |
 
 The agent production resource IDs and smoke-test contract live in
 `docs/guides/agent-conversation-analytics/provisioned-resources.md` and

@@ -216,7 +216,7 @@ Production uses `trace-flow-agent-ingest`, `collector.trace-flow.dev`, the produ
 - Tinybird Events API insertion for versioned canonical facts
 - Cross-date correction tombstones and uncertain-write receipt reconciliation
 - Dirty-date tracking, bounded snapshot Copies, and atomic manifest publication
-- Shared DLQ preservation and retained recovery records in `AGENT_FACT_BATCHER`
+- Shared DLQ preservation and recovery in `AGENT_DEAD_LETTERS`, instance `__dlq__`
 
 ### What It Does NOT Own
 
@@ -242,7 +242,8 @@ The consumer scales with `agent-ingest-{env}` queue depth and dispatches up to s
 time. The organization coordinator serializes canonical writes and bounds active delivery references.
 Delivery receipt state makes repeated references safe. Snapshot work uses a separate queue and admits
 at most two generations globally. Off-contract ingest messages log an error and retry until they
-dead-letter; DLQ acknowledgement waits for durable preservation.
+dead-letter; DLQ acknowledgement waits for durable preservation. Agent recovery uses only shardId
+`"__dlq__"` and resolves records with `retire-dead-letter` while retaining their payloads.
 
 ### Configuration
 
@@ -265,7 +266,7 @@ Defined in `apps/agent-consumer/wrangler.jsonc`:
     { "name": "AGENT_DELIVERY", "class_name": "AgentDelivery" },
     { "name": "AGENT_DELIVERY_COORDINATOR", "class_name": "AgentDeliveryCoordinator" },
     { "name": "AGENT_SNAPSHOT_CAPACITY", "class_name": "SnapshotCapacity" },
-    { "name": "AGENT_FACT_BATCHER", "class_name": "AgentFactBatcher" }
+    { "name": "AGENT_DEAD_LETTERS", "class_name": "AgentDeadLetters" }
   ]
 }
 ```

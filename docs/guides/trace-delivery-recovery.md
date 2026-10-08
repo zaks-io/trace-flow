@@ -141,8 +141,9 @@ Create a local JSON request file:
 ```
 
 Proxy shard IDs are decimal shard numbers. For `"pipeline": "agent"`, use the
-Organization ID for delivery and snapshot inspection. Agent DLQ records are retained
-in the shared `org:__dlq__` object; use `"shardId": "__dlq__"` to list them. Resolve
+Organization ID for delivery and snapshot inspection. Agent DLQ records live
+in the shared `AgentDeadLetters` store. Its instance name and the only accepted recovery shardId
+are `"__dlq__"`; organization IDs are rejected by agent `listRecovery` and `reconcileRecovery`. Resolve
 an agent dead letter with `retire-dead-letter` after investigating its payload. Agent
 dead letters cannot be replayed through this service.
 Fetch records into a protected local file, not logs or chat:
@@ -156,7 +157,8 @@ curl --fail-with-body -H 'Content-Type: application/json' \
 
 Follow `nextAfterId` using `options.afterId` until it is null. Payloads are complete
 and can contain private analytics metadata. Keep the files private.
-Pages return every recovery kind; filter on each record's `kind` locally. Count, byte,
+Proxy pages return every recovery kind; filter on each record's `kind` locally. Agent pages contain
+only `dlq` records. Count, byte,
 state, and cursor bounds apply to every page.
 
 ## Reconciliation

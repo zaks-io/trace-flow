@@ -80,8 +80,8 @@ _Avoid_: "agent proxy", "desktop API", "collector backend".
 `apps/agent-consumer`. Queue consumer that resolves encrypted agent delivery references, prices **Agent Message** facts once from `MODEL_PRICING`, writes versioned canonical facts, and publishes bounded Tinybird snapshots through **AgentDeliveryCoordinator**.
 _Avoid_: "Consumer" without the "Agent" qualifier.
 
-**AgentFactBatcher**:
-The retained Durable Object class (`apps/agent-consumer/src/fact-batcher.ts`) that preserves shared `org:__dlq__` dead letters and recovery records, and erases the retired organization fact ledger. It no longer accepts or flushes facts.
+**AgentDeadLetters**:
+The Durable Object class (`apps/agent-consumer/src/dead-letters.ts`) that preserves agent dead letters in one shared instance named `__dlq__`. Recovery uses shardId `"__dlq__"` and resolves records with `retire-dead-letter` while retaining their payloads.
 
 **AgentDeliveryCoordinator**:
 The per-Organization Durable Object that assigns delivery revisions, serializes canonical writes, tracks dirty dates, and coordinates snapshot publication.

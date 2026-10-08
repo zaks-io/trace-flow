@@ -10,7 +10,7 @@ import type { AgentConsumerEnv } from './context';
 import type { ResumeSnapshotInput } from './snapshot-recovery';
 import { discoverSnapshotCopy } from './snapshot-tinybird';
 import { WorkerEntrypoint } from 'cloudflare:workers';
-import type { AgentFactBatcherInstance } from './fact-batcher';
+import { AGENT_DEAD_LETTERS_INSTANCE_NAME } from './dead-letters';
 import type {
   ReconcileRecoveryInput,
   RecoveryPage,
@@ -29,7 +29,7 @@ import { AGENT_SNAPSHOT_QUEUE_NAMES, processSnapshotQueue } from './snapshot-que
 import { eraseAgentOrganization, organizationErasureStarted } from './organization-erasure';
 import { MAX_ACTIVE_AGENT_DELIVERIES } from './agent-delivery-coordinator-contract';
 
-export { AgentFactBatcher } from './fact-batcher';
+export { AgentDeadLetters } from './dead-letters';
 export { AgentDelivery } from './agent-delivery';
 export { AgentDeliveryCoordinator } from './agent-delivery-coordinator';
 export { SnapshotCapacity } from './snapshot-capacity';
@@ -37,14 +37,6 @@ export { SnapshotCapacity } from './snapshot-capacity';
 const AGENT_DLQ_NAMES = new Set(['agent-ingest-dlq-dev', 'agent-ingest-dlq-prod']);
 const DLQ_PRESERVATION_RETRY_DELAY_SECONDS = 60;
 const DLQ_PRESERVATION_MAX_RETRY_DELAY_SECONDS = 14_400;
-
-function getAgentBatcher(
-  env: AgentConsumerEnv,
-  shardId: string,
-): DurableObjectStub<AgentFactBatcherInstance> {
-  const normalized = normalizeAgentShardId(shardId);
-  return env.AGENT_FACT_BATCHER.getByName(`org:${normalized}`);
-}
 
 function normalizeAgentShardId(shardId: string): string {
   const normalized = shardId.trim();
@@ -54,15 +46,22 @@ function normalizeAgentShardId(shardId: string): string {
   return normalized;
 }
 
+function requireDeadLetterShard(shardId: string): void {
+  if (shardId !== AGENT_DEAD_LETTERS_INSTANCE_NAME) {
+    throw new Error(
+      `Agent recovery records exist only in the shared dead-letter store; shardId must be "${AGENT_DEAD_LETTERS_INSTANCE_NAME}"`,
+    );
+  }
+}
+
 async function preserveDeadLetterBatch(
   batch: MessageBatch<unknown>,
   env: AgentConsumerEnv,
 ): Promise<void> {
   for (const message of batch.messages) {
     try {
-      // Keep dead letters independent of an organization batcher that may be full or unavailable.
-      const shardId = '__dlq__';
-      const sink = getAgentBatcher(env, shardId);
+      const shardId = AGENT_DEAD_LETTERS_INSTANCE_NAME;
+      const sink = env.AGENT_DEAD_LETTERS.getByName(shardId);
       const payload = JSON.stringify({
         queue: batch.queue,
         messageId: message.id,
@@ -240,11 +239,17 @@ class TraceRecoveryEntrypoint extends WorkerEntrypoint<AgentConsumerEnv> {
   }
 
   listRecovery(shardId: string, options: RecoveryPageOptions = {}): Promise<RecoveryPage> {
-    return getAgentBatcher(this.env, shardId).listRecovery(options);
+    requireDeadLetterShard(shardId);
+    return this.env.AGENT_DEAD_LETTERS.getByName(AGENT_DEAD_LETTERS_INSTANCE_NAME).listRecovery(
+      options,
+    );
   }
 
   reconcileRecovery(shardId: string, input: ReconcileRecoveryInput): Promise<RecoveryRecord> {
-    return getAgentBatcher(this.env, shardId).reconcileRecovery(input);
+    requireDeadLetterShard(shardId);
+    return this.env.AGENT_DEAD_LETTERS.getByName(
+      AGENT_DEAD_LETTERS_INSTANCE_NAME,
+    ).reconcileRecovery(input);
   }
 }
 
@@ -258,7 +263,7 @@ function sentryOptions(env: AgentConsumerEnv) {
     ...sentryRequestPrivacy(),
     enableRpcTracePropagation: true,
     rpcTracePropagationBindings: [
-      'AGENT_FACT_BATCHER',
+      'AGENT_DEAD_LETTERS',
       'AGENT_DELIVERY',
       'AGENT_DELIVERY_COORDINATOR',
       'AGENT_SNAPSHOT_CAPACITY',

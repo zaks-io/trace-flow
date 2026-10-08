@@ -4,6 +4,7 @@ import type * as SentryCloudflare from '@sentry/cloudflare';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentConsumerEnv } from '../context';
 import worker from '../index';
+import { AGENT_DEAD_LETTERS_INSTANCE_NAME } from '../dead-letters';
 import { queueMessage } from './factories';
 
 const env = workerEnv as unknown as AgentConsumerEnv;
@@ -118,7 +119,7 @@ describe('agent consumer DLQ', () => {
 
     await worker.queue(batch, {
       ...env,
-      AGENT_FACT_BATCHER: { getByName: preserve },
+      AGENT_DEAD_LETTERS: { getByName: preserve },
     } as unknown as AgentConsumerEnv);
 
     expect(ack).toHaveBeenCalledOnce();
@@ -154,7 +155,7 @@ describe('agent consumer DLQ', () => {
       AGENT_DELIVERY_COORDINATOR: {
         getByName: vi.fn(() => ({ getErasureState })),
       },
-      AGENT_FACT_BATCHER: {
+      AGENT_DEAD_LETTERS: {
         getByName: vi.fn(() => ({ preserveDlq, discardDlq })),
       },
     } as unknown as AgentConsumerEnv;
@@ -189,7 +190,9 @@ describe('agent consumer DLQ', () => {
     await worker.queue(batch, env);
 
     expect(acknowledgements).toBe(2);
-    const recovery = await env.AGENT_FACT_BATCHER.getByName('org:__dlq__').listRecovery();
+    const recovery = await env.AGENT_DEAD_LETTERS.getByName(
+      AGENT_DEAD_LETTERS_INSTANCE_NAME,
+    ).listRecovery();
     expect(recovery.records).toHaveLength(1);
     expect(recovery.records[0]).toMatchObject({
       kind: 'dlq',
@@ -199,10 +202,10 @@ describe('agent consumer DLQ', () => {
     expect(JSON.parse(recovery.records[0]?.payload ?? '{}')).toMatchObject({ body: message.body });
   });
 
-  it('preserves valid messages in the shared recovery sink when the organization sink is full', async () => {
+  it('preserves valid messages only in the shared dead-letter store before acknowledgement', async () => {
     const messageId = `dead-letter-${crypto.randomUUID()}`;
     const body = queueMessage();
-    const sharedSink = env.AGENT_FACT_BATCHER.getByName('org:__dlq__');
+    const sharedSink = env.AGENT_DEAD_LETTERS.getByName(AGENT_DEAD_LETTERS_INSTANCE_NAME);
     let durablyPreserved = false;
     const preserveDlq = vi.fn(async (payload: string, outcome: string, dedupeKey: string) => {
       const record = await sharedSink.preserveDlq(payload, outcome, dedupeKey);
@@ -210,8 +213,8 @@ describe('agent consumer DLQ', () => {
       return record;
     });
     const getByName = vi.fn((name: string) => {
-      if (name !== 'org:__dlq__') {
-        throw new Error('Exceeded the maximum database size.');
+      if (name !== AGENT_DEAD_LETTERS_INSTANCE_NAME) {
+        throw new Error('Unexpected dead-letter instance');
       }
       return { preserveDlq };
     });
@@ -233,7 +236,7 @@ describe('agent consumer DLQ', () => {
     } as unknown as MessageBatch<unknown>;
     const isolatedEnv = {
       ...env,
-      AGENT_FACT_BATCHER: { getByName },
+      AGENT_DEAD_LETTERS: { getByName },
     } as unknown as AgentConsumerEnv;
 
     await worker.queue(batch, isolatedEnv);
@@ -241,8 +244,8 @@ describe('agent consumer DLQ', () => {
     await worker.queue(batch, isolatedEnv);
 
     expect(getByName).toHaveBeenCalledTimes(2);
-    expect(getByName).toHaveBeenNthCalledWith(1, 'org:__dlq__');
-    expect(getByName).toHaveBeenNthCalledWith(2, 'org:__dlq__');
+    expect(getByName).toHaveBeenNthCalledWith(1, AGENT_DEAD_LETTERS_INSTANCE_NAME);
+    expect(getByName).toHaveBeenNthCalledWith(2, AGENT_DEAD_LETTERS_INSTANCE_NAME);
     expect(preserveDlq).toHaveBeenCalledTimes(2);
     expect(ack).toHaveBeenCalledTimes(2);
     expect(message.retry).not.toHaveBeenCalled();
@@ -287,7 +290,7 @@ describe('DLQ preservation failure', () => {
       };
       const failingEnv = {
         ...env,
-        AGENT_FACT_BATCHER: { getByName: unavailable, idFromName: unavailable, get: unavailable },
+        AGENT_DEAD_LETTERS: { getByName: unavailable, idFromName: unavailable, get: unavailable },
       } as unknown as typeof env;
       await worker.queue(batch, failingEnv);
       expect(ack).not.toHaveBeenCalled();

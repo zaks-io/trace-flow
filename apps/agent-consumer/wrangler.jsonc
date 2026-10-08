@@ -1,6 +1,6 @@
 {
   // Agent deliveries are encrypted in R2, priced once, and written as versioned Tinybird facts.
-  // Durable Objects retain bounded delivery receipts, snapshot progress and dead-letter recovery.
+  // Durable Objects retain bounded delivery receipts, snapshot progress and shared dead letters.
   // Default bindings use dev resources; production binds its own queues, buckets, and pricing KV.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "trace-flow-agent-consumer-dev",
@@ -37,7 +37,7 @@
   ],
   "durable_objects": {
     "bindings": [
-      { "name": "AGENT_FACT_BATCHER", "class_name": "AgentFactBatcher" },
+      { "name": "AGENT_DEAD_LETTERS", "class_name": "AgentDeadLetters" },
       { "name": "AGENT_DELIVERY", "class_name": "AgentDelivery" },
       { "name": "AGENT_DELIVERY_COORDINATOR", "class_name": "AgentDeliveryCoordinator" },
       { "name": "AGENT_SNAPSHOT_CAPACITY", "class_name": "SnapshotCapacity" },
@@ -47,6 +47,9 @@
     { "tag": "v1", "new_sqlite_classes": ["AgentFactBatcher"] },
     { "tag": "v2", "new_sqlite_classes": ["AgentDelivery", "AgentDeliveryCoordinator"] },
     { "tag": "v3", "new_sqlite_classes": ["SnapshotCapacity"] },
+    { "tag": "v4", "new_sqlite_classes": ["AgentDeadLetters"] },
+    // Permanently delete the retired legacy ledger and preserved records, written off 2026-10-08 (TRA-298).
+    { "tag": "v5", "deleted_classes": ["AgentFactBatcher"] },
   ],
   // Consumes the 0d-provisioned agent-ingest-dev queue; poison + exhausted-retry messages dead-letter
   // to agent-ingest-dlq-dev.
@@ -114,7 +117,7 @@
       ],
       "durable_objects": {
         "bindings": [
-          { "name": "AGENT_FACT_BATCHER", "class_name": "AgentFactBatcher" },
+          { "name": "AGENT_DEAD_LETTERS", "class_name": "AgentDeadLetters" },
           { "name": "AGENT_DELIVERY", "class_name": "AgentDelivery" },
           { "name": "AGENT_DELIVERY_COORDINATOR", "class_name": "AgentDeliveryCoordinator" },
           { "name": "AGENT_SNAPSHOT_CAPACITY", "class_name": "SnapshotCapacity" },

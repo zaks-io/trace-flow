@@ -17,19 +17,22 @@ per working session or task hand-off. Copy the template.
 
 ## 2026-10-08 TRA-391 tra-391-retire-legacy-agent-ingestion
 
-**Status:** in progress pending TRA-298
+**Status:** in review (PR #600)
 **Changed:** Retired the inline agent queue protocol, migration and ledger recovery tooling,
-and ingestion maintenance mode. Agent ingestion accepts encrypted R2 delivery references;
-AgentFactBatcher retains DLQ preservation, recovery records, and organization erasure. Updated
-the recovery bridge, deployment dependencies, and current ingestion documentation.
-**Verified:** Consumer 268, ingest 159, types 5, Convex 549, recovery bridge 7, and workflow
-permissions 54 tests passed. Root lint, type checking, Knip, duplicate checking, edited-file
-formatting, actionlint, and the acceptance reference scan passed.
-**Next / blockers:** Merge only after TRA-298 is Done: zero unresolved legacy recovery records,
-every organization migration complete, and no frozen-replay deliveries in flight. After merge,
-confirm `Deployment Status`, continued Axiom `agent_ingest` deliveries, and no new agent-consumer
-Sentry issue for 24 hours. Tinybird baseline Copy pipes and legacy-table grants remain for a
-separate Tinybird change.
+and ingestion maintenance mode. Agent ingestion accepts encrypted R2 delivery references.
+Added AgentDeadLetters for shared DLQ preservation and recovery at shardId `"__dlq__"`.
+Merge deploys a `deleted_classes` migration that permanently deletes the retired ledger class and
+all its storage, including retained legacy recovery records and dead letters. Isaac wrote those
+records off on 2026-10-08 (TRA-298). Organization erasure cleans shared dead letters without
+calling the deleted per-organization ledger.
+**Verified:** Consumer 271, ingest 159, Convex 549, retention/recovery bridge 12, and workflow
+permissions 54 tests passed under Node 24 and Bun 1.3.5. Root lint, type checking, Knip, duplicate checking, edited-file
+formatting, development and production Wrangler dry runs, and acceptance reference scans passed.
+Migration entries v1 through v3 and earlier changelog history remain byte-identical.
+**Next / blockers:** Isaac merges; the merge deploy is the irreversible deletion. TRA-298
+completes after deploy by confirming the storage drop. Confirm `Deployment Status`, continued
+Axiom `agent_ingest` deliveries, and no new agent-consumer Sentry issue for 24 hours. Tinybird
+baseline Copy pipes and legacy-table grants remain for TRA-395.
 
 ## 2026-09-22 TRA-295 Conversation Archive removal
 

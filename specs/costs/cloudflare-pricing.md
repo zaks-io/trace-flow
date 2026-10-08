@@ -99,7 +99,8 @@ The current runtime uses Cloudflare in two ingestion paths.
 - Agent Consumer CPU for validation, pricing, row mapping, and Tinybird inserts
 - R2 writes and reads for encrypted delivery buffers and priced row plans
 - Durable Object requests/storage for delivery receipts, organization coordination, and snapshot capacity
-- Retained `AGENT_FACT_BATCHER` requests/storage for DLQ, recovery, and organization erasure
+- `AGENT_DEAD_LETTERS` requests/storage for shared DLQ preservation and recovery. The retirement
+  migration permanently deletes the old fact-ledger class and its accumulated storage.
 - `MODEL_PRICING` KV reads for server-side cost calculation
 
 ## Sources

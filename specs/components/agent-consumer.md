@@ -26,12 +26,13 @@ all nine snapshot targets succeed. Product endpoints read the latest published g
 - `AgentDeliveryCoordinator` assigns monotonically increasing revisions, serializes canonical writes,
   tracks dirty dates, and coordinates snapshot publication.
 - `SnapshotCapacity` admits at most two snapshot generations globally.
-- `AgentFactBatcher` preserves dead letters in the shared `org:__dlq__` object, retains recovery
-  records, and erases the retired organization fact ledger. It no longer accepts or flushes facts.
+- `AgentDeadLetters` preserves agent DLQ payloads in the shared `__dlq__` instance. Recovery uses
+  shardId `"__dlq__"` and `retire-dead-letter` to resolve records while retaining their payloads.
 
 Organization erasure fences new work, waits for admitted writes and Copy intents to settle, and
-clears tenant storage while retaining a permanent erasure tombstone. Existing Durable Object classes
-and migration declarations remain deployed.
+clears delivery buffers and matching shared dead letters. The organization coordinator retains its
+permanent erasure fence. The retirement migration permanently deletes the old fact-ledger class and
+all its storage; no legacy records are carried into the new dead-letter store.
 
 ## Bindings
 
@@ -44,7 +45,7 @@ and migration declarations remain deployed.
 | `AGENT_DELIVERY`                     | Durable Object | Delivery receipts and retry progress           |
 | `AGENT_DELIVERY_COORDINATOR`         | Durable Object | Organization revisions and snapshots           |
 | `AGENT_SNAPSHOT_CAPACITY`            | Durable Object | Global snapshot admission                      |
-| `AGENT_FACT_BATCHER`                 | Durable Object | Retained DLQ, recovery, and erasure operations |
+| `AGENT_DEAD_LETTERS`                 | Durable Object | Shared dead-letter preservation and recovery   |
 | `TINYBIRD_TOKEN`                     | Secret         | Tinybird Events API append token               |
 | `TINYBIRD_AGENT_DELIVERY_READ_TOKEN` | Secret         | Identity and receipt lookups                   |
 | `TINYBIRD_AGENT_SNAPSHOT_TOKEN`      | Secret         | Snapshot Copy starts, discovery, and manifests |
@@ -73,4 +74,4 @@ and migration declarations remain deployed.
 - `apps/agent-consumer/src/delivery-rows.ts`: Immutable priced row plans
 - `apps/agent-consumer/src/pricing.ts`: Model-cost lookup and calculation
 - `apps/agent-consumer/src/rows.ts`: Tinybird row mapping
-- `apps/agent-consumer/src/fact-batcher.ts`: Retained DLQ, recovery, and erasure operations
+- `apps/agent-consumer/src/dead-letters.ts`: Shared dead-letter preservation and recovery

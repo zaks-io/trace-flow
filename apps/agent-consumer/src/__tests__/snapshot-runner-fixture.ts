@@ -23,7 +23,7 @@ export async function makeSnapshotRunner(dirtyDays = [new Date().toISOString().s
     acquire: vi.fn().mockResolvedValue(true),
     release: vi.fn().mockResolvedValue(undefined),
   };
-  const host = workerEnv.AGENT_FACT_BATCHER.getByName(`org:${orgId}`);
+  const host = workerEnv.AGENT_DEAD_LETTERS.getByName(`org:${orgId}`);
   const bindings = {
     ...workerEnv,
     AGENT_SNAPSHOT_QUEUE: { send: queueSend },

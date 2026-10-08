@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { fetchPipe } from '@trace-flow/tinybird-client';
 import type * as TinybirdClient from '@trace-flow/tinybird-client';
 import type { AgentConsumerEnv } from '../context';
+import { AGENT_DEAD_LETTERS_INSTANCE_NAME } from '../dead-letters';
 import { eraseAgentOrganization } from '../organization-erasure';
 
 vi.mock('@trace-flow/tinybird-client', async (importOriginal) => ({
@@ -28,7 +29,6 @@ function fixture(jobId?: string) {
     abandonErasureSnapshot: vi.fn(async () => undefined),
     getErasureState: vi.fn(async () => ({ ready: settled })),
   };
-  const eraseOrganizationData = vi.fn(async () => ({ erased: true }));
   const discardOrganizationDlq = vi.fn(async () => ({
     deleted: 1,
     nextAfterId: null as number | null,
@@ -43,16 +43,15 @@ function fixture(jobId?: string) {
     TINYBIRD_AGENT_SNAPSHOT_TOKEN: 'narrow-test-token',
     TINYBIRD_AGENT_SNAPSHOT_JOBS_TOKEN: 'narrow-test-token',
     AGENT_DELIVERY_COORDINATOR: { getByName: vi.fn(() => coordinator) },
-    AGENT_FACT_BATCHER: {
+    AGENT_DEAD_LETTERS: {
       getByName: vi.fn((name: string) => {
-        if (name === 'org:org-1') return { eraseOrganizationData };
-        if (name === 'org:__dlq__') return { discardOrganizationDlq };
+        if (name === AGENT_DEAD_LETTERS_INSTANCE_NAME) return { discardOrganizationDlq };
         throw new Error('Unexpected erasure scope');
       }),
     },
     AGENT_DELIVERIES: { list, delete: remove },
   } as unknown as AgentConsumerEnv;
-  return { env, coordinator, eraseOrganizationData, discardOrganizationDlq, list, remove };
+  return { env, coordinator, discardOrganizationDlq, list, remove };
 }
 
 describe('agent organization erasure', () => {
@@ -61,7 +60,7 @@ describe('agent organization erasure', () => {
     vi.mocked(fetchPipe).mockResolvedValueOnce([]);
     expect(await eraseAgentOrganization(f.env, 'org-1')).toEqual({ ready: false });
     expect(f.coordinator.settleErasureSnapshotCopyIntent).not.toHaveBeenCalled();
-    expect(f.eraseOrganizationData).not.toHaveBeenCalled();
+    expect(f.env.AGENT_DEAD_LETTERS.getByName).not.toHaveBeenCalled();
     expect(f.remove).not.toHaveBeenCalled();
   });
 
@@ -72,10 +71,10 @@ describe('agent organization erasure', () => {
     expect(f.coordinator.attachErasureSnapshotCopyJob).toHaveBeenCalledWith(
       expect.objectContaining({ jobId: 'job-1' }),
     );
-    expect(f.eraseOrganizationData).not.toHaveBeenCalled();
+    expect(f.env.AGENT_DEAD_LETTERS.getByName).not.toHaveBeenCalled();
   });
 
-  it('removes only the requested tenant buffers after confirmed job termination and legacy erasure', async () => {
+  it('removes only the requested tenant buffers after confirmed job termination', async () => {
     const f = fixture('job-1');
     vi.mocked(fetchPipe).mockResolvedValueOnce([{ job_id: 'job-1', status: 'done' }]);
     expect(await eraseAgentOrganization(f.env, 'org-1')).toEqual({ ready: true });
@@ -83,13 +82,16 @@ describe('agent organization erasure', () => {
       [['agent-deliveries/org-1/delivery']],
       [['agent-delivery-rows/org-1/delivery']],
     ]);
+    expect(f.env.AGENT_DEAD_LETTERS.getByName).toHaveBeenCalledExactlyOnceWith(
+      AGENT_DEAD_LETTERS_INSTANCE_NAME,
+    );
     expect(f.discardOrganizationDlq).toHaveBeenCalledWith('org-1', {
       afterId: undefined,
       limit: 100,
     });
   });
 
-  it('continues the shared legacy DLQ scan without treating a partial page as complete', async () => {
+  it('continues the shared DLQ scan without treating a partial page as complete', async () => {
     const f = fixture('job-1');
     vi.mocked(fetchPipe).mockResolvedValueOnce([{ job_id: 'job-1', status: 'done' }]);
     f.discardOrganizationDlq.mockResolvedValueOnce({ deleted: 0, nextAfterId: 200 });
@@ -97,6 +99,7 @@ describe('agent organization erasure', () => {
       ready: false,
       nextAfterId: 200,
     });
+    expect(f.discardOrganizationDlq).toHaveBeenCalledWith('org-1', { afterId: 100, limit: 100 });
     expect(f.remove).not.toHaveBeenCalled();
   });
 

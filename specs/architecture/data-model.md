@@ -210,8 +210,9 @@ ADR 0019 adds the next derived signal layer (`agent_session_signals`, file-atten
   natural fact identity; event-date corrections tombstone the previous date.
 - Canonical snapshot reads apply `FINAL` within the organization and captured dates. Product reads
   select the latest published snapshot generation per date.
-- `AGENT_FACT_BATCHER` retains dead letters, recovery records, and erasure of the retired fact ledger.
-  It no longer accepts or flushes facts.
+- `AGENT_DEAD_LETTERS` preserves dead letters in the shared `__dlq__` instance. Recovery uses only
+  shardId `"__dlq__"`; `retire-dead-letter` resolves records while retaining their payloads. The
+  retirement migration deletes the old fact-ledger class and all its storage.
 - Numeric token and cache columns are non-null. Missing source data is represented by `token_coverage` and `cache_coverage`.
 - `cost_usd` is the only nullable metric column because pricing can be missing or coverage can be insufficient.
 - File paths are repo-relative or coarse categories such as `outside_repo`; no stored path should contain a home directory or username.

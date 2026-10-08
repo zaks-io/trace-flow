@@ -198,8 +198,9 @@ Each encrypted delivery has bounded receipt metadata in `AgentDelivery`. The org
 coordinator assigns its revision and serializes canonical writes. It tracks dirty dates and
 coordinates snapshot publication without retaining historical fact bodies.
 
-`AgentFactBatcher` remains deployed for shared dead-letter preservation, recovery records, and erasure
-of the retired fact ledger. It no longer participates in canonical fact writes.
+`AgentDeadLetters` preserves agent DLQ records in the shared `__dlq__` instance. Recovery accepts
+only shardId `"__dlq__"`; `retire-dead-letter` resolves a record while keeping its payload. The
+retirement migration permanently deletes the old fact-ledger class and its storage.
 
 ### Row-Level Security
 
@@ -232,7 +233,7 @@ Collector Credentials are not API keys. They do not appear in API-key filters an
 | KV Namespace      | API key validation                                                                                 | `trace-flow-api-keys-{env}`          |
 | KV Namespace      | Model pricing cache                                                                                | Separate namespace                   |
 | KV Namespace      | Collector Credential lookup                                                                        | Separate `COLLECTOR_CREDS` namespace |
-| Durable Objects   | Trace batching, agent delivery and snapshot coordination, retained recovery                        | Per-worker instances                 |
+| Durable Objects   | Trace batching, agent delivery and snapshot coordination, shared dead-letter recovery              | Per-worker instances                 |
 | Rate Limit        | Agent ingest org burst guard                                                                       | `AGENT_INGEST_LIMITER`               |
 
 ### External Services

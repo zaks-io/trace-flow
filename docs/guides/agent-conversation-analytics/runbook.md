@@ -161,8 +161,10 @@ repo-backed repair pipe must live under `copies/`, be unscheduled, and use a `re
 
 Verify canonical identities, event-date corrections, published snapshot totals, and org-scoped
 endpoint results before calling a rollout healthy. Legacy fact-ledger rebuild and replay commands
-are retired. Agent DLQ payloads remain in `org:__dlq__` for inspection and explicit
-`retire-dead-letter` reconciliation; they are not replayed.
+are retired. Agent DLQ payloads live in the shared `AgentDeadLetters` store, instance `__dlq__`.
+Use shardId `"__dlq__"` for inspection and explicit `retire-dead-letter` reconciliation, which
+retains the payload. Agent recovery rejects organization IDs and does not replay dead letters.
+The retirement migration deletes the old fact-ledger class and all its stored records.
 
 ### Snapshot scheduling and recovery
 

@@ -1,5 +1,5 @@
 import type { AgentDeliveryReference, AgentSnapshotQueueMessage } from '@trace-flow/types';
-import type { AgentFactBatcherInstance } from './fact-batcher';
+import type { AgentDeadLettersInstance } from './dead-letters';
 import type { AgentDeliveryInstance } from './agent-delivery';
 import type { AgentDeliveryCoordinatorInstance } from './agent-delivery-coordinator';
 import type { SnapshotCapacityInstance } from './snapshot-capacity';
@@ -25,8 +25,8 @@ export interface AgentConsumerEnv {
   TINYBIRD_AGENT_SNAPSHOT_JOBS_TOKEN: string;
   /** Shared model pricing catalog, keyed `pricing:<provider>:<model>` (models.dev import, 2d). */
   MODEL_PRICING: KVNamespace;
-  /** Shared org:__dlq__ preservation, recovery records and erasure of the retired fact ledger. */
-  AGENT_FACT_BATCHER: DurableObjectNamespace<AgentFactBatcherInstance>;
+  /** Shared dead-letter preservation and recovery. */
+  AGENT_DEAD_LETTERS: DurableObjectNamespace<AgentDeadLettersInstance>;
   /** Tinybird Events API token with DATASOURCE:APPEND scope. */
   TINYBIRD_TOKEN: string;
   /** Tinybird regional API host, e.g. `https://api.us-west-2.aws.tinybird.co`. */
