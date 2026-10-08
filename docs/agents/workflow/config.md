@@ -53,10 +53,16 @@ workflow logic lives in the centrally managed org skills pinned by
 - Full local gate: `bun run ci:check` (`scripts/ci-check.sh` sets non-production
   placeholder env, runs `bun run duplicates:check`, then `bun run check`)
 - `bun run check`: prettier check for `ts/tsx/js/jsx/json/css/md`, then
-  `turbo run lint type-check test build --summarize`
+  `turbo run lint type-check test build --concurrency=2 --summarize`
 - Local hooks:
-  - pre-commit: `bun turbo run lint`; `bun run prettier --check .`
-  - pre-push: `bun run knip`; `bun turbo run type-check test`
+  - pre-commit: `bun run lint`; `bun run prettier --check .`
+  - pre-push: `bun run knip`; `bun turbo run type-check test --concurrency=2`
+- Root check resource policy: build, lint, type-check, test, test:coverage,
+  and check scripts cap Turbo at two concurrent tasks per invocation. Hooks
+  preserve that cap. Persistent dev and test:watch tasks use their existing
+  concurrency so all watchers can start. Use the root scripts for full checks;
+  passing results still cover unchanged code, so avoid redundant manual runs.
+  This also applies to the deploy workflow's CI gate, which calls root scripts.
 - Local gate cache policy: Turbo cache applies to normal turbo tasks; `dev`,
   `deploy`, `deploy:dev`, and `deploy:preview` are cache-disabled in `turbo.json`
 - CI env passthrough: build env is declared in `turbo.json`; `ci:check` uses
