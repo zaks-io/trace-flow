@@ -22,9 +22,9 @@ export function AgentAnalyticsPreview() {
         </span>
       </div>
 
-      <div className="grid min-h-[510px] grid-cols-[48px_1fr] sm:grid-cols-[164px_1fr]">
-        <aside className="border-r border-border/70 bg-[oklch(0.135_0.006_270)] p-2 sm:p-3">
-          <div className="mb-7 hidden items-center gap-2 px-2 pt-1 sm:flex">
+      <div className="grid sm:min-h-[510px] sm:grid-cols-[164px_1fr]">
+        <aside className="hidden border-r border-border/70 bg-[oklch(0.135_0.006_270)] p-3 sm:block">
+          <div className="mb-7 flex items-center gap-2 px-2 pt-1">
             <span className="flex h-6 w-6 items-center justify-center rounded bg-primary/12 text-primary">
               <PulseIcon />
             </span>
@@ -63,8 +63,8 @@ export function AgentAnalyticsPreview() {
                     $164.20
                   </div>
                 </div>
-                <span className="rounded bg-[oklch(0.7_0.12_150/0.1)] px-2 py-1 font-mono text-[9px] text-[oklch(0.74_0.13_150)]">
-                  -8.4%
+                <span className="rounded bg-muted px-2 py-1 font-mono text-[10px] text-muted-foreground">
+                  +8.4%
                 </span>
               </div>
               <div className="mt-3 h-[122px] w-full">
@@ -110,7 +110,7 @@ export function AgentAnalyticsPreview() {
               <Stat label="Projected 30d" value="$182" note="active-day pace" />
             </div>
 
-            <div className="rounded-lg border border-border/75 bg-card/55 p-4 lg:col-span-7">
+            <div className="hidden rounded-lg border border-border/75 bg-card/55 p-4 sm:block lg:col-span-7">
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-[10px] text-muted-foreground">Per-turn context size</div>
@@ -137,7 +137,7 @@ export function AgentAnalyticsPreview() {
               </div>
             </div>
 
-            <div className="rounded-lg border border-border/75 bg-card/55 p-4 lg:col-span-5">
+            <div className="hidden rounded-lg border border-border/75 bg-card/55 p-4 sm:block lg:col-span-5">
               <div className="text-[10px] text-muted-foreground">Notable changes</div>
               <div className="mt-3 space-y-3">
                 <Signal color="bg-chart-2" label="Context above 140k" value="7 sessions" />
@@ -163,10 +163,10 @@ function SidebarItem({
 }) {
   return (
     <div
-      className={`flex h-8 items-center justify-center gap-2 rounded-md px-2 sm:justify-start ${active ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}`}
+      className={`flex h-8 items-center gap-2 rounded-md px-2 ${active ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}`}
     >
       <span className="h-4 w-4">{icon}</span>
-      <span className="hidden text-[11px] sm:block">{label}</span>
+      <span className="text-[11px]">{label}</span>
     </div>
   );
 }
@@ -182,7 +182,7 @@ function Filter({ label }: { label: string }) {
 function Stat({ label, value, note }: { label: string; value: string; note: string }) {
   return (
     <div className="rounded-lg border border-border/75 bg-card/55 p-3">
-      <div className="text-[8px] text-muted-foreground sm:text-[10px]">{label}</div>
+      <div className="text-[10px] text-muted-foreground">{label}</div>
       <div className="mt-1 font-mono text-sm font-semibold tabular-nums sm:text-lg">{value}</div>
       <div className="mt-1 hidden text-[9px] text-muted-foreground sm:block">{note}</div>
     </div>

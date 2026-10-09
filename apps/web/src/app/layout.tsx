@@ -17,22 +17,23 @@ const firaCode = Fira_Code({
 });
 
 export const metadata: Metadata = {
-  title: 'Trace Flow | Coding-agent and model-call analytics',
+  metadataBase: new URL('https://trace-flow.dev'),
+  title: 'Trace Flow | LLM cost tracking for coding agents and API calls',
   description:
-    'Track estimated costs, context growth, and tool failures across coding sessions, plus model-call usage and performance.',
+    'Track estimated LLM spend, tokens, and failures from Claude Code, Codex, and Cursor sessions alongside your SDK requests.',
   openGraph: {
-    title: 'Trace Flow | Coding-agent and model-call analytics',
+    title: 'Trace Flow | LLM cost tracking for coding agents and API calls',
     description:
-      'Track estimated costs, context growth, and tool failures across coding sessions, plus model-call usage and performance.',
+      'Track estimated LLM spend, tokens, and failures from Claude Code, Codex, and Cursor sessions alongside your SDK requests.',
     url: 'https://trace-flow.dev',
     siteName: 'Trace Flow',
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Trace Flow | Coding-agent and model-call analytics',
+    title: 'Trace Flow | LLM cost tracking for coding agents and API calls',
     description:
-      'Track estimated costs, context growth, and tool failures across coding sessions, plus model-call usage and performance.',
+      'Track estimated LLM spend, tokens, and failures from Claude Code, Codex, and Cursor sessions alongside your SDK requests.',
   },
 };
 
