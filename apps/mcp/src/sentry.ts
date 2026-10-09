@@ -6,6 +6,7 @@ import {
   isInitializeParams,
   isNotification,
   isRequest,
+  readRequestMeta,
   type JsonRpcNotification,
   type JsonRpcRequest,
   type JsonRpcResponse,
@@ -51,18 +52,22 @@ function protocolVersion(
   if (message.method === 'initialize' && isInitializeParams(message.params)) {
     return message.params.protocolVersion;
   }
-  return sessionProtocolVersion;
+  return readRequestMeta(message.params).protocolVersion ?? sessionProtocolVersion;
+}
+
+function clientInfo(message: McpSpanMessage): { name: string; version: string } | undefined {
+  if (message.method === 'initialize') {
+    return isInitializeParams(message.params) ? message.params.clientInfo : undefined;
+  }
+  return readRequestMeta(message.params).clientInfo;
 }
 
 function clientAttributes(message: McpSpanMessage): SpanAttributes {
-  if (message.method !== 'initialize' || !isInitializeParams(message.params)) {
-    return {};
-  }
-
-  const { clientInfo } = message.params;
+  const info = clientInfo(message);
+  if (!info) return {};
   return {
-    'mcp.client.name': clientInfo.name,
-    'mcp.client.version': clientInfo.version,
+    'mcp.client.name': info.name,
+    'mcp.client.version': info.version,
   };
 }
 

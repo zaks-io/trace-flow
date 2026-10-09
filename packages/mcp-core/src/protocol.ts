@@ -111,8 +111,23 @@ export interface ListToolsResult {
   nextCursor?: string;
 }
 
-export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2024-11-05'] as const;
+/** Stateless revisions: every request carries its version and client in `_meta`. */
+export const MODERN_PROTOCOL_VERSIONS = ['2026-07-28'] as const;
+/** Handshake revisions: clients open a session with `initialize`. */
+export const LEGACY_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2024-11-05'] as const;
+export const SUPPORTED_PROTOCOL_VERSIONS = [
+  ...MODERN_PROTOCOL_VERSIONS,
+  ...LEGACY_PROTOCOL_VERSIONS,
+] as const;
 export const LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0];
+
+export function isModernProtocolVersion(version: string): boolean {
+  return (MODERN_PROTOCOL_VERSIONS as readonly string[]).includes(version);
+}
+
+export function isLegacyProtocolVersion(version: string): boolean {
+  return (LEGACY_PROTOCOL_VERSIONS as readonly string[]).includes(version);
+}
 
 export const SESSION_TTL_MS = 86400000; // 24 hours in milliseconds
 
@@ -122,6 +137,8 @@ export const JsonRpcErrorCode = {
   MethodNotFound: -32601,
   InvalidParams: -32602,
   InternalError: -32603,
+  HeaderMismatch: -32020,
+  UnsupportedProtocolVersion: -32022,
 } as const;
 
 export const MCP_SERVER_INFO = {

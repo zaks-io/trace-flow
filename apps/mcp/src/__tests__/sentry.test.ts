@@ -32,6 +32,27 @@ describe('MCP Sentry span metadata', () => {
     expect(Object.keys(attrs).some((key) => key.startsWith('mcp.request.argument'))).toBe(false);
   });
 
+  it('extracts per-request client metadata from stateless requests', async () => {
+    const attrs = await mcpSpanAttributes(
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/list',
+        params: {
+          _meta: {
+            'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+            'io.modelcontextprotocol/clientInfo': { name: 'claude-code', version: '3.0.0' },
+          },
+        },
+      },
+      undefined,
+    );
+
+    expect(attrs['mcp.protocol.version']).toBe('2026-07-28');
+    expect(attrs['mcp.client.name']).toBe('claude-code');
+    expect(attrs['mcp.client.version']).toBe('3.0.0');
+  });
+
   it('extracts initialize client metadata', async () => {
     const attrs = await mcpSpanAttributes(
       {
