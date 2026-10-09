@@ -149,13 +149,16 @@ describe('MCP 2026-07-28 stateless requests', () => {
     expect(body.error?.data?.supported).toContain(MODERN);
   });
 
-  it('404s methods the stateless revision does not define', async () => {
-    const res = await rpc('ping');
+  it.each(['ping', 'toString'])(
+    '404s %s, which the stateless revision does not define',
+    async (method) => {
+      const res = await rpc(method);
 
-    expect(res.status).toBe(404);
-    const body: RpcBody = await res.json();
-    expect(body.error?.code).toBe(-32601);
-  });
+      expect(res.status).toBe(404);
+      const body: RpcBody = await res.json();
+      expect(body.error?.code).toBe(-32601);
+    },
+  );
 
   it('refuses to open a legacy session at a stateless version', async () => {
     const res = await SELF.fetch('http://localhost/mcp', {

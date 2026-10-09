@@ -20,11 +20,11 @@ export interface RequestMeta {
 }
 
 /** Methods whose `Mcp-Name` header mirrors a body field. */
-const NAME_SOURCES: Record<string, 'name' | 'uri'> = {
-  'tools/call': 'name',
-  'prompts/get': 'name',
-  'resources/read': 'uri',
-};
+const NAME_SOURCES = new Map<string, 'name' | 'uri'>([
+  ['tools/call', 'name'],
+  ['prompts/get', 'name'],
+  ['resources/read', 'uri'],
+]);
 
 const BASE64_SENTINEL = /^=\?base64\?(.*)\?=$/;
 
@@ -60,7 +60,8 @@ export function decodeMcpHeaderValue(value: string): string | null {
   if (!match) return value;
   try {
     const bytes = Uint8Array.from(atob(match[1] ?? ''), (char) => char.charCodeAt(0));
-    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes);
+    // Keep a leading BOM: stripping it would let the header match a body value it does not equal.
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
     return null;
   }
@@ -83,7 +84,7 @@ export function findHeaderMismatch(request: JsonRpcRequest, headers: Headers): s
   if (method === null) return `Missing ${METHOD_HEADER} header`;
   if (method !== request.method) return `${METHOD_HEADER} header does not match request method`;
 
-  const nameSource = NAME_SOURCES[request.method];
+  const nameSource = NAME_SOURCES.get(request.method);
   if (!nameSource) return null;
   const encodedName = headers.get(NAME_HEADER);
   if (encodedName === null) return `Missing ${NAME_HEADER} header`;

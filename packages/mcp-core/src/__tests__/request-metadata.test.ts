@@ -51,6 +51,11 @@ describe('decodeMcpHeaderValue', () => {
     expect(decodeMcpHeaderValue('=?base64?SGVsbG8sIOS4lueVjA==?=')).toBe('Hello, 世界');
   });
 
+  it('preserves a leading byte order mark', () => {
+    const encoded = btoa(`${String.fromCharCode(0xef, 0xbb, 0xbf)}get_trace`);
+    expect(decodeMcpHeaderValue(`=?base64?${encoded}?=`)).toBe('\uFEFFget_trace');
+  });
+
   it('rejects malformed base64', () => {
     expect(decodeMcpHeaderValue('=?base64?not base64!?=')).toBeNull();
   });
@@ -84,6 +89,14 @@ describe('findHeaderMismatch', () => {
     };
     expect(findHeaderMismatch(request, headers({ 'Mcp-Method': 'tools/list' }))).toBeNull();
   });
+
+  it.each(['toString', 'constructor', '__proto__'])(
+    'does not treat the inherited property %s as a named method',
+    (method) => {
+      const request: JsonRpcRequest = { jsonrpc: '2.0', id: 1, method, params: { _meta: META } };
+      expect(findHeaderMismatch(request, headers({ 'Mcp-Method': method }))).toBeNull();
+    },
+  );
 
   it('rejects a name that is not a string in the body', () => {
     expect(findHeaderMismatch(toolCall(42), headers({ 'Mcp-Name': '42' }))).toMatch(
