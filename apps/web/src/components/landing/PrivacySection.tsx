@@ -19,7 +19,7 @@ const COMMITMENTS = [
       <>
         Stored requests and responses use per-organization AES-256-GCM keys. Send{' '}
         <code className="whitespace-nowrap font-mono text-[13px] text-foreground">
-          X-Trace-Flow-Omit-Body
+          X-Trace-Flow-Omit-Body: true
         </code>{' '}
         to keep usage metadata only.
       </>
@@ -28,7 +28,7 @@ const COMMITMENTS = [
   {
     icon: CalendarClock,
     title: 'Retention you can plan around',
-    body: 'Request traces stay 7 days on Hobby and 30 on Pro. Coding-agent analytics stay a year, monthly totals five.',
+    body: 'Request traces are viewable for 7 days on Hobby and 30 on Pro. Coding-agent analytics expire after a year. Monthly model usage totals are kept for five.',
   },
 ];
 

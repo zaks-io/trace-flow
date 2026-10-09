@@ -14,7 +14,7 @@ export function AgentAnalyticsPreview() {
             <span className="h-2 w-2 rounded-full bg-muted-foreground/25" />
           </div>
           <span className="ml-2 font-mono text-[10px] text-muted-foreground">
-            trace-flow.dev/app
+            trace-flow.dev/app/agents
           </span>
         </div>
         <span className="rounded border border-primary/25 bg-primary/8 px-2 py-1 font-mono text-[9px] uppercase tracking-[0.14em] text-primary">
@@ -31,8 +31,8 @@ export function AgentAnalyticsPreview() {
             <span className="font-mono text-[11px] font-semibold">Trace Flow</span>
           </div>
           <div className="space-y-1">
-            <SidebarItem label="Overview" icon={<GridIcon />} active />
-            <SidebarItem label="Agents" icon={<AgentIcon />} />
+            <SidebarItem label="Overview" icon={<GridIcon />} />
+            <SidebarItem label="Agents" icon={<AgentIcon />} active />
             <SidebarItem label="Requests" icon={<ListIcon />} />
             <SidebarItem label="Operations" icon={<BarsIcon />} />
           </div>
@@ -42,14 +42,14 @@ export function AgentAnalyticsPreview() {
           <div className="mb-4 flex items-end justify-between gap-4">
             <div>
               <div className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
-                Overview
+                Agent analytics
               </div>
               <div className="mt-1 text-base font-semibold tracking-tight text-foreground sm:text-lg">
-                Where your LLM spend goes
+                Where agent work turns into spend
               </div>
             </div>
             <div className="hidden items-center gap-2 sm:flex">
-              <Filter label="All sources" />
+              <Filter label="Claude + Codex" />
               <Filter label="Last 30 days" />
             </div>
           </div>
@@ -105,8 +105,8 @@ export function AgentAnalyticsPreview() {
             </div>
 
             <div className="grid grid-cols-3 gap-2 lg:col-span-4 lg:grid-cols-1">
-              <Stat label="Coding agents" value="$121.40" note="148 sessions" />
-              <Stat label="API calls" value="$42.80" note="9,312 requests" />
+              <Stat label="Tokens processed" value="83.4M" note="63% generated" />
+              <Stat label="Conversations" value="148" note="12 active days" />
               <Stat label="Projected 30d" value="$182" note="active-day pace" />
             </div>
 
