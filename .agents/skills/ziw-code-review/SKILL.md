@@ -12,6 +12,9 @@ agent: general-purpose
 Review the requested working tree, branch, PR, or commit range. Return concrete
 bugs and requirement gaps with source evidence and the smallest fix direction.
 
+For encountered friction, use [friction-log.md](../ziw-orchestrate/references/friction-log.md)
+with the configured complaint store and this role's mutation authority.
+
 ## Inputs
 
 Target, base branch or range start, intent/requirements, and configured checks.
@@ -27,7 +30,8 @@ Optional `--submit` requires an explicit GitHub PR target.
   Agent Review, or Agent Orchestrator. Recommend evidence changes, but only Agent
   Orchestrator performs tracker and merge-ready mutations.
 
-Review is read-only except for explicit GitHub `--submit`, or independent
+Review is read-only except for configured retrospective MCP complaint filing,
+explicit GitHub `--submit`, or independent
 review-debt intake in configured main-drift/checkpoint mode or with explicit user
 authorization. Author QA never creates tracker issues. Never apply or clear
 review-evidence labels, move workflow states, or apply merge-ready PR labels.
@@ -60,7 +64,9 @@ Start with the diff and existing evidence. Scale effort to risk, not line count.
 
 ## Context and routing
 
-Read `AGENTS.md`, `docs/agents/workflow/config.md`, and `CONTEXT.md` when present.
+Read `AGENTS.md`, `docs/agents/workflow/config.md`, and the configured glossary.
+Without mapped paths, use [glossary-discovery.md](../ziw-grill/references/glossary-discovery.md)
+to discover the established glossary convention.
 Recover intent from the request, linked issue and acceptance criteria, PR,
 commits, and docs relevant to touched files. Read the exact cited spec sections,
 not the whole spec corpus.
@@ -146,7 +152,8 @@ the requirement source and state when none was supplied; do not invent criteria.
 
 For independent review, recommend `APPLY` only with `READY FOR PR` or `APPROVE`,
 a verified committed target, and exhibited conformance with no blocking rows.
-Record the PR URL when applicable, reviewed SHA, and review-diff fingerprint
+Record the completed independent reviewer identity and count, explicit verdict,
+PR URL when applicable, reviewed SHA, and review-diff fingerprint
 supplied by the orchestrator snapshot. Do not invent a fingerprint or derive one
 from the SHA. Missing evidence cannot support `APPLY`.
 

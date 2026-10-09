@@ -1,3 +1,5 @@
+import { isLiveWorker } from "./worker-lifecycle.mjs";
+
 // Keep deterministic orchestration decisions inside the published skill so its
 // scripts remain runnable after project-scoped installation.
 const DEFAULT_DONE_STATES = ["done", "closed", "complete", "completed"];
@@ -307,6 +309,15 @@ const hasNamedLabel = (labels, name) =>
   Boolean(name) && toArray(labels).some((label) => labelName(label) === normalize(name));
 
 function currentReviewEvidence(state = {}) {
+  const currentFingerprint = currentReviewDiffFingerprint(state);
+  const reviewedFingerprint = reviewedDiffFingerprint(state);
+  if (
+    currentFingerprint &&
+    reviewedFingerprint &&
+    !fingerprintEquals(currentFingerprint, reviewedFingerprint)
+  ) {
+    return false;
+  }
   const cleanVerdict = valueSet(CLEAN_REVIEW_VERDICTS).has(
     normalize(state.reviewVerdict ?? state.codeReviewVerdict),
   );
@@ -329,6 +340,20 @@ function countEvidence(value) {
   if (Array.isArray(value)) return value.length;
   if (typeof value === "number") return value;
   return value ? 1 : 0;
+}
+
+export function hasCompletedIndependentReview(evidence = {}) {
+  return (
+    valueSet(CLEAN_REVIEW_VERDICTS).has(
+      normalize(evidence.reviewVerdict ?? evidence.codeReviewVerdict),
+    ) &&
+    countEvidence(evidence.independentReviewCount ?? evidence.independentReviews) > 0 &&
+    evidence.hasReviewEvidence !== false &&
+    evidence.reviewEvidenceCurrent !== false &&
+    !evidence.evidenceMissing &&
+    !evidence.linkedPrChanged &&
+    !hasBlockingReview(evidence)
+  );
 }
 
 function requiredChecksPassed(state = {}) {
@@ -502,7 +527,6 @@ export function reviewDepthRequirement(tier, config = {}) {
 function independentReviewCount(state = {}) {
   const explicit = state.independentReviewCount ?? state.independentReviews;
   let count = countEvidence(explicit);
-  if (count === 0 && currentReviewEvidence(state)) count = 1;
   // Fail closed: a hosted review counts only when its recorded diff fingerprint
   // provably matches the current review-relevant diff.
   if (state.hostedReviewComplete && hostedReviewCoversCurrentDiff(state)) count += 1;
@@ -605,31 +629,17 @@ export function activeDeliveryFootprint(state = {}) {
       !isDependencyBotPr(pr) &&
       !TERMINAL_PR_STATES.includes(normalize(pr?.state ?? pr?.status)),
   );
-  const prKeys = new Set(
-    openPrs
-      .flatMap((pr) => [pr.id, pr.url, pr.number, pr.prId])
-      .map(normalize)
-      .filter(Boolean),
-  );
+  const prKeys = new Set(openPrs.map((pr) => pr.number).filter(Number.isInteger));
 
   const activePreviews = toArray(state.previews).filter((preview) => {
     if (preview?.active === false) return false;
     return !INACTIVE_PREVIEW_STATES.includes(normalize(preview?.state ?? preview?.status));
   });
-  const unlinkedPreviews = activePreviews.filter((preview) => {
-    const previewPrKeys = [preview.prId, preview.prUrl, preview.prNumber]
-      .map(normalize)
-      .filter(Boolean);
-    return previewPrKeys.length === 0 || previewPrKeys.every((key) => !prKeys.has(key));
-  });
-
-  const pendingDispatches = toArray(state.dispatches).filter(
-    (dispatch) =>
-      dispatch?.returned !== true &&
-      dispatch?.stopped !== true &&
-      dispatch?.hasPr !== true &&
-      !["returned", "stopped", "failed"].includes(normalize(dispatch?.state ?? dispatch?.status)),
+  const unlinkedPreviews = activePreviews.filter(
+    (preview) => preview.prNumber == null || !prKeys.has(preview.prNumber),
   );
+
+  const pendingDispatches = toArray(state.dispatches).filter(isLiveWorker);
 
   return {
     dispatches: pendingDispatches.length,
@@ -648,27 +658,21 @@ function workerConcurrencyCap(config = {}) {
 }
 
 function isActiveWorker(worker = {}) {
-  if (worker.occupiesWorkerSlot === false) return false;
-  if (worker.returned === true || worker.stopped === true || worker.hasPr === true) return false;
-  return !["completed", "failed", "returned", "stale", "stopped"].includes(
-    normalize(worker.state ?? worker.status),
-  );
+  return worker.occupiesWorkerSlot !== false && isLiveWorker(worker);
 }
 
 export function activeWorkerCapacity(state = {}, config = {}) {
   const cap = workerConcurrencyCap(config);
   const workers = [...toArray(state.workers), ...toArray(state.dispatches)].filter(isActiveWorker);
   const identities = new Set(
-    workers.map((worker, index) =>
-      normalize(
-        worker.session ??
-          worker.sessionId ??
-          worker.issueId ??
-          worker.ticket ??
-          worker.id ??
-          `worker-${index}`,
-      ),
-    ),
+    workers.map((worker) => {
+      if (typeof worker.workerRef !== "string" || !worker.workerRef) {
+        throw new Error(
+          "active worker.workerRef is required; normalize records before counting capacity",
+        );
+      }
+      return worker.workerRef;
+    }),
   );
   const used = identities.size;
   return { cap, headroom: Math.max(0, cap - used), used };
@@ -725,8 +729,9 @@ function footprintEntries(item = {}) {
     ...toArray(item.files),
     ...toArray(item.paths),
     ...toArray(item.packages),
-    ...toArray(item.changedFiles),
+    ...toArray(item.changedFiles).filter((entry) => typeof entry === "string"),
   ]
+    .filter((entry) => typeof entry === "string")
     .map(normalizeFootprintPath)
     .filter(Boolean);
 }
@@ -743,13 +748,7 @@ function activeFootprintItems(state = {}) {
   const activePrs = toArray(state.pullRequests).filter(
     (pr) => pr?.open !== false && !TERMINAL_PR_STATES.includes(normalize(pr?.state ?? pr?.status)),
   );
-  const activeDispatches = toArray(state.dispatches).filter(
-    (dispatch) =>
-      dispatch?.returned !== true &&
-      dispatch?.stopped !== true &&
-      dispatch?.hasPr !== true &&
-      !["returned", "stopped", "failed"].includes(normalize(dispatch?.state ?? dispatch?.status)),
-  );
+  const activeDispatches = toArray(state.dispatches).filter(isLiveWorker);
 
   return [...toArray(state.activeWork).filter(isActiveWorker), ...activePrs, ...activeDispatches];
 }
@@ -764,20 +763,33 @@ function configuredWorkerNames(config = {}, kind) {
   ]);
 }
 
-function eligibleWorkerKinds(ticket = {}, config = {}) {
-  const workers = toArray(
+function ticketWorkerPaths(ticket = {}) {
+  return toArray(
     ticket.eligibleWorkers ?? ticket.workerPaths ?? ticket.allowedWorkers ?? ticket.workers,
   )
     .map(normalize)
     .filter(Boolean);
-  if (workers.length === 0) return null;
+}
+
+function eligibleWorkerKinds(ticket = {}, config = {}) {
+  const workers = ticketWorkerPaths(ticket);
+  const defaultRoute = workers.length === 0;
+  const limitsConfigured =
+    config.localBudgetSoftStopPercent != null ||
+    config.localBudgetHardStopPercent != null ||
+    config.localStartsBelowSoftLimit != null;
+  if (workers.length === 0) {
+    if (config.defaultWorkerPath) workers.push(normalize(config.defaultWorkerPath));
+    else return limitsConfigured ? [] : null;
+  }
 
   const remoteNames = configuredWorkerNames(config, "remote");
   const localNames = configuredWorkerNames(config, "local");
-  return [
+  const kinds = [
     ...(workers.some((worker) => remoteNames.has(worker)) ? ["remote"] : []),
     ...(workers.some((worker) => localNames.has(worker)) ? ["local"] : []),
   ];
+  return kinds.length === 0 && defaultRoute && !limitsConfigured ? null : kinds;
 }
 
 function ticketLeverage(ticket = {}) {
@@ -819,7 +831,8 @@ export function dispatchSelectionDecision(state = {}, config = {}) {
     return {
       action: workflowDecisionActions.waitForSignal,
       deferred: candidates.map((ticket) => ({
-        id: ticket?.id,
+        id: ticket?.issueRef,
+        issueRef: ticket?.issueRef,
         reason: "worker concurrency cap has no headroom",
       })),
       capacity,
@@ -828,7 +841,15 @@ export function dispatchSelectionDecision(state = {}, config = {}) {
   }
 
   const activeItems = activeFootprintItems(state).map((item) => ({
-    id: item?.id ?? item?.number ?? item?.url,
+    id:
+      item?.number ??
+      item?.issueRef ??
+      item?.workerRef ??
+      (item?.worktree || item?.path || item?.branch
+        ? `worktree:${item.worktree ?? item.path ?? item.branch}`
+        : item?.receiptId
+          ? `receipt:${item.receiptId}`
+          : null),
     footprint: footprintEntries(item),
   }));
   const selected = [];
@@ -851,7 +872,8 @@ export function dispatchSelectionDecision(state = {}, config = {}) {
   for (const { kinds, ticket } of routedCandidates) {
     if (selected.length >= headroom) {
       deferred.push({
-        id: ticket?.id,
+        id: ticket?.issueRef,
+        issueRef: ticket?.issueRef,
         reason: "worker concurrency headroom is already allocated",
       });
       continue;
@@ -863,7 +885,11 @@ export function dispatchSelectionDecision(state = {}, config = {}) {
       ticketFootprint.length === 0 &&
       (activeItems.length > 0 || selected.length > 0)
     ) {
-      deferred.push({ id: ticket?.id, reason: "missing predicted file footprint" });
+      deferred.push({
+        id: ticket?.issueRef,
+        issueRef: ticket?.issueRef,
+        reason: "missing predicted file footprint",
+      });
       continue;
     }
 
@@ -876,7 +902,8 @@ export function dispatchSelectionDecision(state = {}, config = {}) {
         (budget.mode === "remote-only" || budget.mode === "hard-stop")
       ) {
         deferred.push({
-          id: ticket?.id,
+          id: ticket?.issueRef,
+          issueRef: ticket?.issueRef,
           reason:
             budget.mode === "hard-stop"
               ? "configured hard local budget stop reached"
@@ -885,14 +912,19 @@ export function dispatchSelectionDecision(state = {}, config = {}) {
         continue;
       } else if (kinds.includes("local") && localStarts >= localStartLimit) {
         deferred.push({
-          id: ticket?.id,
+          id: ticket?.issueRef,
+          issueRef: ticket?.issueRef,
           reason: "configured per-tick local start limit is already allocated",
         });
         continue;
       } else if (kinds.includes("local")) {
         worker = "local";
       } else {
-        deferred.push({ id: ticket?.id, reason: "no configured worker is authorized" });
+        deferred.push({
+          id: ticket?.issueRef,
+          issueRef: ticket?.issueRef,
+          reason: "no configured worker is authorized",
+        });
         continue;
       }
     }
@@ -903,7 +935,8 @@ export function dispatchSelectionDecision(state = {}, config = {}) {
 
     if (conflict) {
       deferred.push({
-        id: ticket?.id,
+        id: ticket?.issueRef,
+        issueRef: ticket?.issueRef,
         conflictsWith: conflict.id,
         reason: "predicted file footprint collides with active or selected work",
       });
@@ -911,9 +944,13 @@ export function dispatchSelectionDecision(state = {}, config = {}) {
     }
 
     selected.push({
-      id: ticket?.id,
+      id: ticket?.issueRef,
+      issueRef: ticket?.issueRef,
       footprint: ticketFootprint,
       ...(worker ? { worker } : {}),
+      ...(worker && ticketWorkerPaths(ticket).length === 0 && config.defaultWorkerPath
+        ? { workerPath: config.defaultWorkerPath }
+        : {}),
     });
     if (worker === "local") localStarts += 1;
   }
