@@ -1,12 +1,12 @@
 import type { Context } from 'hono';
 
-import type { OTLPQueueMessage, QueueMessageUnion } from '@trace-flow/types';
+import type { OTLPQueueMessage, QueueMessageUnion, SubscriptionTier } from '@trace-flow/types';
 import { BodySizeLimitError, getCurrentTimestamp, readBodyWithLimit } from '@trace-flow/utils';
 import { captureSafeException, currentSentryTraceContext } from '@trace-flow/utils/sentry-tracing';
 import { axiomConfigFromEnv, createWorkerLogger, type Logger } from '@trace-flow/logging';
 import { validateApiKey, isAuthError } from '../auth';
 import type { ApiKeyData } from '../auth';
-import { evaluateRecordingPolicy } from '../recordingPolicy';
+import { startRecordingPolicy } from '../recordingPolicy';
 import type { TracingDecision } from '../context';
 import { applyTierToTraces, transformOTLPToTraces } from './transform';
 import { decodeOTLPProtobuf, readOTLPBody, OTLPProtoDecodeError } from './decode';
@@ -144,6 +144,34 @@ function logPayloadSummary(
 }
 
 /**
+ * A provisional envelope that outlives a rejection is replayed by the delivery sweep, recording an
+ * export the policy declined, so a failed discard is reported rather than ignored.
+ */
+async function discardProvisionalDelivery(
+  storage: R2Bucket,
+  delivery: Promise<string>,
+  logger: Logger,
+): Promise<void> {
+  let deliveryKey: string;
+  try {
+    deliveryKey = await delivery;
+  } catch {
+    return;
+  }
+  try {
+    await storage.delete(deliveryKey);
+  } catch (err) {
+    logger.error('otlp.provisional_delivery_discard_failed', undefined, { deliveryKey });
+    captureSafeException(err, {
+      message: 'OTLP provisional delivery discard failed',
+      operation: 'otlp.delivery_discard',
+    });
+  } finally {
+    await logger.flush();
+  }
+}
+
+/**
  * Handles OTLP trace ingestion requests.
  * Accepts OTLP/HTTP in both JSON (application/json) and protobuf
  * (application/x-protobuf) encodings, with optional gzip/deflate compression.
@@ -156,6 +184,17 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     context: { component: 'otlp' },
   });
 
+  // Before auth so a flood of bad keys is shed here instead of reaching Convex.
+  const clientIp = c.req.header('cf-connecting-ip') ?? 'unknown';
+  const ipLimit = await c.env.IP_LIMITER.limit({ key: clientIp });
+  if (!ipLimit.success) {
+    logger.warn('otlp.rate_limited', { reason: 'per_ip', clientIp });
+    c.executionCtx.waitUntil(logger.flush());
+    return c.json({ error: { code: 429, message: 'Per-IP rate limit exceeded' } }, 429, {
+      'Retry-After': '60',
+    });
+  }
+
   const authResult = await validateApiKey(c, logger);
   if (isAuthError(authResult)) {
     c.executionCtx.waitUntil(logger.flush());
@@ -163,16 +202,6 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
   }
   const keyData: ApiKeyData = authResult;
   const orgLogger = keyData.orgId ? logger.child({ orgId: keyData.orgId }) : logger;
-
-  const clientIp = c.req.header('cf-connecting-ip') ?? 'unknown';
-  const ipLimit = await c.env.IP_LIMITER.limit({ key: clientIp });
-  if (!ipLimit.success) {
-    orgLogger.warn('otlp.rate_limited', { reason: 'per_ip', clientIp });
-    c.executionCtx.waitUntil(orgLogger.flush());
-    return c.json({ error: { code: 429, message: 'Per-IP rate limit exceeded' } }, 429, {
-      'Retry-After': '60',
-    });
-  }
 
   const rawContentType = c.req.header('Content-Type');
   const contentType = classifyContentType(rawContentType);
@@ -322,14 +351,50 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     );
   }
 
-  const { decision } = await evaluateRecordingPolicy(
-    c.env,
-    keyData.orgId,
-    traces.length,
-    orgLogger,
-  );
+  const recording = await startRecordingPolicy(c.env, keyData.orgId, traces.length, orgLogger);
+  const message: OTLPQueueMessage = {
+    type: 'otlp',
+    apiKey,
+    traces,
+    receivedAt: receivedAtNano,
+    ...(imported?.valid
+      ? { importedExecution: { contract: IMPORTED_EXECUTION.CONTRACT, orgId: keyData.orgId } }
+      : {}),
+    sentry_trace_context: currentSentryTraceContext(),
+  };
+  const persistDelivery = async (tier: SubscriptionTier | undefined): Promise<string> => {
+    // The transform stamped a default tier before the org's tier was known; apply the real one now.
+    applyTierToTraces(traces, receivedAtNano, tier);
+    const envelope = await buildTraceDeliveryEnvelope(message);
+    return persistTraceDelivery(c.env.STORAGE, envelope, c.env.TRACE_DELIVERY_NAMESPACE);
+  };
+
+  // Writing the envelope while the usage Durable Object answers keeps that round trip off the
+  // response path. Every outcome that does not record must discard it.
+  const provisionalDelivery =
+    recording.provisionalTier === undefined
+      ? undefined
+      : persistDelivery(recording.provisionalTier);
+  // A failed write only matters if the export is recorded, which is decided below.
+  provisionalDelivery?.catch(() => undefined);
+  const discardProvisional = () => {
+    if (provisionalDelivery) {
+      c.executionCtx.waitUntil(
+        discardProvisionalDelivery(c.env.STORAGE, provisionalDelivery, orgLogger),
+      );
+    }
+  };
+
+  let decision: TracingDecision;
+  try {
+    ({ decision } = await recording.evaluation);
+  } catch (err) {
+    discardProvisional();
+    throw err;
+  }
 
   if (!decision.record) {
+    discardProvisional();
     const rejection = otlpRejectionFor(decision.reason);
     orgLogger.warn('otlp.reject', {
       reason: rejection.logReason,
@@ -349,31 +414,12 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     return c.json(response, 200);
   }
 
-  // The transform stamped a default tier before the org's tier was known; apply the real one now.
-  applyTierToTraces(traces, receivedAtNano, decision.tier);
-
   // Sample only on the success path — rejected tenants don't cost us log volume.
   logPayloadSummary(orgLogger, body, contentType, decodedBytes);
 
-  const message: OTLPQueueMessage = {
-    type: 'otlp',
-    apiKey,
-    traces,
-    receivedAt: receivedAtNano,
-    ...(imported?.valid
-      ? { importedExecution: { contract: IMPORTED_EXECUTION.CONTRACT, orgId: keyData.orgId } }
-      : {}),
-    sentry_trace_context: currentSentryTraceContext(),
-  };
-
   let deliveryKey: string;
   try {
-    const envelope = await buildTraceDeliveryEnvelope(message);
-    deliveryKey = await persistTraceDelivery(
-      c.env.STORAGE,
-      envelope,
-      c.env.TRACE_DELIVERY_NAMESPACE,
-    );
+    deliveryKey = await (provisionalDelivery ?? persistDelivery(decision.tier));
   } catch (err) {
     orgLogger.error('otlp.delivery_persist_failed', undefined, { traceCount: traces.length });
     captureSafeException(err, {

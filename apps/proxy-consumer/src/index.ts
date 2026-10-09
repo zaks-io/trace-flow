@@ -40,6 +40,7 @@ import {
 } from '@trace-flow/otel-conventions';
 import { getPricing, TYPESAFE_JEV_PRICING, type ModelPricing } from '@trace-flow/pricing';
 import { fetchOpenRouterPricing } from './openrouter-pricing';
+import { forEachConcurrently, STORAGE_CONCURRENCY } from './concurrency';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type {
   ReconcileRecoveryInput,
@@ -448,33 +449,38 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
 
   try {
     // Resolve per envelope rather than pre-loading a batch to regroup by its stored context.
-    for (const message of batch.messages.filter((item) => isTraceDeliveryMessage(item.body))) {
-      try {
-        const resolved = await resolveQueueItem(message.body, message.id, env);
-        if (!resolved) {
-          message.ack();
-          continue;
+    // Each envelope continues its own trace, so resolving several at once keeps them separate.
+    await forEachConcurrently(
+      batch.messages.filter((item) => isTraceDeliveryMessage(item.body)),
+      STORAGE_CONCURRENCY,
+      async (message) => {
+        try {
+          const resolved = await resolveQueueItem(message.body, message.id, env);
+          if (!resolved) {
+            message.ack();
+            return;
+          }
+          await continueQueueTrace(
+            resolved.payload.sentry_trace_context,
+            { queueName: batch.queue, messageCount: 1 },
+            () =>
+              withNativeTrace(
+                tracing,
+                'trace delivery processing',
+                () => processMessage({ message, resolved }),
+                { deliveryId: resolved.messageId },
+              ),
+          );
+        } catch (error) {
+          logger.error('consumer.message_process_failed', error, { messageId: message.id });
+          Sentry.captureException(new Error('Trace delivery resolution failed'), {
+            tags: { operation: 'consumer.delivery_resolve' },
+            extra: { messageId: message.id },
+          });
+          failedMessages.push(message);
         }
-        await continueQueueTrace(
-          resolved.payload.sentry_trace_context,
-          { queueName: batch.queue, messageCount: 1 },
-          () =>
-            withNativeTrace(
-              tracing,
-              'trace delivery processing',
-              () => processMessage({ message, resolved }),
-              { deliveryId: resolved.messageId },
-            ),
-        );
-      } catch (error) {
-        logger.error('consumer.message_process_failed', error, { messageId: message.id });
-        Sentry.captureException(new Error('Trace delivery resolution failed'), {
-          tags: { operation: 'consumer.delivery_resolve' },
-          extra: { messageId: message.id },
-        });
-        failedMessages.push(message);
-      }
-    }
+      },
+    );
     for (const group of groupBySentryTrace(
       batch.messages.filter((item) => !isTraceDeliveryMessage(item.body)),
       (message) => message.body.sentry_trace_context,
@@ -512,15 +518,25 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
         );
         const statusById = new Map(results.map((result) => [result.messageId, result.status]));
 
-        for (const item of shard.items) {
-          const status = statusById.get(item.messageId) ?? 'failed';
-          if (status === 'failed') {
+        await forEachConcurrently(shard.items, STORAGE_CONCURRENCY, async (item) => {
+          if ((statusById.get(item.messageId) ?? 'failed') === 'failed') {
             item.message.retry();
-          } else {
+            return;
+          }
+          try {
             if (item.deliveryKey) await completeTraceDelivery(env.STORAGE, item.deliveryKey);
             item.message.ack();
+          } catch (error) {
+            // The staged spans are deduplicated by message, so the retry completes the handoff.
+            logger
+              .child({ component: 'queue-consumer', operation: 'delivery_complete' })
+              .error('consumer.delivery_complete_failed', error, {
+                shardId,
+                messageId: item.messageId,
+              });
+            item.message.retry();
           }
-        }
+        });
       } catch (error) {
         logger
           .child({ component: 'queue-consumer', operation: 'batch_to_do_shard' })

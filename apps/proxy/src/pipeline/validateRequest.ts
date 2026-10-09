@@ -15,7 +15,7 @@ import {
 import { PROVIDERS, resolveRoute } from '@trace-flow/llm-providers';
 import { validateApiKey, isAuthError } from '../auth';
 import type { ApiKeyData } from '../auth';
-import type { UsageCheckResult } from '../usage';
+import { captureSafeException } from '@trace-flow/utils/sentry-tracing';
 import { evaluateRecordingPolicy } from '../recordingPolicy';
 import type { ProxyEnv, TracingDecision } from '../context';
 
@@ -33,8 +33,12 @@ type ValidateResult =
 export interface ValidatedRequest {
   logger: Logger;
   keyData: ApiKeyData;
-  usageCheck: UsageCheckResult;
-  decision: TracingDecision;
+  /**
+   * Forwarding never waits on this: recording is never allowed to block the customer's request
+   * (ADR 0006), so the usage Durable Object round trip overlaps the upstream call. It never
+   * rejects, because by the time it settles the request may already be upstream.
+   */
+  decision: Promise<TracingDecision>;
   route: ReturnType<typeof resolveRoute> & object;
   requestId: string;
   traceId: string;
@@ -171,19 +175,25 @@ export async function validateRequest(c: Context<{ Bindings: ProxyEnv }>): Promi
   // Evaluate the recording policy only after the request is known to be well-formed. The usage
   // check increments the org's consumed units, so running it ahead of the size/route guards would
   // burn units on requests that are then rejected 413/404 and never recorded.
-  const { decision, usageCheck } = await evaluateRecordingPolicy(
-    c.env,
-    keyData.orgId,
-    1,
-    orgLogger,
+  const decision = evaluateRecordingPolicy(c.env, keyData.orgId, 1, orgLogger).then(
+    ({ decision: settled, usageCheck }) => {
+      if (settled.reason === 'internal_error') {
+        orgLogger.error('proxy.tracing_disabled', undefined, {
+          usageStatus: usageCheck.status,
+          usageReason: usageCheck.status === 'error' ? usageCheck.reason : undefined,
+        });
+      }
+      return settled;
+    },
+    (error: unknown): TracingDecision => {
+      orgLogger.error('proxy.tracing_disabled', undefined, { usageReason: 'policy_failed' });
+      captureSafeException(error, {
+        message: 'Recording policy evaluation failed',
+        operation: 'proxy.recording_policy',
+      });
+      return { record: false, reason: 'internal_error' };
+    },
   );
-
-  if (decision.reason === 'internal_error') {
-    orgLogger.error('proxy.tracing_disabled', undefined, {
-      usageStatus: usageCheck.status,
-      usageReason: usageCheck.status === 'error' ? usageCheck.reason : undefined,
-    });
-  }
 
   const apiKey = keyData.analyticsKeyId;
   const requestId = generateId();
@@ -214,7 +224,6 @@ export async function validateRequest(c: Context<{ Bindings: ProxyEnv }>): Promi
     validated: {
       logger,
       keyData,
-      usageCheck,
       decision,
       route,
       requestId,

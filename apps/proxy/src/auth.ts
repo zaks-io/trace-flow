@@ -3,7 +3,7 @@ import type { Context } from 'hono';
 import type { Logger } from '@trace-flow/logging';
 import type { SubscriptionKVData } from '@trace-flow/types';
 import { analyticsKeyId } from '@trace-flow/utils';
-import { getCached } from './cache';
+import { getCached, getIsolateCached, setIsolateCached } from './cache';
 
 export interface ApiKeyData {
   analyticsKeyId: string;
@@ -12,8 +12,15 @@ export interface ApiKeyData {
   orgId: string;
 }
 
+interface ApiKeyGrant {
+  authorized: true;
+  expiresAt: number;
+  createdAt: number;
+  orgId: string;
+}
+
 type ApiKeyAuthorization =
-  | { authorized: true; expiresAt: number; createdAt: number; orgId: string }
+  | ApiKeyGrant
   | { authorized: false; reason: 'invalid' | 'expired' | 'forbidden' };
 
 /** Why Convex could not answer; logged so a stall is distinguishable from a bad response. */
@@ -27,6 +34,13 @@ interface AuthorizationUnavailable {
  * existing 503 + Retry-After path rather than hold the client connection open.
  */
 const AUTHORIZE_TIMEOUT_MS = 5_000;
+
+/**
+ * Accepted staleness window: revoking a key, removing its owner from the organization, or
+ * deleting the organization takes up to this long to reach an isolate that already granted it.
+ * Expiry is still checked locally on every request.
+ */
+export const API_KEY_GRANT_TTL_MS = 30_000;
 
 async function authorizeApiKey(
   env: { CONVEX_SITE_URL: string; USAGE_SYNC_SECRET: string },
@@ -85,7 +99,31 @@ async function authorizeApiKey(
 }
 
 /**
- * Validates API keys against current Convex state using the X-Trace-Flow-Api-Key header.
+ * Only grants are cached. Denials are not: unknown keys are attacker-chosen and would churn the
+ * shared L1 map, evicting real grants. Outages must retry.
+ */
+async function currentAuthorization(
+  env: { CONVEX_SITE_URL: string; USAGE_SYNC_SECRET: string },
+  key: string,
+  identifier: string,
+): Promise<ApiKeyAuthorization | AuthorizationUnavailable> {
+  const cacheKey = `api-key-grant:${identifier}`;
+  const cached = getIsolateCached<ApiKeyGrant>(cacheKey);
+  if (cached) return cached;
+
+  const requestedAt = Date.now();
+  const authorization = await authorizeApiKey(env, key);
+  if ('authorized' in authorization && authorization.authorized) {
+    // Measured from the request, so a slow Convex answer cannot stretch the revocation window.
+    const remainingMs = requestedAt + API_KEY_GRANT_TTL_MS - Date.now();
+    if (remainingMs > 0) setIsolateCached(cacheKey, authorization, remainingMs);
+  }
+  return authorization;
+}
+
+/**
+ * Validates the X-Trace-Flow-Api-Key header against Convex, reusing a grant for
+ * `API_KEY_GRANT_TTL_MS`.
  *
  * Returns an error Response if validation fails, or ApiKeyData if the key is valid.
  */
@@ -109,7 +147,7 @@ export async function validateApiKey<
   }
 
   const identifier = await analyticsKeyId(apiKey);
-  const authorization = await authorizeApiKey(c.env, apiKey);
+  const authorization = await currentAuthorization(c.env, apiKey, identifier);
   if ('unavailable' in authorization) {
     logger?.error('proxy.auth_unavailable', undefined, {
       reason: authorization.unavailable,

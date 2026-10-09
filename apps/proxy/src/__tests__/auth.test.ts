@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { validateApiKey, isAuthError, checkBillingStatus } from '../auth';
+import { API_KEY_GRANT_TTL_MS, validateApiKey, isAuthError, checkBillingStatus } from '../auth';
 import { _clearAll } from '../cache';
 import { analyticsKeyId } from '@trace-flow/utils';
 import type { Context } from 'hono';
@@ -197,7 +197,7 @@ describe('validateApiKey', () => {
     // Simulate time passing past expiry
     vi.spyOn(Date, 'now').mockReturnValue(expiresAt + 1);
 
-    // Second call gets a fresh control-plane decision and rechecks expiry locally.
+    // The second call reuses the grant, so expiry must be enforced locally.
     const second = await validateApiKey(context);
     expect(isAuthError(second)).toBe(true);
     if (isAuthError(second)) {
@@ -277,30 +277,83 @@ describe('validateApiKey', () => {
     if (isAuthError(result)) expect(result.status).toBe(401);
   });
 
-  it('rejects a revoked key immediately after a successful authorization', async () => {
+  it('keeps a revoked key authorized only until its grant window ends', async () => {
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now);
     const context = createMockContext(
       { 'x-trace-flow-api-key': 'revoked-after-warmup' },
-      { authorized: true, expiresAt: Date.now() + 60_000, createdAt: 1, orgId: 'org123' },
+      { authorized: true, expiresAt: now + 3_600_000, createdAt: 1, orgId: 'org123' },
     );
-    vi.mocked(fetch)
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            authorized: true,
-            expiresAt: Date.now() + 60_000,
-            createdAt: 1,
-            orgId: 'org123',
-          }),
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ authorized: false, reason: 'invalid' })),
-      );
 
     expect(isAuthError(await validateApiKey(context))).toBe(false);
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ authorized: false, reason: 'invalid' })),
+    );
+
+    vi.mocked(Date.now).mockReturnValue(now + API_KEY_GRANT_TTL_MS - 1);
+    expect(isAuthError(await validateApiKey(context))).toBe(false);
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    vi.mocked(Date.now).mockReturnValue(now + API_KEY_GRANT_TTL_MS);
     const revoked = await validateApiKey(context);
     expect(isAuthError(revoked)).toBe(true);
     if (isAuthError(revoked)) expect(revoked.status).toBe(401);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('starts the grant window when authorization is requested, not answered', async () => {
+    const requestedAt = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(requestedAt);
+    const context = createMockContext(
+      { 'x-trace-flow-api-key': 'slow-grant' },
+      { authorized: true, expiresAt: requestedAt + 3_600_000, createdAt: 1, orgId: 'org123' },
+    );
+    const grant = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementationOnce(async (...args) => {
+      vi.mocked(Date.now).mockReturnValue(requestedAt + 4_900);
+      return grant(...args);
+    });
+
+    expect(isAuthError(await validateApiKey(context))).toBe(false);
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ authorized: false, reason: 'invalid' })),
+    );
+    vi.mocked(Date.now).mockReturnValue(requestedAt + API_KEY_GRANT_TTL_MS);
+
+    expect(isAuthError(await validateApiKey(context))).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('never lets one key reuse another key grant', async () => {
+    const grant = { authorized: true, expiresAt: Date.now() + 60_000, createdAt: 1, orgId: 'a' };
+    const first = createMockContext({ 'x-trace-flow-api-key': 'key-a' }, grant);
+    expect(isAuthError(await validateApiKey(first))).toBe(false);
+
+    const second = createMockContext(
+      { 'x-trace-flow-api-key': 'key-b' },
+      { authorized: false, reason: 'invalid' },
+    );
+    const result = await validateApiKey(second);
+
+    expect(isAuthError(result)).toBe(true);
+    expect(fetch).toHaveBeenCalledWith(
+      'https://convex.test/worker/authorize-api-key',
+      expect.objectContaining({ body: JSON.stringify({ key: 'key-b' }) }),
+    );
+  });
+
+  it.each([
+    ['an invalid key', { authorized: false, reason: 'invalid' }, 401],
+    ['a forbidden key', { authorized: false, reason: 'forbidden' }, 403],
+    ['an unavailable control plane', 'not valid json', 503],
+  ])('rechecks %s on every request', async (_label, authorization, status) => {
+    const context = createMockContext({ 'x-trace-flow-api-key': 'denied-key' }, authorization);
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await validateApiKey(context);
+      expect(isAuthError(result)).toBe(true);
+      if (isAuthError(result)) expect(result.status).toBe(status);
+    }
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 });

@@ -82,13 +82,13 @@ app.all('*', async (c) => {
   if (validateResult.kind === 'reject') return validateResult.response;
   const { validated } = validateResult;
 
-  const { decision, route, omitBody, logger } = validated;
+  const { route, omitBody, logger } = validated;
   const reportFailure = createProxyFailureReporter();
-  const tier = validated.usageCheck.status !== 'error' ? validated.usageCheck.tier : undefined;
   let forwarded;
   try {
     forwarded = await forwardToUpstream(c, validated);
   } catch (err) {
+    const decision = await validated.decision;
     logger.error('proxy.upstream_fetch_failed');
     reportFailure(err instanceof UpstreamFetchError ? err.cause : err, 'upstream_fetch');
     if (err instanceof UpstreamFetchError && decision.record) {
@@ -98,7 +98,7 @@ app.all('*', async (c) => {
           reportFailure(transaction.requestCaptureError, 'request_capture');
         }
         const persisted = await persistTransaction(c.env, transaction, {
-          tier,
+          tier: decision.tier,
           route,
           omitBody,
           logger,
@@ -120,6 +120,7 @@ app.all('*', async (c) => {
       'Retry-After': '1',
     });
   }
+  const decision = await validated.decision;
   const attached = attachCapture(forwarded);
 
   if (decision.record) {
@@ -132,7 +133,7 @@ app.all('*', async (c) => {
           reportFailure(transaction.streamError, 'response_stream');
         }
         const persisted = await persistTransaction(c.env, transaction, {
-          tier,
+          tier: decision.tier,
           route,
           omitBody,
           logger,
@@ -181,7 +182,7 @@ app.all('*', async (c) => {
     );
   }
 
-  return respond(attached);
+  return respond(attached, decision);
 });
 
 const handler = {

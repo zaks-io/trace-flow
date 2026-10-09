@@ -228,6 +228,54 @@ describe('Queue Handler Integration', () => {
     expect(await storedBody?.json()).toEqual(envelope.body?.encryptedPayload);
   });
 
+  it('retries only the delivery whose outbox reference could not be deleted', async () => {
+    const keys = ['delete-failure-1', 'delete-failure-2'].map((id) => buildTraceDeliveryKey(id));
+    for (const [index, key] of keys.entries()) {
+      const envelope: TraceDeliveryEnvelope = {
+        version: 1,
+        message: createMockQueueMessage(`delete-failure-${index}`, 'api-key-delete-failure'),
+      };
+      await env.STORAGE.put(key, JSON.stringify(envelope));
+    }
+    const deleteSpy = vi.spyOn(env.STORAGE, 'delete');
+    deleteSpy.mockRejectedValueOnce(new Error('delete failed'));
+    const outcomes = new Map<string, string>();
+    const messages = keys.map((key) => ({
+      id: key,
+      timestamp: new Date(),
+      body: { type: 'delivery', key } satisfies TraceDeliveryMessage,
+      attempts: 0,
+      ack: () => outcomes.set(key, 'ack'),
+      retry: () => outcomes.set(key, 'retry'),
+    }));
+    const batchOf = (items: typeof messages) =>
+      ({
+        queue: 'trace-flow-requests-dev',
+        messages: items,
+        metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
+        retryAll: () => undefined,
+        ackAll: () => undefined,
+      }) as unknown as MessageBatch<TraceDeliveryMessage>;
+
+    await worker.queue(batchOf(messages), env, createExecutionContext());
+
+    const failedKey = deleteSpy.mock.calls[0]![0] as string;
+    const deliveredKey = keys.find((key) => key !== failedKey)!;
+    expect(outcomes.get(failedKey)).toBe('retry');
+    expect(outcomes.get(deliveredKey)).toBe('ack');
+    expect(await env.STORAGE.get(failedKey)).not.toBeNull();
+    expect(await env.STORAGE.get(deliveredKey)).toBeNull();
+
+    deleteSpy.mockRestore();
+    await worker.queue(
+      batchOf(messages.filter((message) => message.id === failedKey)),
+      env,
+      createExecutionContext(),
+    );
+    expect(outcomes.get(failedKey)).toBe('ack');
+    expect(await env.STORAGE.get(failedKey)).toBeNull();
+  });
+
   it('leaves an explicit DLQ replay blocked when its envelope is missing', async () => {
     env.NUM_SHARDS = 1000;
     const batcher = env.TRACE_BATCHER.get(env.TRACE_BATCHER.idFromName('batcher-999'));

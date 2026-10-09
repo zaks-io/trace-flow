@@ -18,13 +18,8 @@ export async function checkUsage(
   count: number,
   prefetchedSubscription?: SubscriptionKVData,
 ): Promise<UsageCheckResult> {
-  // Check cache for exceeded state before hitting the DO.
-  // "allowed" is NEVER cached — the DO call both checks AND increments the counter.
-  const cached = usageCache.get(orgId);
-  if (cached && cached.expiry > Date.now()) {
-    return cached.result;
-  }
-  usageCache.delete(orgId);
+  const cached = cachedUsageCheck(orgId);
+  if (cached) return cached;
 
   let subscriptionConfig: SubscriptionKVData;
 
@@ -87,6 +82,17 @@ const MAX_USAGE_CACHE_ENTRIES = 1_000;
 // Not using the two-layer cache here because DO results contain org-specific
 // state that doesn't benefit from Cache API (already scoped to this colo's DO).
 const usageCache = new Map<string, { result: UsageCheckResult; expiry: number }>();
+
+/**
+ * The outcome `checkUsage` will answer from cache without calling the DO. Only "exceeded" is
+ * cached: the DO call both checks and increments the counter, so "allowed" never can be.
+ */
+export function cachedUsageCheck(orgId: string): UsageCheckResult | undefined {
+  const cached = usageCache.get(orgId);
+  if (cached && cached.expiry > Date.now()) return cached.result;
+  usageCache.delete(orgId);
+  return undefined;
+}
 
 function cacheUsageResult(orgId: string, result: UsageCheckResult): void {
   // Only cache "exceeded" — the one truly terminal state within a billing period.
