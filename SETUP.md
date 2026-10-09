@@ -41,7 +41,7 @@ scripts/dev/verify.sh
 - `apps/agent-ingest`
 - `apps/agent-consumer`
 
-It does not start Web, Convex, MCP, or Analyst Sandbox.
+It does not start Web, Convex, or MCP.
 
 Run Convex and Web separately:
 
@@ -60,15 +60,22 @@ switches.
 
 The production runtime uses these Cloudflare resource families:
 
-| Resource         | Model request path                          | Agent conversation path                                                            | Shared/read path                                    |
-| ---------------- | ------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------- |
-| Workers          | `proxy`, `proxy-consumer`                   | `agent-ingest`, `agent-consumer`                                                   | `web`, `pipes-api`, `api`, `mcp`, `analyst-sandbox` |
-| Queues           | `trace-flow-requests-*` + DLQ               | `agent-ingest-*` + DLQ                                                             | None                                                |
-| R2               | `trace-flow-storage-*` Body Objects         | `trace-flow-agent-deliveries-*` encrypted facts                                    | Sandbox workspace backups                           |
-| KV               | `API_KEYS`, `MODEL_PRICING`                 | `COLLECTOR_CREDS`, `MODEL_PRICING`                                                 | None                                                |
-| Durable Objects  | `USAGE_TRACKER`, `TRACE_BATCHER`            | Delivery receipts, org coordinator, snapshot capacity, shared `AGENT_DEAD_LETTERS` | `Sandbox`                                           |
-| Rate limiters    | org and IP ingest limits                    | `AGENT_INGEST_LIMITER`                                                             | read and token-refresh limits                       |
-| Analytics Engine | proxy and consumer operational measurements | Worker logs and Sentry                                                             | Worker logs and Sentry                              |
+| Resource         | Model request path                          | Agent conversation path                                                            | Shared/read path                 |
+| ---------------- | ------------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------- |
+| Workers          | `proxy`, `proxy-consumer`                   | `agent-ingest`, `agent-consumer`                                                   | `web`, `pipes-api`, `api`, `mcp` |
+| Queues           | `trace-flow-requests-*` + DLQ               | `agent-ingest-*` + DLQ                                                             | None                             |
+| R2               | `trace-flow-storage-*` Body Objects         | `trace-flow-agent-deliveries-*` encrypted facts                                    | None                             |
+| KV               | `API_KEYS`, `MODEL_PRICING`                 | `COLLECTOR_CREDS`, `MODEL_PRICING`                                                 | None                             |
+| Durable Objects  | `USAGE_TRACKER`, `TRACE_BATCHER`            | Delivery receipts, org coordinator, snapshot capacity, shared `AGENT_DEAD_LETTERS` | None                             |
+| Rate limiters    | org and IP ingest limits                    | `AGENT_INGEST_LIMITER`                                                             | read and token-refresh limits    |
+| Analytics Engine | proxy and consumer operational measurements | Worker logs and Sentry                                                             | Worker logs and Sentry           |
+
+The Analyst Runtime calls shared Trace Flow tools directly in Convex. Its former backup buckets
+remain configured for seven-day expiry of `snapshots/` objects until a separately approved cleanup.
+An organization deleted within seven days after the removal deploy can retain prior Analyst backups
+until that lifecycle expiry. Deleting the deployed Worker and container image, the backup buckets
+after seven days, stored sandbox table documents, and unused Convex environment values requires
+Isaac's approval. See [ADR 0022](docs/adr/0022-trace-flow-analyst-convex-runtime.md).
 
 The agent production resource IDs and smoke-test contract live in
 `docs/guides/agent-conversation-analytics/provisioned-resources.md` and
@@ -99,17 +106,16 @@ Set secrets through the owning platform only. Do not commit them.
 
 ### Worker Secrets
 
-| Worker            | Secrets                                                                           |
-| ----------------- | --------------------------------------------------------------------------------- |
-| `proxy`           | `USAGE_SYNC_SECRET`, `SENTRY_DSN`, `AXIOM_TOKEN`, `BODY_ENCRYPTION_ROOT_KEY`      |
-| `proxy-consumer`  | `TINYBIRD_TOKEN`, `SENTRY_DSN`, `AXIOM_TOKEN`                                     |
-| `pipes-api`       | `PIPES_API_SHARED_SECRET`, `SENTRY_DSN`, `AXIOM_TOKEN`                            |
-| `api`             | `SENTRY_DSN`, `AXIOM_TOKEN`, `BODY_ENCRYPTION_ROOT_KEY`, `BODY_ACCESS_JWT_SECRET` |
-| `web`             | Auth0, Sentry, and app URL values supplied during build/deploy                    |
-| `mcp`             | Convex JWKS/read-side runtime values for MCP access                               |
-| `agent-ingest`    | `AGENT_INGEST_SHARED_SECRET`, `SENTRY_DSN`                                        |
-| `agent-consumer`  | `TINYBIRD_TOKEN`, `SENTRY_DSN`                                                    |
-| `analyst-sandbox` | `ANALYST_SANDBOX_SHARED_SECRET`, `OPENROUTER_API_KEY`                             |
+| Worker           | Secrets                                                                           |
+| ---------------- | --------------------------------------------------------------------------------- |
+| `proxy`          | `USAGE_SYNC_SECRET`, `SENTRY_DSN`, `AXIOM_TOKEN`, `BODY_ENCRYPTION_ROOT_KEY`      |
+| `proxy-consumer` | `TINYBIRD_TOKEN`, `SENTRY_DSN`, `AXIOM_TOKEN`                                     |
+| `pipes-api`      | `PIPES_API_SHARED_SECRET`, `SENTRY_DSN`, `AXIOM_TOKEN`                            |
+| `api`            | `SENTRY_DSN`, `AXIOM_TOKEN`, `BODY_ENCRYPTION_ROOT_KEY`, `BODY_ACCESS_JWT_SECRET` |
+| `web`            | Auth0, Sentry, and app URL values supplied during build/deploy                    |
+| `mcp`            | Convex JWKS/read-side runtime values for MCP access                               |
+| `agent-ingest`   | `AGENT_INGEST_SHARED_SECRET`, `SENTRY_DSN`                                        |
+| `agent-consumer` | `TINYBIRD_TOKEN`, `SENTRY_DSN`                                                    |
 
 Convex Tinybird queries also require `SENTRY_DSN` and `SENTRY_ENVIRONMENT` in the
 Convex deployment. Use `development` for dev, `preview` for PR previews, and
@@ -137,7 +143,6 @@ subscriptions, and Tinybird JWT signing. Required environment values include:
 - Cloudflare account/API config for KV sync
 - `CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID` for Collector Credential KV sync
 - `AGENT_INGEST_SHARED_SECRET` for the ingest control-plane endpoints
-- `ANALYST_SANDBOX_URL` and `ANALYST_SANDBOX_SHARED_SECRET` for Analyst sandbox orchestration
 - `OPENROUTER_API_KEY` for Analyst model calls
 - `BODY_ACCESS_JWT_SECRET` for short-lived Body Object access tokens shared with the Raw API Worker
 
@@ -195,8 +200,8 @@ Collector `workers.dev` URLs remain available during rollout. Web sign-in uses t
 
 Configure the Preview Auth0 application's allowed callback URLs with
 `https://preview.trace-flow.dev/auth/callback`, and add `https://preview.trace-flow.dev` to its
-allowed logout URLs and web origins. The workflow sets the branch's Convex `AGENT_INGEST_URL`,
-`ANALYST_SANDBOX_URL`, and `APP_URL` to the matching Preview hosts.
+allowed logout URLs and web origins. The workflow sets the branch's Convex `AGENT_INGEST_URL`
+and `APP_URL` to the matching Preview hosts. Analyst tools execute directly in Convex.
 
 Dev Tinybird must deploy the `trace_flow_proxy_spans_append` token declared in
 `datasources/otel_trace_spans.datasource` before Preview runs. The workflow verifies its exact
@@ -227,7 +232,7 @@ The workflow:
 1. runs CI checks
 2. deploys Convex and exports `.convex.cloud` / `.convex.site` URLs through `GITHUB_OUTPUT`
 3. deploys Tinybird schema before consumer Workers
-4. deploys Proxy, Proxy Consumer, Pipes API, Raw API, MCP, Web, Agent Ingest, Agent Consumer, and Analyst Sandbox
+4. deploys Proxy, Proxy Consumer, Pipes API, Raw API, MCP, Web, Agent Ingest, and Agent Consumer
 5. fails agent deploys if production config resolves to dev queues or KV namespaces
 
 Desktop distribution runs independently through `.github/workflows/desktop-release.yml`. It signs

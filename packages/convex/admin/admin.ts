@@ -18,12 +18,6 @@ import { TIER_CONFIG } from '@trace-flow/types';
 import type { Id, TableNames } from '../_generated/dataModel';
 import { makeFunctionReference } from 'convex/server';
 
-const eraseOrganizationSandboxBackups = makeFunctionReference<
-  'action',
-  { orgId: Id<'organizations'> },
-  null
->('analystSandbox:eraseOrganizationSandboxBackups');
-
 async function requireAdminAction(ctx: ActionCtx) {
   await requireAuthenticated(ctx);
   const isAdmin = await ctx.runQuery(internal.auth.users.isAdminInternal);
@@ -345,8 +339,6 @@ async function deleteOrgDataImpl(ctx: ActionCtx, orgId: Id<'organizations'>) {
     orgId,
   });
 
-  await ctx.runAction(eraseOrganizationSandboxBackups, { orgId });
-
   // IMPORTANT: Tinybird deletion must run BEFORE Convex record deletion.
   // deleteOrgTraces queries API keys from Convex to build the SQL WHERE clause.
   const tinybirdResults = await ctx.runAction(internal.integrations.tinybird.deleteOrgTraces, {
@@ -484,6 +476,19 @@ export const deleteOrgRecordsBatch = internalMutation({
         .take(PAGE_SIZE - ops);
       for (const row of rows) {
         if (ops >= PAGE_SIZE) return { counts, hasMore: true };
+        await ctx.db.delete(row._id);
+        ops++;
+      }
+      if (ops >= PAGE_SIZE) return { counts, hasMore: true };
+    }
+
+    // Retired runtime rows still belong to the organization until approved data cleanup.
+    for (const table of ['analystSandboxRunEvents', 'analystSandboxRuns'] as const) {
+      const rows = await ctx.db
+        .query(table)
+        .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
+        .take(PAGE_SIZE - ops);
+      for (const row of rows) {
         await ctx.db.delete(row._id);
         ops++;
       }

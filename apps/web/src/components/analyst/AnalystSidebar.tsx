@@ -31,8 +31,6 @@ import { useAnalyst } from './AnalystContext';
 import { AnalystCostSummary } from './AnalystCostSummary';
 import { AnalystMessageList, type AnalystMessage } from './AnalystMessageList';
 import { AnalystRunStatusBar, getAnalystRunState, type QueuedAnalystRun } from './AnalystRunStatus';
-import type { SandboxRun } from './AnalystSandboxRuns';
-import { isActive } from './piRunEvents';
 import { useResizableSidebar } from './useResizableSidebar';
 import { buildMessagePageContextReferences, type AnalystPageContextReference } from './pageContext';
 
@@ -82,20 +80,11 @@ export function AnalystSidebar() {
     currentThreadId ? { threadId: currentThreadId } : 'skip',
     { initialNumItems: 30, stream: true },
   );
-  const sandboxRuns = useQuery(
-    api.analystSandbox.listSandboxRuns,
-    currentThreadId ? { threadId: currentThreadId } : 'skip',
-  ) as SandboxRun[] | undefined;
-  const activeSandboxRuns = useMemo(
-    () => (sandboxRuns ?? []).filter((run) => isActive(run.status)),
-    [sandboxRuns],
-  );
   const messageResults = useMemo(
     () => (messages.results as AnalystMessage[] | undefined) ?? [],
     [messages.results],
   );
   const latestMessage = messageResults.at(-1);
-  const latestRun = sandboxRuns?.[0];
   const scrollKey = [
     currentThreadId,
     latestMessage?.id,
@@ -104,10 +93,6 @@ export function AnalystSidebar() {
     latestMessage?.status,
     latestMessage?.text.length ?? 0,
     latestMessage?.parts.length ?? 0,
-    latestRun?._id,
-    latestRun?.status,
-    latestRun?.lastEventAt,
-    latestRun?.nextSeq,
   ].join(':');
   const runState = useMemo(
     () =>
@@ -116,15 +101,13 @@ export function AnalystSidebar() {
         currentThreadId,
         queuedRun,
         messages: messageResults,
-        sandboxRuns: sandboxRuns ?? [],
       }),
-    [sending, currentThreadId, queuedRun, messageResults, sandboxRuns],
+    [sending, currentThreadId, queuedRun, messageResults],
   );
   const analystBusy = runState.busy;
   const canSelectPageContext = pathname.startsWith('/app/agents');
   const canStopAnalyst =
-    Boolean(currentThreadId) &&
-    (runState.phase === 'queued' || runState.phase === 'running' || activeSandboxRuns.length > 0);
+    Boolean(currentThreadId) && (runState.phase === 'queued' || runState.phase === 'running');
   const messagePageContextReferences = useMemo(
     () => buildMessagePageContextReferences(pathname, selectedReferences),
     [pathname, selectedReferences],

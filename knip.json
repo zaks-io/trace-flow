@@ -15,9 +15,6 @@
     "packages/sdk-tests": {
       "entry": ["src/**/*.ts"]
     },
-    "apps/analyst-sandbox": {
-      "entry": ["python-tests/generate-client.mts"]
-    },
     "apps/proxy": {},
     "apps/proxy-consumer": {},
     "apps/web": {

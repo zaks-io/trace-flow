@@ -157,6 +157,7 @@ export type DataModel = {
       | "seq"
       | "type";
     indexes: {
+      by_org_id: ["orgId", "_creationTime"];
       by_id: ["_id"];
       by_creation_time: ["_creationTime"];
       by_run_seq: ["runId", "seq", "_creationTime"];
@@ -247,6 +248,7 @@ export type DataModel = {
       | "usageApplied.totalCost"
       | "usageApplied.totalTokens";
     indexes: {
+      by_org_id: ["orgId", "_creationTime"];
       by_id: ["_id"];
       by_creation_time: ["_creationTime"];
       by_creator_status_updated: [

@@ -220,7 +220,6 @@ Cloudflare's 404.
 | LLM proxy / gateway                                                                   | `https://trace-flow-proxy-dev.isaac-a46.workers.dev` (`/` → 401, live)   | `https://gateway.preview.trace-flow.dev`                         | `https://gateway.trace-flow.dev`                                                                         |
 | Tinybird Pipe API                                                                     | `https://trace-flow-pipes-api-dev.isaac-a46.workers.dev` (`/v0/pipes/*`) | `https://pipes.preview.trace-flow.dev`                           | `https://pipes.trace-flow.dev`                                                                           |
 | Body-retrieval Raw API                                                                | `https://trace-flow-raw-api-dev.isaac-a46.workers.dev` (`/bodies/*`)     | `https://raw.preview.trace-flow.dev`                             | `https://raw.trace-flow.dev`                                                                             |
-| Analyst Sandbox (Analyst code execution; `/` → 404, live)                             | `https://trace-flow-analyst-sandbox-dev.isaac-a46.workers.dev`           | `https://analyst-sandbox.preview.trace-flow.dev`                 | `https://analyst-sandbox.trace-flow.dev`                                                                 |
 | Convex **site** origin (`/collector/authorize`, `/agent-ingest/compatibility-policy`) | `https://hardy-iguana-812.convex.site`                                   | Branch-scoped Convex Preview URL emitted by the preview workflow | `https://laudable-bison-427.convex.site`                                                                 |
 | MCP server                                                                            | `https://trace-flow-mcp-dev.isaac-a46.workers.dev`                       | `https://mcp.preview.trace-flow.dev`                             | `https://mcp.trace-flow.dev`                                                                             |
 
@@ -285,7 +284,7 @@ The collapsible right-side **Trace Flow Analyst** chat surface.
 _Avoid_: "agent sidebar".
 
 **Analyst Runtime**:
-The isolated runtime that answers **Trace Flow Analyst** questions by coordinating model calls and approved tools.
+The Convex agent that answers **Trace Flow Analyst** questions by calling the shared `@trace-flow/mcp-core` Analyst tools directly. Tool calls use the current user's active membership, Pro entitlement, and unexpired scoped keys.
 _Avoid_: "agent runtime", "MCP runtime".
 
 **Analyst Thread**:

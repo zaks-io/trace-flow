@@ -5,7 +5,8 @@ import { useSmoothText } from '@convex-dev/agent/react';
 import { CircleAlert, FileText, LinkIcon } from 'lucide-react';
 import type { AnalystMessage } from './analystMessageModel';
 import { AnalystMarkdown } from './analystMarkdown';
-import { formatStructuredValue } from './structuredValue';
+import { StructuredValue } from './StructuredValue';
+import { AnalystMessageToolPart } from './AnalystMessageToolPart';
 
 export type AnalystMessagePart = AnalystMessage['parts'][number];
 export type AnalystDataPart = Extract<AnalystMessagePart, { type: `data-${string}` }>;
@@ -37,11 +38,12 @@ export function AnalystMessagePartView({
     case 'file':
       return <FilePart part={part} />;
     case 'step-start':
+      return null;
     case 'reasoning':
     case 'dynamic-tool':
-      return null;
+      return <AnalystMessageToolPart part={part} />;
     default:
-      if (part.type.startsWith('tool-')) return null;
+      if (part.type.startsWith('tool-')) return <AnalystMessageToolPart part={part} />;
       if (part.type.startsWith('data-')) return <DataPart part={part as AnalystDataPart} />;
       return null;
   }
@@ -121,20 +123,6 @@ function DataPart({ part }: { part: AnalystDataPart }) {
         {part.type.replace(/^data-/, '') || 'Data'}
       </div>
       <StructuredValue value={part.data} />
-    </div>
-  );
-}
-
-export function StructuredValue({ label, value }: { label?: string; value: unknown }) {
-  const rendered = formatStructuredValue(value);
-  if (!rendered) return null;
-
-  return (
-    <div className="space-y-1">
-      {label && <div className="font-medium text-muted-foreground">{label}</div>}
-      <div className="max-h-56 overflow-auto whitespace-pre-wrap rounded border border-border/60 bg-muted/40 px-2 py-1 font-mono text-[11px] leading-relaxed">
-        {rendered}
-      </div>
     </div>
   );
 }

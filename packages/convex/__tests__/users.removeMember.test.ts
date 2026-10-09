@@ -73,15 +73,6 @@ function makeRemoveMemberCtx(acceptedInvite: Record<string, unknown> | null = nu
   const apiKeysQuery = queryResult(null, [apiKeys[0]]);
   const collectorCredentialsQuery = queryResult(null, collectorCredentials);
   const invitesQuery = queryResult(acceptedInvite);
-  const analystThreadsQuery = queryResult(null, [
-    {
-      _id: 'analyst_thread_1',
-      creatorUserId: removedUser._id,
-      orgId: removedMembership.orgId,
-      sandboxBackup: { id: 'snapshot-to-erase', dir: '/workspace', updatedAt: 1 },
-    },
-  ]);
-
   const dbGet = vi.fn(async (id: string) => {
     if (id === removedMembership._id) return removedMembership;
     if (id === removedUser._id) return removedUser;
@@ -108,7 +99,6 @@ function makeRemoveMemberCtx(acceptedInvite: Record<string, unknown> | null = nu
         if (table === 'apiKeys') return apiKeysQuery;
         if (table === 'collectorCredentials') return collectorCredentialsQuery;
         if (table === 'invites') return invitesQuery;
-        if (table === 'analystThreads') return analystThreadsQuery;
         throw new Error(`Unexpected table: ${table}`);
       }),
     },
@@ -159,7 +149,6 @@ describe('auth.users.removeMember', () => {
       status: 'revoked',
       revokedAt: expect.any(Number),
     });
-    expect(dbPatch).toHaveBeenCalledWith('analyst_thread_1', { sandboxBackup: undefined });
 
     const scheduledArgs = schedulerRunAfter.mock.calls.map((call) => call[2]);
     expect(scheduledArgs).toEqual(
@@ -167,7 +156,6 @@ describe('auth.users.removeMember', () => {
         { key: apiKeys[0].key },
         { hashedSecret: collectorCredentials[0].hashedSecret },
         { sub: 'auth0|removed', userId: removedUser._id },
-        { backupIds: ['snapshot-to-erase'] },
       ]),
     );
   });

@@ -19,7 +19,6 @@ env:
   PREVIEW_PIPES_API_URL: https://pipes.preview.trace-flow.dev
   PREVIEW_RAW_API_URL: https://raw.preview.trace-flow.dev
   PREVIEW_COLLECTOR_URL: https://collector.preview.trace-flow.dev
-  PREVIEW_ANALYST_SANDBOX_URL: https://analyst-sandbox.preview.trace-flow.dev
   PREVIEW_MCP_URL: https://mcp.preview.trace-flow.dev
   PREVIEW_API_KEYS_NAMESPACE_ID: 30c9a31ff3af4b408b4d64b8ecfa98a5
   PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID: 422b54e456c7446ea5ba4f9ef9a8c84e
@@ -144,7 +143,7 @@ jobs:
           bunx convex env set --preview-name "$BRANCH_NAME" TINYBIRD_API_URL "$TB_HOST"
           bunx convex env set --preview-name "$BRANCH_NAME" CLOUDFLARE_KV_NAMESPACE_ID "$PREVIEW_API_KEYS_NAMESPACE_ID"
           bunx convex env set --preview-name "$BRANCH_NAME" CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID "$PREVIEW_COLLECTOR_CREDS_NAMESPACE_ID"
-          for name in AUTH0_CLIENT_SECRET CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN AGENT_INGEST_SHARED_SECRET ANALYST_SANDBOX_SHARED_SECRET USAGE_SYNC_SECRET; do
+          for name in AUTH0_CLIENT_SECRET CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN AGENT_INGEST_SHARED_SECRET USAGE_SYNC_SECRET; do
             value="${!name}"
             test -n "$value"
             printf '%s' "$value" | bunx convex env set --preview-name "$BRANCH_NAME" "$name"
@@ -161,7 +160,6 @@ jobs:
             bunx convex env set --preview-name "$BRANCH_NAME" BODY_ACCESS_JWT_SECRET
           bunx convex env set --preview-name "$BRANCH_NAME" SENTRY_ENVIRONMENT preview
           bunx convex env set --preview-name "$BRANCH_NAME" AGENT_INGEST_URL "$PREVIEW_COLLECTOR_URL"
-          bunx convex env set --preview-name "$BRANCH_NAME" ANALYST_SANDBOX_URL "$PREVIEW_ANALYST_SANDBOX_URL"
           bunx convex env set --preview-name "$BRANCH_NAME" APP_URL "$PREVIEW_WEB_URL"
           # Auth configuration is evaluated when the deployment is pushed.
           bunx convex deploy --preview-name "$BRANCH_NAME"
@@ -175,7 +173,6 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           AGENT_INGEST_SHARED_SECRET: ${{ secrets.AGENT_INGEST_SHARED_SECRET }}
-          ANALYST_SANDBOX_SHARED_SECRET: ${{ secrets.ANALYST_SANDBOX_SHARED_SECRET }}
           USAGE_SYNC_SECRET: ${{ secrets.USAGE_SYNC_SECRET }}
           TB_TOKEN: ${{ secrets.TINYBIRD_DEV_TOKEN_MANAGER_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
@@ -243,7 +240,6 @@ jobs:
               --filter='!@trace-flow/mcp' \
               --filter='!@trace-flow/agent-ingest' \
               --filter='!@trace-flow/agent-consumer' \
-              --filter='!@trace-flow/analyst-sandbox' \
               --filter='!@trace-flow/pipes-api' \
               --filter='!@trace-flow/api' \
               --env-mode=loose \
@@ -320,8 +316,6 @@ jobs:
               cd apps/pipes-api && bunx wrangler deploy --env preview \
                 --secrets-file "$pipes_secrets_file" \
                 --var CONVEX_SITE_URL:"$CONVEX_SITE_URL"
-            ) && (
-              cd apps/analyst-sandbox && bunx wrangler deploy --env preview --var CONVEX_URL:"$CONVEX_URL"
             ); then
               exit 0
             fi
@@ -344,7 +338,6 @@ jobs:
           BODY_ENCRYPTION_ROOT_KEY: ${{ secrets.BODY_ENCRYPTION_ROOT_KEY }}
           TB_TOKEN: ${{ secrets.TINYBIRD_DEV_TOKEN_MANAGER_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
-          CONVEX_URL: ${{ needs.deploy-convex.outputs.convex_url }}
           CONVEX_SITE_URL: ${{ needs.deploy-convex.outputs.convex_site_url }}
 
       # The proxy refuses every request with 503 when its secrets fail startup validation.
@@ -405,22 +398,11 @@ jobs:
 
       - name: Configure Analyst Preview authentication
         run: |
-          test -n "$ANALYST_SANDBOX_SHARED_SECRET"
           test -n "$OPENROUTER_API_KEY"
-          (
-            cd apps/analyst-sandbox
-            printf '%s' "$ANALYST_SANDBOX_SHARED_SECRET" |
-              bunx wrangler secret put ANALYST_SANDBOX_SHARED_SECRET --env preview
-            printf '%s' "$OPENROUTER_API_KEY" |
-              bunx wrangler secret put OPENROUTER_API_KEY --env preview
-          )
           printf '%s' "$OPENROUTER_API_KEY" |
             bunx convex env set --preview-name "$BRANCH_NAME" OPENROUTER_API_KEY
         env:
-          ANALYST_SANDBOX_SHARED_SECRET: ${{ secrets.ANALYST_SANDBOX_SHARED_SECRET }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
           BRANCH_NAME: ${{ needs.prepare.outputs.head_ref }}
 
@@ -448,7 +430,6 @@ jobs:
             | Raw API | ${process.env.PREVIEW_RAW_API_URL} |
             | Proxy | ${process.env.PREVIEW_GATEWAY_URL} |
             | Agent Ingest | ${process.env.PREVIEW_COLLECTOR_URL} |
-            | Analyst Sandbox | ${process.env.PREVIEW_ANALYST_SANDBOX_URL} |
             | MCP | ${process.env.PREVIEW_MCP_URL} |
             `;
 

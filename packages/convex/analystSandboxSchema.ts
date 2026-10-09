@@ -1,10 +1,6 @@
 import { v } from 'convex/values';
 
-/**
- * Single source of truth for the Pi sandbox run/event table shapes and enums.
- * `schema.ts` builds the tables from these, and the sandbox action/mutation args
- * reuse the same validators so the status/event-type unions are defined once.
- */
+// Retained only to validate existing production documents until approved cleanup.
 
 export const sandboxRunStatus = v.union(
   v.literal('queued'),
@@ -100,11 +96,3 @@ export const sandboxRunEventFields = {
   data: v.optional(v.any()),
   emittedAt: v.number(),
 };
-
-/** Shape the sandbox runner posts back for a single event (seq + ids are assigned server-side). */
-export const sandboxRunEventInput = v.object({
-  type: sandboxRunEventType,
-  message: v.optional(v.string()),
-  data: v.optional(v.any()),
-  emittedAt: v.optional(v.number()),
-});

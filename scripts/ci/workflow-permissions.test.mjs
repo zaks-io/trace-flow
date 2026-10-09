@@ -12,6 +12,45 @@ const claude = workflow('claude');
 const ci = workflow('ci');
 const preview = workflow('preview');
 const deploy = workflow('deploy');
+
+describe('direct Convex Analyst delivery', () => {
+  test('workflows have no Analyst execution job, filter, URL, or credential', () => {
+    for (const delivery of [ci, preview, deploy]) {
+      expect(Object.keys(delivery.jobs).some((name) => /analyst/i.test(name))).toBe(false);
+      expect(Object.keys(delivery.env ?? {}).some((name) => /analyst/i.test(name))).toBe(false);
+      for (const job of Object.values(delivery.jobs)) {
+        expect((job.needs ?? []).some((name) => /analyst/i.test(name))).toBe(false);
+        for (const step of job.steps ?? []) {
+          expect(Object.keys(step.env ?? {}).some((name) => /analyst/i.test(name))).toBe(false);
+        }
+      }
+    }
+    expect(Object.keys(ci.jobs.changes.outputs).some((name) => /analyst/i.test(name))).toBe(false);
+    const filters = YAML.parse(
+      ci.jobs.changes.steps.find((step) => step.id === 'filter').with.filters,
+    );
+    expect(Object.keys(filters).some((name) => /analyst/i.test(name))).toBe(false);
+  });
+
+  test('prior Analyst backups keep their lifecycle configuration until bucket cleanup', () => {
+    const production = deploy.jobs['deploy-proxy-consumer'].steps.find(
+      (step) => step.name === 'Configure R2 retention',
+    );
+    const previewRetention = preview.jobs.preview.steps.find(
+      (step) => step.name === 'Configure R2 retention',
+    );
+    for (const [step, environments] of [
+      [production, ['production']],
+      [previewRetention, ['dev', 'preview']],
+    ]) {
+      expect(step.run).toContain('bun scripts/setup-r2-lifecycle.ts');
+      for (const environment of environments) {
+        expect(step.run).toMatch(new RegExp(`trace-flow-analyst-\\S+-backups-${environment}\\b`));
+      }
+    }
+  });
+});
+
 const authorize = new Function(
   'github',
   'context',
@@ -210,7 +249,6 @@ describe('preview credential boundary', () => {
       'CLOUDFLARE_ACCOUNT_ID',
       'CLOUDFLARE_API_TOKEN',
       'AGENT_INGEST_SHARED_SECRET',
-      'ANALYST_SANDBOX_SHARED_SECRET',
       'USAGE_SYNC_SECRET',
     ]) {
       expect(configure.env[name]).toBe(`\${{ secrets.${name} }}`);
@@ -234,16 +272,13 @@ describe('preview credential boundary', () => {
     const analyst = preview.jobs.preview.steps.find(
       (step) => step.name === 'Configure Analyst Preview authentication',
     );
-    expect(analyst.env.ANALYST_SANDBOX_SHARED_SECRET).toBe(
-      configure.env.ANALYST_SANDBOX_SHARED_SECRET,
-    );
     expect(analyst.env.OPENROUTER_API_KEY).toBe('${{ secrets.OPENROUTER_API_KEY }}');
     expect(analyst.run).toContain('test -n "$OPENROUTER_API_KEY"');
-    expect(analyst.run).toContain('wrangler secret put OPENROUTER_API_KEY --env preview');
     expect(analyst.run).toContain(
       'convex env set --preview-name "$BRANCH_NAME" OPENROUTER_API_KEY',
     );
-    expect(analyst.run).toContain('cd apps/analyst-sandbox');
+    expect(analyst.run).not.toContain('wrangler');
+    expect(analyst.env).not.toHaveProperty('CLOUDFLARE_API_TOKEN');
     expect(analyst.run).not.toContain('--cwd');
     expect(analyst.run).not.toContain('--prod');
   });
@@ -664,16 +699,14 @@ describe('MCP Worker change detection', () => {
     expect(ci.jobs.status.steps[0].run).toContain("contains(needs.*.result, 'cancelled')");
   });
 
-  test('app-only MCP changes select the MCP Worker without the Analyst Sandbox', () => {
+  test('app-only MCP changes select the MCP Worker', () => {
     expect(matchesFilter(filters, 'mcp', 'apps/mcp/src/index.ts')).toBe(true);
     expect(matchesFilter(filters, 'mcp', 'apps/mcp/src/__tests__/index.test.ts')).toBe(true);
-    expect(matchesFilter(filters, 'analyst-sandbox', 'apps/mcp/src/index.ts')).toBe(false);
     expect(matchesFilter(filters, 'mcp', 'apps/web/src/app/page.tsx')).toBe(false);
   });
 
   test('MCP runtime dependency changes select the MCP Worker and remaining package checks', () => {
     expect(matchesFilter(filters, 'mcp', 'packages/mcp-core/src/index.ts')).toBe(true);
-    expect(matchesFilter(filters, 'analyst-sandbox', 'packages/mcp-core/src/index.ts')).toBe(true);
     expect(matchesFilter(filters, 'mcp', 'packages/logging/src/index.ts')).toBe(true);
     expect(matchesFilter(filters, 'mcp', 'packages/utils/src/index.ts')).toBe(true);
     expect(matchesFilter(filters, 'utils', 'packages/utils/src/index.ts')).toBe(true);

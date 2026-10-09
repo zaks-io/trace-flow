@@ -104,19 +104,15 @@ export default defineSchema({
     updatedAt: v.number(),
     lastMessageAt: v.optional(v.number()),
     stopRequestedAt: v.optional(v.number()),
-    // Latest /workspace snapshot for this conversation's Pi sandbox. The next Pi
-    // run rehydrates from this handle and resumes the session instead of starting
-    // cold.
+    // Retained until legacy production documents are cleared with approval.
     sandboxBackup: v.optional(v.object({ ...sandboxBackupHandle.fields, updatedAt: v.number() })),
   })
     .index('by_creator_updated', ['creatorUserId', 'updatedAt'])
     .index('by_creator_status_updated', ['creatorUserId', 'status', 'updatedAt'])
     .index('by_agent_thread_id', ['agentThreadId']),
 
-  // Unified, authoritative usage totals per conversation, split by which agent spent
-  // it: the conversation Analyst vs. the Pi coding agent. Accumulated at write time
-  // (analyst via usageHandler, Pi via its run-event ingest), read by the cost summary.
-  // `orgId` rides every row so an org-wide rollup is a trivial group-by later.
+  // Analyst LLM usage accumulates at write time. The legacy 'pi' variant remains
+  // valid until production documents are cleared with approval.
   analystUsageLedger: defineTable({
     analystThreadId: v.id('analystThreads'),
     orgId: v.id('organizations'),
@@ -133,14 +129,17 @@ export default defineSchema({
     .index('by_thread_agent', ['analystThreadId', 'agent'])
     .index('by_org', ['orgId']),
 
+  // Keep retired table validators until approved production data cleanup.
   analystSandboxRuns: defineTable(sandboxRunFields)
     .index('by_thread_updated', ['analystThreadId', 'updatedAt'])
     .index('by_creator_status_updated', ['creatorUserId', 'status', 'updatedAt'])
-    .index('by_status_updated', ['status', 'updatedAt']),
+    .index('by_status_updated', ['status', 'updatedAt'])
+    .index('by_org_id', ['orgId']),
 
   analystSandboxRunEvents: defineTable(sandboxRunEventFields)
     .index('by_run_seq', ['runId', 'seq'])
-    .index('by_thread_seq', ['analystThreadId', 'seq']),
+    .index('by_thread_seq', ['analystThreadId', 'seq'])
+    .index('by_org_id', ['orgId']),
 
   alerts: defineTable({
     name: v.string(),
