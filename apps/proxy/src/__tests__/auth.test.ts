@@ -301,6 +301,29 @@ describe('validateApiKey', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  it('starts the grant window when authorization is requested, not answered', async () => {
+    const requestedAt = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(requestedAt);
+    const context = createMockContext(
+      { 'x-trace-flow-api-key': 'slow-grant' },
+      { authorized: true, expiresAt: requestedAt + 3_600_000, createdAt: 1, orgId: 'org123' },
+    );
+    const grant = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementationOnce(async (...args) => {
+      vi.mocked(Date.now).mockReturnValue(requestedAt + 4_900);
+      return grant(...args);
+    });
+
+    expect(isAuthError(await validateApiKey(context))).toBe(false);
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ authorized: false, reason: 'invalid' })),
+    );
+    vi.mocked(Date.now).mockReturnValue(requestedAt + API_KEY_GRANT_TTL_MS);
+
+    expect(isAuthError(await validateApiKey(context))).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it('never lets one key reuse another key grant', async () => {
     const grant = { authorized: true, expiresAt: Date.now() + 60_000, createdAt: 1, orgId: 'a' };
     const first = createMockContext({ 'x-trace-flow-api-key': 'key-a' }, grant);

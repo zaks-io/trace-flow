@@ -111,9 +111,12 @@ async function currentAuthorization(
   const cached = getIsolateCached<ApiKeyGrant>(cacheKey);
   if (cached) return cached;
 
+  const requestedAt = Date.now();
   const authorization = await authorizeApiKey(env, key);
   if ('authorized' in authorization && authorization.authorized) {
-    setIsolateCached(cacheKey, authorization, API_KEY_GRANT_TTL_MS);
+    // Measured from the request, so a slow Convex answer cannot stretch the revocation window.
+    const remainingMs = requestedAt + API_KEY_GRANT_TTL_MS - Date.now();
+    if (remainingMs > 0) setIsolateCached(cacheKey, authorization, remainingMs);
   }
   return authorization;
 }
