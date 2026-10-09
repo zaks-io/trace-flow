@@ -40,6 +40,7 @@ import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { DataModel, Doc, Id } from './_generated/dataModel';
 import { requireEnabledUser } from './auth/users';
+import { getOwnedSandboxRun } from './analystSandboxStore';
 import {
   buildPiSandboxId,
   clampPiRuntimeMs,
@@ -626,8 +627,8 @@ export const getSandboxRun = query({
   args: { runId: v.id('analystSandboxRuns') },
   handler: async (ctx, args) => {
     const user = await requireEnabledUser(ctx);
-    const run = await ctx.db.get(args.runId);
-    if (run?.creatorUserId !== user._id) throw new Error('Pi run not found');
+    const run = await getOwnedSandboxRun(ctx, args.runId, user._id);
+    if (!run) throw new Error('Pi run not found');
     return summarizeSandboxRun(run);
   },
 });
@@ -640,8 +641,8 @@ export const listSandboxRunEvents = query({
   },
   handler: async (ctx, args) => {
     const user = await requireEnabledUser(ctx);
-    const run = await ctx.db.get(args.runId);
-    if (run?.creatorUserId !== user._id) throw new Error('Pi run not found');
+    const run = await getOwnedSandboxRun(ctx, args.runId, user._id);
+    if (!run) throw new Error('Pi run not found');
 
     const limit = Math.min(Math.max(args.limit ?? 100, 1), 200);
     const events = await ctx.db
@@ -668,8 +669,8 @@ export const listSandboxRunRows = query({
   args: { runId: v.id('analystSandboxRuns'), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const user = await requireEnabledUser(ctx);
-    const run = await ctx.db.get(args.runId);
-    if (run?.creatorUserId !== user._id) throw new Error('Pi run not found');
+    const run = await getOwnedSandboxRun(ctx, args.runId, user._id);
+    if (!run) throw new Error('Pi run not found');
 
     const limit = Math.min(Math.max(args.limit ?? 200, 1), 400);
     const events = await ctx.db

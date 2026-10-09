@@ -20,7 +20,13 @@ import {
   sandboxRunDeadlineMs,
   shouldScheduleContinuation,
 } from './analystSandboxPolicy';
-import { internalMutation, internalQuery, type MutationCtx } from './_generated/server';
+import { getActiveOrganizationMembership } from './auth/userHelpers';
+import {
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+  type QueryCtx,
+} from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 
 const MAX_SANDBOX_EVENT_BATCH = 50;
@@ -79,16 +85,25 @@ export const getSandboxRunForAction = internalQuery({
   handler: async (ctx, args) => ctx.db.get(args.runId),
 });
 
+/** A removed member keeps their run IDs, so ownership also requires active membership in the run's org. */
+export async function getOwnedSandboxRun(
+  ctx: QueryCtx,
+  runId: Id<'analystSandboxRuns'>,
+  userId: Id<'users'>,
+): Promise<Doc<'analystSandboxRuns'> | null> {
+  const active = await getActiveOrganizationMembership(ctx, await ctx.db.get(userId));
+  if (!active) return null;
+  const run = await ctx.db.get(runId);
+  if (run?.creatorUserId !== userId || run.orgId !== active.orgId) return null;
+  return run;
+}
+
 export const getOwnedSandboxRunForAction = internalQuery({
   args: {
     runId: v.id('analystSandboxRuns'),
     userId: v.id('users'),
   },
-  handler: async (ctx, args) => {
-    const run = await ctx.db.get(args.runId);
-    if (run?.creatorUserId !== args.userId) return null;
-    return run;
-  },
+  handler: (ctx, args) => getOwnedSandboxRun(ctx, args.runId, args.userId),
 });
 
 export const getActiveSandboxRunsForAction = internalQuery({

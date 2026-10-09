@@ -422,11 +422,11 @@ export const getUser = query({
   handler: async (ctx, args) => {
     const currentUser = await getCurrentEnabledUser(ctx);
     if (!currentUser) throw new Error('Authentication required');
+    // A stale users.orgId outlives removal, so only an active member may view the org's users.
+    const active = await getActiveOrganizationMembership(ctx, currentUser);
+    if (!active) return null;
     const target = await ctx.db.get(args.id);
-    if (!target) return null;
-    // Only allow viewing users in the same org. Guard against two org-less users (both orgId
-    // undefined) matching each other, which would leak profile data across the tenant boundary.
-    if (!currentUser.orgId || target.orgId !== currentUser.orgId) return null;
+    if (target?.orgId !== active.orgId) return null;
     return target;
   },
 });
