@@ -44,36 +44,6 @@ const requireMatch = (path, pattern, message) => {
   if (!pattern.test(read(path))) failures.push(`${path}: ${message}`);
 };
 
-const baselineCopies = readdirSync('copies').filter((name) =>
-  name.endsWith('_versions_baseline.pipe'),
-);
-if (baselineCopies.length !== canonical.size)
-  failures.push(`expected ${canonical.size} baseline copies, found ${baselineCopies.length}`);
-for (const name of baselineCopies) {
-  requireMatch(
-    `copies/${name}`,
-    /toUInt64\(1\) AS DeliverySequence/,
-    'baseline sequence must be explicitly reserved at 1',
-  );
-  requireMatch(
-    `copies/${name}`,
-    /SHA256\(/,
-    'baseline rows need a deterministic typed-row content hash',
-  );
-  requireMatch(
-    `copies/${name}`,
-    /WHERE OrgId = \{\{ String\(org_id\) \}\}/,
-    'baseline must be scoped to one verified organization',
-  );
-  requireMatch(
-    `copies/${name}`,
-    /\{\{ UInt64\(copy_attempt\) \}\} >= 1/,
-    'baseline must retain its durable Copy attempt in job metadata',
-  );
-  if (/LIMIT 1 BY/.test(read(`copies/${name}`)))
-    failures.push(`copies/${name}: baseline must not hide duplicate source identities`);
-}
-
 for (const [name, [pk, time]] of canonical) {
   const path = `datasources/${name}.datasource`;
   for (const column of ['DeliverySequence', 'ContentHash', 'IsDeleted']) {

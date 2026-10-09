@@ -11,7 +11,7 @@ DESCRIPTION >
         model call, so they are excluded here. Counting them as 'direct' forced every
         session's token_coverage to 'missing' (a user turn has no tokens, so it reads as
         missing source data) and inflated message_count past the billable-message total.
-      - Include source-reported subagent/result usage (agent_tool_event_facts
+      - Include source-reported subagent/result usage (agent_tool_event_fact_versions
         extracted_subagent_*) ONLY when no matching nested/sidechain Agent Message
         exists for the same (source, session_pk, subagent agent id). The fallback row
         carries tokens but cost_usd is null (the consumer prices messages, not tool

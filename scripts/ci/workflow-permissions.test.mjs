@@ -507,10 +507,10 @@ describe('credentialed CI checks', () => {
       ci.jobs.changes.steps.find((step) => step.id === 'filter').with.filters,
     );
     for (const path of [
-      'copies/repair_agent_messages_versions_baseline.pipe',
-      'fixtures/agent_message_facts.ndjson',
+      'copies/repair_agent_usage_daily_snapshots.pipe',
+      'fixtures/agent_message_fact_versions.ndjson',
       'scripts/ci/tinybird-local-fixture-tests.py',
-      'scripts/ci/tinybird_baseline_version_fixtures.py',
+      'scripts/ci/tinybird-cleanup-approval.mjs',
     ]) {
       expect(filters.tinybird.some((pattern) => new Glob(pattern).match(path))).toBe(true);
     }
@@ -541,12 +541,11 @@ describe('credentialed CI checks', () => {
 });
 
 describe('production Worker secret boundary', () => {
-  test('pins both deployed and legacy Tinybird inventories for the cloud expand check', () => {
+  test('cloud check validates the approved retirement directly', () => {
     const cloudCheck = ci.jobs['tinybird-schema-check'].steps.find(
       (step) => step.name === 'Tinybird deploy --check (trace_flow_prod)',
     );
-    expect(cloudCheck.env.TINYBIRD_CURRENT_REF).toBe('HEAD^');
-    expect(cloudCheck.env.TINYBIRD_LEGACY_REF).toBe('11613a4619444adb0e27abc3df958cebb43cc280');
+    expect(cloudCheck.env.TINYBIRD_CLEANUP_APPROVED).toBe('trace_flow_prod_20261009');
   });
 
   test.each(['Deploy Raw API Worker', 'Deploy Pipes API Worker'])(
@@ -578,45 +577,21 @@ describe('production Worker secret boundary', () => {
     expect(checkedJobs).toBeGreaterThan(0);
   });
 
-  test('deploys the consumer before switching endpoints and starting ingest', () => {
-    const currentRefJob = deploy.jobs['agent-delivery-current-ref'];
-    const release = deploy.jobs['agent-delivery-current-ref'].steps.find(
-      (step) => step.name === 'Resolve current deployed ref',
+  test('deploys the schema before consumers and verifies live resources before ingest', () => {
+    const schema = deploy.jobs['deploy-tinybird-schema'];
+    expect(deploy.jobs['deploy-convex'].needs).toEqual(['ci']);
+    expect(schema.needs).toEqual(['ci', 'deploy-convex']);
+    expect(schema.permissions.deployments).toBe('write');
+    const apply = schema.steps.find((step) => step.name === 'Deploy schema in trace_flow_prod');
+    expect(apply.env.TINYBIRD_CLEANUP_APPROVED).toBe(
+      "${{ inputs.tinybird_cleanup_approval || 'trace_flow_prod_20261009' }}",
     );
-    expect(currentRefJob.environment).toBe('Production');
-    expect(currentRefJob.permissions).toEqual({ contents: 'read', deployments: 'read' });
-    expect(release.env).not.toHaveProperty('BEFORE_SHA');
-    expect(release.run).toContain('resolve-agent-tinybird-current-ref.mjs');
-    expect(release.env.GITHUB_TOKEN).toBe('${{ github.token }}');
-    expect(release.env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_OPERATOR_TOKEN }}');
-    expect(release.env.TB_TARGET_WORKSPACE).toBe('trace_flow_prod');
-    const expand = deploy.jobs['deploy-tinybird-schema'].steps.find(
-      (step) => step.name === 'Expand schema in trace_flow_prod',
-    );
-    expect(expand.env.TINYBIRD_DEPLOY_PHASE).toBe('expand');
-    expect(expand.env.TINYBIRD_CURRENT_REF).toBe(
-      '${{ needs.agent-delivery-current-ref.outputs.current_ref }}',
-    );
-    expect(expand.env.TINYBIRD_LEGACY_REF).toBe('11613a4619444adb0e27abc3df958cebb43cc280');
-    expect(expand.env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_DEPLOY_TOKEN }}');
-    const switchJob = deploy.jobs['switch-agent-tinybird'];
-    expect(switchJob.needs).toEqual(['ci', 'deploy-agent-consumer']);
-    expect(switchJob).not.toHaveProperty('if');
-    expect(switchJob.permissions.deployments).toBe('write');
-    const marker = switchJob.steps.find(
-      (step) => step.name === 'Record deployed Agent Tinybird ref',
-    );
-    const switchProof = switchJob.steps.find(
-      (step) => step.name === 'Verify switched endpoint definitions',
-    );
-    const switchDeploy = switchJob.steps.find((step) => step.name === 'Switch endpoints');
-    expect(switchDeploy.env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_DEPLOY_TOKEN }}');
-    expect(switchProof.env.REQUESTED_CURRENT_REF).toBe('${{ github.sha }}');
-    expect(switchProof.env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_OPERATOR_TOKEN }}');
-    expect(switchProof.env.TB_TARGET_WORKSPACE).toBe('trace_flow_prod');
-    expect(switchProof.run).toContain('resolve-agent-tinybird-current-ref.mjs');
-    expect(marker.with.script).toContain("task: 'deploy-agent-tinybird'");
-    expect(marker.with.script).toContain("state: 'success'");
+    expect(apply.env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_DEPLOY_TOKEN }}');
+    const verification = deploy.jobs['switch-agent-tinybird'];
+    expect(verification.needs).toEqual(['ci', 'deploy-agent-consumer']);
+    const proof = verification.steps.find((step) => step.name === 'Verify live Tinybird resources');
+    expect(proof.run).toContain('verify-tinybird-resources.mjs');
+    expect(proof.env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_OPERATOR_TOKEN }}');
     expect(deploy.jobs['deploy-agent-ingest'].needs).toContain('switch-agent-tinybird');
     expect(deploy.jobs['deploy-agent-ingest']).not.toHaveProperty('if');
   });

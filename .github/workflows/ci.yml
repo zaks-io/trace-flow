@@ -152,7 +152,6 @@ jobs:
               - 'scripts/ci/configure-agent-tinybird-tokens*'
               - 'scripts/ci/configure-proxy-tinybird-token*'
               - 'scripts/ci/provision-agent-delivery*'
-              - 'scripts/ci/resolve-agent-tinybird-current-ref*'
               - 'scripts/ci/workflow-permissions.test.mjs'
               - 'scripts/ci/ubuntu_https_sources.py'
               - 'scripts/ci/ubuntu_https_sources_test.py'
@@ -166,9 +165,9 @@ jobs:
               - 'tests/**'
               - 'tinybird.config.json'
               - 'scripts/ci/*tinybird-local-fixture-tests*'
-              - 'scripts/ci/tinybird_baseline_version_fixtures.py'
+              - 'scripts/ci/tinybird-*'
+              - 'scripts/ci/verify-tinybird-resources*'
               - 'scripts/ci/deploy-agent-tinybird-tree.test.sh'
-              - 'scripts/ci/overlay-agent-message-parent-columns*'
               - 'scripts/deploy-agent-tinybird.sh'
               - 'scripts/tinybird-agent-signal-performance-report.sh'
               - 'scripts/verify-agent-signal-query-guardrails.mjs'
@@ -195,7 +194,9 @@ jobs:
           bun test \
             scripts/ci/configure-agent-tinybird-tokens.test.mjs \
             scripts/ci/provision-agent-delivery.test.mjs \
-            scripts/ci/resolve-agent-tinybird-current-ref.test.mjs \
+            scripts/ci/tinybird-cleanup-approval.test.mjs \
+            scripts/ci/tinybird-cleanup-receipt.test.mjs \
+            scripts/ci/verify-tinybird-resources.test.mjs \
             scripts/ci/workflow-permissions.test.mjs
           node --test scripts/ci/configure-proxy-tinybird-token.test.mjs
           python3 scripts/ci/ubuntu_https_sources_test.py
@@ -212,6 +213,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' || needs.changes.outputs.tinybird == 'true' || needs.changes.outputs.root == 'true'
     permissions:
       contents: read
+      deployments: read
     services:
       tinybird-local:
         image: tinybirdco/tinybird-local:latest
@@ -242,19 +244,12 @@ jobs:
         run: |
           bash scripts/verify-tinybird-cost-contract.sh
           node scripts/verify-agent-signal-query-guardrails.mjs
-          bun test scripts/ci/overlay-agent-message-parent-columns.test.mjs
-          TB_TARGET_WORKSPACE=trace_flow_prod \
-            TINYBIRD_DEPLOY_PHASE=expand \
-            TINYBIRD_CURRENT_REF=HEAD^ \
-            TINYBIRD_VALIDATE_DEPLOY_TREE_ONLY=1 \
-          bash scripts/deploy-agent-tinybird.sh
           tb --local build
           bash scripts/ci/run-tinybird-local-fixture-tests.sh
         env:
           TB_VERSION_WARNING: 0
 
-      # Cloud dry-run diff against trace_flow_prod in the non-destructive expand phase. It restores
-      # legacy resources and the exact endpoint definitions from the explicit current ref.
+      # Cloud validation lists the approved retirement drop inventory without applying it.
       - name: Tinybird deploy --check (trace_flow_prod)
         # Keep local schema validation available to contributors without cloud secrets.
         if: >-
@@ -267,9 +262,8 @@ jobs:
           ./scripts/deploy-agent-tinybird.sh --check
         env:
           TB_TARGET_WORKSPACE: trace_flow_prod
-          TINYBIRD_DEPLOY_PHASE: expand
-          TINYBIRD_CURRENT_REF: HEAD^
-          TINYBIRD_LEGACY_REF: 11613a4619444adb0e27abc3df958cebb43cc280
+          GITHUB_TOKEN: ${{ github.token }}
+          TINYBIRD_CLEANUP_APPROVED: trace_flow_prod_20261009
           TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
           TB_VERSION_WARNING: 0

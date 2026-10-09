@@ -1,6 +1,6 @@
 DESCRIPTION >
     How per-turn cost and context behave as a conversation gets deeper. Reads billable
-    (assistant) turns from agent_message_facts, groups them by turn_index (the stored,
+    (assistant) turns from agent_message_fact_versions, groups them by turn_index (the stored,
     0-indexed chronological position of a turn within its conversation), and at each depth
     reports the median plus a p25–p75 band and a p95 envelope of (a) per-turn cost and
     (b) per-turn context size (input + cache read + cache write). This is a population view:

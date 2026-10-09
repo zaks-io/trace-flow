@@ -15,17 +15,6 @@ const SNAPSHOT_DATASOURCES = [
 ];
 
 export const AGENT_APPEND_DATASOURCES = [
-  'agent_messages',
-  'agent_tool_events',
-  'agent_file_events',
-  'agent_capability_snapshots',
-  'agent_pull_request_links',
-  'agent_message_facts',
-  'agent_tool_event_facts',
-  'agent_file_event_facts',
-  'agent_capability_snapshot_facts',
-  'agent_pull_request_facts',
-  'agent_review_unit_attributions',
   'agent_message_fact_versions',
   'agent_tool_event_fact_versions',
   'agent_file_event_fact_versions',
@@ -38,11 +27,7 @@ export const AGENT_TINYBIRD_TOKENS = [
   {
     name: 'trace_flow_agent_delivery_read',
     variable: 'TINYBIRD_AGENT_DELIVERY_READ_TOKEN',
-    scopes: [
-      'PIPES:READ:agent_delivery_receipt',
-      'PIPES:READ:agent_fact_identity_day',
-      'PIPES:READ:agent_fact_identity_day_batch',
-    ],
+    scopes: ['PIPES:READ:agent_delivery_receipt', 'PIPES:READ:agent_fact_identity_day_batch'],
   },
   {
     name: 'trace_flow_agent_snapshot_worker',

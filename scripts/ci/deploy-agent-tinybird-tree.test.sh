@@ -1,192 +1,75 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CURRENT_REF="844d8f0313af18ac73ad60bdbe7f81dc3d8f019d"
-FAILED_CURRENT_REF="c5aaa06a8c1cb88cc5345edcbbd3e7f57b61c136"
-LEGACY_REF="11613a4619444adb0e27abc3df958cebb43cc280"
-TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/trace-flow-deploy-tree-test.XXXXXX")"
+TEST_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEST_DIR"' EXIT
-
-cat > "$TEST_DIR/tb" <<'EOF'
+cat > "$TEST_DIR/tb" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
-
-if [[ "$*" != "--cloud deploy --check" ]]; then
-  echo "Unexpected fake tb invocation: $*" >&2
-  exit 1
-fi
-
-assert_ref_file() {
-  local ref="$1"
-  local path="$2"
-  cmp -s <(git -C "$TEST_ROOT" show "$ref:$path") "$PWD/$path" || {
-    echo "Generated tree did not preserve $path from $ref" >&2
-    exit 1
-  }
-}
-
-assert_ref_file_with_token() {
-  local ref="$1"
-  local path="$2"
-  local directive="$3"
-  [[ "$(grep -Fxc "$directive" "$PWD/$path")" == "1" ]] || {
-    echo "Generated tree did not declare '$directive' exactly once in $path" >&2
-    exit 1
-  }
-  if git -C "$TEST_ROOT" show "$ref:$path" | grep -Fxq "$directive"; then
-    assert_ref_file "$ref" "$path"
-    return
-  fi
-  cmp -s <(git -C "$TEST_ROOT" show "$ref:$path") <(grep -Fvx "$directive" "$PWD/$path") || {
-    echo "Generated tree changed preserved schema while adding a token to $path" >&2
-    exit 1
-  }
-}
-
-assert_repo_file() {
-  local path="$1"
-  cmp -s "$TEST_ROOT/$path" "$PWD/$path" || {
-    echo "Generated tree did not preserve repo definition $path" >&2
-    exit 1
-  }
-}
-
-assert_ref_file_with_token \
-  "$LEGACY_REF" \
-  datasources/agent_messages.datasource \
-  "TOKEN trace_flow_agent_facts_append APPEND"
-assert_ref_file "$LEGACY_REF" datasources/otel_traces.datasource
-assert_ref_file "$LEGACY_REF" pipes/llm_requests_mv.pipe
-[[ ! -e pipes/agent_sessions_copy.pipe ]] || {
-  echo "Generated tree retained a scheduled legacy Copy pipe" >&2
-  exit 1
-}
-
-if [[ "$TEST_PHASE" == "expand" ]]; then
-  filter_options=datasources/trace_filter_options.datasource
-  if git -C "$TEST_ROOT" cat-file -e "$CURRENT_REF:$filter_options" 2>/dev/null; then
-    [[ "$(grep -c '^FORWARD_QUERY' "$PWD/$filter_options")" == "1" ]]
-    if git -C "$TEST_ROOT" show "$CURRENT_REF:$filter_options" | grep -q '^FORWARD_QUERY'; then
-      assert_ref_file "$CURRENT_REF" "$filter_options"
-    else
-      cmp -s <(git -C "$TEST_ROOT" show "$CURRENT_REF:$filter_options"; printf '\nFORWARD_QUERY >\n    SELECT *\n') "$PWD/$filter_options" || {
-        echo "Generated tree changed historical filter schema while adding its identity forward query" >&2
-        exit 1
-      }
-    fi
-  else
-    assert_repo_file "$filter_options"
-  fi
-  assert_ref_file "$CURRENT_REF" pipes/agent_usage_summary.pipe
-  assert_repo_file datasources/agent_message_facts.datasource
-  assert_repo_file datasources/agent_message_fact_versions.datasource
-  assert_repo_file copies/repair_agent_messages_versions_baseline.pipe
-  assert_repo_file pipes/agent_session_identity.pipe
-  if git -C "$TEST_ROOT" cat-file -e "$CURRENT_REF:pipes/agent_delivery_receipt.pipe" 2>/dev/null; then
-    assert_ref_file_with_token \
-      "$CURRENT_REF" \
-      pipes/agent_delivery_receipt.pipe \
-      "TOKEN trace_flow_agent_delivery_read READ"
-    assert_ref_file_with_token \
-      "$CURRENT_REF" \
-      datasources/agent_snapshot_manifest.datasource \
-      "TOKEN trace_flow_agent_snapshot_worker APPEND"
-  else
-    assert_repo_file pipes/agent_delivery_receipt.pipe
-    assert_repo_file datasources/agent_snapshot_manifest.datasource
-  fi
+if [[ "$*" == "--cloud --output json deploy --check --allow-destructive-operations" ]]; then
+  printf '%s\n' "$TEST_RESULT"
+elif [[ "$*" == "--cloud deploy --allow-destructive-operations" ]]; then
+  [[ "$EXPECT_DESTRUCTIVE" == "1" ]]
+  if [[ "$EXPECT_DESTRUCTIVE" == "1" && "$TINYBIRD_CLEANUP_APPROVED" == "trace_flow_prod_20261009" ]]; then test -f "$TEST_MARKER.receipt"; fi
+  touch "$TEST_MARKER"
+elif [[ "$*" == "--cloud deploy" ]]; then
+  [[ "$EXPECT_DESTRUCTIVE" == "0" ]]
+  if [[ "$EXPECT_DESTRUCTIVE" == "1" && "$TINYBIRD_CLEANUP_APPROVED" == "trace_flow_prod_20261009" ]]; then test -f "$TEST_MARKER.receipt"; fi
+  touch "$TEST_MARKER"
 else
-  assert_repo_file pipes/agent_usage_summary.pipe
-  assert_repo_file datasources/agent_message_facts.datasource
-  assert_repo_file datasources/agent_message_fact_versions.datasource
-fi
-
-assert_repo_file pipes/agent_delivery_receipt.pipe
-assert_repo_file copies/repair_agent_repositories_snapshots.pipe
-node "$TEST_ROOT/scripts/ci/configure-agent-tinybird-tokens-datafiles.mjs" \
-  --validate-datafiles "$PWD" >/dev/null
-
-touch "$TEST_MARKER"
-EOF
-chmod +x "$TEST_DIR/tb"
-
-run_phase() {
-  local phase="$1"
-  local current_ref="${2:-$CURRENT_REF}"
-  local marker="$TEST_DIR/${3:-$phase}.passed"
-  PATH="$TEST_DIR:$PATH" \
-    TEST_ROOT="$ROOT_DIR" \
-    TEST_PHASE="$phase" \
-    TEST_MARKER="$marker" \
-    CURRENT_REF="$current_ref" \
-    LEGACY_REF="$LEGACY_REF" \
-    TB_TOKEN=test-only \
-    TB_SKIP_BUILD=1 \
-    TB_TARGET_WORKSPACE=trace_flow_prod \
-    TINYBIRD_DEPLOY_PHASE="$phase" \
-    TINYBIRD_CURRENT_REF="$current_ref" \
-    TINYBIRD_LEGACY_REF="$LEGACY_REF" \
-    bash "$ROOT_DIR/scripts/deploy-agent-tinybird.sh" --check >/dev/null
-  [[ -f "$marker" ]] || {
-    echo "Fake Tinybird check did not inspect the $phase tree" >&2
-    exit 1
-  }
-}
-
-cd "$ROOT_DIR"
-
-set +e
-incomplete_output="$(
-  TB_TARGET_WORKSPACE=trace_flow_prod \
-    TINYBIRD_DEPLOY_PHASE=expand \
-    TINYBIRD_CURRENT_REF="$CURRENT_REF" \
-    TINYBIRD_LEGACY_REF="$CURRENT_REF" \
-    TINYBIRD_VALIDATE_DEPLOY_TREE_ONLY=1 \
-    bash "$ROOT_DIR/scripts/deploy-agent-tinybird.sh" 2>&1
-)"
-incomplete_exit_code=$?
-set -e
-if [[ "$incomplete_exit_code" -eq 0 || "$incomplete_output" != *"does not contain required legacy Tinybird files"* ]]; then
-  echo "Incomplete legacy inventory was not rejected" >&2
+  echo "Unexpected tb call: $*" >&2
   exit 1
 fi
-
-run_expand_ref() {
-  local ref="$1"
-  local marker="$2"
-  local path
-  for path in datasources/agent_message_facts.datasource datasources/agent_message_fact_versions.datasource; do
-    if git cat-file -e "$ref:$path" 2>/dev/null &&
-      git show "$ref:$path" | grep -q 'parent_vendor_session_id' &&
-      ! cmp -s <(git show "$ref:$path") "$ROOT_DIR/$path"; then
-      local output
-      if output="$(
-        TB_TOKEN=test-only \
-          TB_SKIP_BUILD=1 \
-          TB_TARGET_WORKSPACE=trace_flow_prod \
-          TINYBIRD_DEPLOY_PHASE=expand \
-          TINYBIRD_CURRENT_REF="$ref" \
-          TINYBIRD_LEGACY_REF="$LEGACY_REF" \
-          bash "$ROOT_DIR/scripts/deploy-agent-tinybird.sh" --check 2>&1
-      )"; then
-        echo "Changed parent-bearing current datasource was accepted for $ref" >&2
-        exit 1
-      fi
-      [[ "$output" == *"current schema already has parent columns but differs from repo"* ]] || {
-        echo "Unexpected parent-bearing datasource rejection for $ref" >&2
-        exit 1
-      }
-      return
-    fi
-  done
-  run_phase expand "$ref" "$marker"
+FAKE
+chmod +x "$TEST_DIR/tb"
+REAL_NODE="$(command -v node)"
+export REAL_NODE
+cat > "$TEST_DIR/node" <<'FAKE_NODE'
+#!/usr/bin/env bash
+if [[ "$1" == */tinybird-cleanup-receipt.mjs ]]; then
+  if [[ "$2" == consume ]]; then
+    [[ "${TEST_RECEIPT_FAIL:-0}" == "0" ]] || exit 1
+    touch "$TEST_MARKER.receipt"
+    echo 42
+  fi
+  if [[ "$2" == check ]]; then printf '%s\n' "${TEST_CONSUMED:-false}"; fi
+else
+  exec "$REAL_NODE" "$@"
+fi
+FAKE_NODE
+chmod +x "$TEST_DIR/node"
+cd "$ROOT_DIR"
+run_deploy() {
+  PATH="$TEST_DIR:$PATH" TB_TARGET_WORKSPACE=trace_flow_prod TB_SKIP_BUILD=1 \
+    TEST_MARKER="$TEST_DIR/applied" TEST_RESULT="$1" EXPECT_DESTRUCTIVE="$2" \
+    TINYBIRD_CLEANUP_APPROVED="$3" bash scripts/deploy-agent-tinybird.sh >/dev/null 2>&1
 }
+initial='{"deleted_datasource_names":["agent_messages"],"deleted_pipe_names":[],"deleted_data_connector_names":[]}'
+clean='{"deleted_datasource_names":[],"deleted_pipe_names":[],"deleted_data_connector_names":[]}'
+later='{"deleted_datasource_names":["agent_message_fact_versions"],"deleted_pipe_names":[],"deleted_data_connector_names":[]}'
+run_deploy "$initial" 1 trace_flow_prod_20261009
+test -f "$TEST_DIR/applied"
+rm "$TEST_DIR/applied"
+run_deploy "$clean" 0 trace_flow_prod_20261009
+test -f "$TEST_DIR/applied"
+rm "$TEST_DIR/applied"
+if run_deploy "$later" 1 trace_flow_prod_20261009; then
+  echo 'Reused approval allowed a later destructive deploy' >&2; exit 1
+fi
+test ! -f "$TEST_DIR/applied"
+if run_deploy "$initial" 1 ''; then
+  echo 'Unapproved destructive deploy was allowed' >&2; exit 1
+fi
+test ! -f "$TEST_DIR/applied"
+echo 'Tinybird direct deploy and approval gates passed'
 
-run_phase expand
-run_phase expand "$FAILED_CURRENT_REF" expand-failed-current-ref
-run_expand_ref HEAD^ expand-head-parent
-run_phase switch
-run_expand_ref HEAD expand-with-declared-tokens
+rm -f "$TEST_DIR/applied"
+if TEST_CONSUMED=true run_deploy "$initial" 1 trace_flow_prod_20261009; then
+  echo 'Consumed approval was reused for a restored retired resource' >&2; exit 1
+fi
+test ! -f "$TEST_DIR/applied"
 
-echo "Tinybird deploy tree preservation passed (844, c5, guarded HEAD^, HEAD, and switch)"
+if TEST_RECEIPT_FAIL=1 run_deploy "$initial" 1 trace_flow_prod_20261009; then
+  echo 'Cleanup applied without durable approval consumption' >&2; exit 1
+fi
+test ! -f "$TEST_DIR/applied"

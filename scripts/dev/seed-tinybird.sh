@@ -13,11 +13,11 @@ fi
 
 tinybird_local_running || "$TRACE_FLOW_DEV_DIR/start.sh"
 
-for fixture in fixtures/agent_message_facts.ndjson \
-  fixtures/agent_tool_event_facts.ndjson \
-  fixtures/agent_file_event_facts.ndjson \
-  fixtures/agent_pull_request_facts.ndjson \
-  fixtures/agent_capability_snapshot_facts.ndjson
+for fixture in fixtures/agent_message_fact_versions.ndjson \
+  fixtures/agent_tool_event_fact_versions.ndjson \
+  fixtures/agent_file_event_fact_versions.ndjson \
+  fixtures/agent_pull_request_fact_versions.ndjson \
+  fixtures/agent_capability_snapshot_fact_versions.ndjson
 do
   if [[ -f "$fixture" ]]; then
     datasource="$(basename "$fixture" .ndjson)"

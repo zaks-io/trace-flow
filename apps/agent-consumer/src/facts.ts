@@ -1,11 +1,11 @@
-/** Base fact category to Tinybird datasource. Order is the insert order. */
+/** Canonical fact categories in delivery insert order. */
 export const DATASOURCES = {
-  messages: 'agent_message_facts',
-  tool_events: 'agent_tool_event_facts',
-  file_events: 'agent_file_event_facts',
-  capability_snapshots: 'agent_capability_snapshot_facts',
-  pull_request_links: 'agent_pull_request_facts',
-  review_unit_attributions: 'agent_review_unit_attributions',
+  messages: 'agent_message_fact_versions',
+  tool_events: 'agent_tool_event_fact_versions',
+  file_events: 'agent_file_event_fact_versions',
+  capability_snapshots: 'agent_capability_snapshot_fact_versions',
+  pull_request_links: 'agent_pull_request_fact_versions',
+  review_unit_attributions: 'agent_review_unit_attribution_versions',
 } as const;
 
 export type Category = keyof typeof DATASOURCES;
