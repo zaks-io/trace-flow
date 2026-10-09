@@ -40,7 +40,12 @@ import {
 } from '@trace-flow/otel-conventions';
 import { getPricing, TYPESAFE_JEV_PRICING, type ModelPricing } from '@trace-flow/pricing';
 import { fetchOpenRouterPricing } from './openrouter-pricing';
-import { forEachConcurrently, STORAGE_CONCURRENCY } from './concurrency';
+import {
+  ByteBudget,
+  ENVELOPE_BYTES_IN_FLIGHT,
+  forEachConcurrently,
+  STORAGE_CONCURRENCY,
+} from './concurrency';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type {
   ReconcileRecoveryInput,
@@ -218,6 +223,7 @@ async function resolveQueueItem(
   body: QueueMessageUnion,
   queueMessageId: string,
   env: Env,
+  reserve?: (bytes: number) => Promise<void>,
 ): Promise<ResolvedQueueItem | null> {
   if (!isTraceDeliveryMessage(body)) {
     return {
@@ -226,7 +232,7 @@ async function resolveQueueItem(
     };
   }
 
-  const envelope = await loadTraceDelivery(env.STORAGE, body.key);
+  const envelope = await loadTraceDelivery(env.STORAGE, body.key, reserve);
   if (!envelope) return null;
   return {
     payload: envelope.message,
@@ -450,12 +456,14 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
   try {
     // Resolve per envelope rather than pre-loading a batch to regroup by its stored context.
     // Each envelope continues its own trace, so resolving several at once keeps them separate.
+    const envelopeBytes = new ByteBudget(ENVELOPE_BYTES_IN_FLIGHT);
     await forEachConcurrently(
       batch.messages.filter((item) => isTraceDeliveryMessage(item.body)),
       STORAGE_CONCURRENCY,
       async (message) => {
+        const lease = envelopeBytes.lease();
         try {
-          const resolved = await resolveQueueItem(message.body, message.id, env);
+          const resolved = await resolveQueueItem(message.body, message.id, env, lease.reserve);
           if (!resolved) {
             message.ack();
             return;
@@ -478,6 +486,8 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
             extra: { messageId: message.id },
           });
           failedMessages.push(message);
+        } finally {
+          lease.release();
         }
       },
     );
