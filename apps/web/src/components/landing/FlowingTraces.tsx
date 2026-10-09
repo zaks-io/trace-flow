@@ -8,19 +8,19 @@ export function FlowingTraces() {
     >
       <defs>
         <linearGradient id="traceGradient1" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor="oklch(0.65 0.2 262)" stopOpacity="0" />
-          <stop offset="50%" stopColor="oklch(0.65 0.2 262)" stopOpacity="0.4" />
-          <stop offset="100%" stopColor="oklch(0.65 0.2 262)" stopOpacity="0" />
+          <stop offset="0%" stopColor="oklch(0.65 0.2 35)" stopOpacity="0" />
+          <stop offset="50%" stopColor="oklch(0.65 0.2 35)" stopOpacity="0.4" />
+          <stop offset="100%" stopColor="oklch(0.65 0.2 35)" stopOpacity="0" />
         </linearGradient>
         <linearGradient id="traceGradient2" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor="oklch(0.7 0.18 165)" stopOpacity="0" />
-          <stop offset="50%" stopColor="oklch(0.7 0.18 165)" stopOpacity="0.3" />
-          <stop offset="100%" stopColor="oklch(0.7 0.18 165)" stopOpacity="0" />
+          <stop offset="0%" stopColor="oklch(0.7 0.12 50)" stopOpacity="0" />
+          <stop offset="50%" stopColor="oklch(0.7 0.12 50)" stopOpacity="0.3" />
+          <stop offset="100%" stopColor="oklch(0.7 0.12 50)" stopOpacity="0" />
         </linearGradient>
         <linearGradient id="traceGradient3" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor="oklch(0.65 0.2 310)" stopOpacity="0" />
-          <stop offset="50%" stopColor="oklch(0.65 0.2 310)" stopOpacity="0.25" />
-          <stop offset="100%" stopColor="oklch(0.65 0.2 310)" stopOpacity="0" />
+          <stop offset="0%" stopColor="oklch(0.6 0.16 25)" stopOpacity="0" />
+          <stop offset="50%" stopColor="oklch(0.6 0.16 25)" stopOpacity="0.25" />
+          <stop offset="100%" stopColor="oklch(0.6 0.16 25)" stopOpacity="0" />
         </linearGradient>
       </defs>
 
@@ -59,7 +59,7 @@ export function FlowingTraces() {
         cx="400"
         cy="250"
         r="3"
-        fill="oklch(0.65 0.2 262)"
+        fill="oklch(0.65 0.2 35)"
         opacity="0.3"
         className="animate-pulse-slow"
       />
@@ -67,7 +67,7 @@ export function FlowingTraces() {
         cx="800"
         cy="200"
         r="2"
-        fill="oklch(0.7 0.18 165)"
+        fill="oklch(0.7 0.12 50)"
         opacity="0.25"
         className="animate-pulse-slow delay-1s"
       />
@@ -75,7 +75,7 @@ export function FlowingTraces() {
         cx="500"
         cy="450"
         r="2.5"
-        fill="oklch(0.7 0.18 165)"
+        fill="oklch(0.7 0.12 50)"
         opacity="0.3"
         className="animate-pulse-slow delay-2s"
       />
@@ -83,7 +83,7 @@ export function FlowingTraces() {
         cx="850"
         cy="520"
         r="3"
-        fill="oklch(0.65 0.2 310)"
+        fill="oklch(0.6 0.16 25)"
         opacity="0.25"
         className="animate-pulse-slow delay-3s"
       />

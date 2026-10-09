@@ -1,12 +1,10 @@
 import { redirect } from 'next/navigation';
 import { getSession } from '@/lib/auth0';
 import { HeroSection } from '@/components/landing/HeroSection';
-import { CodeExample } from '@/components/landing/CodeExample';
 import { ProductShowcase } from '@/components/landing/ProductShowcase';
-import { HowItWorks } from '@/components/landing/HowItWorks';
+import { SetupSection } from '@/components/landing/SetupSection';
+import { PrivacySection } from '@/components/landing/PrivacySection';
 import { FooterCTA } from '@/components/landing/FooterCTA';
-import { AIHistory } from '@/components/landing/AIHistory';
-import { DesktopCapture } from '@/components/landing/DesktopCapture';
 import { HomePageProvider } from '@/components/landing/HomePageProvider';
 
 export default async function HomePage() {
@@ -22,10 +20,8 @@ export default async function HomePage() {
       <main>
         <HeroSection isWaitlistMode={isWaitlistMode} />
         <ProductShowcase />
-        <HowItWorks />
-        <DesktopCapture />
-        <CodeExample />
-        <AIHistory />
+        <SetupSection />
+        <PrivacySection />
         <FooterCTA isWaitlistMode={isWaitlistMode} />
       </main>
     </HomePageProvider>

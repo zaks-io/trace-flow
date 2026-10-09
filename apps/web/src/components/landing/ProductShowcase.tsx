@@ -1,3 +1,5 @@
+import { Check, Route, SquareTerminal } from 'lucide-react';
+
 const REQUEST_ROWS = [
   {
     provider: 'Anthropic',
@@ -11,86 +13,69 @@ const REQUEST_ROWS = [
   { provider: 'OpenRouter', model: 'qwen3-coder', tokens: '31.8k', latency: '6.2s', cost: '$0.09' },
 ] as const;
 
+const PROVIDER_DOT_COLORS = ['bg-chart-1', 'bg-chart-4', 'bg-chart-3', 'bg-chart-5'] as const;
+
 export function ProductShowcase() {
   return (
     <section id="product" className="relative border-y border-border/70 bg-card/20 py-24 sm:py-32">
       <div className="mx-auto max-w-7xl px-5 sm:px-8">
-        <div className="mb-16 max-w-3xl">
-          <div className="mb-4 font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-primary">
-            What you can use today
-          </div>
+        <div className="mb-14 max-w-3xl">
           <h2 className="text-balance text-3xl font-semibold tracking-[-0.035em] text-foreground sm:text-5xl">
-            Understand where your time and tokens go.
+            Two sources of spend. One account.
           </h2>
-          <p className="mt-6 max-w-2xl text-lg leading-8 text-muted-foreground">
-            Compare model costs and response times. See which coding sessions accumulate context or
-            run into tool failures. Use the dashboard and analytics tools to investigate what
-            changed.
+          <p className="mt-5 max-w-2xl text-lg leading-8 text-muted-foreground">
+            Use either path or both. Each one records estimated cost, tokens, and failures you can
+            filter by model and source.
           </p>
         </div>
 
         <div className="grid gap-5 lg:grid-cols-12">
           <article className="rounded-xl border border-primary/25 bg-primary/4 p-6 sm:p-8 lg:col-span-5">
-            <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-primary">
-              Coding-agent analytics
-            </div>
-            <h3 className="mt-3 text-xl font-semibold tracking-tight sm:text-2xl">
-              Find the sessions worth investigating
+            <SourceHeading
+              icon={<SquareTerminal className="size-4" strokeWidth={1.75} />}
+              label="Coding agents"
+              badge="Alpha"
+            />
+            <h3 className="mt-4 text-xl font-semibold tracking-tight sm:text-2xl">
+              Find the sessions worth a closer look
             </h3>
-            <p className="mt-4 text-sm leading-6 text-muted-foreground">
-              The desktop app captures analytics from Claude Code and Codex CLI, plus Cursor on
-              macOS. Sessions are parsed locally, with redacted excerpts for investigation. Full
-              conversation archiving is in development.
+            <p className="mt-3 text-sm leading-6 text-muted-foreground">
+              The desktop app reads Claude Code and Codex CLI history, plus Cursor on macOS. It
+              parses sessions on your machine and uploads analytics, not transcripts.
             </p>
-            <div className="mt-8 space-y-5">
+            <ul className="mt-8 space-y-5">
               <Capability
                 label="Cost and context by conversation depth"
                 detail="See how context and estimated cost grow through a session."
               />
               <Capability
-                label="Tool reliability and notable changes"
-                detail="Compare failure rates and shifts by source, model, or repository."
+                label="Tool reliability"
+                detail="Compare failure rates by source, model, or repository."
               />
               <Capability
                 label="Review and file attention"
-                detail="Connect agent spend to the code and review units it touched."
+                detail="Connect agent spend to the code and reviews it touched."
               />
-            </div>
-            <div className="mt-8 rounded-lg border border-primary/20 bg-background/55 p-4">
-              <div className="flex items-center gap-3">
-                <span className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/10 text-primary">
-                  <CollectorIcon />
-                </span>
-                <div>
-                  <div className="text-xs font-medium">Desktop app</div>
-                  <div className="mt-1 text-[10px] text-muted-foreground">
-                    macOS and Windows. Cursor capture on macOS.
-                  </div>
-                </div>
-              </div>
-            </div>
+            </ul>
           </article>
 
           <article className="overflow-hidden rounded-xl border border-border bg-background lg:col-span-7">
-            <div className="border-b border-border p-6 sm:p-8">
-              <div className="mb-5 flex items-center justify-between gap-4">
-                <div>
-                  <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-primary">
-                    LLM requests
-                  </div>
-                  <h3 className="mt-2 text-xl font-semibold tracking-tight sm:text-2xl">
-                    Track spending and performance over time
-                  </h3>
-                </div>
-              </div>
-              <p className="max-w-xl text-sm leading-6 text-muted-foreground">
-                Capture estimated costs, token usage, latency, and errors as model responses stream.
-                Compare usage over time and inspect captured requests when something goes wrong.
+            <div className="p-6 sm:p-8">
+              <SourceHeading
+                icon={<Route className="size-4" strokeWidth={1.75} />}
+                label="API calls"
+              />
+              <h3 className="mt-4 text-xl font-semibold tracking-tight sm:text-2xl">
+                Every model request, priced
+              </h3>
+              <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
+                Route your SDK through the Trace Flow gateway. Responses keep streaming while each
+                request records cost, tokens, latency, and errors.
               </p>
             </div>
-            <div className="p-3 sm:p-5">
+            <div className="px-3 pb-3 sm:px-5 sm:pb-5">
               <div className="overflow-hidden rounded-lg border border-border bg-card/45">
-                <div className="grid grid-cols-[1fr_0.65fr_0.65fr] border-b border-border px-3 py-2 font-mono text-[8px] uppercase tracking-[0.12em] text-muted-foreground sm:grid-cols-[0.8fr_1.35fr_0.55fr_0.55fr_0.5fr]">
+                <div className="grid grid-cols-[1fr_0.7fr_0.6fr] border-b border-border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground sm:grid-cols-[0.8fr_1.35fr_0.55fr_0.55fr_0.5fr]">
                   <span>Provider</span>
                   <span className="hidden sm:block">Model</span>
                   <span>Tokens</span>
@@ -100,11 +85,12 @@ export function ProductShowcase() {
                 {REQUEST_ROWS.map((row, index) => (
                   <div
                     key={row.model}
-                    className={`grid grid-cols-[1fr_0.65fr_0.65fr] items-center px-3 py-3 text-[10px] sm:grid-cols-[0.8fr_1.35fr_0.55fr_0.55fr_0.5fr] ${index < REQUEST_ROWS.length - 1 ? 'border-b border-border/60' : ''}`}
+                    className="grid grid-cols-[1fr_0.7fr_0.6fr] items-center border-border/60 px-3 py-3 text-xs not-last:border-b sm:grid-cols-[0.8fr_1.35fr_0.55fr_0.55fr_0.5fr]"
                   >
                     <span className="flex items-center gap-2">
                       <span
-                        className={`h-1.5 w-1.5 rounded-full ${['bg-chart-1', 'bg-chart-4', 'bg-chart-3', 'bg-chart-5'][index]}`}
+                        className={`h-1.5 w-1.5 rounded-full ${PROVIDER_DOT_COLORS[index]}`}
+                        aria-hidden="true"
                       />
                       <span className="text-foreground">{row.provider}</span>
                     </span>
@@ -119,9 +105,7 @@ export function ProductShowcase() {
                   </div>
                 ))}
               </div>
-              <div className="mt-3 font-mono text-[9px] text-muted-foreground">
-                Illustrative request data
-              </div>
+              <p className="mt-3 text-xs text-muted-foreground">Illustrative request data</p>
             </div>
           </article>
         </div>
@@ -130,43 +114,40 @@ export function ProductShowcase() {
   );
 }
 
-function Capability({ label, detail }: { label: string; detail: string }) {
+function SourceHeading({
+  icon,
+  label,
+  badge,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  badge?: string;
+}) {
   return (
-    <div className="flex gap-3">
-      <span className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-primary/30 text-primary">
-        <CheckIcon />
+    <div className="flex items-center gap-2.5 text-sm font-medium text-foreground">
+      <span className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/10 text-primary">
+        {icon}
       </span>
-      <div>
-        <div className="text-sm font-medium text-foreground">{label}</div>
-        <div className="mt-1 text-xs leading-5 text-muted-foreground">{detail}</div>
-      </div>
+      {label}
+      {badge && (
+        <span className="rounded-full border border-primary/30 px-2 py-0.5 text-[11px] font-medium text-primary">
+          {badge}
+        </span>
+      )}
     </div>
   );
 }
 
-function CheckIcon() {
+function Capability({ label, detail }: { label: string; detail: string }) {
   return (
-    <svg viewBox="0 0 20 20" fill="none" className="h-3 w-3" aria-hidden="true">
-      <path
-        d="m5 10 3 3 7-7"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-function CollectorIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
-      <path
-        d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <li className="flex gap-3">
+      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-primary/30 text-primary">
+        <Check className="size-3" strokeWidth={2} aria-hidden="true" />
+      </span>
+      <div>
+        <div className="text-sm font-medium text-foreground">{label}</div>
+        <div className="mt-1 text-sm leading-6 text-muted-foreground">{detail}</div>
+      </div>
+    </li>
   );
 }

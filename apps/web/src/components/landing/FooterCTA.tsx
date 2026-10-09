@@ -8,23 +8,16 @@ interface FooterCTAProps {
 
 export function FooterCTA({ isWaitlistMode }: FooterCTAProps) {
   return (
-    <footer className="relative bg-card/30 py-24">
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-border to-transparent" />
-
+    <footer className="relative bg-background py-24 sm:py-32">
       <div className="mx-auto max-w-2xl px-6 text-center">
-        <div className="mb-5 font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-primary">
-          Private alpha
-        </div>
-        <h2 className="mb-5 text-3xl font-semibold tracking-[-0.035em] text-foreground sm:text-5xl">
-          Start keeping your AI history.
-          <span className="block text-primary">Put it to work.</span>
+        <h2 className="text-balance text-3xl font-semibold tracking-[-0.035em] text-foreground sm:text-5xl">
+          See where your LLM spend goes.
         </h2>
-        <p className="mx-auto mb-8 max-w-lg text-base leading-7 text-muted-foreground">
-          Join the private alpha to track costs and performance across your model calls and coding
-          sessions. Help shape what we capture and how you learn from it.
+        <p className="mx-auto mt-5 max-w-lg text-base leading-7 text-muted-foreground">
+          Start on the free Hobby plan with 7 days of request history. Upgrade when you need more.
         </p>
 
-        <div className="mb-14">
+        <div className="mt-8 mb-14 flex justify-center">
           <SignupButton isWaitlistMode={isWaitlistMode} />
         </div>
 
@@ -39,18 +32,16 @@ export function FooterCTA({ isWaitlistMode }: FooterCTAProps) {
             />
           </p>
 
-          <div className="flex gap-4 text-xs text-muted-foreground/50">
+          <div className="flex gap-6 text-xs text-muted-foreground">
             <a
               href="https://github.com/zaks-io/trace-flow"
               className="transition-colors hover:text-foreground"
             >
               GitHub
             </a>
-            <span>&middot;</span>
             <Link href="/terms" className="transition-colors hover:text-foreground">
               Terms
             </Link>
-            <span>&middot;</span>
             <Link href="/privacy" className="transition-colors hover:text-foreground">
               Privacy
             </Link>

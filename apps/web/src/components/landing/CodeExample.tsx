@@ -236,52 +236,37 @@ function CodeBlock({
 }
 
 export function CodeExample() {
-  const [activeProvider, setActiveProvider] = useState(0);
-  const provider = PROVIDERS[activeProvider];
+  const [activeProvider, setActiveProvider] = useState(PROVIDERS[0].name);
+  const provider = PROVIDERS.find((p) => p.name === activeProvider) ?? PROVIDERS[0];
 
   return (
-    <section className="relative bg-card/30 py-24">
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-border to-transparent" />
-      <div className="mx-auto max-w-5xl px-6">
-        <div className="mb-12 text-center">
-          <div className="mb-4 font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-primary">
-            API capture
-          </div>
-          <h2 className="mb-3 text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
-            Keep your SDK. Change the route.
-          </h2>
-          <p className="text-lg text-muted-foreground">
-            The proxy path starts with a base URL and one Trace Flow header.
-          </p>
-        </div>
-
-        {/* Provider tabs */}
-        <div className="mb-6 flex flex-wrap items-center justify-center gap-1.5">
-          {PROVIDERS.map((p, i) => (
-            <button
-              key={p.name}
-              onClick={() => setActiveProvider(i)}
-              className={`rounded-full px-4 py-1.5 font-mono text-xs transition-all ${
-                i === activeProvider
-                  ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              {p.name}
-            </button>
-          ))}
-        </div>
-
-        <div className="grid gap-6 md:grid-cols-2">
-          <CodeBlock label="Before">
-            <HighlightedCode code={provider.before} />
-          </CodeBlock>
-          <CodeBlock label="After" highlighted>
-            <HighlightedCode code={provider.after} highlightLines={provider.highlightLines} />
-          </CodeBlock>
-        </div>
+    <div>
+      <div role="group" aria-label="Provider" className="mb-6 flex flex-wrap items-center gap-1.5">
+        {PROVIDERS.map((p) => (
+          <button
+            key={p.name}
+            type="button"
+            aria-pressed={p.name === activeProvider}
+            onClick={() => setActiveProvider(p.name)}
+            className={`rounded-full px-4 py-1.5 font-mono text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+              p.name === activeProvider
+                ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {p.name}
+          </button>
+        ))}
       </div>
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-linear-to-r from-transparent via-border to-transparent" />
-    </section>
+
+      <div className="grid gap-6 md:grid-cols-2">
+        <CodeBlock label="Before">
+          <HighlightedCode code={provider.before} />
+        </CodeBlock>
+        <CodeBlock label="After" highlighted>
+          <HighlightedCode code={provider.after} highlightLines={provider.highlightLines} />
+        </CodeBlock>
+      </div>
+    </div>
   );
 }

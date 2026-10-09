@@ -19,7 +19,7 @@ export function HeroSection({ isWaitlistMode }: HeroSectionProps) {
 
       <div className="relative z-10 mx-auto max-w-7xl px-5 sm:px-8">
         <nav
-          className="mb-20 flex items-center justify-between sm:mb-24"
+          className="mb-14 flex items-center justify-between sm:mb-16"
           aria-label="Main navigation"
         >
           <Link href="/" className="flex items-center gap-3 font-mono text-sm font-semibold">
@@ -52,25 +52,24 @@ export function HeroSection({ isWaitlistMode }: HeroSectionProps) {
           </div>
         </nav>
 
-        <div className="mx-auto mb-14 max-w-4xl text-center sm:mb-16">
-          <h1 className="delay-150 animate-hero-fade text-balance text-4xl font-semibold tracking-[-0.045em] text-foreground sm:text-6xl lg:text-7xl">
-            See what your AI work costs.
-            <span className="block text-primary">Find what needs a closer look.</span>
+        <div className="mb-12 max-w-3xl sm:mb-14">
+          <h1 className="delay-150 animate-hero-fade text-balance text-4xl font-semibold tracking-[-0.045em] text-foreground sm:text-5xl lg:text-6xl">
+            Track your LLM costs.
+            <span className="block text-primary">Coding agents and API calls.</span>
           </h1>
 
-          <p className="delay-300 animate-hero-fade mx-auto mt-7 max-w-2xl text-balance text-lg leading-8 text-muted-foreground sm:text-xl">
-            Track estimated spending, growing context, and tool failures across coding sessions.
-            Capture analytics with the desktop app, or connect your SDK to track model-call costs
-            and performance. Compare the data over time in your dashboard.
+          <p className="delay-300 animate-hero-fade mt-6 max-w-xl text-pretty text-lg leading-8 text-muted-foreground">
+            See estimated spend, tokens, and failures from Claude Code, Codex, and Cursor sessions
+            alongside your SDK requests.
           </p>
 
-          <div className="delay-450 animate-hero-fade mt-9 flex flex-col items-center gap-4">
+          <div className="delay-450 animate-hero-fade mt-8 flex flex-wrap items-center gap-x-6 gap-y-4">
             <SignupButton isWaitlistMode={isWaitlistMode} />
             <Link
-              href="#product"
+              href="#setup"
               className="text-sm font-medium text-muted-foreground underline decoration-border underline-offset-4 transition-colors hover:text-foreground hover:decoration-primary"
             >
-              See what you can track
+              See how setup works
             </Link>
           </div>
         </div>

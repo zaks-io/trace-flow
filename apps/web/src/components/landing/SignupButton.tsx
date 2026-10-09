@@ -11,7 +11,7 @@ interface SignupButtonProps {
 export function SignupButton({ isWaitlistMode }: SignupButtonProps) {
   if (isWaitlistMode) {
     return (
-      <div className="flex flex-col items-center gap-3">
+      <div className="flex flex-col items-start gap-3">
         <p className="text-sm text-muted-foreground">
           A small group of teams is testing Trace Flow now.
         </p>
@@ -21,14 +21,11 @@ export function SignupButton({ isWaitlistMode }: SignupButtonProps) {
   }
 
   return (
-    <div className="flex flex-col items-center gap-3">
-      <p className="text-sm text-muted-foreground">Already invited to the private alpha?</p>
-      <a
-        href="/auth/login"
-        className="glow-primary inline-flex h-11 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-primary px-8 text-sm font-medium text-primary-foreground ring-offset-background transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-      >
-        Open your dashboard
-      </a>
-    </div>
+    <a
+      href="/auth/login?screen_hint=signup"
+      className="inline-flex h-11 items-center justify-center whitespace-nowrap rounded-md bg-primary px-7 text-sm font-medium text-primary-foreground ring-offset-background transition-[background-color,transform] hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:translate-y-px"
+    >
+      Start free
+    </a>
   );
 }
