@@ -5,7 +5,7 @@ import { useSmoothText } from '@convex-dev/agent/react';
 import { CircleAlert, FileText, LinkIcon } from 'lucide-react';
 import type { AnalystMessage } from './analystMessageModel';
 import { AnalystMarkdown } from './analystMarkdown';
-import { StructuredValue } from './StructuredValue';
+import { StructuredValueBlock } from './StructuredValueBlock';
 import { AnalystMessageToolPart } from './AnalystMessageToolPart';
 
 export type AnalystMessagePart = AnalystMessage['parts'][number];
@@ -122,7 +122,7 @@ function DataPart({ part }: { part: AnalystDataPart }) {
         <CircleAlert className="h-3 w-3" />
         {part.type.replace(/^data-/, '') || 'Data'}
       </div>
-      <StructuredValue value={part.data} />
+      <StructuredValueBlock value={part.data} />
     </div>
   );
 }

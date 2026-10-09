@@ -5,7 +5,7 @@ import type { DynamicToolUIPart, ToolUIPart } from 'ai';
 import { AlertCircle, Brain, CheckCircle2, ChevronRight, Loader2, Wrench } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { AnalystMessagePart } from './AnalystMessagePartView';
-import { StructuredValue } from './StructuredValue';
+import { StructuredValueBlock } from './StructuredValueBlock';
 
 export function AnalystMessageToolPart({ part }: { part: AnalystMessagePart }) {
   const reasoning = part.type === 'reasoning' ? part : null;
@@ -82,8 +82,8 @@ export function AnalystMessageToolPart({ part }: { part: AnalystMessagePart }) {
                     {errorText}
                   </div>
                 )}
-                {input !== undefined && <StructuredValue label="Input" value={input} />}
-                {output !== undefined && <StructuredValue label="Output" value={output} />}
+                {input !== undefined && <StructuredValueBlock label="Input" value={input} />}
+                {output !== undefined && <StructuredValueBlock label="Output" value={output} />}
               </div>
             )}
           </div>

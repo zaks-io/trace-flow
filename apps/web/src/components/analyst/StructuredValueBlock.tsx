@@ -1,6 +1,6 @@
 import { formatStructuredValue } from './structuredValue';
 
-export function StructuredValue({ label, value }: { label?: string; value: unknown }) {
+export function StructuredValueBlock({ label, value }: { label?: string; value: unknown }) {
   const rendered = formatStructuredValue(value);
   if (!rendered) return null;
 
