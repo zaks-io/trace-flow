@@ -52,15 +52,31 @@ pub async fn assemble_sync_unit_with_lineage(
     cache: &GitRemoteCache,
     lineage: Option<&CodexLineage>,
 ) -> std::io::Result<SyncUnit> {
+    let snapshot = read_transcript_file(file)?;
+    assemble_snapshot(file, source, cache, snapshot, lineage).await
+}
+
+/// Read and parse `file`, bounded to its discovered size. Separate from [`assemble_snapshot`] so an
+/// embedder can report [`TranscriptSnapshot::skipped_lines`] even when assembly then fails.
+pub fn read_transcript_file(file: &DiscoveredFile) -> std::io::Result<TranscriptSnapshot> {
     let input = std::fs::File::open(&file.path)?;
     // Bound this pass to the discovered snapshot. A concurrent append belongs to the next pass.
-    let snapshot =
-        read_transcript_snapshot(BufReader::new(input.take(file.size_bytes)), file.size_bytes)?;
+    read_transcript_snapshot(BufReader::new(input.take(file.size_bytes)), file.size_bytes)
+}
+
+/// Assemble the [`SyncUnit`] for `file` from a snapshot [`read_transcript_file`] returned.
+pub async fn assemble_snapshot(
+    file: &DiscoveredFile,
+    source: AgentSource,
+    cache: &GitRemoteCache,
+    snapshot: TranscriptSnapshot,
+    lineage: Option<&CodexLineage>,
+) -> std::io::Result<SyncUnit> {
     assemble_records(
         file,
         source,
         cache,
-        snapshot.records,
+        snapshot.parsed.records,
         snapshot.content_hash_head,
         lineage,
     )
@@ -95,7 +111,7 @@ pub async fn assemble_sync_unit_from_bytes(
         file,
         source,
         cache,
-        snapshot.records,
+        snapshot.parsed.records,
         snapshot.content_hash_head,
         None,
     )
@@ -190,27 +206,56 @@ async fn assemble_records(
     })
 }
 
-/// Parse a transcript's text into one [`Value`] per JSONL line. Blank lines are ignored and a line that
-/// fails to parse is skipped rather than failing the whole file, so one corrupt record can't strand the
-/// rest of a session. This drops no data the cursor then hides: the whole file is re-parsed every scan
-/// (the cursor advances only on a successful POST), so a line that becomes valid later is picked up then.
-pub fn read_transcript(text: &str) -> Vec<Value> {
-    text.lines()
-        .filter(|line| !line.trim().is_empty())
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect()
+/// A transcript's parsed JSONL records and how many lines were skipped as malformed.
+#[derive(Debug, Default)]
+pub struct TranscriptRecords {
+    pub records: Vec<Value>,
+    /// Non-blank lines that were not valid JSON. A count only, so format drift that drops data is
+    /// visible in sync reports without the skipped content ever leaving the parser.
+    pub skipped_lines: u32,
 }
 
-struct TranscriptSnapshot {
-    records: Vec<Value>,
+impl TranscriptRecords {
+    fn push_line(&mut self, line: &str) {
+        if line.trim().is_empty() {
+            return;
+        }
+        match serde_json::from_str(line) {
+            Ok(record) => self.records.push(record),
+            Err(_) => self.skipped_lines = self.skipped_lines.saturating_add(1),
+        }
+    }
+}
+
+/// Parse a transcript's text into one [`Value`] per JSONL line. Blank lines are ignored and a line that
+/// fails to parse is skipped (and counted) rather than failing the whole file, so one corrupt record
+/// can't strand the rest of a session. This drops no data the cursor then hides: the whole file is
+/// re-parsed every scan (the cursor advances only on a successful POST), so a line that becomes valid
+/// later is picked up then.
+pub fn read_transcript(text: &str) -> TranscriptRecords {
+    let mut parsed = TranscriptRecords::default();
+    text.lines().for_each(|line| parsed.push_line(line));
+    parsed
+}
+
+/// One transcript read at its discovered size: the parsed records plus the head hash its cursor keeps.
+pub struct TranscriptSnapshot {
+    parsed: TranscriptRecords,
     content_hash_head: String,
+}
+
+impl TranscriptSnapshot {
+    /// Lines skipped as malformed; see [`TranscriptRecords::skipped_lines`].
+    pub fn skipped_lines(&self) -> u32 {
+        self.parsed.skipped_lines
+    }
 }
 
 fn read_transcript_snapshot(
     mut reader: impl BufRead,
     expected_bytes: u64,
 ) -> std::io::Result<TranscriptSnapshot> {
-    let mut records = Vec::new();
+    let mut parsed = TranscriptRecords::default();
     let mut line = String::new();
     let mut bytes_read = 0u64;
     let mut head = String::new();
@@ -228,11 +273,7 @@ fn read_transcript_snapshot(
                 head_chars += 1;
             }
         }
-        if !line.trim().is_empty() {
-            if let Ok(record) = serde_json::from_str(&line) {
-                records.push(record);
-            }
-        }
+        parsed.push_line(&line);
         line.clear();
     }
     if bytes_read != expected_bytes {
@@ -244,7 +285,7 @@ fn read_transcript_snapshot(
         ));
     }
     Ok(TranscriptSnapshot {
-        records,
+        parsed,
         content_hash_head: head_hash(&head),
     })
 }
@@ -330,19 +371,21 @@ mod tests {
     }
 
     #[test]
-    fn read_transcript_skips_blank_lines() {
+    fn read_transcript_skips_blank_lines_without_counting_them() {
         let text = "{\"a\":1}\n\n   \n{\"b\":2}\n";
-        let records = read_transcript(text);
-        assert_eq!(records.len(), 2);
+        let parsed = read_transcript(text);
+        assert_eq!(parsed.records.len(), 2);
+        assert_eq!(parsed.skipped_lines, 0);
     }
 
     #[test]
-    fn read_transcript_skips_a_malformed_line_but_keeps_the_good_ones() {
-        let text = "{\"a\":1}\nnot json at all\n{\"b\":2}\n";
-        let records = read_transcript(text);
-        assert_eq!(records.len(), 2);
-        assert_eq!(records[0]["a"], json!(1));
-        assert_eq!(records[1]["b"], json!(2));
+    fn read_transcript_skips_malformed_lines_counts_them_and_keeps_the_good_ones() {
+        let text = "{\"a\":1}\nnot json at all\n{\"b\":2}\n{\"truncated\":\n";
+        let parsed = read_transcript(text);
+        assert_eq!(parsed.records.len(), 2);
+        assert_eq!(parsed.records[0]["a"], json!(1));
+        assert_eq!(parsed.records[1]["b"], json!(2));
+        assert_eq!(parsed.skipped_lines, 2);
     }
 
     #[test]
@@ -573,6 +616,7 @@ mod tests {
                 .unwrap();
 
         assert_eq!(streamed.records, from_bytes.records);
+        assert_eq!(read_transcript_file(&file).unwrap().skipped_lines(), 1);
         assert_eq!(streamed.ctx, from_bytes.ctx);
         assert_eq!(streamed.next_cursor, from_bytes.next_cursor);
         let UnitCursor::File(cursor) = streamed.next_cursor else {

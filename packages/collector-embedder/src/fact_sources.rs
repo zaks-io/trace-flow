@@ -3,8 +3,9 @@ use std::path::PathBuf;
 
 use collector_contracts::AgentSource;
 use collector_sync::{
-    assemble_sync_unit_with_lineage, select_changed, walk_transcripts, CodexLineage, CursorStore,
-    CursorStoreError, DiscoveredFile, GitRemoteCache, ImportWindow, SyncUnit, DISCOVERY_INCOMPLETE,
+    assemble_snapshot, read_transcript_file, select_changed, walk_transcripts, CodexLineage,
+    CursorStore, CursorStoreError, DiscoveredFile, GitRemoteCache, ImportWindow, SyncUnit,
+    DISCOVERY_INCOMPLETE,
 };
 
 use crate::sync::SourceReport;
@@ -85,9 +86,18 @@ impl FactSources {
         }
         let mut units = Vec::with_capacity(files.len());
         for file in files {
-            match assemble_sync_unit_with_lineage(&file, self.source, cache, self.lineage.as_ref())
-                .await
-            {
+            let assembled = match read_transcript_file(&file) {
+                // Counted before assembly so a file that then fails still reports its skipped lines.
+                Ok(snapshot) => {
+                    report.skipped_lines = report
+                        .skipped_lines
+                        .saturating_add(snapshot.skipped_lines());
+                    assemble_snapshot(&file, self.source, cache, snapshot, self.lineage.as_ref())
+                        .await
+                }
+                Err(error) => Err(error),
+            };
+            match assembled {
                 Ok(unit) => {
                     *files_read += 1;
                     units.push(unit);
@@ -399,6 +409,9 @@ mod tests {
                 "payload": { "id": "child", "parent_thread_id": "missing" }
             }),
         );
+        let mut body = std::fs::read_to_string(&child).unwrap();
+        body.push_str("not json\n{\"cut\":\n");
+        std::fs::write(&child, body).unwrap();
         let store = CursorStore::open_in_memory("org").unwrap();
         let mut report = SourceReport::default();
         let mut sources = FactSources::discover(
@@ -419,6 +432,10 @@ mod tests {
             .unwrap();
         assert!(units.is_empty());
         assert_eq!(report.failed, 1);
+        assert_eq!(
+            report.skipped_lines, 2,
+            "a failed assembly still reports its skipped lines"
+        );
         assert!(report
             .first_error
             .as_deref()

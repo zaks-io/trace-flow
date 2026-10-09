@@ -161,6 +161,11 @@ async fn a_400_naming_its_session_retries_the_rest_together_and_the_bad_unit_alo
     assert_eq!(report.advanced, 9);
     assert_eq!(report.failed, 0);
     assert_eq!(report.quarantined, vec!["/p7.jsonl".to_string()]);
+    // The quarantine sets no `first_error`, so the cause is how the report explains it.
+    assert!(report.first_error.is_none());
+    let cause = report.invalid_envelope.expect("a 400 records its cause");
+    assert_eq!(cause.reason.as_deref(), Some("fact_identity_conflict"));
+    assert_eq!(cause.category.as_deref(), Some("messages"));
 }
 
 #[tokio::test]

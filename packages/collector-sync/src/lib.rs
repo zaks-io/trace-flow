@@ -45,8 +45,9 @@ mod quarantine;
 pub mod sync_cycle;
 
 pub use assemble_units::{
-    assemble_sync_unit, assemble_sync_unit_from_bytes, assemble_sync_unit_with_lineage,
-    build_session_context, read_transcript,
+    assemble_snapshot, assemble_sync_unit, assemble_sync_unit_from_bytes,
+    assemble_sync_unit_with_lineage, build_session_context, read_transcript, read_transcript_file,
+    TranscriptRecords, TranscriptSnapshot,
 };
 pub use claude_session::{
     agent_depth_from_transcript_path, claude_session_fields, ClaudeSessionFields,
