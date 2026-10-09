@@ -23,7 +23,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use collector_api_client::{CollectorApiClient, IngestError, IngestResult};
+use collector_api_client::{CollectorApiClient, IngestError, IngestResult, InvalidEnvelopeCause};
 use collector_contracts::{AgentIngestEnvelope, AgentSource};
 use collector_parser::session_context::SessionContext;
 use serde_json::Value;
@@ -91,6 +91,8 @@ pub struct SyncUnit {
     /// The source-shaped watermark *after* this batch — committed only on `Ok`. A file's
     /// mtime/offset/head-hash for JSONL sources, a composer's bubble-count/newest-timestamp for Cursor.
     pub next_cursor: UnitCursor,
+    /// Transcript lines dropped as malformed while reading this unit. Always 0 for Cursor composers.
+    pub skipped_lines: u32,
 }
 
 /// The outcome of one [`run_sync_cycle`].
@@ -118,6 +120,9 @@ pub struct CycleReport {
     pub throttled: bool,
     /// The server's requested `Retry-After` for that back-off, when it sent one.
     pub retry_after: Option<Duration>,
+    /// Reason and category codes of the cycle's first `400 invalid_envelope`, whether its unit was
+    /// later quarantined or left failed. Codes only, never session ids or transcript text.
+    pub invalid_envelope: Option<InvalidEnvelopeCause>,
 }
 
 /// A unit rejected without evidence that the rejection is about the unit; see
@@ -318,6 +323,9 @@ async fn drain<C: IngestClient>(
                 report.advanced += batch.units.len() as u32;
             }
             Err(IngestError::InvalidEnvelope(detail)) => {
+                report
+                    .invalid_envelope
+                    .get_or_insert_with(|| detail.cause());
                 let named = |index: &usize| {
                     detail
                         .vendor_session_ids
@@ -477,6 +485,7 @@ mod tests {
                 byte_offset: 10,
                 content_hash_head: "h".to_string(),
             }),
+            skipped_lines: 0,
         }
     }
 
@@ -512,6 +521,7 @@ mod tests {
                 byte_offset: 10,
                 content_hash_head: "h".to_string(),
             }),
+            skipped_lines: 0,
         }
     }
 
@@ -567,6 +577,7 @@ mod tests {
                 max_created_at: 1_700_000_000_000,
                 content_hash: Some("sha256:composer".to_string()),
             }),
+            skipped_lines: 0,
         }
     }
 

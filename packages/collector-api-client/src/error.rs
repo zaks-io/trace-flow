@@ -2,6 +2,7 @@
 // Vendored and refactored from otto-api-client/src/lib.rs (~/src/otto, 2026-05-25).
 // Trace Flow owns the contract, IDs, pricing, redaction, and storage around this code.
 
+use std::fmt;
 use std::time::Duration;
 
 use thiserror::Error;
@@ -17,11 +18,66 @@ pub struct UpgradeRequiredDetail {
 /// What a `400 invalid_envelope` body says about the rejection. Older ingest Workers send only
 /// `{error}`, so every field is optional; a `fact_identity_conflict` names the vendor sessions whose
 /// facts conflicted, which lets the sync loop isolate the bad unit without bisecting the batch.
+/// `reason` and `category` hold only code-like tokens; the client drops any other text the server
+/// sends there, so they are safe to show in sync reports.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct InvalidEnvelopeDetail {
     pub reason: Option<String>,
     pub category: Option<String>,
     pub vendor_session_ids: Vec<String>,
+}
+
+impl InvalidEnvelopeDetail {
+    /// The report-safe part of the rejection: its reason and category codes, without session ids.
+    pub fn cause(&self) -> InvalidEnvelopeCause {
+        InvalidEnvelopeCause {
+            reason: self.reason.clone(),
+            category: self.category.clone(),
+        }
+    }
+}
+
+/// Why ingest rejected an envelope, as the enum-like codes a sync report shows.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InvalidEnvelopeCause {
+    pub reason: Option<String>,
+    pub category: Option<String>,
+}
+
+impl InvalidEnvelopeCause {
+    pub fn is_empty(&self) -> bool {
+        self.reason.is_none() && self.category.is_none()
+    }
+}
+
+impl fmt::Display for InvalidEnvelopeCause {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (&self.reason, &self.category) {
+            (None, None) => f.write_str("no reason given"),
+            (Some(reason), None) => write!(f, "reason={reason}"),
+            (None, Some(category)) => write!(f, "category={category}"),
+            (Some(reason), Some(category)) => write!(f, "reason={reason} category={category}"),
+        }
+    }
+}
+
+/// Accept a server-supplied reason or category only when it looks like a code (`snake_case`, short),
+/// so a misbehaving Worker cannot route transcript text or paths into a report.
+pub(crate) fn code_token(value: Option<String>) -> Option<String> {
+    value.filter(|v| {
+        (1..=64).contains(&v.len())
+            && v.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    })
+}
+
+fn invalid_envelope_suffix(detail: &InvalidEnvelopeDetail) -> String {
+    let cause = detail.cause();
+    if cause.is_empty() {
+        String::new()
+    } else {
+        format!(" ({cause})")
+    }
 }
 
 /// Every distinct terminal outcome from `POST /v1/ingest`.
@@ -40,7 +96,7 @@ pub enum IngestError {
     PayloadTooLarge,
 
     /// `400` — envelope failed structural validation or carried conflicting fact identities.
-    #[error("invalid envelope")]
+    #[error("invalid envelope{}", invalid_envelope_suffix(.0))]
     InvalidEnvelope(InvalidEnvelopeDetail),
 
     /// `426` — client or parser is below the policy minimum version.

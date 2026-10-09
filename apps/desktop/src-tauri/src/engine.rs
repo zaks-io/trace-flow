@@ -423,6 +423,24 @@ fn run_cycle_blocking(
                         "session quarantined: ingest rejected it; retried when it changes"
                     );
                 }
+                // The tray's recent-errors list shows only the message, so the counts and codes are
+                // in it as well as in the structured fields.
+                if let Some(cause) = &report.invalid_envelope {
+                    tracing::warn!(
+                        source = ?source,
+                        reason = cause.reason.as_deref().unwrap_or(""),
+                        category = cause.category.as_deref().unwrap_or(""),
+                        "{source:?}: ingest rejected an envelope: {cause}"
+                    );
+                }
+                if report.skipped_lines > 0 {
+                    tracing::warn!(
+                        source = ?source,
+                        skipped_lines = report.skipped_lines,
+                        "{source:?}: skipped {} malformed transcript line(s)",
+                        report.skipped_lines
+                    );
+                }
             }
             CycleOutcome {
                 advanced,

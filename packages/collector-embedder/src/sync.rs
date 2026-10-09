@@ -24,6 +24,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+pub use collector_api_client::InvalidEnvelopeCause;
 use collector_api_client::{CollectorApiClient, CollectorApiClientConfig};
 use collector_contracts::AgentSource;
 use collector_sync::{
@@ -87,6 +88,12 @@ pub struct SourceReport {
     pub throttled: bool,
     /// The Worker's `Retry-After` for that wait, when it sent one.
     pub retry_after: Option<Duration>,
+    /// Transcript lines skipped as malformed in the files read this pass. They do not fail the pass;
+    /// a nonzero count flags format drift that would otherwise drop data silently.
+    pub skipped_lines: u32,
+    /// Reason and category codes of the pass's first `400 invalid_envelope`, including rejections
+    /// that ended in quarantine. Codes only.
+    pub invalid_envelope: Option<InvalidEnvelopeCause>,
 }
 
 impl SourceReport {
@@ -320,6 +327,9 @@ async fn apply_fact_cycle(
     report.skipped_quarantined += cycle.skipped_quarantined;
     report.throttled |= cycle.throttled;
     report.retry_after = report.retry_after.max(cycle.retry_after);
+    if report.invalid_envelope.is_none() {
+        report.invalid_envelope = cycle.invalid_envelope;
+    }
     unconfirmed.extend(cycle.unconfirmed);
     if let Some(err) = &cycle.first_error {
         // The IngestError Display is a stable error class (e.g. "unauthorized", "upgrade required"),
@@ -726,6 +736,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn malformed_transcript_lines_are_counted_without_failing_the_pass() {
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        let claude_dir = home.path().join(".claude").join("projects").join("p1");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        let mut body = b"not json\n".to_vec();
+        body.extend_from_slice(CLAUDE);
+        body.extend_from_slice(b"\n{\"uuid\":\"cut-off\n");
+        std::fs::write(claude_dir.join("claude-session-001.jsonl"), body).unwrap();
+        let ingest_url = spawn_http(|_raw| {
+            raw_response(
+                202,
+                "Accepted",
+                r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#,
+            )
+        })
+        .await;
+        let now = 1_779_840_000_000;
+
+        let outcome = run_fact_sync(home.path(), state.path(), ingest_url, false, now).await;
+
+        let claude = &outcome.reports[0].1;
+        assert_eq!(claude.advanced, 1);
+        assert_eq!(claude.skipped_lines, 2, "blank lines are not counted");
+        assert!(claude.is_complete());
+        assert_eq!(last_complete_sync_at_ms(state.path()), Some(now));
+    }
+
+    #[tokio::test]
+    async fn a_named_400_reports_its_reason_and_category_with_the_quarantine() {
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        let claude_dir = home.path().join(".claude").join("projects").join("p1");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(claude_dir.join("claude-session-001.jsonl"), CLAUDE).unwrap();
+        let ingest_url = spawn_http(|_raw| {
+            raw_response(
+                400,
+                "Bad Request",
+                r#"{"error":"invalid_envelope","reason":"fact_identity_conflict","category":"messages","vendor_session_ids":["claude-session-001"]}"#,
+            )
+        })
+        .await;
+
+        let outcome = run_fact_sync(
+            home.path(),
+            state.path(),
+            ingest_url,
+            false,
+            1_779_840_000_000,
+        )
+        .await;
+
+        let claude = &outcome.reports[0].1;
+        assert_eq!(claude.quarantined, vec!["claude-session-001".to_string()]);
+        assert_eq!(
+            claude.invalid_envelope,
+            Some(InvalidEnvelopeCause {
+                reason: Some("fact_identity_conflict".to_string()),
+                category: Some("messages".to_string()),
+            })
+        );
+    }
+
+    #[tokio::test]
     async fn an_unnamed_400_is_quarantined_when_a_later_batch_of_the_pass_is_accepted() {
         let home = tempfile::TempDir::new().unwrap();
         let state = tempfile::TempDir::new().unwrap();
@@ -797,6 +872,10 @@ mod tests {
         assert_eq!(claude.failed, 1);
         assert!(claude.quarantined.is_empty());
         assert_eq!(claude.first_error.as_deref(), Some("invalid envelope"));
+        assert_eq!(
+            claude.invalid_envelope,
+            Some(InvalidEnvelopeCause::default())
+        );
         assert_eq!(last_complete_sync_at_ms(state.path()), None);
     }
 

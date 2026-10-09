@@ -408,6 +408,7 @@ pub fn assemble_cursor_units(
             records,
             ctx,
             next_cursor: UnitCursor::Composer(next),
+            skipped_lines: 0,
         });
     }
     Ok(units)

@@ -90,6 +90,7 @@ impl FactSources {
             {
                 Ok(unit) => {
                     *files_read += 1;
+                    report.skipped_lines = report.skipped_lines.saturating_add(unit.skipped_lines);
                     units.push(unit);
                 }
                 Err(error) => {

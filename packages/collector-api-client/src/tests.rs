@@ -552,6 +552,25 @@ async fn invalid_envelope_carries_the_conflict_detail() {
             assert_eq!(detail.reason.as_deref(), Some("fact_identity_conflict"));
             assert_eq!(detail.category.as_deref(), Some("messages"));
             assert_eq!(detail.vendor_session_ids, vec!["vsid-bad".to_string()]);
+            assert_eq!(
+                IngestError::InvalidEnvelope(detail).to_string(),
+                "invalid envelope (reason=fact_identity_conflict category=messages)"
+            );
+        }
+        other => panic!("expected InvalidEnvelope, got: {other}"),
+    }
+}
+
+#[tokio::test]
+async fn invalid_envelope_drops_a_reason_that_is_not_a_code() {
+    let body = r#"{"error":"invalid_envelope","reason":"bad line: {\"text\":\"secret\"}","category":"/Users/me/x.jsonl"}"#;
+    match ingest_once(raw_response(400, "Bad Request", body)).await {
+        IngestError::InvalidEnvelope(detail) => {
+            assert_eq!(detail.cause(), Default::default());
+            assert_eq!(
+                IngestError::InvalidEnvelope(detail).to_string(),
+                "invalid envelope"
+            );
         }
         other => panic!("expected InvalidEnvelope, got: {other}"),
     }

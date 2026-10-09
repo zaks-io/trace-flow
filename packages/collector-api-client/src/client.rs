@@ -15,7 +15,7 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{
-    IngestError, IngestOk, IngestResult, InvalidEnvelopeDetail, UpgradeRequiredDetail,
+    code_token, IngestError, IngestOk, IngestResult, InvalidEnvelopeDetail, UpgradeRequiredDetail,
 };
 use crate::retry::{backoff_delay, wait_delay, RetryConfig, DEFAULT_TIMEOUT};
 
@@ -245,8 +245,8 @@ fn classify_response(status: u16, body: &str, retry_after: Option<Duration>) -> 
             reason: parsed.reason.unwrap_or_default(),
         }),
         400 => ResponseClass::Terminal(IngestError::InvalidEnvelope(InvalidEnvelopeDetail {
-            reason: parsed.reason,
-            category: parsed.category,
+            reason: code_token(parsed.reason),
+            category: code_token(parsed.category),
             vendor_session_ids: parsed.vendor_session_ids,
         })),
         413 => ResponseClass::Terminal(IngestError::PayloadTooLarge),
