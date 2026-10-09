@@ -13,9 +13,6 @@ import { cors } from 'hono/cors';
 import { axiomConfigFromEnv, createWorkerLogger, type Logger } from '@trace-flow/logging';
 import {
   JsonRpcErrorCode,
-  SUPPORTED_PROTOCOL_VERSIONS,
-  MCP_SERVER_INFO,
-  MCP_SERVER_CAPABILITIES,
   SERVER_CARD_MEDIA_TYPE,
   SERVER_CARD_PATH,
   buildServerCard,
@@ -23,22 +20,14 @@ import {
   PROTECTED_RESOURCE_METADATA_PATH,
   isRequest,
   isNotification,
-  isInitializeParams,
   createErrorResponse,
-  createSuccessResponse,
-  handleToolsList,
-  dispatchToolCall,
-  type JsonRpcResponse,
+  METHOD_HEADER,
+  NAME_HEADER,
   type JsonRpcMessage,
-  type JsonRpcRequest,
-  type InitializeParams,
-  type InitializeResult,
-  type ToolCallParams,
 } from '@trace-flow/mcp-core';
 import { authenticate } from './authenticate';
-import { mintSessionToken, verifySessionToken } from './sessions';
-import { createWorkerBackend } from './backend';
 import { traceMcpInteraction } from './sentry';
+import { handleRpcRequest, requestEra, type RpcOutcome } from './rpc';
 
 interface Env {
   CONNECT_BASE_URL: string;
@@ -98,6 +87,8 @@ app.use(
       'Authorization',
       'Mcp-Session-Id',
       'Mcp-Protocol-Version',
+      METHOD_HEADER,
+      NAME_HEADER,
       'Baggage',
       'Sentry-Trace',
       'Traceparent',
@@ -378,7 +369,7 @@ app.post('/mcp', async (c) => {
 
   if (isNotification(message)) {
     return traceMcpInteraction(message, c.req.header('Mcp-Session-Id'), undefined, () =>
-      c.body(null, 204),
+      c.body(null, 202),
     );
   }
 
@@ -389,11 +380,22 @@ app.post('/mcp', async (c) => {
     );
   }
 
-  const sessionId = c.req.header('Mcp-Session-Id');
+  const headers = c.req.raw.headers;
+  const era = requestEra(message, headers);
+  // Modern revisions have no sessions: ignore the header rather than validating it.
+  const sessionId = era === 'legacy' ? c.req.header('Mcp-Session-Id') : undefined;
   let status: RpcOutcome['status'] = 200;
   const response = await traceMcpInteraction(message, sessionId, undefined, async () => {
-    const outcome = await handleRequest(c.env, message, sessionId, userId);
+    const outcome = await handleRpcRequest(c.env, message, era, { headers, sessionId, userId });
     status = outcome.status;
+    if (outcome.status !== 200) {
+      c.get('logger').warn('mcp.rpc_rejected', {
+        era,
+        method: message.method,
+        status: outcome.status,
+        code: outcome.response.error?.code,
+      });
+    }
     return outcome.response;
   });
 
@@ -414,121 +416,6 @@ app.delete('/mcp', async (c) => {
   if ('error' in auth) return auth.error;
   return c.body(null, 204);
 });
-
-interface RpcOutcome {
-  response: JsonRpcResponse;
-  status: 200 | 400 | 404;
-}
-
-function ok(response: JsonRpcResponse): RpcOutcome {
-  return { response, status: 200 };
-}
-
-async function handleRequest(
-  env: Env,
-  request: JsonRpcRequest,
-  sessionId: string | undefined,
-  userId: string,
-): Promise<RpcOutcome> {
-  const { method, params, id } = request;
-
-  if (method === 'initialize') {
-    if (!isInitializeParams(params)) {
-      return ok(
-        createErrorResponse(id, JsonRpcErrorCode.InvalidParams, 'Invalid initialize params'),
-      );
-    }
-    return ok(await handleInitialize(env, id, params, userId));
-  }
-
-  if (method === 'ping') {
-    return ok(createSuccessResponse(id, {}));
-  }
-
-  if (!sessionId) {
-    return {
-      response: createErrorResponse(
-        id,
-        JsonRpcErrorCode.InvalidRequest,
-        'Session not initialized. Please send initialize request first.',
-      ),
-      status: 400,
-    };
-  }
-
-  // The spec requires 404 for a terminated session; clients re-initialize only on that
-  // status, so any other code leaves a long-running client stuck once the session expires.
-  const session = await verifySessionToken(sessionId, env.MCP_SESSION_SECRET);
-  if (session?.userId !== userId) {
-    return {
-      response: createErrorResponse(
-        id,
-        JsonRpcErrorCode.InvalidRequest,
-        'Session not found or expired.',
-      ),
-      status: 404,
-    };
-  }
-  Sentry.getActiveSpan()?.setAttribute('mcp.protocol.version', session.protocolVersion);
-
-  if (method === 'tools/list') {
-    return ok(handleToolsList(id));
-  }
-
-  if (method === 'tools/call') {
-    const backend = createWorkerBackend(userId, {
-      connectBaseUrl: env.CONNECT_BASE_URL,
-      sharedSecret: env.MCP_BACKEND_SHARED_SECRET,
-    });
-    return ok(
-      await dispatchToolCall(
-        backend,
-        env.TINYBIRD_API_URL,
-        id,
-        params as ToolCallParams,
-        session.protocolVersion,
-      ),
-    );
-  }
-
-  return ok(
-    createErrorResponse(id, JsonRpcErrorCode.MethodNotFound, `Method not found: ${method}`),
-  );
-}
-
-async function handleInitialize(
-  env: Env,
-  id: string | number,
-  params: InitializeParams,
-  userId: string,
-): Promise<JsonRpcResponse> {
-  const requestedVersion = params.protocolVersion;
-  if (
-    !SUPPORTED_PROTOCOL_VERSIONS.includes(
-      requestedVersion as (typeof SUPPORTED_PROTOCOL_VERSIONS)[number],
-    )
-  ) {
-    return createErrorResponse(
-      id,
-      JsonRpcErrorCode.InvalidParams,
-      `Unsupported protocol version: ${requestedVersion}`,
-      { supported: SUPPORTED_PROTOCOL_VERSIONS, requested: requestedVersion },
-    );
-  }
-
-  const sessionId = await mintSessionToken(
-    { userId, protocolVersion: requestedVersion },
-    env.MCP_SESSION_SECRET,
-  );
-
-  const result: InitializeResult & { sessionId: string } = {
-    protocolVersion: requestedVersion,
-    capabilities: MCP_SERVER_CAPABILITIES,
-    serverInfo: MCP_SERVER_INFO,
-    sessionId,
-  };
-  return createSuccessResponse(id, result);
-}
 
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
 
