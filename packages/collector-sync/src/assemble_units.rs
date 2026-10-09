@@ -52,15 +52,31 @@ pub async fn assemble_sync_unit_with_lineage(
     cache: &GitRemoteCache,
     lineage: Option<&CodexLineage>,
 ) -> std::io::Result<SyncUnit> {
+    let snapshot = read_transcript_file(file)?;
+    assemble_snapshot(file, source, cache, snapshot, lineage).await
+}
+
+/// Read and parse `file`, bounded to its discovered size. Separate from [`assemble_snapshot`] so an
+/// embedder can report [`TranscriptSnapshot::skipped_lines`] even when assembly then fails.
+pub fn read_transcript_file(file: &DiscoveredFile) -> std::io::Result<TranscriptSnapshot> {
     let input = std::fs::File::open(&file.path)?;
     // Bound this pass to the discovered snapshot. A concurrent append belongs to the next pass.
-    let snapshot =
-        read_transcript_snapshot(BufReader::new(input.take(file.size_bytes)), file.size_bytes)?;
+    read_transcript_snapshot(BufReader::new(input.take(file.size_bytes)), file.size_bytes)
+}
+
+/// Assemble the [`SyncUnit`] for `file` from a snapshot [`read_transcript_file`] returned.
+pub async fn assemble_snapshot(
+    file: &DiscoveredFile,
+    source: AgentSource,
+    cache: &GitRemoteCache,
+    snapshot: TranscriptSnapshot,
+    lineage: Option<&CodexLineage>,
+) -> std::io::Result<SyncUnit> {
     assemble_records(
         file,
         source,
         cache,
-        snapshot.parsed,
+        snapshot.parsed.records,
         snapshot.content_hash_head,
         lineage,
     )
@@ -95,7 +111,7 @@ pub async fn assemble_sync_unit_from_bytes(
         file,
         source,
         cache,
-        snapshot.parsed,
+        snapshot.parsed.records,
         snapshot.content_hash_head,
         None,
     )
@@ -106,14 +122,10 @@ async fn assemble_records(
     file: &DiscoveredFile,
     source: AgentSource,
     cache: &GitRemoteCache,
-    parsed: TranscriptRecords,
+    records: Vec<Value>,
     content_hash_head: String,
     lineage: Option<&CodexLineage>,
 ) -> std::io::Result<SyncUnit> {
-    let TranscriptRecords {
-        records,
-        skipped_lines,
-    } = parsed;
     // Codex and Claude carry session identity + git differently: Claude repeats `sessionId`/`cwd`/
     // `gitBranch` per line and the repo is resolved live from `cwd`; Codex records one `session_meta`
     // whose payload embeds the id, cwd, and git remote/branch/sha directly. Using the Claude reader on
@@ -191,7 +203,6 @@ async fn assemble_records(
         records,
         ctx,
         next_cursor,
-        skipped_lines,
     })
 }
 
@@ -227,9 +238,17 @@ pub fn read_transcript(text: &str) -> TranscriptRecords {
     parsed
 }
 
-struct TranscriptSnapshot {
+/// One transcript read at its discovered size: the parsed records plus the head hash its cursor keeps.
+pub struct TranscriptSnapshot {
     parsed: TranscriptRecords,
     content_hash_head: String,
+}
+
+impl TranscriptSnapshot {
+    /// Lines skipped as malformed; see [`TranscriptRecords::skipped_lines`].
+    pub fn skipped_lines(&self) -> u32 {
+        self.parsed.skipped_lines
+    }
 }
 
 fn read_transcript_snapshot(
@@ -597,8 +616,7 @@ mod tests {
                 .unwrap();
 
         assert_eq!(streamed.records, from_bytes.records);
-        assert_eq!(streamed.skipped_lines, 1);
-        assert_eq!(from_bytes.skipped_lines, 1);
+        assert_eq!(read_transcript_file(&file).unwrap().skipped_lines(), 1);
         assert_eq!(streamed.ctx, from_bytes.ctx);
         assert_eq!(streamed.next_cursor, from_bytes.next_cursor);
         let UnitCursor::File(cursor) = streamed.next_cursor else {

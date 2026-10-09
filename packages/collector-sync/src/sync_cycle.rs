@@ -91,8 +91,6 @@ pub struct SyncUnit {
     /// The source-shaped watermark *after* this batch — committed only on `Ok`. A file's
     /// mtime/offset/head-hash for JSONL sources, a composer's bubble-count/newest-timestamp for Cursor.
     pub next_cursor: UnitCursor,
-    /// Transcript lines dropped as malformed while reading this unit. Always 0 for Cursor composers.
-    pub skipped_lines: u32,
 }
 
 /// The outcome of one [`run_sync_cycle`].
@@ -485,7 +483,6 @@ mod tests {
                 byte_offset: 10,
                 content_hash_head: "h".to_string(),
             }),
-            skipped_lines: 0,
         }
     }
 
@@ -521,7 +518,6 @@ mod tests {
                 byte_offset: 10,
                 content_hash_head: "h".to_string(),
             }),
-            skipped_lines: 0,
         }
     }
 
@@ -577,7 +573,6 @@ mod tests {
                 max_created_at: 1_700_000_000_000,
                 content_hash: Some("sha256:composer".to_string()),
             }),
-            skipped_lines: 0,
         }
     }
 
