@@ -801,8 +801,7 @@ export const getThreadByAgentThreadIdForAction = internalQuery({
       .query('analystThreads')
       .withIndex('by_agent_thread_id', (q) => q.eq('agentThreadId', args.agentThreadId))
       .first();
-    if (thread?.creatorUserId !== args.userId || thread.status !== 'active') return null;
-    return thread;
+    return thread ? getOwnedThread(ctx, args.userId, thread._id) : null;
   },
 });
 

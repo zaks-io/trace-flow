@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { api } from '../_generated/api';
+import { api, internal } from '../_generated/api';
+import { sha256Hex } from '../analystSandboxRun';
 import { seedOrganizationMembership, type MembershipWorld } from './organizationMembership.setup';
 
 async function seedOwnerRun({ t, ownerId, orgId, threadId }: MembershipWorld) {
@@ -72,6 +73,46 @@ describe('organization-scoped direct reads', () => {
     for (const read of sandboxRunReads(world, runId)) {
       await expect(read()).rejects.toThrow('Pi run not found');
     }
+  });
+
+  it('stops a sandbox from querying data once its creator is removed', async () => {
+    const world = await seedOrganizationMembership();
+    const token = 'sandbox-token';
+    const runId = await world.t.run(async (ctx) =>
+      ctx.db.insert('analystSandboxRuns', {
+        analystThreadId: world.threadId,
+        creatorUserId: world.ownerId,
+        orgId: world.orgId,
+        sandboxId: 'running-sandbox',
+        prompt: 'Summarize costs',
+        status: 'running',
+        runTokenHash: await sha256Hex(token),
+        maxRuntimeMs: 60_000,
+        updatedAt: Date.now(),
+        nextSeq: 0,
+      }),
+    );
+    await world.t.run((ctx) => ctx.db.patch(world.ownerMembershipId, { status: 'removed' }));
+    await expect(
+      world.t.action(api.analystSandbox.executeSandboxToolCall, {
+        runId,
+        token,
+        toolName: 'query_usage',
+      }),
+    ).rejects.toThrow('Pi run not found');
+  });
+
+  it('resolves a tool call thread only for an active member of its org', async () => {
+    const world = await seedOrganizationMembership();
+    const lookup = () =>
+      world.t.query(internal.analyst.getThreadByAgentThreadIdForAction, {
+        agentThreadId: 'agent-thread',
+        userId: world.ownerId,
+      });
+    await expect(lookup()).resolves.toMatchObject({ _id: world.threadId });
+
+    await world.t.run((ctx) => ctx.db.patch(world.ownerMembershipId, { status: 'removed' }));
+    await expect(lookup()).resolves.toBeNull();
   });
 
   it('shows org members to an active member only', async () => {

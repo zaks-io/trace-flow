@@ -994,6 +994,12 @@ export const executeSandboxToolCall = action({
       throw new Error(`Pi run is ${run.status}`);
     }
 
+    // Tools query the creator's current org, so the creator must still belong to the run's org.
+    const owned = await ctx.runQuery(internal.analystSandboxStore.getOwnedSandboxRunForAction, {
+      runId: args.runId,
+      userId: run.creatorUserId,
+    });
+    if (!owned) throw new Error('Pi run not found');
     const user = await getEnabledUserById(ctx, run.creatorUserId);
     await requireAnalystProEntitlement(ctx, run.orgId);
 
