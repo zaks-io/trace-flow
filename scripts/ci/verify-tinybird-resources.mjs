@@ -1,5 +1,5 @@
 import { readdirSync } from 'node:fs';
-import { RETIRED_RESOURCES } from './tinybird-cleanup-approval.mjs';
+import { RETIRED_RESOURCES } from './tinybird-destructive-diff.mjs';
 
 export async function verifyTinybirdResources({
   host = process.env.TB_HOST,

@@ -451,14 +451,15 @@ await ctx.db.insert('apiKeys', {
 ### Agent Sessions (Tinybird)
 
 ```sql
-SELECT *
-FROM agent_session_summaries
+SELECT session_pk, maxMerge(LastEventAt) AS last_event_at
+FROM agent_session_summaries_published
 WHERE OrgId = {org_id}
-ORDER BY LastEventAt DESC
+GROUP BY session_pk
+ORDER BY last_event_at DESC
 LIMIT 100
 ```
 
-Agent dashboard and MCP surfaces should prefer serving tables and bounded pipes over broad scans of base facts. Raw `agent_*_facts` reads are for diagnostics and derivation, not the default product contract.
+Agent dashboard and MCP surfaces should prefer serving tables and bounded pipes over broad scans of base facts. Versioned `agent_*_fact_versions` reads are for diagnostics and derivation, not the default product contract.
 
 ## Data Lifecycle
 

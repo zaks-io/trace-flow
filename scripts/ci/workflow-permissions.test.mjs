@@ -510,7 +510,7 @@ describe('credentialed CI checks', () => {
       'copies/repair_agent_usage_daily_snapshots.pipe',
       'fixtures/agent_message_fact_versions.ndjson',
       'scripts/ci/tinybird-local-fixture-tests.py',
-      'scripts/ci/tinybird-cleanup-approval.mjs',
+      'scripts/ci/tinybird-destructive-diff.mjs',
     ]) {
       expect(filters.tinybird.some((pattern) => new Glob(pattern).match(path))).toBe(true);
     }
@@ -541,11 +541,13 @@ describe('credentialed CI checks', () => {
 });
 
 describe('production Worker secret boundary', () => {
-  test('cloud check validates the approved retirement directly', () => {
+  test('cloud check uses the same manifest guard as production', () => {
     const cloudCheck = ci.jobs['tinybird-schema-check'].steps.find(
       (step) => step.name === 'Tinybird deploy --check (trace_flow_prod)',
     );
-    expect(cloudCheck.env.TINYBIRD_CLEANUP_APPROVED).toBe('trace_flow_prod_20261009');
+    expect(cloudCheck.run).toContain('./scripts/deploy-agent-tinybird.sh --check');
+    expect(cloudCheck.env).not.toHaveProperty('TINYBIRD_CLEANUP_APPROVED');
+    expect(ci.jobs['tinybird-schema-check'].permissions).toEqual({ contents: 'read' });
   });
 
   test.each(['Deploy Raw API Worker', 'Deploy Pipes API Worker'])(
@@ -579,13 +581,13 @@ describe('production Worker secret boundary', () => {
 
   test('deploys the schema before consumers and verifies live resources before ingest', () => {
     const schema = deploy.jobs['deploy-tinybird-schema'];
-    expect(deploy.jobs['deploy-convex'].needs).toEqual(['ci']);
-    expect(schema.needs).toEqual(['ci', 'deploy-convex']);
-    expect(schema.permissions.deployments).toBe('write');
+    expect(deploy.jobs['deploy-convex'].needs).toEqual(['ci', 'deploy-tinybird-schema']);
+    expect(schema.needs).toEqual(['ci']);
+    expect(schema.permissions).toEqual({ contents: 'read' });
     const apply = schema.steps.find((step) => step.name === 'Deploy schema in trace_flow_prod');
-    expect(apply.env.TINYBIRD_CLEANUP_APPROVED).toBe(
-      "${{ inputs.tinybird_cleanup_approval || 'trace_flow_prod_20261009' }}",
-    );
+    expect(apply.run).toBe('./scripts/deploy-agent-tinybird.sh');
+    expect(apply.env).not.toHaveProperty('TINYBIRD_CLEANUP_APPROVED');
+    expect(deploy.on.workflow_dispatch.inputs).not.toHaveProperty('tinybird_cleanup_approval');
     expect(apply.env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_DEPLOY_TOKEN }}');
     const verification = deploy.jobs['switch-agent-tinybird'];
     expect(verification.needs).toEqual(['ci', 'deploy-agent-consumer']);

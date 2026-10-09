@@ -61,7 +61,7 @@ Tinybird spend is mostly storage, materialization CPU, and read query CPU.
 
 ### Agent Conversation Path
 
-- base `agent_*_facts` insert volume from Agent Consumer
+- versioned `agent_*_fact_versions` insert volume from Agent Consumer
 - session, usage, tool, and repository materializations
 - `/app/agents` pipes filtered by `org_id`
 - long agent fact retention and repeated dashboard breakdown queries

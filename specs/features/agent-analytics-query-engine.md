@@ -64,7 +64,7 @@ questions about data it already holds.
 The engine operates over the agent fact tables (per-turn, per-session, per-tool-event,
 per-file-event, and their time/dimension rollups). A query selects:
 
-- **Facts** — which grain to query (e.g. per-turn `agent_message_facts`).
+- **Facts** — which grain to query (e.g. per-turn `agent_message_fact_versions`).
 - **Dimensions** — what to slice/group by: `session_pk`, `turn_index`, `source`, `model`,
   `repo_fingerprint`, calendar day, `tool_name`, `command_family`, coverage flags, etc.
 - **Measures** — numeric facts to aggregate: every token type, `cost_usd`, `duration_ms`,
@@ -88,25 +88,27 @@ _what_.
 
 This is the contract the engine is designed against. Sourced from the live
 `datasources/agent_*.datasource`, `packages/types/src/agent-ingest.ts`, and `pipes/agent_*.pipe`.
-All raw fact tables: partitioned by `toYYYYMMDD(EventAt)`, 1-year TTL, sorting key starts with
-`OrgId` (tenancy) then `session_pk`. Consumer appends via `agent_consumer_append`.
+Versioned fact tables use `ReplacingMergeTree` with `DeliverySequence`, `IsDeleted`, monthly
+partitions and a 1-year TTL. Sorting keys start with `OrgId` and event date, then the fact
+identity. Reads use `FINAL` and filter `IsDeleted = 0`. The consumer appends via the scoped
+`trace_flow_agent_facts_append` token.
 
 ### Raw fact tables (the engine reads these — rollups are for fast serving, not for analysis)
 
-| Table                             | Grain (one row =)       | Sorting key                                 | Notes                                                      |
-| --------------------------------- | ----------------------- | ------------------------------------------- | ---------------------------------------------------------- |
-| `agent_message_facts`             | one model call / turn   | `OrgId, session_pk, message_pk`             | **The core table.** Per-turn token breakdown + cost.       |
-| `agent_tool_event_facts`          | one tool invocation     | `OrgId, session_pk, tool_use_pk`            | Status/duration/command family; subagent token fallback.   |
-| `agent_file_event_facts`          | one file operation      | `OrgId, session_pk, file_event_pk`          | read/write/edit/create/delete/rename + repo-relative path. |
-| `agent_capability_snapshot_facts` | one capability snapshot | `OrgId, session_pk, capability_snapshot_pk` | Retained for Context Bloat; not in v1 queries.             |
-| `agent_pull_request_link_facts`   | one PR-link observation | `OrgId, session_pk, pull_request_link_pk`   | Passive; ≤1 canonical PR per session attributes.           |
+| Table                                     | Grain (one row =)       | Sorting key                                                  | Notes                                                      |
+| ----------------------------------------- | ----------------------- | ------------------------------------------------------------ | ---------------------------------------------------------- |
+| `agent_message_fact_versions`             | one model call / turn   | `OrgId, toDate(EventAt), session_pk, message_pk`             | **The core table.** Per-turn token breakdown + cost.       |
+| `agent_tool_event_fact_versions`          | one tool invocation     | `OrgId, toDate(EventAt), session_pk, tool_use_pk`            | Status/duration/command family; subagent token fallback.   |
+| `agent_file_event_fact_versions`          | one file operation      | `OrgId, toDate(EventAt), session_pk, file_event_pk`          | read/write/edit/create/delete/rename + repo-relative path. |
+| `agent_capability_snapshot_fact_versions` | one capability snapshot | `OrgId, toDate(EventAt), session_pk, capability_snapshot_pk` | Retained for Context Bloat; not in v1 queries.             |
+| `agent_pull_request_fact_versions`        | one PR-link observation | `OrgId, toDate(EventAt), session_pk, pull_request_pk`        | Passive; ≤1 canonical PR per session attributes.           |
 
-Serving/rollup tables (`AggregatingMergeTree`, rebuildable from raw): `agent_session_summaries`
+Serving/rollup tables (`AggregatingMergeTree`, rebuildable from raw): `agent_session_summaries_snapshots`
 (per-session: MessageCount, per-token sums, CostUsd, PricedMessageCount, counts, timestamps),
-`agent_usage_daily` / `agent_usage_hourly`, `agent_tool_usage_daily` / `_hourly`,
-`agent_context_call_buckets_hourly`, `agent_repositories` (label lookup).
+`agent_usage_daily_snapshots` / `agent_usage_hourly_snapshots`, `agent_tool_usage_daily_snapshots` / `agent_tool_usage_hourly_snapshots`,
+`agent_context_call_buckets_hourly_snapshots`, `agent_repositories_snapshots` (label lookup).
 
-### agent_message_facts — fields that matter to the engine
+### agent_message_fact_versions — fields that matter to the engine
 
 - **Identity/join**: `OrgId`, `session_pk` (join key across ALL fact tables),
   `message_pk`, `vendor_session_id`, `vendor_message_id`.
@@ -151,7 +153,7 @@ cache_creation`; generated = `input + output + reasoning`; cache-inclusive = gen
 ### Verified capabilities (the acceptance bar is real, not aspirational)
 
 - **Cost + turn count + cache-read together, one query**: `GROUP BY session_pk` on
-  `agent_message_facts` returns `count(DISTINCT turn_index)`, `sum(cost_usd)`,
+  `agent_message_fact_versions` returns `count(DISTINCT turn_index)`, `sum(cost_usd)`,
   `sum(cache_read_tokens)` simultaneously. ✅ The relationship the engine must preserve is a
   single GROUP BY.
 - **Per-turn cost/context curve within a session**: `GROUP BY (session_pk, turn_index)`,

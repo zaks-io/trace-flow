@@ -1,4 +1,4 @@
-# Fixtures: fixtures/agent_message_facts.ndjson + fixtures/agent_review_unit_attributions.ndjson (org_1c).
+# Fixtures: fixtures/agent_message_fact_versions.ndjson + fixtures/agent_review_unit_attribution_versions.ndjson (org_1c).
 # cc1 has four priced assistant messages at $0.25 each and one attributed review-unit edge.
 # span1 is ambiguous and sub1 is rejected, so neither contributes to review-unit cost.
 # retention_days=20000 neutralizes the now()-relative tier floor.

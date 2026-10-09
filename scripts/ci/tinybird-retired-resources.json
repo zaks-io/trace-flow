@@ -1,4 +1,10 @@
 {
+  "approval": {
+    "reference": "trace_flow_prod_20261009",
+    "approved_by": "Isaac",
+    "approved_on": "2026-10-09",
+    "issue": "TRA-405"
+  },
   "datasources": [
     "agent_capability_snapshot_facts",
     "agent_capability_snapshots",

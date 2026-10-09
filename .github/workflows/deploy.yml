@@ -10,10 +10,6 @@ on:
         description: 'Choose an environment to deploy to: <production>'
         required: true
         default: 'production'
-      tinybird_cleanup_approval:
-        description: 'Fresh dated approval for future destructive Tinybird changes'
-        required: false
-        type: string
 
 concurrency:
   group: production-deploy
@@ -102,8 +98,8 @@ jobs:
     permissions:
       contents: read
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    # Erasure must stop requiring retired tables before schema cleanup can remove them.
-    needs: [ci]
+    # Readers must understand analytics identifiers before Convex issues scoped tokens for them.
+    needs: [ci, deploy-tinybird-schema]
     environment: Production
     outputs:
       convex_url: ${{ steps.deploy.outputs.convex_url }}
@@ -245,11 +241,10 @@ jobs:
   deploy-tinybird-schema:
     name: Deploy Tinybird Schema
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    needs: [ci, deploy-convex]
+    needs: [ci]
     environment: Production
     permissions:
       contents: read
-      deployments: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -268,9 +263,7 @@ jobs:
       - name: Deploy schema in trace_flow_prod
         run: ./scripts/deploy-agent-tinybird.sh
         env:
-          GITHUB_TOKEN: ${{ github.token }}
           TB_TARGET_WORKSPACE: trace_flow_prod
-          TINYBIRD_CLEANUP_APPROVED: ${{ inputs.tinybird_cleanup_approval || 'trace_flow_prod_20261009' }}
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
           TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
