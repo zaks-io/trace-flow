@@ -17,7 +17,6 @@ Clients never receive Tinybird admin or append tokens.
 | `materializations/`                | materialized-view pipes that write derived datasources |
 | `pipes/`                           | parameterized read endpoints used by Web and MCP       |
 | `tests/`                           | Tinybird Local endpoint fixtures                       |
-| `scripts/check-tinybird.sh`        | local schema validation helper                         |
 | `scripts/deploy-agent-tinybird.sh` | production-safe deploy helper                          |
 
 ## Trace Storage

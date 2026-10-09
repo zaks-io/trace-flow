@@ -101,7 +101,7 @@ identity. Reads use `FINAL` and filter `IsDeleted = 0`. The consumer appends via
 | `agent_tool_event_fact_versions`          | one tool invocation     | `OrgId, toDate(EventAt), session_pk, tool_use_pk`            | Status/duration/command family; subagent token fallback.   |
 | `agent_file_event_fact_versions`          | one file operation      | `OrgId, toDate(EventAt), session_pk, file_event_pk`          | read/write/edit/create/delete/rename + repo-relative path. |
 | `agent_capability_snapshot_fact_versions` | one capability snapshot | `OrgId, toDate(EventAt), session_pk, capability_snapshot_pk` | Retained for Context Bloat; not in v1 queries.             |
-| `agent_pull_request_fact_versions`        | one PR-link observation | `OrgId, toDate(EventAt), session_pk, pull_request_pk`        | Passive; ≤1 canonical PR per session attributes.           |
+| `agent_pull_request_fact_versions`        | one PR-link observation | `OrgId, toDate(EventAt), session_pk, pull_request_link_pk`   | Passive; ≤1 canonical PR per session attributes.           |
 
 Serving/rollup tables (`AggregatingMergeTree`, rebuildable from raw): `agent_session_summaries_snapshots`
 (per-session: MessageCount, per-token sums, CostUsd, PricedMessageCount, counts, timestamps),
