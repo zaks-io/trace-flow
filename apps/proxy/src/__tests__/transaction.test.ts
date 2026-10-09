@@ -445,7 +445,6 @@ describe('buildTransaction', () => {
     const route = { provider } as Parameters<typeof recordSkippedExchange>[2]['route'];
     const forwarded = {
       validated: {
-        decision: { record: false, reason: 'exceeded' },
         keyData: { orgId: 'org-1' },
         operationName: 'chat',
         route,

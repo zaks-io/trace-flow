@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { evaluateRecordingPolicy } from '../recordingPolicy';
+import { evaluateRecordingPolicy, startRecordingPolicy } from '../recordingPolicy';
 import { _clearAll } from '../cache';
 import { _clearUsageCache } from '../usage';
 
@@ -104,5 +104,40 @@ describe('evaluateRecordingPolicy', () => {
     await evaluateRecordingPolicy(env, 'org-1', 7);
     const req: Request = env._doFetch.mock.calls[0]![0];
     expect(await req.json()).toMatchObject({ count: 7 });
+  });
+});
+
+describe('startRecordingPolicy', () => {
+  it('offers the subscription tier while the usage check is in flight', async () => {
+    const env = makeEnv({ billing: JSON.stringify(HOBBY_SUB), doResponse: { allowed: true } });
+    const pending = await startRecordingPolicy(env, 'org-1', 1);
+    expect(pending.provisionalTier).toBe('hobby');
+    expect((await pending.evaluation).decision).toEqual({
+      record: true,
+      reason: 'ok',
+      tier: 'hobby',
+    });
+  });
+
+  it('offers no tier when billing already rules recording out', async () => {
+    const env = makeEnv({ billing: JSON.stringify({ ...ACTIVE_SUB, status: 'suspended' }) });
+    const pending = await startRecordingPolicy(env, 'org-1', 1);
+    expect(pending.provisionalTier).toBeUndefined();
+    expect((await pending.evaluation).decision.reason).toBe('suspended');
+    expect(env._doFetch).not.toHaveBeenCalled();
+  });
+
+  it('offers no tier once the org is known to be over its limit', async () => {
+    const periodEnd = Date.now() + 60_000;
+    const env = makeEnv({
+      billing: JSON.stringify(ACTIVE_SUB),
+      doResponse: { allowed: false, periodEnd },
+    });
+    await evaluateRecordingPolicy(env, 'org-1', 1);
+
+    const pending = await startRecordingPolicy(env, 'org-1', 1);
+    expect(pending.provisionalTier).toBeUndefined();
+    expect((await pending.evaluation).decision.reason).toBe('exceeded');
+    expect(env._doFetch).toHaveBeenCalledTimes(1);
   });
 });

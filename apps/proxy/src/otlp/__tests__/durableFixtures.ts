@@ -10,7 +10,9 @@ export const API_KEY = 'otlp-durable-test-key';
 
 export function makeEnv(options?: {
   storageError?: Error;
+  deleteError?: Error;
   usageError?: Error;
+  usageResponse?: () => Promise<Response>;
   subscriptionStatus?: string;
 }) {
   let storedValue = '';
@@ -21,14 +23,16 @@ export function makeEnv(options?: {
         storedValue = value;
         return { key: 'stored' };
       });
-  const usageGet = vi.fn(() => ({
-    fetch: options?.usageError
-      ? vi.fn().mockRejectedValue(options.usageError)
-      : vi.fn(async () => Response.json({ allowed: true })),
-  }));
+  const storageDelete = options?.deleteError
+    ? vi.fn().mockRejectedValue(options.deleteError)
+    : vi.fn().mockResolvedValue(undefined);
+  const usageFetch = options?.usageError
+    ? vi.fn().mockRejectedValue(options.usageError)
+    : vi.fn(options?.usageResponse ?? (async () => Response.json({ allowed: true })));
+  const usageGet = vi.fn(() => ({ fetch: usageFetch }));
   const env = {
     REQUEST_QUEUE: { send: queueSend },
-    STORAGE: { put: storagePut },
+    STORAGE: { put: storagePut, delete: storageDelete },
     API_KEYS: {
       get: vi.fn(async (key: string) => {
         if (key === API_KEY) {
@@ -61,7 +65,15 @@ export function makeEnv(options?: {
     TRACE_DELIVERY_NAMESPACE: 'dev',
     BODY_ENCRYPTION_ROOT_KEY: 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=',
   } as unknown as ProxyEnv;
-  return { env, queueSend, storagePut, usageGet, getStoredValue: () => storedValue };
+  return {
+    env,
+    queueSend,
+    storagePut,
+    storageDelete,
+    usageGet,
+    usageFetch,
+    getStoredValue: () => storedValue,
+  };
 }
 
 export function otlpBody(attributeValue = 'value'): OTLPExportTraceServiceRequest {

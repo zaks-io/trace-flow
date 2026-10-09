@@ -80,33 +80,45 @@ The Cache API stores Request/Response pairs. To cache a KV value, we construct a
 
 ### What We Cache
 
-| Value                                         | TTL | Rationale                                   |
-| --------------------------------------------- | --- | ------------------------------------------- |
-| API key data (`API_KEYS.get(apiKey)`)         | 60s | Rarely changes; revocation delay acceptable |
-| Billing status (`API_KEYS.get(sub:${orgId})`) | 60s | Changes on subscription updates only        |
-| Usage exceeded result (DO `exceeded`/`error`) | 60s | Terminal state; no counting needed          |
+| Value                                               | TTL          | Rationale                            |
+| --------------------------------------------------- | ------------ | ------------------------------------ |
+| API key grants (Convex `/worker/authorize-api-key`) | 30s, L1 only | See the 2026-10-09 amendment below   |
+| Billing status (`API_KEYS.get(sub:${orgId})`)       | 60s          | Changes on subscription updates only |
+| Usage exceeded result (DO `exceeded`/`error`)       | 60s          | Terminal state; no counting needed   |
 
 ### What We Do NOT Cache
 
 **`allowed` usage results must never be cached.** The DO call for `checkUsage()` serves two purposes: (1) check if quota is exceeded, and (2) increment the usage counter. Caching `allowed` would skip the counter increment, causing quota tracking to break. Only terminal states (`exceeded`, `error`, `billing_not_active`) are safe to cache because they don't need counter increments.
 
+## Amendment (2026-10-09): API key grants
+
+API keys are now authorized by Convex rather than read from KV, so a cache miss costs a
+Convex round trip (about 110ms average) rather than a billed KV read. The proxy caches only
+successful authorizations, for 30 seconds, in the L1 map. Revoking a key, removing its owner from
+the organization, or deleting the organization therefore reaches a warm isolate within 30 seconds.
+Expiry is still checked on every request.
+
+Grants stay out of L2 because the Cache API is shared by every Worker on the zone, including
+previews backed by a different Convex deployment. Denials are not cached: unknown keys are
+attacker-chosen and would evict real grants from the bounded map, and outages must retry.
+
 ## Trade-offs
 
-| Risk                                                       | Impact                                                                         | Mitigation                                                                   |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| Revoked API key accepted for up to 60s                     | Low — attacker would need the key AND there's a window                         | 60s is standard for edge caching; keys can also be blocked at provider level |
-| Billing status change takes 60s to propagate               | Negligible — subscription changes are rare and the delay is invisible to users | Could add cache-busting header for explicit invalidation                     |
-| Exceeded user gets 60s of DO calls before caching kicks in | Minimal cost (~$0.15/M) during the window before "exceeded" is cached          | First exceeded response caches immediately                                   |
-| Isolate recycling reduces L1 effectiveness                 | L2 (Cache API) catches the miss within the same colo                           | Two-layer design specifically addresses this                                 |
-| Cache API eviction                                         | Falls through to KV correctly; just costs one billed read                      | Graceful degradation by design                                               |
-| Module-scope Map unbounded growth                          | Memory pressure could evict isolate                                            | Evict expired entries on read; cap Map at 1000 entries                       |
+| Risk                                                       | Impact                                                                         | Mitigation                                                   |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| Revoked API key accepted for up to 30s                     | Low — attacker would need the key AND there's a window                         | Grants are cached per isolate only; denials are never cached |
+| Billing status change takes 60s to propagate               | Negligible — subscription changes are rare and the delay is invisible to users | Could add cache-busting header for explicit invalidation     |
+| Exceeded user gets 60s of DO calls before caching kicks in | Minimal cost (~$0.15/M) during the window before "exceeded" is cached          | First exceeded response caches immediately                   |
+| Isolate recycling reduces L1 effectiveness                 | L2 (Cache API) catches the miss within the same colo                           | Two-layer design specifically addresses this                 |
+| Cache API eviction                                         | Falls through to KV correctly; just costs one billed read                      | Graceful degradation by design                               |
+| Module-scope Map unbounded growth                          | Memory pressure could evict isolate                                            | Evict expired entries on read; cap Map at 1000 entries       |
 
 ## Verification
 
 1. **Cache hit tracking**: Add `X-Trace-Flow-Cache` response header during development (`l1-hit`, `l2-hit`, `kv-read`) to verify cache layers are working
 2. **KV read metrics**: Compare KV read counts in CF dashboard before and after deployment
 3. **Load test**: `wrk -t4 -c100 -d30s` against proxy endpoint; KV reads should stay flat regardless of request volume
-4. **Key revocation**: Revoke an API key, verify it's rejected within 60 seconds
+4. **Key revocation**: Revoke an API key, verify it's rejected within 30 seconds
 5. **Quota counting**: Send requests within quota, verify DO counter increments correctly (not cached)
 6. **Quota exceeded**: Exhaust quota, verify subsequent requests get cached `exceeded` response without DO calls
 7. **Quota refill**: Purchase additional quota after exceeding, verify it takes effect within 60s

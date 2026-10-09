@@ -2,6 +2,7 @@ import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { analyticsKeyId } from '@trace-flow/utils';
 import { app } from '../../index';
+import { _clearAll } from '../../cache';
 import { _clearUsageCache } from '../../usage';
 import type { OTLPExportTraceServiceRequest } from '../types';
 import { GEN_AI_USAGE, SOURCE_IMPORTED_EXECUTION, TRACE_FLOW } from '@trace-flow/otel-conventions';
@@ -17,7 +18,8 @@ import {
 } from './durableFixtures';
 
 describe('OTLP durable acceptance', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await _clearAll();
     _clearUsageCache();
     vi.stubGlobal(
       'fetch',
@@ -47,8 +49,8 @@ describe('OTLP durable acceptance', () => {
     await waitOnExecutionContext(ctx);
   });
 
-  it('returns retryable 503 for an internal recording decision error', async () => {
-    const { env, storagePut, queueSend } = makeEnv({
+  it('returns retryable 503 and discards its envelope for an internal recording decision error', async () => {
+    const { env, storagePut, storageDelete, queueSend } = makeEnv({
       usageError: new Error('usage tracker unavailable'),
     });
     const { response, ctx } = await postOTLP(env, otlpBody());
@@ -56,9 +58,80 @@ describe('OTLP durable acceptance', () => {
     expect(response.status).toBe(503);
     expect(response.headers.get('X-Trace-Flow-Contract')).toBeNull();
     expect(response.headers.get('Retry-After')).toBe('1');
-    expect(storagePut).not.toHaveBeenCalled();
-    expect(queueSend).not.toHaveBeenCalled();
     await waitOnExecutionContext(ctx);
+    expect(storagePut).toHaveBeenCalledTimes(1);
+    expect(storageDelete).toHaveBeenCalledWith(storagePut.mock.calls[0]![0]);
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it('sheds rate-limited IPs before authorizing the key', async () => {
+    const { env, storagePut } = makeEnv();
+    vi.mocked(env.IP_LIMITER.limit).mockResolvedValue({ success: false });
+    const { response, ctx } = await postOTLP(env, otlpBody());
+
+    expect(response.status).toBe(429);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(storagePut).not.toHaveBeenCalled();
+    await waitOnExecutionContext(ctx);
+  });
+
+  it('writes the envelope while the usage check is still in flight', async () => {
+    let allowUsage!: () => void;
+    const { env, storagePut, queueSend, getStoredValue } = makeEnv({
+      usageResponse: () =>
+        new Promise((resolve) => {
+          allowUsage = () => resolve(Response.json({ allowed: true }));
+        }),
+    });
+    const pending = postOTLP(env, otlpBody());
+
+    await vi.waitFor(() => expect(storagePut).toHaveBeenCalledTimes(1));
+    expect(queueSend).not.toHaveBeenCalled();
+    allowUsage();
+    const { response, ctx } = await pending;
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('X-Trace-Flow-Recording')).toBe('true');
+    expect(JSON.parse(getStoredValue()).message.traces[0].TierAtIngestion).toBe('pro');
+    await waitOnExecutionContext(ctx);
+    expect(queueSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('discards the envelope of an export over its limit, then stops writing for that org', async () => {
+    const periodEnd = Date.now() + 60_000;
+    const { env, storagePut, storageDelete, queueSend, usageFetch } = makeEnv({
+      usageResponse: async () => Response.json({ allowed: false, periodEnd }),
+    });
+
+    const first = await postOTLP(env, otlpBody());
+    expect(first.response.status).toBe(200);
+    expect(await first.response.json()).toMatchObject({ partialSuccess: { rejectedSpans: 1 } });
+    await waitOnExecutionContext(first.ctx);
+    expect(storagePut).toHaveBeenCalledTimes(1);
+    expect(storageDelete).toHaveBeenCalledWith(storagePut.mock.calls[0]![0]);
+
+    const second = await postOTLP(env, otlpBody());
+    expect(await second.response.json()).toMatchObject({ partialSuccess: { rejectedSpans: 1 } });
+    await waitOnExecutionContext(second.ctx);
+    expect(usageFetch).toHaveBeenCalledTimes(1);
+    expect(storagePut).toHaveBeenCalledTimes(1);
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it('reports a rejected export whose envelope it cannot discard', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { env, storageDelete } = makeEnv({
+      usageResponse: async () => Response.json({ allowed: false, periodEnd: Date.now() + 60_000 }),
+      deleteError: new Error('R2 unavailable'),
+    });
+    const { response, ctx } = await postOTLP(env, otlpBody());
+
+    expect(response.status).toBe(200);
+    await waitOnExecutionContext(ctx);
+    expect(storageDelete).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls.flat().join('\n')).toContain(
+      'otlp.provisional_delivery_discard_failed',
+    );
   });
 
   it('accepts a 200KB export and queues only its delivery reference', async () => {

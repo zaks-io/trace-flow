@@ -1,4 +1,5 @@
 import { applySecurityHeaders } from '@trace-flow/utils';
+import type { TracingDecision } from '../context';
 import type { AttachedCapture } from './attachCapture';
 
 /**
@@ -6,9 +7,8 @@ import type { AttachedCapture } from './attachCapture';
  * `X-Trace-Flow-Recording*` headers so SDKs can detect when a request wasn't
  * billed-for (suspended/canceled/exceeded) without scraping logs.
  */
-export function respond(attached: AttachedCapture): Response {
+export function respond(attached: AttachedCapture, decision: TracingDecision): Response {
   const { response } = attached.forwarded;
-  const { decision } = attached.forwarded.validated;
 
   const headers = new Headers(response.headers);
   // Provider edge cookies (e.g. `__cf_bm`) are scoped to the provider's domain; they are

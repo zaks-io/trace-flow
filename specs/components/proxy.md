@@ -13,8 +13,10 @@ terminal byte and EOF wait until the R2 delivery envelope exists.
 ## Request Flow
 
 1. Client sends request to `/{provider}/...` (e.g., `/openai/v1/chat/completions`)
-2. Proxy validates the API key against KV namespace
-3. Request is forwarded to the target provider
+2. Proxy authorizes the API key with Convex, reusing a successful authorization for up to 30
+   seconds in the isolate
+3. Request is forwarded to the target provider while the usage Durable Object decides whether it
+   is recorded
 4. Response streams back to client immediately
 5. A versioned delivery envelope containing metadata and the optional encrypted Body Object is stored
    under `trace-deliveries/`
@@ -123,7 +125,7 @@ Secrets and variables:
 
 ## Caching
 
-API key validation and billing status KV reads use a two-layer cache (module-scope Map + Cache API) to avoid per-request KV billing. See [Proxy KV Caching](../../docs/adr/0006-proxy-kv-caching.md) for the full cost analysis and architecture.
+Billing status KV reads use a two-layer cache (module-scope Map + Cache API) to avoid per-request KV billing. Convex API key grants are cached for 30 seconds in the module-scope Map only. See [Proxy KV Caching](../../docs/adr/0006-proxy-kv-caching.md) for the full cost analysis, architecture, and revocation window.
 
 ## Key Files
 

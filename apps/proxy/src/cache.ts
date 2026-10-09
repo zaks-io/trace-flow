@@ -102,6 +102,18 @@ export async function getCached<T>(
   return value;
 }
 
+/**
+ * L1 only. The Cache API is shared by every Worker on the zone, including previews backed by a
+ * different Convex deployment, so values that authorize requests must stay in this isolate.
+ */
+export function getIsolateCached<T>(key: string): T | undefined {
+  return l1Get<T>(key);
+}
+
+export function setIsolateCached<T>(key: string, value: T, ttlMs: number): void {
+  l1Set(key, value, ttlMs);
+}
+
 export async function invalidate(key: string): Promise<void> {
   l1.delete(key);
   try {
