@@ -20,7 +20,7 @@ const DOCS: DocDefinition[] = [
     slug: 'sdk-reference',
     title: 'SDK Reference',
     description:
-      'Provider-specific examples for OpenAI, Anthropic, Google, OpenRouter, and Groq with Vercel AI SDK and native SDKs.',
+      'Provider-specific examples for OpenAI, Anthropic, Google, OpenRouter, Groq, and TypeSafe Jev with Vercel AI SDK and native SDKs.',
     tag: 'Reference',
   },
   {
