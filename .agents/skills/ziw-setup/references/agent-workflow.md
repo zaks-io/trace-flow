@@ -4,8 +4,14 @@ Use this when writing or refreshing `docs/agents/workflow/config.md`.
 
 ## Roles
 
+- Debug: reproduces a failure, tests hypotheses, and verifies a narrow repair
+  only when authorized. Diagnosis-only work leaves no repair applied. Direct
+  requests need no ticket; tracked investigations return to Implement.
+- Architecture: assesses structural friction or proposes a module interface
+  from real callers and change evidence. It finishes with recommendations;
+  selected unresolved designs go to Grill. It does not implement or create tickets.
 - Grill: resolves material ambiguity in an idea, plan, PRD, ADR set, or existing
-  spec one question at a time. It checks discoverable evidence before asking,
+  spec in rounds of independent questions. It checks discoverable evidence before asking,
   updates confirmed planning artifacts, and requires explicit user approval
   before a spec is ready for slicing. It does not create tracker tickets or
   implement code.
@@ -36,6 +42,11 @@ Use this when writing or refreshing `docs/agents/workflow/config.md`.
   leaves exact human next actions.
 
 ## Planning Artifacts
+
+Repo Config stores stable mappings and policy only. Project progress, blockers,
+and verification follow-ups live in Linear or the configured tracker. CI, PR,
+review, deployment, and provider availability are read live. Do not store a
+project backlog, an Unknowns checklist, or a status snapshot in config.
 
 Repo Config maps the current-truth spec authority and paths, glossary or context
 docs, context map, ADR convention, authority hierarchy, spec status convention,
@@ -129,6 +140,9 @@ domain behavior, and performance work without benchmarks.
   expected, backoff across consecutive quiet ticks, reset on new signal.
 - The worker concurrency cap counts confirmed implementation and repair
   sessions, not open PRs, previews, human assignees, or abandoned worktrees.
+  Distinct sessions covering one issue count separately; a linked PR does not
+  free a running worker. Preserve canonical receipt/session identities through
+  the [handoff contract](handoff.md).
   Orchestrator advances PR state independently and backfills every freed worker
   slot in the same tick. It closes PRs
   only when refreshed code-host and tracker evidence satisfies the PR closure
@@ -252,9 +266,9 @@ For issue-assigned delegation:
   state instead of staying in Linear Backlog because blockers remain.
 - The issue needs the repo routing label or metadata the integration uses to
   choose the preconfigured environment, when the repo requires one.
-- The issue needs the configured repo-route label (such as `<org>/<repo>`) so the
-  assigned agent can resolve which repository to clone. A missing repo-route
-  label is a hard block on delegation: heal it inline when the tracker team maps
+- All repository-scoped dispatch requires the configured repo-route label
+  (such as `<org>/<repo>`). Issue-assigned agents also use it to resolve which
+  repository to clone. A missing label blocks dispatch: repair it when the team maps
   unambiguously to one repo, otherwise escalate `needs-info`.
 - Agent Orchestrator starts work by assigning the selected tracker-exposed agent.
 - The assigned agent executes the ticket in its configured environment and
@@ -326,7 +340,8 @@ and writes the systems of record:
 - claim records: configured issue tracker fields, assignments, labels, and
   comments
 - review evidence labels: configured issue tracker labels plus adjacent comments
-  or fields that record PR URL and reviewed head SHA
+  or fields that record PR URL, reviewed head SHA, diff fingerprint, explicit
+  verdict, and completed independent reviewer identity/count
 - code-host human-merge PR label: configured GitHub or code-host label for PRs
   that are merge-ready except for required human merge authority
 - branch and PR state: configured code host
@@ -341,9 +356,12 @@ is needed.
 Orchestrator-local files, run logs, checkpoints, and the dispatch ledger are only
 scratch state. They can speed up polling or avoid duplicate work, but agents must
 refresh the systems of record before acting. The friction intake is
-retrospective, not state: append-only comments on a parked ticket or
-ticket-per-finding intake in a private tracker team or project, never read back
-to decide anything.
+retrospective, not delivery state. All roles use the configured MCP complaint
+store; setup prefers Exposure Ledger when available. Store each event once,
+using tracker intake as an explicit fallback or preserving a legacy
+tracker-primary config until refreshed. Report unavailable storage
+once and continue authorized work. Read complaints only for requested
+retrospectives or deduplication, never to decide delivery state.
 
 When config uses ticket-per-finding intake, raw friction tickets must land
 outside the delivery queue, usually in an `Inbox` or `Triage` state without
@@ -391,6 +409,8 @@ and name the core skills:
 
 - `ziw-grill` for resolving material planning ambiguity and producing or
   updating an explicitly approved ready spec
+- `ziw-debug` for symptom reproduction, cause investigation, and authorized narrow repair
+- `ziw-architecture` for requested structural assessment and module design proposals
 - `ziw-to-issues` for turning a spec, PRD, or epic into `kind-slice` tickets
 - `ziw-orchestrate` for the orchestration loop
 - `ziw-implement` for one startable issue through PR creation

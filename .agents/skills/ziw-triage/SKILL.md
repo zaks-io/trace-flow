@@ -23,6 +23,9 @@ The end state is a clean `Todo` handoff queue:
 - Orchestrator can consume the final `starts`, blocked-ready list, and next
   actions without re-triaging the same queue
 
+For encountered friction, use [friction-log.md](../ziw-orchestrate/references/friction-log.md)
+with the configured complaint store and this role's mutation authority.
+
 ## Inputs
 
 - Issue tracker project, team, repo label, board, roadmap, query, filter, or
@@ -68,6 +71,21 @@ CI, deploy, log, or unrelated external links.
 Use tracker/MCP tools only to apply mutations and read specific ticket fields
 the scripts do not return, never to rebuild the inventory, PR state, dependency
 frontier, or readiness decisions the scripts already compute.
+
+Linear allows 2,500 API requests an hour per user, shared by every agent,
+sandbox, and host job, and one hosted-MCP call costs about 4. Four triage runs
+that read issues one at a time used the whole hour in 13 minutes. Keep a run to
+a few dozen tracker calls:
+
+- Never read issues one by one to rebuild the queue. If the snapshot skips
+  Linear, make one bounded `list_issues` query, or stop and report the missing
+  credential.
+- Do not call `get_issue` or `list_comments` for every issue in the set. Read
+  only the fields a decision needs, for the issues that need them.
+- Call `save_issue` only when a field changes, with all of that issue's changes
+  in one call. Treat the mutation response as the result; do not reread it.
+- On `rate_limited`, HTTP 429, or `upstream credential rejected for linear`,
+  stop every tracker call. Do not retry. Report the exact pending changes.
 
 When handoff quality depends on information outside this boundary, leave the
 exact missing field for To Issues or a human. When an issue needs verification

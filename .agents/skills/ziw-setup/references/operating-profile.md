@@ -9,9 +9,10 @@ should resolve these into config, not leave the loop to guess them.
 
 - Default cap: **3** active workers. Config overrides with
   `Worker concurrency cap`.
-- Count confirmed implementation and repair sessions that have not returned,
-  stopped, failed, or produced a PR. Deduplicate session, issue, and provider
-  handles.
+- Count distinct confirmed implementation and repair sessions until provider
+  lifecycle confirms return, stop, or failure. Deduplicate confirmed sessions,
+  or receipts without a session. Sharing an issue, branch, path, or PR never
+  collapses workers; opening a PR does not release a running session.
 - Human assignees, open PRs, previews, and abandoned worktrees do not consume
   worker slots. They remain PR actions, provider constraints, ownership signals,
   and file-footprint seams.
@@ -236,8 +237,8 @@ values, not this file:
   PR URL, reviewed head SHA, and review-diff fingerprint
 - merge method, required checks that define green, plus any post-merge
   preparation needed before local post-merge checks are trustworthy
-- default-branch baseline health note: current required-check state and any
-  known-red jobs with the ticket that will fix them (`expected-red-until-<id>`)
+- baseline check policy: required job names and which job post-merge checks judge;
+  current health is read from CI and repair work stays in the configured tracker
 - the production deploy status check on the default-branch HEAD when the repo
   deploys on push
 - remote worker environment gate: whether repo hooks and gates actually install

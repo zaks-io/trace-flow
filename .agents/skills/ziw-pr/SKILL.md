@@ -9,6 +9,9 @@ argument-hint: "[issue-id|branch|pr-url]"
 Take the current code to a non-draft ready-for-review PR. Do the whole workflow
 unless blocked.
 
+For encountered friction, use [friction-log.md](../ziw-orchestrate/references/friction-log.md)
+with the configured complaint store and this role's mutation authority.
+
 ## Inputs
 
 - Current branch and all intended staged or unstaged repo changes.
@@ -187,6 +190,12 @@ PR body:
 
 [Issue: ISSUE-ID](url)
 ```
+
+Keep the exact tracker issue URL in the PR body for work this PR delivers.
+Return the PR number and known `issueKey`/`issueUuid` through the
+[handoff contract](../ziw-setup/references/handoff.md). A title or branch token is
+only a delivery hint; it cannot replace an explicit issue association or confirm
+that the implementation session returned.
 
 Risk is HIGH for auth, authorization, secrets, destructive data, schema
 migrations, queues/background jobs, production data flow, public contracts, or
