@@ -54,15 +54,34 @@ describe('trace delivery helpers', () => {
   });
 
   it('loads and validates an envelope', async () => {
-    const storage = { get: vi.fn().mockResolvedValue({ json: async () => envelope }) };
+    const storage = { get: vi.fn().mockResolvedValue({ size: 10, json: async () => envelope }) };
     await expect(loadTraceDelivery(storage, buildTraceDeliveryKey('id'))).resolves.toEqual(
       envelope,
     );
     expect(isTraceDeliveryEnvelope(envelope)).toBe(true);
   });
 
+  it('reserves the stored size before reading the body', async () => {
+    const order: string[] = [];
+    const storage = {
+      get: vi.fn().mockResolvedValue({
+        size: 4096,
+        json: async () => {
+          order.push('read');
+          return envelope;
+        },
+      }),
+    };
+    await loadTraceDelivery(storage, buildTraceDeliveryKey('id'), async (bytes) => {
+      order.push(`reserve:${bytes}`);
+    });
+    expect(order).toEqual(['reserve:4096', 'read']);
+  });
+
   it('rejects invalid persisted data', async () => {
-    const storage = { get: vi.fn().mockResolvedValue({ json: async () => ({ version: 1 }) }) };
+    const storage = {
+      get: vi.fn().mockResolvedValue({ size: 10, json: async () => ({ version: 1 }) }),
+    };
     await expect(loadTraceDelivery(storage, buildTraceDeliveryKey('id'))).rejects.toThrow(
       'Invalid trace delivery envelope',
     );

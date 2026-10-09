@@ -8,6 +8,7 @@ import { buildStoredBodyKey, isEncryptedStoredBodiesPayload } from '@trace-flow/
 export const TRACE_DELIVERY_PREFIX = 'trace-deliveries/';
 
 export interface TraceDeliveryObject {
+  size: number;
   json<T>(): Promise<T>;
 }
 
@@ -55,13 +56,19 @@ export function isTraceDeliveryEnvelope(value: unknown): value is TraceDeliveryE
   );
 }
 
+/**
+ * `reserve` runs with the stored size before the body is read, so callers loading several
+ * envelopes at once can bound how many bytes they hold.
+ */
 export async function loadTraceDelivery(
   storage: TraceDeliveryReader,
   key: string,
+  reserve?: (bytes: number) => Promise<void>,
 ): Promise<TraceDeliveryEnvelope | null> {
   if (!isTraceDeliveryKey(key)) throw new Error('Invalid trace delivery key');
   const object = await storage.get(key);
   if (!object) return null;
+  await reserve?.(object.size);
   const value: unknown = await object.json();
   if (!isTraceDeliveryEnvelope(value)) throw new Error(`Invalid trace delivery envelope: ${key}`);
   return value;
