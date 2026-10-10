@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { hasAnalystMessageContent, type AnalystMessage } from './analystMessageModel';
 
-export const ANALYST_MAX_STEPS = 50;
+const ANALYST_MAX_STEPS = 50;
 
 export type QueuedAnalystRun = {
   threadId: Id<'analystThreads'>;
@@ -14,14 +14,10 @@ export type QueuedAnalystRun = {
 };
 
 export type AnalystRunState = {
-  phase: 'idle' | 'submitting' | 'queued' | 'running' | 'background' | 'failed';
+  phase: 'idle' | 'submitting' | 'queued' | 'running' | 'failed';
   label: string;
   detail: string;
   busy: boolean;
-};
-
-export type AnalystRunStatusSandboxRun = {
-  status: string;
 };
 
 export function getAnalystRunState({
@@ -29,13 +25,11 @@ export function getAnalystRunState({
   currentThreadId,
   queuedRun,
   messages,
-  sandboxRuns = [],
 }: {
   sending: boolean;
   currentThreadId: Id<'analystThreads'> | null;
   queuedRun: QueuedAnalystRun | null;
   messages: AnalystMessage[];
-  sandboxRuns?: AnalystRunStatusSandboxRun[];
 }): AnalystRunState {
   if (sending) {
     return {
@@ -96,16 +90,6 @@ export function getAnalystRunState({
     }
   }
 
-  const activeSandboxRun = sandboxRuns.find((run) => isActiveSandboxRunStatus(run.status));
-  if (activeSandboxRun) {
-    return {
-      phase: 'background',
-      label: 'Analyzing',
-      detail: 'Working through your data in the background.',
-      busy: false,
-    };
-  }
-
   return {
     phase: 'idle',
     label: 'Ready',
@@ -124,7 +108,7 @@ export function AnalystRunStatusBar({
   stopping?: boolean;
 }) {
   const Icon = stateIcon[state.phase];
-  const canStop = Boolean(onStop) && (state.phase === 'running' || state.phase === 'background');
+  const canStop = Boolean(onStop) && (state.phase === 'queued' || state.phase === 'running');
 
   if (state.phase === 'idle') return null;
 
@@ -135,7 +119,7 @@ export function AnalystRunStatusBar({
           <Icon
             className={cn(
               'h-3.5 w-3.5 shrink-0',
-              (state.busy || state.phase === 'background') && 'animate-spin',
+              state.busy && 'animate-spin',
               state.phase === 'failed' && 'text-destructive',
             )}
           />
@@ -179,17 +163,13 @@ function isActiveMessage(message: AnalystMessage) {
   );
 }
 
-function isActiveSandboxRunStatus(status: string) {
-  return status === 'queued' || status === 'starting' || status === 'running';
-}
-
 function activeToolDetail(message: AnalystMessage): string | null {
   const runningTool = message.parts.find((part) => {
     if (part.type === 'dynamic-tool' || part.type.startsWith('tool-')) {
       return (
         'state' in part &&
         typeof part.state === 'string' &&
-        !['output-available', 'output-denied'].includes(part.state)
+        !['output-available', 'output-denied', 'output-error'].includes(part.state)
       );
     }
     return false;
@@ -209,6 +189,5 @@ const stateIcon = {
   submitting: Loader2,
   queued: Clock3,
   running: Loader2,
-  background: Loader2,
   failed: AlertCircle,
 } satisfies Record<AnalystRunState['phase'], typeof CheckCircle2>;

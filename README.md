@@ -110,10 +110,9 @@ API key listing. MCP tools never return request or response bodies. See the
 Trace Flow Analyst is the in-app chat for asking questions about the analytics you already collect.
 It requires an active Pro subscription and is not available on Hobby. It opens as a sidebar on every
 dashboard page, keeps threads private to their creator, and can attach objects from the current page
-to a message. Data questions run in a sealed Cloudflare Sandbox with internet access disabled. Its
-outbound traffic is limited to the Analyst Sandbox Worker, which brokers model calls and data
-queries, and the sandbox's own R2 storage. Inside it, an analysis agent
-writes and runs Python against your Trace Flow data and reports back with its cost.
+to a message. The Convex agent answers data questions with the shared Trace Flow tools from
+`@trace-flow/mcp-core`. Tool calls use the current user's permissions and subscription, and chat
+model usage and costs remain tracked.
 
 ## Architecture
 
@@ -122,8 +121,8 @@ through Auth0), API keys, Collector Credentials, Stripe subscriptions, session o
 alerts, MCP OAuth, and scoped Tinybird token minting. Tinybird holds the trace spans and agent facts
 the dashboard reads. R2 holds encrypted request and response bodies and in-flight delivery objects.
 Convex also hosts the Analyst Runtime on Convex Agents
-([ADR 0022](./docs/adr/0022-trace-flow-analyst-convex-runtime.md)), which reaches Trace Flow data
-only through the Analyst Sandbox Worker. The Rust workspace contains the collector CLI, the desktop
+([ADR 0022](./docs/adr/0022-trace-flow-analyst-convex-runtime.md)), which calls the shared Trace Flow
+tools directly with the current user's scoped authorization. The Rust workspace contains the collector CLI, the desktop
 shell, parsers, and the sync engine.
 
 The runtime is split into more Cloudflare Workers than the feature list suggests. The count is
@@ -135,9 +134,8 @@ uploads) so capture never waits on Tinybird writes
 [ADR 0020](./docs/adr/0020-read-side-secret-boundaries.md) keeps Body Object decryption keys and
 Tinybird forwarding in separate isolates (Raw API and Pipes API). Web reads through those two. MCP
 gets a scoped token from Convex and queries Tinybird directly, so it never touches bodies. Web is a
-Next.js app deployed to Workers with OpenNext. The Analyst Sandbox Worker (`apps/analyst-sandbox`)
-runs model-generated code in a container with all egress denied except calls back to the Worker
-itself. The per-app map is in [repo navigation](./docs/agents/repo-navigation.md).
+Next.js app deployed to Workers with OpenNext. The Analyst Runtime runs entirely in Convex.
+The per-app map is in [repo navigation](./docs/agents/repo-navigation.md).
 
 ### Data flow
 
@@ -230,7 +228,7 @@ scripts/dev/web.sh
 
 `scripts/dev/workers.sh` starts the six core data-plane Workers (Proxy, Proxy Consumer, Raw API,
 Pipes API, Agent Ingest, Agent Consumer) together so local queues, KV, R2, and Durable Objects share
-one persisted state directory. Web, Convex, MCP, and the Analyst Sandbox are not part of that
+one persisted state directory. Web, Convex, and MCP are not part of that
 multi-Worker process. See [Local Agent Environment](./docs/agents/local-environment.md) and the
 environment definitions in [CONTEXT.md](./CONTEXT.md).
 

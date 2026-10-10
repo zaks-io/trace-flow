@@ -27,10 +27,14 @@ export function createMcpBackend(
   ctx: ActionCtx,
   userId: Id<'users'>,
   sentryScope?: Scope,
+  expectedOrgId?: Id<'organizations'>,
 ): McpBackend {
   // One key fetch per request, shared across listApiKeys/resolveKeyIds/mintToken.
   let keysPromise: ReturnType<typeof loadKeys> | null = null;
-  const loadKeys = () => ctx.runQuery(internal.apiKeys.listForUser, { userId });
+  const loadKeys = async () => {
+    const keys = await ctx.runQuery(internal.apiKeys.listForUser, { userId });
+    return expectedOrgId ? keys.filter((key) => !key.orgId || key.orgId === expectedOrgId) : keys;
+  };
   const getKeys = () => (keysPromise ??= loadKeys());
 
   const unexpiredMeta = async (): Promise<McpApiKeyMeta[]> => {
@@ -58,11 +62,14 @@ export function createMcpBackend(
           .map((key) => analyticsKeyId(key.key)),
       );
       const user = await ctx.runQuery(internal.auth.users.getUserById, { id: userId });
+      if (expectedOrgId && (!user?.enabled || user.orgId !== expectedOrgId)) {
+        throw new Error('Active organization membership required');
+      }
       return ctx.runAction(internal.integrations.tinybird.generateTokenInternal, {
         scopes,
         analyticsKeyIds,
         retentionDays,
-        orgId: user?.orgId,
+        orgId: expectedOrgId ?? user?.orgId,
         traceContext: serializeConvexTraceContext(sentryScope),
       });
     },
@@ -72,12 +79,14 @@ export function createMcpBackend(
       const user = await ctx.runQuery(internal.auth.users.getUserById, { id: userId });
       if (
         !user ||
+        (expectedOrgId && user.orgId !== expectedOrgId) ||
         !(await ctx.runQuery(internal.auth.users.hasActiveOrganizationMembership, { userId }))
       ) {
         return null;
       }
-      const subscription = user.orgId
-        ? await ctx.runQuery(internal.billing.subscriptions.getByOrgId, { orgId: user.orgId })
+      const orgId = expectedOrgId ?? user.orgId;
+      const subscription = orgId
+        ? await ctx.runQuery(internal.billing.subscriptions.getByOrgId, { orgId })
         : null;
       const tier = subscription?.tier ?? 'hobby';
       return {

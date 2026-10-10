@@ -61,25 +61,6 @@
         "wrangler": "^4.127.1",
       },
     },
-    "apps/analyst-sandbox": {
-      "name": "@trace-flow/analyst-sandbox",
-      "version": "0.0.1",
-      "dependencies": {
-        "@cloudflare/sandbox": "0.12.1",
-        "@trace-flow/convex": "workspace:*",
-        "@trace-flow/pricing": "workspace:*",
-        "@trace-flow/utils": "workspace:*",
-        "convex": "1.44.0",
-      },
-      "devDependencies": {
-        "@cloudflare/workers-types": "^4.20260702.1",
-        "@trace-flow/mcp-core": "workspace:*",
-        "@vitest/coverage-v8": "^4.1.11",
-        "typescript": "^5.9.3",
-        "vitest": "^4.1.11",
-        "wrangler": "^4.127.1",
-      },
-    },
     "apps/api": {
       "name": "@trace-flow/api",
       "version": "0.0.1",
@@ -630,11 +611,7 @@
 
     "@chevrotain/types": ["@chevrotain/types@11.1.2", "", {}, "sha512-U+HFai5+zmJCkK86QsaJtoITlboZHBqrVketcO2ROv865xfCMSFpELQoz1GkX5GzME8pTa+3kbKrZHQtI0gdbw=="],
 
-    "@cloudflare/containers": ["@cloudflare/containers@0.3.7", "", {}, "sha512-DM9dm3FnIBSyiSJ1FLavKwl/lk3oAmTaynCzZQ9pZR0ncRPquSxkxd8Nu2MFILxmDDsPkxKsSNEh9mHHMty4Fw=="],
-
     "@cloudflare/kv-asset-handler": ["@cloudflare/kv-asset-handler@0.5.0", "", {}, "sha512-jxQYkj8dSIzc0cD6cMMNdOc1UVjqSqu8BZdor5s8cGjW2I8BjODt/kWPVdY+u9zj3ms75Q5qaZgnxUad83+eAg=="],
-
-    "@cloudflare/sandbox": ["@cloudflare/sandbox@0.12.1", "", { "dependencies": { "@cloudflare/containers": "^0.3.5", "aws4fetch": "^1.0.20", "capnweb": "^0.8.0", "hono": "^4.12.18" }, "peerDependencies": { "@openai/agents": "^0.3.3", "@opencode-ai/sdk": "^1.1.40", "@xterm/xterm": ">=5.0.0" }, "optionalPeers": ["@openai/agents", "@opencode-ai/sdk", "@xterm/xterm"] }, "sha512-P1ZmNDLYtuEY1ZUcAx0OgTol98VqS617LGd4nf1RTOjSV2yHLDAp59NI36/gg3/pxkHPgmAEyFIjH/ie8FoA7g=="],
 
     "@cloudflare/unenv-preset": ["@cloudflare/unenv-preset@2.16.1", "", { "peerDependencies": { "unenv": "2.0.0-rc.24", "workerd": ">1.20260305.0 <2.0.0-0" }, "optionalPeers": ["workerd"] }, "sha512-ECxObrMfyTl5bhQf/lZCXwo5G6xX9IAUo+nDMKK4SZ8m4Jvvxp52vilxyySSWh2YTZz8+HQ07qGH/2rEom1vDw=="],
 
@@ -1428,8 +1405,6 @@
 
     "@trace-flow/agent-ingest": ["@trace-flow/agent-ingest@workspace:apps/agent-ingest"],
 
-    "@trace-flow/analyst-sandbox": ["@trace-flow/analyst-sandbox@workspace:apps/analyst-sandbox"],
-
     "@trace-flow/api": ["@trace-flow/api@workspace:apps/api"],
 
     "@trace-flow/convex": ["@trace-flow/convex@workspace:packages/convex"],
@@ -1749,8 +1724,6 @@
     "callsites": ["callsites@3.1.0", "", {}, "sha512-P8BjAsXvZS+VIDUI11hHCQEv74YT67YUi5JJFNWIqL235sBmjX4+qx9Muvls5ivyNENctx46xQLQ3aTuE7ssaQ=="],
 
     "caniuse-lite": ["caniuse-lite@1.0.30001810", "", {}, "sha512-TITQPUkaz+aVk5GL6NhOdwk1aEaNTSDPsGFWrTuhKGtjTF70jL/Oht2W4c6rXUe5fu7Ie19VIahAXHIIiWWNeg=="],
-
-    "capnweb": ["capnweb@0.8.0", "", {}, "sha512-BK/TuXUiyfLSKsmjojn70yN7oYG/JJzoURZ3tckjg5Zj2KcygPm0A5jyOlswK7SYB4f0Gh9tt+RZ132b80iLfA=="],
 
     "ccount": ["ccount@2.0.1", "", {}, "sha512-eyrF0jiFpY+3drT6383f1qhkbGsLSifNAjA61IUjZjmLCWjItY6LB9ft9YhoDgwfmclB2zhu51Lc7+95b8NRAg=="],
 

@@ -17,12 +17,7 @@ import {
 } from './auth/userHelpers';
 import { openRouterCost } from './analystUsage';
 import { accumulateLedger, readThreadLedger } from './analystUsageLedger';
-import {
-  buildAnalystTools,
-  cancelSandboxRunBestEffort,
-  shouldExposeSandboxControlTool,
-  truncateText,
-} from './analystSandbox';
+import { buildAnalystTools } from './analystTools';
 import {
   action,
   internalAction,
@@ -48,24 +43,18 @@ const MAX_PAGE_CONTEXT_REFS = 12;
 const ANALYST_STOP_POLL_MS = 1_000;
 const ANALYST_STOP_REASON = 'user_stop';
 const ANALYST_FINAL_RESPONSE_PROMPT = `You reached the Analyst step limit. Do not call more tools. Provide the best final answer you can from the information already gathered. If the answer is incomplete, say what is missing and what follow-up would resolve it.`;
-const INTERNAL_SANDBOX_CONTINUATION_PREFIX =
+const LEGACY_ANALYSIS_CONTINUATION_PREFIX =
   'A background Trace Flow data analysis run completed. Use this final composed response to answer the user';
-const MAX_PI_FINAL_CONTEXT_CHARS = 24_000;
 export const ANALYST_PRO_REQUIRED_MESSAGE = 'Analyst requires an active Pro subscription.';
 
 const BASE_ANALYST_INSTRUCTIONS = `You are Trace Flow Analyst.
 
 Answer questions about Trace Flow, LLM traces, usage, costs, and agent analytics.
 Do not invent numbers or pretend page context is authoritative data.
-The main Analyst must not ingest Trace Flow rows, trace bodies, usage tables, agent analytics tables, raw datasets, or raw tool results directly.
-For any question that requires Trace Flow product data, numbers, traces, usage, costs, or agent analytics, call start_pi_agent_analysis. It runs the Trace Flow data analysis agent: an isolated sandbox whose only job is to answer Trace Flow data questions. It writes scripts, pages and saves raw payloads to disk, analyzes them with coding tools, validates summaries/aggregates locally, and returns a final composed response.
-The data analysis agent is narrow by design: it only analyzes Trace Flow data and will decline anything else. Relay only the Trace Flow data question — restate it as a clear data-analysis task. Do not hand it work outside that scope (writing or editing application code, repository inspection, infrastructure, web access, sending messages); handle or decline such requests yourself instead of forwarding them, since it will refuse them.
-start_pi_agent_analysis is the right tool for EVERY data question in this conversation, including follow-ups. The sandbox persists across the conversation: each run automatically resumes the previous one with its full session history and the data already downloaded to disk. So a follow-up does NOT start from scratch — it continues where the last run left off, reusing prior work. Phrase each prompt as the next question or refinement; do not re-explain context the agent already has, and do not ask it to re-download data it already fetched.
-It returns immediately with a run id; the run continues asynchronously, streams in the UI, and will notify this conversation when it completes. After starting a run, wait for the async completion continuation before giving the final data answer. Do not call control_pi_agent_run just to wait. End the current turn with a short acknowledgement unless the user explicitly asked you to debug, steer, cancel, or add follow-up instructions to a specific existing run.
-control_pi_agent_run steers a run that is still in flight (status, tail, cancel, steer, follow_up). Use follow_up/steer ONLY for a run that is currently running. For a new question after a run has completed, call start_pi_agent_analysis again — it resumes the same sandbox automatically; you do not need to, and must not, treat completion as losing context.
-When a run completes, use its final composed response to answer the user. Do not request or infer raw datasets; raw data stays in sandbox artifacts.
-Conversations are private, but every tool call still uses the current user's live permissions.
-Direct Trace Flow data tools are intentionally not exposed to the main Analyst.`;
+Use the available Trace Flow tools to look up data before making claims about numbers, traces, usage, costs, or agent analytics. Tool definitions and results describe the available queries and their limits.
+For follow-up questions, use prior results when they answer the question and query again when the requested data differs or needs to be refreshed.
+Explain the time range, filters, and any missing data that affect the answer. Never invent data when a tool fails.
+Conversations are private, but every tool call still uses the current user's live permissions.`;
 
 const pageContextReferenceValidator = v.object({
   surface: v.literal('agents'),
@@ -104,7 +93,7 @@ export function buildAnalystSystemPrompt(
     (ref) => ref.surface === 'agents' || ref.route.startsWith('/app/agents'),
   );
   const agentAnalyticsInstructions = hasAgentAnalyticsContext
-    ? `\nThe /app/agents page is Agent Analytics. When the user's request refers to "my data", usage, costs, tokens, conversations, repos, models, sources, active days, or agent activity from this page, start the data analysis agent with instructions to use the sandbox-local REST/OpenAPI data operation query_agent_analytics from a script. For a simple 7-day overview or KPI summary, tell it to call query_agent_analytics directly with {"view":"summary","hours":168}; do not ask it to inspect OpenAPI or call describe_agent_analytics unless the request needs filter discovery, allowed values, or non-summary view parameters. Tell it to validate numbers with aggregates or script-computed checks and to keep raw rows on disk, not in model context. Do not default to generic trace tools unless the user explicitly asks about LLM traces.`
+    ? `\nThe /app/agents page is Agent Analytics. When the user's request refers to "my data", usage, costs, tokens, conversations, repos, models, sources, active days, or agent activity from this page, use query_agent_analytics. For a simple 7-day overview or KPI summary, call query_agent_analytics with {"view":"summary","hours":168}. Use describe_agent_analytics when the request needs filter discovery, allowed values, or non-summary view parameters. Do not default to generic trace tools unless the user explicitly asks about LLM traces.`
     : '';
 
   return `${BASE_ANALYST_INSTRUCTIONS}
@@ -192,11 +181,11 @@ export function isHiddenAnalystMessageLike(message: {
   return (
     isHiddenAnalystProviderMetadata(message.providerMetadata) ||
     isHiddenAnalystProviderMetadata(metadataProviderMetadata) ||
-    isInternalSandboxContinuationMessage(message)
+    isLegacyAnalysisContinuationMessage(message)
   );
 }
 
-function isInternalSandboxContinuationMessage(message: {
+function isLegacyAnalysisContinuationMessage(message: {
   role?: unknown;
   text?: unknown;
   message?: unknown;
@@ -215,7 +204,7 @@ function isInternalSandboxContinuationMessage(message: {
       : message.message && typeof message.message === 'object'
         ? readStringMessageContent((message.message as { content?: unknown }).content)
         : undefined;
-  return Boolean(text?.trimStart().startsWith(INTERNAL_SANDBOX_CONTINUATION_PREFIX));
+  return Boolean(text?.trimStart().startsWith(LEGACY_ANALYSIS_CONTINUATION_PREFIX));
 }
 
 function readStringMessageContent(content: unknown): string | undefined {
@@ -349,22 +338,6 @@ async function shouldStopAnalystRun(
   return typeof stopRequestedAt === 'number' && stopRequestedAt >= args.baselineAt;
 }
 
-export function buildPiCompletionPrompt(run: { _id: string; prompt: string; resultText?: string }) {
-  return [
-    `${INTERNAL_SANDBOX_CONTINUATION_PREFIX}.`,
-    '',
-    `Run ID: ${run._id}`,
-    '',
-    'Original user request:',
-    run.prompt,
-    '',
-    'Data analysis agent final composed response:',
-    truncateText(run.resultText, MAX_PI_FINAL_CONTEXT_CHARS) ?? '',
-    '',
-    'Use this final composed response to answer the user. Do not request, reconstruct, or infer raw datasets; raw data stayed in sandbox artifacts.',
-  ].join('\n');
-}
-
 export const listThreads = query({
   args: {},
   handler: async (ctx) => {
@@ -422,8 +395,7 @@ export const listMessages = query({
 /**
  * Admin-only conversation cost summary. Returns `null` for non-admins (the client
  * gates on `useIsAdmin`, so this is a debug/observability surface) and the totals
- * otherwise: the conversation Analyst's own LLM usage vs. the Pi coding agent's,
- * so an admin can see where the tokens and dollars went.
+ * otherwise: the Analyst's own LLM tokens and provider-reported cost.
  */
 export const conversationUsageSummary = query({
   args: { threadId: v.id('analystThreads') },
@@ -472,24 +444,10 @@ export const stopRun = action({
       }
     }
 
-    const sandboxRuns = await ctx.runQuery(
-      internal.analystSandboxStore.getActiveSandboxRunsForAction,
-      {
-        threadId: thread._id,
-        userId: user._id,
-      },
-    );
-    const sandboxResults = [];
-    for (const run of sandboxRuns) {
-      sandboxResults.push(await cancelSandboxRunBestEffort(ctx, user._id, run));
-    }
-
     return {
-      ok: streamErrors.length === 0 && sandboxResults.every((result) => result.ok),
+      ok: streamErrors.length === 0,
       abortedStreams,
       streamErrors,
-      cancelledSandboxRuns: sandboxResults.length,
-      sandboxResults,
     };
   },
 });
@@ -626,9 +584,7 @@ async function streamAnalystText(
         prompt: args.prompt,
         promptMessageId,
         system: buildAnalystSystemPrompt(args.pageContextReferences),
-        tools: buildAnalystTools({
-          allowSandboxControl: shouldExposeSandboxControlTool(args.prompt),
-        }),
+        tools: buildAnalystTools(),
         stopWhen: stepCountIs(ANALYST_MAX_STEPS - 1),
         abortSignal: stopWatcher.signal,
         prepareStep: prepareEntitledStep,
@@ -700,7 +656,6 @@ function hasPendingAnalystToolWork(savedMessages: unknown[]) {
       if (record.type === 'tool-result') {
         const toolCallId = typeof record.toolCallId === 'string' ? record.toolCallId : undefined;
         if (toolCallId) toolResults.add(toolCallId);
-        if (isPendingAsyncPiOutput(record.output)) return true;
       }
     }
   }
@@ -715,27 +670,6 @@ function messageContentParts(message: unknown) {
   if (!message || typeof message !== 'object') return [];
   const content = (message as { message?: { content?: unknown } }).message?.content;
   return Array.isArray(content) ? content.filter((part) => part && typeof part === 'object') : [];
-}
-
-function isPendingAsyncPiOutput(output: unknown): boolean {
-  const value = unwrapToolOutputValue(output);
-  if (!value || typeof value !== 'object') return false;
-  const record = value as Record<string, unknown>;
-  return (
-    record.type === 'async_pi_agent_run' &&
-    record.async === true &&
-    (record.status === 'queued' || record.status === 'starting' || record.status === 'running')
-  );
-}
-
-function unwrapToolOutputValue(output: unknown): unknown {
-  if (!output || typeof output !== 'object' || Array.isArray(output)) return output;
-  const record = output as Record<string, unknown>;
-  if (record.type === 'json' && 'value' in record) return unwrapToolOutputValue(record.value);
-  if (Object.keys(record).length === 1 && 'output' in record) {
-    return unwrapToolOutputValue(record.output);
-  }
-  return output;
 }
 
 export const streamMessage = internalAction({

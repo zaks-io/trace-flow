@@ -539,34 +539,6 @@ jobs:
           TB_TOKEN: ${{ secrets.TINYBIRD_OPERATOR_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
 
-  deploy-analyst-sandbox:
-    name: Deploy Analyst Sandbox Worker
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [ci, deploy-convex]
-    environment: Production
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 2
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: 24
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Deploy Analyst Sandbox Worker
-        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: apps/analyst-sandbox
-          command: deploy --env production --var CONVEX_URL:${{ needs.deploy-convex.outputs.convex_url }}
-          packageManager: bun
-
   deploy-status:
     name: Deployment Status
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -584,7 +556,6 @@ jobs:
       - deploy-agent-consumer
       - prepare-agent-delivery
       - switch-agent-tinybird
-      - deploy-analyst-sandbox
     steps:
       - name: Check deployment statuses
         run: |
@@ -615,4 +586,4 @@ jobs:
         uses: linear/linear-release-action@c0cb8354a362c24c6d3e0948f37fd66d07588e3f # v0.14.5
         with:
           access_key: ${{ secrets.LINEAR_ACCESS_KEY }}
-          include_paths: apps/web/**,apps/proxy/**,apps/proxy-consumer/**,apps/api/**,apps/pipes-api/**,apps/mcp/**,apps/agent-ingest/**,apps/agent-consumer/**,apps/analyst-sandbox/**,packages/convex/**,packages/emails/**,packages/mcp-core/**,packages/types/**,packages/utils/**,packages/tinybird-client/**,packages/otel-conventions/**,packages/spans/**,packages/llm-providers/**,packages/pricing/**,packages/logging/**,datasources/**,pipes/**,scripts/assert-agent-prod-resources.sh,scripts/deploy-agent-tinybird.sh,scripts/ci/**,.github/workflows/deploy.yml,package.json,bun.lock,turbo.json
+          include_paths: apps/web/**,apps/proxy/**,apps/proxy-consumer/**,apps/api/**,apps/pipes-api/**,apps/mcp/**,apps/agent-ingest/**,apps/agent-consumer/**,packages/convex/**,packages/emails/**,packages/mcp-core/**,packages/types/**,packages/utils/**,packages/tinybird-client/**,packages/otel-conventions/**,packages/spans/**,packages/llm-providers/**,packages/pricing/**,packages/logging/**,datasources/**,pipes/**,scripts/assert-agent-prod-resources.sh,scripts/deploy-agent-tinybird.sh,scripts/ci/**,.github/workflows/deploy.yml,package.json,bun.lock,turbo.json

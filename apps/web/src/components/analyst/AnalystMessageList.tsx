@@ -4,7 +4,6 @@ import { Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { hasAnalystMessageContent, type AnalystMessage } from './analystMessageModel';
 import { AnalystMessagePartView, type AnalystMessagePart } from './AnalystMessagePartView';
-import { AnalystToolStep, isTimelinePart, toTimelinePart } from './AnalystToolTimeline';
 
 export type { AnalystMessage } from './analystMessageModel';
 
@@ -89,12 +88,6 @@ function MessageContent({ message }: { message: AnalystMessage }) {
 
 function PartView({ part, isStreaming }: { part: AnalystMessagePart; isStreaming: boolean }) {
   if (part.type === 'step-start') return null;
-
-  if (isTimelinePart(part)) {
-    const timelinePart = toTimelinePart(part, 'part');
-    if (!timelinePart) return null;
-    return <AnalystToolStep part={timelinePart} />;
-  }
 
   return <AnalystMessagePartView part={part} isStreaming={isStreaming} />;
 }

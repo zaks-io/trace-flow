@@ -74,12 +74,13 @@ workflow logic lives in the centrally managed org skills pinned by
   `Deployment Status: failure` as of 2026-09-06. The Analyst Sandbox deploy job
   failed after the container image pushed: wrangler's version lookup got a
   Cloudflare API 503 (`upstream connect error`), so the failure is a transient
-  provider error, not a code change. Rerunning the deploy needs explicit
-  production approval.
+  provider error, not a code change. This is historical evidence; that deployment
+  job was removed by the 2026-10-09 Analyst decision. Rerunning a production deploy
+  needs explicit production approval.
 - Gate parity: config-gap. The required hosted `CI Status` does not invoke the
   single local entrypoint `bun run ci:check`; it fans out path-filtered jobs.
   Local `ci:check` also does not cover every hosted gate, including Rust,
-  desktop, analyst-sandbox Python tests, and Tinybird cloud deploy check.
+  desktop, and Tinybird cloud deploy check.
 - Separate hosted gates: `Tinybird Schema Check`, `Duplicate Code Check`,
   package/app jobs, `Rust Collector`, `Tauri Desktop Build`, and deploy workflow
   `Deployment Status`
@@ -98,7 +99,7 @@ workflow logic lives in the centrally managed org skills pinned by
   Convex Preview and Cloudflare Worker previews, then comments preview URLs on the PR
 - Production deploy path: `.github/workflows/deploy.yml` on push to `main`.
   Convex deploys first and exports `.convex.cloud` and `.convex.site` URLs;
-  Web/Analyst Sandbox consume `.cloud`; Proxy/Agent Ingest/MCP consume `.site`;
+  Web consumes `.cloud`; Proxy/Agent Ingest/MCP consume `.site`;
   Tinybird schema deploys before proxy/agent consumers
 - Production deploy status check: `Deployment Status` on the default-branch HEAD
   after merge

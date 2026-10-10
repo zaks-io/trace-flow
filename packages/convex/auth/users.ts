@@ -1,6 +1,5 @@
 import { mutation, query, internalMutation, internalQuery } from '../_generated/server';
 import { v } from 'convex/values';
-import { makeFunctionReference } from 'convex/server';
 import { type QueryCtx, type MutationCtx } from '../_generated/server';
 import { type Doc, type Id } from '../_generated/dataModel';
 import { internal } from '../_generated/api';
@@ -17,10 +16,6 @@ import { userValidator } from '../validators';
 import { rateLimiter } from '../rateLimits';
 
 type AuthContext = QueryCtx | MutationCtx;
-
-const eraseSandboxBackupObjects = makeFunctionReference<'action', { backupIds: string[] }, null>(
-  'analystSandbox:eraseSandboxBackupObjects',
-);
 
 export {
   getActiveOrganizationMembership,
@@ -299,21 +294,6 @@ export const removeMember = mutation({
         await ctx.db.patch(acceptedInvite._id, { status: 'expired' });
       }
       await revokeCredentialsAfterMemberRemoval(ctx, membership.orgId, removedUser._id);
-      const analystThreads = await ctx.db
-        .query('analystThreads')
-        .withIndex('by_creator_updated', (q) => q.eq('creatorUserId', removedUser._id))
-        .collect();
-      const backupIds: string[] = [];
-      for (const thread of analystThreads) {
-        if (thread.orgId !== membership.orgId || !thread.sandboxBackup) continue;
-        backupIds.push(thread.sandboxBackup.id);
-        await ctx.db.patch(thread._id, { sandboxBackup: undefined });
-      }
-      for (let offset = 0; offset < backupIds.length; offset += 100) {
-        await ctx.scheduler.runAfter(0, eraseSandboxBackupObjects, {
-          backupIds: backupIds.slice(offset, offset + 100),
-        });
-      }
       if (removedUser.tokenIdentifier) {
         await scheduleUserOrgRemoval(ctx, removedUser._id, removedUser.tokenIdentifier);
       }

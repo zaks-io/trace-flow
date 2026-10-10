@@ -32,7 +32,6 @@ jobs:
       agent-ingest: ${{ steps.filter.outputs.agent-ingest }}
       agent-consumer: ${{ steps.filter.outputs.agent-consumer }}
       mcp: ${{ steps.filter.outputs.mcp }}
-      analyst-sandbox: ${{ steps.filter.outputs.analyst-sandbox }}
       duplicates: ${{ steps.filter.outputs.duplicates }}
       rust: ${{ steps.filter.outputs.rust }}
       desktop: ${{ steps.filter.outputs.desktop }}
@@ -92,9 +91,6 @@ jobs:
               - 'packages/mcp-core/**'
               - 'packages/logging/**'
               - 'packages/utils/**'
-            analyst-sandbox:
-              - 'apps/analyst-sandbox/**'
-              - 'packages/mcp-core/**'
             duplicates:
               - '.jscpd.json'
               - 'package.json'
@@ -760,67 +756,6 @@ jobs:
           bunx wrangler deploy --env preview --dry-run
           bunx wrangler deploy --env production --dry-run
 
-  analyst-sandbox:
-    name: Analyst Sandbox
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [changes]
-    if: needs.changes.outputs.analyst-sandbox == 'true' || needs.changes.outputs.root == 'true'
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-          persist-credentials: false
-
-      - uses: oven-sh/setup-bun@v2
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - name: Cache Turbo
-        uses: actions/cache@v4
-        with:
-          path: .turbo
-          key: ${{ runner.os }}-turbo-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-turbo-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Format check
-        run: bun prettier --check "apps/analyst-sandbox/**/*.{ts,tsx,js,jsx,json}"
-
-      - name: Lint
-        run: bunx turbo run lint --filter=@trace-flow/analyst-sandbox
-
-      - name: Type check
-        run: bunx turbo run type-check --filter=@trace-flow/analyst-sandbox
-
-      - name: Test (TypeScript)
-        run: bunx turbo run test --filter=@trace-flow/analyst-sandbox
-
-      # Builds the sandbox image with Blacksmith's layer cache (the heavy pip-install layer is
-      # reused across runs), loads it into the local daemon, then runs the generated Python
-      # client's behavior suite inside it — no live data, no network beyond loopback.
-      - name: Set up Blacksmith Docker builder
-        uses: useblacksmith/setup-docker-builder@v1
-
-      - name: Build sandbox image (layer-cached)
-        uses: useblacksmith/build-push-action@v2
-        with:
-          context: apps/analyst-sandbox
-          file: apps/analyst-sandbox/Dockerfile
-          load: true
-          tags: trace-flow-analyst-sandbox:python-tests
-
-      - name: Test (Python client in sandbox image)
-        env:
-          ANALYST_SANDBOX_IMAGE: trace-flow-analyst-sandbox:python-tests
-        run: ./apps/analyst-sandbox/python-tests/run.sh
-
   # Collector Rust workspace (packages/collector-*, apps/cli, apps/desktop). Kept out of Turbo.
   # fmt is OS-independent so it runs once on linux; check/test/clippy run per OS because the CLI
   # and desktop shell touch platform-specific keychain, path, tray, and webview code.
@@ -943,7 +878,6 @@ jobs:
       - agent-ingest
       - agent-consumer
       - mcp
-      - analyst-sandbox
       - rust
       - desktop-build
     steps:

@@ -1,14 +1,14 @@
 import type { MutationCtx, QueryCtx } from './_generated/server';
-import type { Doc, Id } from './_generated/dataModel';
+import type { Id } from './_generated/dataModel';
 
-export type LedgerAgent = 'analyst' | 'pi';
+export type LedgerAgent = 'analyst';
 
 /** A single usage increment to fold into a ledger row. */
 export interface UsageDelta {
   totalTokens: number;
   totalCost: number;
   cacheReadTokens: number;
-  /** How many LLM calls/snapshots this delta represents (analyst: 1 per step; Pi: 1 per applied snapshot). */
+  /** How many LLM calls/snapshots this delta represents (1 per step). */
   requests: number;
   /** Whether this delta carried a real (provider-reported) cost. */
   hasCost: boolean;
@@ -30,51 +30,6 @@ export function applyDelta(
     cacheReadTokens: current.cacheReadTokens + Math.max(0, delta.cacheReadTokens),
     requests: current.requests + Math.max(0, delta.requests),
     hasCost: current.hasCost || delta.hasCost,
-  };
-}
-
-/** A run's cumulative usage snapshot (Pi reports running totals, not per-step). */
-export interface CumulativeUsage {
-  totalTokens: number;
-  totalCost: number;
-  cacheReadTokens: number;
-}
-
-export const ZERO_CUMULATIVE: CumulativeUsage = {
-  totalTokens: 0,
-  totalCost: 0,
-  cacheReadTokens: 0,
-};
-
-/**
- * The delta to add to the Pi ledger given a new cumulative snapshot and the last one
- * already applied. Counts one priced request only when the snapshot actually advanced
- * and carried cost. The caller persists `next` as the new last-applied baseline.
- */
-export function cumulativeDelta(
-  applied: CumulativeUsage,
-  next: CumulativeUsage,
-  nextHasCost: boolean,
-): UsageDelta {
-  return {
-    totalTokens: next.totalTokens - applied.totalTokens,
-    totalCost: next.totalCost - applied.totalCost,
-    cacheReadTokens: next.cacheReadTokens - applied.cacheReadTokens,
-    requests: next.totalTokens > applied.totalTokens ? 1 : 0,
-    hasCost: nextHasCost,
-  };
-}
-
-/**
- * Per-field max of two cumulative snapshots. The Pi run's last-applied baseline must stay
- * monotonic: a resume can report a cumulative below the prior one, and persisting that
- * regressed value as the baseline would re-add the recovered usage on the next advance.
- */
-export function maxCumulative(a: CumulativeUsage, b: CumulativeUsage): CumulativeUsage {
-  return {
-    totalTokens: Math.max(a.totalTokens, b.totalTokens),
-    totalCost: Math.max(a.totalCost, b.totalCost),
-    cacheReadTokens: Math.max(a.cacheReadTokens, b.cacheReadTokens),
   };
 }
 
@@ -127,27 +82,23 @@ export async function accumulateLedger(
   });
 }
 
-/** Read both agent rows for a thread, returning the summary shape the UI expects. */
+/** Read the Analyst LLM totals; legacy runtime rows are no longer read. */
 export async function readThreadLedger(
   ctx: QueryCtx | MutationCtx,
   analystThreadId: Id<'analystThreads'>,
-): Promise<Record<LedgerAgent, { totalTokens: number; totalCost: number; hasCost: boolean }>> {
-  const rows = await ctx.db
+) {
+  const row = await ctx.db
     .query('analystUsageLedger')
-    .withIndex('by_thread', (q) => q.eq('analystThreadId', analystThreadId))
-    .collect();
+    .withIndex('by_thread_agent', (q) =>
+      q.eq('analystThreadId', analystThreadId).eq('agent', 'analyst'),
+    )
+    .first();
 
   return {
-    analyst: pickTotals(rows, 'analyst'),
-    pi: pickTotals(rows, 'pi'),
-  };
-}
-
-function pickTotals(rows: Doc<'analystUsageLedger'>[], agent: LedgerAgent) {
-  const row = rows.find((r) => r.agent === agent);
-  return {
-    totalTokens: row?.totalTokens ?? 0,
-    totalCost: row?.totalCost ?? 0,
-    hasCost: row?.hasCost ?? false,
+    analyst: {
+      totalTokens: row?.totalTokens ?? 0,
+      totalCost: row?.totalCost ?? 0,
+      hasCost: row?.hasCost ?? false,
+    },
   };
 }

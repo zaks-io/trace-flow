@@ -57,7 +57,7 @@ reviews:
           consult specs/integrations/auth0.md, specs/features/stripe-billing.md,
           and docs/adr/0002-jwt-tinybird-auth.md.
         - apps/mcp/: MCP transport and auth. packages/mcp-core/: tools shared by MCP
-          and Analyst. apps/analyst-sandbox/: Analyst execution and sandbox isolation.
+          and Analyst. Analyst tools execute directly in Convex.
         - apps/cli/ and apps/desktop/: collector interfaces. packages/collector-*/:
           shared parsing, contracts, API clients, and sync. Read
           docs/guides/agent-conversation-analytics/README.md and the relevant
