@@ -300,7 +300,7 @@ def fixture_sql(
                 f"{version} AS version",
                 f"{deleted} AS deleted",
                 f"{changed} AS changed",
-                f"multiIf(s = 0 AND m % 20 >= 10, 46, s IN (0, 128, 256, 2560, 3200), 0, s = 1920, if(m % 20 < 10, 8, 6), s = 1280, if(m % 20 < 10, 31, 29), 1 + s % {retained_days}) AS day_offset",
+                f"multiIf({'s = 0, [46, 31, 8, 6, 0][1 + intDiv(m % 20, 4)], ' if table == TABLES[2][0] else ''}s = 0 AND m % 20 >= 10, 46, s IN (0, 128, 256, 2560, 3200), 0, s = 1920, if(m % 20 < 10, 8, 6), s = 1280, if(m % 20 < 10, 31, 29), 1 + s % {retained_days}) AS day_offset",
                 f"if(day_offset = 0, {end_ms} + multiIf((s = 256 AND m % 20 >= 10) OR s = 2560, 1000 + m % 20 * 1000, s = 128, -3600000 + m % 20 * 1000, -120000 + m % 20 * 1000), {anchor} - day_offset * {DAY_MS} + if(day_offset = {retained_days}, {DAY_MS} - 2000, (({(end_ms - anchor) // 1000} + 14400 + (s * 137) % 40000 + m % 20) % 86400) * 1000)) AS base_ms",
                 f"base_ms + {movement} + changed * 500 AS event_ms",
                 f"{end_ms} + version * 1000 AS ingested_ms",
@@ -311,7 +311,7 @@ def fixture_sql(
                 f"{_id('fallback-agent', 's')} AS fallback_agent",
                 "concat('repository-', toString(s % 128)) AS repo_name",
                 "concat('benchmark/branch-', toString(s)) AS branch_name",
-                "concat('src/', repo_name, '/', repeat('synthetic-component-', 6), toString(m % 512), '.ts') AS file_path",
+                "if(s IN (0, 1280, 1920), 'src/benchmark-retention-crossing.ts', concat('src/', repo_name, '/', repeat('synthetic-component-', 6), toString(m % 512), '.ts')) AS file_path",
                 "concat('https://github.com/benchmark-synthetic/', repo_name, '/pull/', toString(n + 1)) AS review_url_value",
                 f"lower(hex(SHA256(concat('{table}:{label}:', toString(n))))) AS content_hash_value",
             ]

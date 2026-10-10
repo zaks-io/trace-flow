@@ -73,10 +73,27 @@ class RunnerContractTests(unittest.TestCase):
                 1791598920000,
             )
 
+    def test_missing_end_day_facts_fail_before_measurement(self):
+        class Client:
+            def rows(self, sql):
+                return [{"end_day_rows": 0, "after_end_rows": 0, "future_rows": 0}]
+
+        with self.assertRaisesRegex(RuntimeError, "missing end-day facts"):
+            boundary_evidence(
+                Client(),
+                {"agent_message_fact_versions": "synthetic_messages"},
+                1791598920000,
+            )
+
     def test_inventory_and_all_parameter_sets_are_measured(self):
         root = Path(__file__).resolve().parents[2]
         endpoints = endpoint_inventory(root)
         self.assertEqual(len(endpoints), 18)
+        self.assertEqual(len(LIFETIME), 6)
+        self.assertTrue(
+            {"agent_file_attention_top_files", "agent_file_attention_top_directories"}
+            <= LIFETIME
+        )
 
         class Client:
             def pipe_data(self, path, params):

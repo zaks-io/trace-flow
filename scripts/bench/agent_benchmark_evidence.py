@@ -60,6 +60,8 @@ def boundary_evidence(ch, tables, end_ms):
             f"countIf({timestamp} >= fromUnixTimestamp64Milli({end_ms}, 'UTC')) AS after_end_rows, max({timestamp}) AS last_event, countIf({timestamp} > now()) AS future_rows "
             f"FROM {physical} FINAL WHERE OrgId = 'benchmark-org' AND IsDeleted = 0"
         )[0]
+    if any(row["end_day_rows"] == 0 for row in result.values()):
+        raise RuntimeError("Fixture is missing end-day facts")
     if any(row["future_rows"] for row in result.values()):
         raise RuntimeError("Fixture has future events at measurement start")
     physical = tables["agent_message_fact_versions"]
@@ -70,5 +72,13 @@ def boundary_evidence(ch, tables, end_ms):
         "concat('benchmark-session-1920-', lower(hex(SHA256('1920')))), "
         "concat('benchmark-session-1280-', lower(hex(SHA256('1280')))), concat('benchmark-session-128-', lower(hex(SHA256('128')))), concat('benchmark-session-256-', lower(hex(SHA256('256')))), concat('benchmark-session-2560-', lower(hex(SHA256('2560')))), concat('benchmark-session-3200-', lower(hex(SHA256('3200'))))) "
         "GROUP BY session_pk ORDER BY session_pk"
+    )
+    physical = tables["agent_file_event_fact_versions"]
+    result["crossing_file_paths"] = ch.rows(
+        "SELECT session_pk, repo_fingerprint, normalized_repo_path, count() AS touches, "
+        "groupArray(EventAt) AS touch_times, min(EventAt) AS first_touch, max(EventAt) AS last_touch "
+        f"FROM {physical} FINAL WHERE OrgId = 'benchmark-org' AND IsDeleted = 0 "
+        "AND normalized_repo_path = 'src/benchmark-retention-crossing.ts' "
+        "GROUP BY session_pk, repo_fingerprint, normalized_repo_path ORDER BY session_pk"
     )
     return result
