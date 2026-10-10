@@ -50,13 +50,16 @@ scripts/dev/local-stack.sh down
 `login-url` defaults to `dev@trace-flow.local`. Logs are available for `oidc`, `workers`,
 `agent-ingest`, `pipes-api`, `raw-api`, `kv-bridge`, and `web`.
 
-`smoke` uses the already-running local proxy, KV bridge, and Tinybird instance. It seeds a temporary
-local API key, posts OTLP, waits for the consumer to flush, and queries the trace summary endpoint.
+`smoke` reads an unexpired ingest API key from the signed-in user's local Convex organization.
+Sign in and finish onboarding first; `TRACE_FLOW_LOCAL_STACK_EMAIL` selects the user and defaults to
+`dev@trace-flow.local`. It posts OTLP through the already-running proxy, waits for the consumer to
+flush, and queries Tinybird by the key's `sha256:` analytics ID. It never prints the key.
 `--tinybird-only` inserts and queries a trace without Workers. Neither mode starts services.
 Smoke rows remain in the disposable database until it is purged.
 
-`verify` requires the existing local Tinybird instance, runs its build and tests, then repository
-type checks and tests. `full` also runs lint and build. For code checks without a running stack,
+`verify` requires the existing local Tinybird instance, builds in the CLI's isolated build workspace
+and runs tests in disposable test workspaces, then runs repository type checks and tests.
+Verification does not build into the stack's live workspace. `full` also runs lint and build. For code checks without a running stack,
 use `bun run ci:check`; it does not require stack setup.
 
 Normal `down` stops processes and containers and retains data. `down --purge` permanently deletes
@@ -89,7 +92,7 @@ Worker mirrors exclude dotenv files and contain only that Worker's required loca
 Web blanks keys declared in its dotenv files before adding stack values. Convex runs from a private
 CLI directory because the CLI rewrites `.env.local`. Tinybird also uses a private CLI
 directory, pinned to the local default workspace, so an existing cloud `.tinyb` cannot redirect
-local deploys or verification. Mock sign-in and generated credentials stay
+local deploys. Verification has a separate private CLI directory pinned to `Trace_Flow_Local_Verification`. Mock sign-in and generated credentials stay
 in local runtime state, never in deploy configuration.
 
 When `sbx-runtime` is installed, the stack allocates stable named ports, private state outside the
@@ -110,17 +113,57 @@ Live Collector uploads remain unsupported because Agent Consumer's `TINYBIRD_AGE
 not configured. Organization erasure remains unsupported because Convex requires an HTTPS ingest
 URL. These limitations apply to the prior stacks too.
 
+## Plain-machine operations
+
+After signing in and opening the main pages, the stack holds about 6.5 GiB: the five `wrangler dev`
+processes about 2.7 GiB, `next dev` 1.3 to 2.3 GiB (more after a cold compile), Tinybird Local about
+1.85 GiB, and Convex about 0.35 GiB. It runs about 1,100 processes and threads. ClickHouse inside
+Tinybird Local aborts when systemd limits Docker scopes to the default 15% of the task limit. Hosts
+that cap container tasks need `TasksMax=infinity` for `docker-*.scope` units. Sandbox agents must
+request host changes through the host-change procedure instead of changing systemd settings.
+
+- `TRACE_FLOW_TINYBIRD_MEMORY=3g`: Tinybird Local container memory limit. ClickHouse fails queries
+  at 90% of it. `bun run test:tinybird` peaks near 2.2 GiB of anonymous memory in the container.
+- `TRACE_FLOW_TINYBIRD_CPU_COUNT=2`: CPU count Tinybird Local sizes its Python worker pools from.
+  The stack leaves a running container alone. To apply either setting, stop the stack through its
+  owning session, remove only that stack's stopped Tinybird container, and rerun the approved `up`.
+  Keep the state directory and stack directory stable so persisted data retains its matching tokens.
+
+## Dev Environment
+
+The following Convex guidance is restored verbatim from the prior guide. Its reference to the
+removed `scripts/dev/convex.sh` describes that script's former behavior, not a current command.
+The disposable stack uses a private CLI directory with an adjusted `functions` path instead.
+
+## Convex Gotchas
+
+- **Run Convex commands from the repo root, never from `packages/convex/`.** The root `convex.json`
+  sets `"functions": "packages/convex"`, and `scripts/dev/convex.sh` `cd`s to the repo root before
+  `bunx convex dev`. Running `bunx convex dev --once` from inside `packages/convex/` resolves the
+  functions dir to the empty `packages/convex/convex/` directory and pushes **zero** functions while
+  still printing `Convex functions ready!`. New functions then 404 at runtime. Symptom: a freshly
+  added function returns `Could not find function ... Did you forget to run npx convex dev?`.
+- Use `bunx convex dev --once` to push to the dev **Control Plane**; never `convex deploy` (that is a
+  production action).
+- **Never pass `-v`/`--verbose` to `convex dev`, and never run `convex env list`/`env get`** — they
+  print Convex environment secret _values_, not just keys. To confirm a function deployed, run it with
+  invalid args and read the `ArgumentValidationError` instead.
+
 ## Verification boundaries
 
 For script changes without an approved live run, use static evidence:
 
 ```bash
 shellcheck scripts/dev/*.sh
-node --test scripts/dev/setup-worktree.test.mjs scripts/dev/local-stack.test.mjs
+node --test scripts/dev/setup-worktree.test.mjs scripts/dev/local-stack*.test.mjs
 scripts/dev/local-stack.sh --help
 bun run lint
 bun run ci:check
 ```
+
+Run `scripts/dev/local-stack-tinybird.test.py` with the Python interpreter used by the installed
+`tb` entrypoint to check workspace selection against the real CLI library. It mocks HTTP and starts
+no services.
 
 Record the live-run gap in the PR. A passing code gate cannot prove mock sign-in, Docker networking,
 queue delivery, or shutdown. After approval, one supervised `up`, smoke, and `down` closes that gap;

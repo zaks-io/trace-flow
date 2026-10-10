@@ -35,10 +35,25 @@ STACK_REQUESTED_TINYBIRD_HOST="${TRACE_FLOW_TINYBIRD_HOST:-}"
 
 # shellcheck source=scripts/dev/_common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
+# Diagnostics must run before runtime allocation, which itself needs sha256sum.
+# shellcheck source=scripts/dev/local-stack-checks.sh
+source "$TRACE_FLOW_DEV_DIR/local-stack-checks.sh"
+if [[ "$1" == doctor ]]; then
+  cmd_doctor
+  exit 0
+fi
 # shellcheck source=scripts/dev/_runtime.sh
 source "$(dirname "${BASH_SOURCE[0]}")/_runtime.sh"
 # shellcheck source=scripts/dev/_tinybird.sh
 source "$(dirname "${BASH_SOURCE[0]}")/_tinybird.sh"
+
+case "$1" in
+  up | smoke | verify | seed)
+    if [[ -n "$STACK_REQUESTED_TINYBIRD_HOST" && "$STACK_REQUESTED_TINYBIRD_HOST" != "$TRACE_FLOW_TINYBIRD_HOST" ]]; then
+      fail "the self-contained stack uses its local Tinybird instance; set TRACE_FLOW_LOCAL_STACK_TINYBIRD_PORT instead of TRACE_FLOW_TINYBIRD_HOST"
+    fi
+    ;;
+esac
 
 STACK_DIR="${TRACE_FLOW_LOCAL_STACK_DIR:-$TRACE_FLOW_STATE_DIR/local-stack}"
 STACK_LOG_DIR="$STACK_DIR/logs"
@@ -624,11 +639,7 @@ cmd_status() {
   print_urls
 }
 
-# shellcheck source=scripts/dev/local-stack-checks.sh
-source "$TRACE_FLOW_DEV_DIR/local-stack-checks.sh"
-
 case "${1:-}" in
-  doctor) cmd_doctor ;;
   smoke) cmd_smoke "${@:2}" ;;
   verify) cmd_verify "${2:-quick}" ;;
   up) cmd_up ;;

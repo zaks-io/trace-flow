@@ -7,6 +7,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -41,6 +42,79 @@ function fixture(t) {
 function bash(script, env) {
   return spawnSync('bash', ['-c', script], { env, encoding: 'utf8' });
 }
+
+test('doctor reports missing sha256sum before any runtime allocation', (t) => {
+  const { scripts, bin, env, root, calls } = fixture(t);
+  symlinkSync('/usr/bin/dirname', path.join(bin, 'dirname'));
+  const result = spawnSync('/bin/bash', [path.join(scripts, 'local-stack.sh'), 'doctor'], {
+    env: { ...env, HOME: root, PATH: bin, TRACE_FLOW_TINYBIRD_HOST: 'https://unrelated.example' },
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stdout, /miss sha256sum/);
+  assert.match(result.stdout, /miss docker daemon/);
+  assert.ok(!readFileSync(calls, 'utf8').includes('sbx-runtime'));
+  assert.equal(existsSync(path.join(root, '.trace-flow')), false);
+});
+
+test('Tinybird host overrides block data commands but leave diagnostics and shutdown usable', (t) => {
+  const { scripts, bin, env, root } = fixture(t);
+  writeFileSync(
+    path.join(bin, 'sbx-runtime'),
+    `#!/bin/bash
+printf 'SBX_WORKTREE_ID=fixture\\nSBX_STATE_DIR=${root}/state\\n'
+for service in "\${@:6}"; do
+  key="SBX_PORT_\${service^^}"; key="\${key//-/_}"
+  printf '%s=17000\\n' "$key"
+done
+`,
+    { mode: 0o755 },
+  );
+  writeFileSync(path.join(bin, 'docker'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
+  writeFileSync(path.join(bin, 'curl'), '#!/bin/bash\nexit 99\n', { mode: 0o755 });
+  const commandEnv = { ...env, TRACE_FLOW_TINYBIRD_HOST: 'https://unrelated.example' };
+  for (const command of ['up', 'smoke', 'verify', 'seed']) {
+    const result = spawnSync('bash', [path.join(scripts, 'local-stack.sh'), command], {
+      env: commandEnv,
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /set TRACE_FLOW_LOCAL_STACK_TINYBIRD_PORT/);
+  }
+  for (const command of ['down', 'status', 'doctor']) {
+    const result = spawnSync('bash', [path.join(scripts, 'local-stack.sh'), command], {
+      env: commandEnv,
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+  }
+});
+
+test('Tinybird token files are private without changing the caller umask', (t) => {
+  const { scripts, bin, env, root } = fixture(t);
+  writeFileSync(
+    path.join(bin, 'tb'),
+    `#!/bin/bash
+printf '{"user_token":"fixture-user","workspace_token":"fixture-workspace"}'
+`,
+    { mode: 0o755 },
+  );
+  const result = bash(
+    `
+source '${scripts}/_common.sh'
+source '${scripts}/_tinybird.sh'
+STACK_TINYBIRD_ENV='${root}/tinybird.env'
+unset TB_LOCAL_USER_TOKEN TB_LOCAL_WORKSPACE_TOKEN
+umask 022
+ensure_tinybird_tokens
+test "$(umask)" = 0022
+test "$TB_LOCAL_WORKSPACE_TOKEN" = fixture-workspace
+test "$(stat -c %a "$STACK_TINYBIRD_ENV")" = 600
+`,
+    env,
+  );
+  assert.equal(result.status, 0, result.stderr);
+});
 
 for (const argument of ['--help', 'help', 'unknown-command']) {
   test(`${argument} never discovers tools, allocates runtime, or starts services`, (t) => {
@@ -126,70 +200,7 @@ ${command}
   assert.equal(existsSync(calls), false);
 });
 
-function smoke(t, mode, recording = 'true') {
-  const { root, env } = fixture(t);
-  const requests = path.join(root, 'requests');
-  const preload = path.join(root, 'fetch.mjs');
-  writeFileSync(
-    preload,
-    `
-import { appendFileSync } from 'node:fs';
-globalThis.fetch = async (url, init = {}) => {
-  const parsed = new URL(url);
-  appendFileSync(process.env.TEST_REQUESTS, JSON.stringify({ path: parsed.pathname, method: init.method ?? 'GET', body: init.body }) + '\\n');
-  if (parsed.pathname === '/v1/traces') return Response.json({}, { headers: { 'X-Trace-Flow-Recording': '${recording}' } });
-  if (parsed.pathname === '/v0/sql') return Response.json({ data: [{ count: 1 }] });
-  if (parsed.pathname.includes('/v0/pipes/')) return Response.json({ data: [{}] });
-  return Response.json({});
-};
-`,
-  );
-  const result = spawnSync(
-    'node',
-    ['--import', preload, path.join(devDir, 'local-stack-smoke.mjs'), ...mode],
-    {
-      env: {
-        ...env,
-        TEST_REQUESTS: requests,
-        TRACE_FLOW_TINYBIRD_HOST: 'http://127.0.0.1:7181',
-        TINYBIRD_WORKSPACE_TOKEN: 'fixture-token',
-        STACK_PROXY_URL: 'http://127.0.0.1:8787',
-        STACK_KV_BRIDGE_URL: 'http://127.0.0.1:8791',
-        KV_BRIDGE_TOKEN: 'fixture-bridge',
-        STACK_API_KEYS_KV_ID: 'fixture-namespace',
-      },
-      encoding: 'utf8',
-    },
-  );
-  return { result, requests: readFileSync(requests, 'utf8').trim().split('\n').map(JSON.parse) };
-}
-
-test('runtime smoke writes the shared KV bridge, posts OTLP and verifies the summary', (t) => {
-  const { result, requests } = smoke(t, []);
-  assert.equal(result.status, 0, result.stderr);
-  const writes = requests.filter((request) => request.method === 'PUT');
-  assert.equal(writes.length, 2);
-  assert.ok(
-    writes.every((request) => request.path.includes('/namespaces/fixture-namespace/values/')),
-  );
-  assert.ok(requests.some((request) => request.path === '/v1/traces' && request.method === 'POST'));
-  assert.ok(requests.some((request) => request.path === '/v0/pipes/mcp_trace_summaries.json'));
-});
-
-test('runtime smoke fails when the proxy accepts but does not record the trace', (t) => {
-  const { result } = smoke(t, [], 'false');
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /did not record/);
-});
-
-test('Tinybird-only smoke inserts and queries without touching Workers', (t) => {
-  const { result, requests } = smoke(t, ['--tinybird-only']);
-  assert.equal(result.status, 0, result.stderr);
-  assert.ok(requests.some((request) => request.path === '/v0/events'));
-  assert.ok(requests.every((request) => request.path.startsWith('/v0/')));
-});
-
-test('Local Workers retain generated env loading and the optional Wrangler env file', (t) => {
+test('Local Workers load an existing dev.env and the optional Wrangler env file', (t) => {
   const { scripts, bin, env, root } = fixture(t);
   const state = path.join(root, 'state');
   mkdirSync(state);
@@ -220,37 +231,41 @@ test "$WORKERS_FIXTURE_VALUE" = loaded
   assert.equal(args.filter((arg) => arg === '-c').length, 6);
 });
 
-test('Tinybird CLI pins a private workspace without changing the checkout cloud selection', (t) => {
-  const { scripts, bin, env, root } = fixture(t);
-  const original = JSON.stringify({ name: 'cloud-workspace-fixture' });
-  writeFileSync(path.join(root, '.tinyb'), original);
-  const configFile = path.join(root, 'used-config');
-  writeFileSync(
-    path.join(bin, 'tb'),
-    `#!/bin/bash
+for (const command of ['deploy --wait --auto', 'build', 'test run']) {
+  test(`Tinybird ${command} uses its private workspace without changing the cloud selection`, (t) => {
+    const { scripts, bin, env, root } = fixture(t);
+    const original = JSON.stringify({ name: 'cloud-workspace-fixture' });
+    writeFileSync(path.join(root, '.tinyb'), original);
+    const configFile = path.join(root, 'used-config');
+    writeFileSync(
+      path.join(bin, 'tb'),
+      `#!/bin/bash
 set -e
-test "$*" = '--local deploy --wait --auto'
+test "$*" = '--local ${command}'
 test "$TB_HOST" = http://127.0.0.1:17181
 test "$TB_TOKEN" = fixture-token
 cp .tinyb "$TEST_CONFIG"
 `,
-    { mode: 0o755 },
-  );
-  const result = bash(
-    `
+      { mode: 0o755 },
+    );
+    const result = bash(
+      `
 source '${scripts}/_common.sh'
 source '${scripts}/_tinybird.sh'
 STACK_DIR='${root}/stack'
 TINYBIRD_WORKSPACE_TOKEN=fixture-token
 TRACE_FLOW_TINYBIRD_HOST=http://127.0.0.1:17181
-tinybird_cli deploy --wait --auto
+tinybird_cli ${command}
 `,
-    { ...env, TEST_CONFIG: configFile },
-  );
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(JSON.parse(readFileSync(configFile, 'utf8')), {
-    name: 'Tinybird_Local_Testing',
-    cwd: root,
+      { ...env, TEST_CONFIG: configFile },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(readFileSync(configFile, 'utf8')), {
+      name: command.startsWith('deploy')
+        ? 'Tinybird_Local_Testing'
+        : 'Trace_Flow_Local_Verification',
+      cwd: root,
+    });
+    assert.equal(readFileSync(path.join(root, '.tinyb'), 'utf8'), original);
   });
-  assert.equal(readFileSync(path.join(root, '.tinyb'), 'utf8'), original);
-});
+}

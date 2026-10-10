@@ -23,7 +23,6 @@ cmd_doctor() {
     printf 'miss docker compose v2\n'
     missing=1
   fi
-  printf 'State: %s\n' "$STACK_DIR"
   return "$missing"
 }
 
@@ -35,16 +34,11 @@ require_running_stack() {
 
 cmd_smoke() {
   require_running_stack
-  # Read existing secrets without generating or changing stack state.
-  set -a
-  # shellcheck disable=SC1090
-  source "$STACK_SECRETS"
-  set +a
   TRACE_FLOW_TINYBIRD_HOST="$TRACE_FLOW_TINYBIRD_HOST" \
     TINYBIRD_WORKSPACE_TOKEN="$TINYBIRD_WORKSPACE_TOKEN" \
     STACK_PROXY_URL="http://127.0.0.1:$PROXY_PORT" \
-    STACK_KV_BRIDGE_URL="http://127.0.0.1:$KV_BRIDGE_PORT" \
-    STACK_API_KEYS_KV_ID="$API_KEYS_KV_ID" \
+    STACK_CONVEX_CLI_DIR="$STACK_CONVEX_CLI_DIR" \
+    STACK_EMAIL="$DEFAULT_EMAIL" \
     node "$TRACE_FLOW_DEV_DIR/local-stack-smoke.mjs" "$@"
 }
 

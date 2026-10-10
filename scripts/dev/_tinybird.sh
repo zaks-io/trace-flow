@@ -26,8 +26,7 @@ ensure_tinybird_tokens() {
   user_token="$(printf '%s' "$tokens" | json_field user_token)"
   workspace_token="$(printf '%s' "$tokens" | json_field workspace_token)"
   [[ -n "$user_token" && -n "$workspace_token" ]] || fail "Tinybird did not return local tokens"
-  umask 077
-  printf 'TB_LOCAL_USER_TOKEN=%s\nTB_LOCAL_WORKSPACE_TOKEN=%s\n' "$user_token" "$workspace_token" >"$STACK_TINYBIRD_ENV"
+  (umask 077; printf 'TB_LOCAL_USER_TOKEN=%s\nTB_LOCAL_WORKSPACE_TOKEN=%s\n' "$user_token" "$workspace_token" >"$STACK_TINYBIRD_ENV")
   set -a
   # shellcheck disable=SC1090
   source "$STACK_TINYBIRD_ENV"
@@ -78,11 +77,18 @@ start_tinybird_local() {
 # Tinybird CLI prefers .tinyb's workspace name over an explicit token. Keep its
 # writable config private, so an existing cloud selection cannot redirect local deploys.
 tinybird_cli() {
-  local cli_dir="$STACK_DIR/tinybird-cli"
+  local cli_dir="$STACK_DIR/tinybird-cli" workspace_name=Tinybird_Local_Testing
+  case "${1:-}" in
+    build | test)
+      cli_dir="$STACK_DIR/tinybird-verify-cli"
+      # Pin the build workspace even when the CLI resolves the live token's name.
+      workspace_name=Trace_Flow_Local_Verification
+      ;;
+  esac
   mkdir -p "$cli_dir"
   chmod 700 "$cli_dir"
-  node -e 'require("node:fs").writeFileSync(process.argv[1], JSON.stringify({name: "Tinybird_Local_Testing", cwd: process.argv[2]}), {mode: 0o600})' \
-    "$cli_dir/.tinyb" "$TRACE_FLOW_ROOT"
+  node -e 'const config = {cwd: process.argv[2]}; if (process.argv[3]) config.name = process.argv[3]; require("node:fs").writeFileSync(process.argv[1], JSON.stringify(config), {mode: 0o600})' \
+    "$cli_dir/.tinyb" "$TRACE_FLOW_ROOT" "$workspace_name"
   (cd "$cli_dir" && TB_VERSION_WARNING=0 TB_HOST="$TRACE_FLOW_TINYBIRD_HOST" \
     TB_TOKEN="$TINYBIRD_WORKSPACE_TOKEN" tb --local "$@")
 }

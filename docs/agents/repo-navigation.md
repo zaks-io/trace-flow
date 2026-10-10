@@ -87,7 +87,8 @@ sync with `packages/otel-conventions`.
   handoff docs.
 - `.agents/skills/` is the canonical repo-local skill directory.
 - `.codex/` contains Codex project configuration and hooks.
-- `.cursor/` contains Cursor Background Agent environment and rules.
+- `.cursor/` contains Cursor editor rules and worktree setup. The background environment bootstrap
+  was removed because its image lacked Docker and Compose.
 
 The `ziw-*` skills are centrally managed and version-pinned in `skills-lock.json`. Do
 not edit generated skill copies in place; update the source and re-sync.
@@ -97,7 +98,7 @@ not edit generated skill copies in place; update the source and re-sync.
 - Environment vocabulary (**Dev Environment**, **Local Workers**, **Self-Contained
   Local**, **Control Plane** / **Data Plane**) is defined in the **Environments**
   section of `CONTEXT.md`. `docs/agents/local-environment.md` describes the
-  Self-Contained Local stack the dev scripts build by default. "Dev" means the
+  Self-Contained Local stack started only for approved local runs. "Dev" means the
   Dev Environment; name Local Workers or Self-Contained Local when you mean those.
 - `package.json` defines root scripts. Use `bun run ci:check` as the full local
   gate unless a narrower check is justified.

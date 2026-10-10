@@ -1,11 +1,9 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { localStackAccount } from './local-stack-convex.mjs';
 
 const tinybirdHost = requireLocalUrl('TRACE_FLOW_TINYBIRD_HOST');
 const tinybirdToken = requireEnv('TINYBIRD_WORKSPACE_TOKEN');
 const workerUrl = requireLocalUrl('STACK_PROXY_URL');
-const bridgeUrl = requireLocalUrl('STACK_KV_BRIDGE_URL');
-const bridgeToken = requireEnv('KV_BRIDGE_TOKEN');
-const namespaceId = requireEnv('STACK_API_KEYS_KV_ID');
 const timeoutMs = Number(process.env.TRACE_FLOW_SMOKE_TIMEOUT_MS ?? 120_000);
 const tinybirdOnly = process.argv.includes('--tinybird-only');
 for (const arg of process.argv.slice(2)) {
@@ -16,18 +14,34 @@ const nowMs = Date.now();
 const nowNs = BigInt(nowMs) * 1_000_000n;
 const traceId = process.env.TRACE_FLOW_SMOKE_TRACE_ID ?? randomBytes(16).toString('hex');
 const spanId = process.env.TRACE_FLOW_SMOKE_SPAN_ID ?? randomBytes(8).toString('hex');
-const apiKey = `tf-smoke-${nowMs}-${randomBytes(4).toString('hex')}`;
-const orgId = `org_smoke_local_${nowMs}`;
+let apiKey;
+let analyticsKey;
 
 try {
   log('checking Tinybird Local');
   await tinybirdSql('SELECT 1 AS ok');
 
   if (tinybirdOnly) {
+    apiKey = randomBytes(32).toString('hex');
+  } else {
+    const { apiKeys } = localStackAccount(requireEnv('STACK_EMAIL'));
+    const key = apiKeys.find(
+      (record) =>
+        typeof record.key === 'string' &&
+        record.key &&
+        record.expiresAt > nowMs &&
+        (record.permissions ?? ['ingest']).includes('ingest'),
+    );
+    if (!key)
+      throw new Error('org has no unexpired ingest API key; create one in the web app first');
+    apiKey = key.key;
+  }
+  analyticsKey = `sha256:${createHash('sha256').update(apiKey).digest('hex')}`;
+
+  if (tinybirdOnly) {
     log('inserting smoke trace directly into Tinybird');
     await insertTinybirdTrace();
   } else {
-    await seedLocalApiKey();
     await postOtlpTrace();
   }
 
@@ -104,31 +118,6 @@ async function tinybirdEvents(datasource, rows) {
     },
     body,
   });
-}
-
-async function seedLocalApiKey() {
-  log('seeding local Worker KV');
-  const expiresAt = nowMs + 24 * 60 * 60 * 1000;
-  const periodEnd = nowMs + 30 * 24 * 60 * 60 * 1000;
-  const apiKeyRecord = JSON.stringify({ expiresAt, createdAt: nowMs, orgId });
-  const subscriptionRecord = JSON.stringify({
-    tier: 'pro',
-    status: 'active',
-    monthlyUnits: 100_000,
-    addonUnits: 0,
-    currentPeriodStart: nowMs,
-    currentPeriodEnd: periodEnd,
-  });
-
-  for (const [key, value] of [
-    [apiKey, apiKeyRecord],
-    [`sub:${orgId}`, subscriptionRecord],
-  ]) {
-    await fetchJson(
-      `${bridgeUrl}/accounts/local/storage/kv/namespaces/${namespaceId}/values/${encodeURIComponent(key)}`,
-      { method: 'PUT', headers: { Authorization: `Bearer ${bridgeToken}` }, body: value },
-    );
-  }
 }
 
 function otlpPayload() {
@@ -212,7 +201,7 @@ async function insertTinybirdTrace() {
       Duration: 50_000_000,
       StatusCode: 'STATUS_CODE_OK',
       StatusMessage: '',
-      ApiKey: apiKey,
+      ApiKey: analyticsKey,
       'Events.Timestamp': [],
       'Events.Name': [],
       'Events.Attributes': [],
@@ -233,7 +222,7 @@ async function waitForTrace() {
         'SELECT count() AS count',
         'FROM otel_trace_spans',
         `WHERE TraceId = '${traceId}'`,
-        `AND ApiKey = '${apiKey}'`,
+        `AND ApiKey = '${analyticsKey}'`,
       ].join(' ');
       const body = await tinybirdSql(sql);
       const count = Number(body?.data?.[0]?.count ?? 0);
@@ -247,7 +236,7 @@ async function waitForTrace() {
 
 async function assertTraceSummary() {
   const url = new URL('/v0/pipes/mcp_trace_summaries.json', tinybirdHost);
-  url.searchParams.set('api_keys', apiKey);
+  url.searchParams.set('api_keys', analyticsKey);
   url.searchParams.set('retention_days', '7');
   url.searchParams.set('trace_id', traceId);
   const { body } = await fetchJson(url, {
