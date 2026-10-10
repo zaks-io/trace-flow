@@ -1,4 +1,4 @@
-# Fixtures: fixtures/agent_message_facts.ndjson (org_context).
+# Fixtures: fixtures/agent_message_fact_versions.ndjson (org_context).
 # Current window [2026-05-20, 2026-05-21): 6 measured assistant calls across 3 sessions.
 # Context tokens are input + cache_read + cache_creation, never output/reasoning.
 # Per-turn context set (current): {20k, 60k, 90k, 145k, 150k, 220k}.

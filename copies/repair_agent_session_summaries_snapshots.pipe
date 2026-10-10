@@ -1,5 +1,5 @@
 DESCRIPTION >
-    Bounded on-demand snapshot of agent_session_summaries from contributors: session_files, session_messages, session_pull_requests, session_tools.
+    Bounded on-demand agent_session_summaries_snapshots from versioned canonical facts.
 
 NODE snapshot
 SQL >

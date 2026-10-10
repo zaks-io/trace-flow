@@ -69,11 +69,7 @@ test('defines the exact deployed token names, Worker variables, and resource sco
     {
       name: 'trace_flow_agent_delivery_read',
       variable: 'TINYBIRD_AGENT_DELIVERY_READ_TOKEN',
-      scopes: [
-        'PIPES:READ:agent_delivery_receipt',
-        'PIPES:READ:agent_fact_identity_day',
-        'PIPES:READ:agent_fact_identity_day_batch',
-      ],
+      scopes: ['PIPES:READ:agent_delivery_receipt', 'PIPES:READ:agent_fact_identity_day_batch'],
     },
     {
       name: 'trace_flow_agent_snapshot_worker',
@@ -109,17 +105,6 @@ test('defines the exact deployed token names, Worker variables, and resource sco
     },
   ]);
   expect(AGENT_APPEND_DATASOURCES).toEqual([
-    'agent_messages',
-    'agent_tool_events',
-    'agent_file_events',
-    'agent_capability_snapshots',
-    'agent_pull_request_links',
-    'agent_message_facts',
-    'agent_tool_event_facts',
-    'agent_file_event_facts',
-    'agent_capability_snapshot_facts',
-    'agent_pull_request_facts',
-    'agent_review_unit_attributions',
     'agent_message_fact_versions',
     'agent_tool_event_fact_versions',
     'agent_file_event_fact_versions',
@@ -239,7 +224,7 @@ test('fails without writing an export when deployed scopes are not exact', async
 
 test('adds every missing datafile binding without changing existing bytes or tokens', async () => {
   const { root, expectedBase } = await datafileFixture();
-  expect(await ensureAgentTinybirdTokenDatafiles(root)).toEqual({ added: 41, present: 0 });
+  expect(await ensureAgentTinybirdTokenDatafiles(root)).toEqual({ added: 29, present: 0 });
   const inventory = await validateAgentTinybirdTokenDatafiles(root);
   expect(inventory).toEqual(
     Object.fromEntries(AGENT_TINYBIRD_TOKENS.map(({ name, scopes }) => [name, [...scopes].sort()])),
@@ -258,7 +243,7 @@ test('keeps one existing exact datafile binding byte-for-byte', async () => {
   const before = await Promise.all(
     [...expectedBase.keys()].map(async (path) => [path, await readFile(path, 'utf8')]),
   );
-  expect(await ensureAgentTinybirdTokenDatafiles(root)).toEqual({ added: 0, present: 41 });
+  expect(await ensureAgentTinybirdTokenDatafiles(root)).toEqual({ added: 0, present: 29 });
   for (const [path, contents] of before) expect(await readFile(path, 'utf8')).toBe(contents);
 });
 

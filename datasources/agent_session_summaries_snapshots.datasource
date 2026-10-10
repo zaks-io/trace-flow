@@ -1,5 +1,5 @@
 DESCRIPTION >
-    Generation-scoped daily snapshot rows for agent_session_summaries. Publishing a generation through
+    Generation-scoped daily snapshot rows for session summaries. Publishing a generation through
     agent_snapshot_manifest makes a complete replacement visible without exposing partial copies.
 
 SCHEMA >

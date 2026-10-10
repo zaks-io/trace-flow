@@ -1,20 +1,12 @@
 import { insertRows, fetchPipe } from '@trace-flow/tinybird-client';
 import {
+  DATASOURCES,
   ROW_IDENTITY_FIELDS,
   MAX_FACT_INSERT_PARTITIONS,
   factPartitionKey,
   rowIdentity,
   type Category,
 } from './facts';
-
-const FACT_VERSION_DATASOURCES: Record<Category, string> = {
-  messages: 'agent_message_fact_versions',
-  tool_events: 'agent_tool_event_fact_versions',
-  file_events: 'agent_file_event_fact_versions',
-  capability_snapshots: 'agent_capability_snapshot_fact_versions',
-  pull_request_links: 'agent_pull_request_fact_versions',
-  review_unit_attributions: 'agent_review_unit_attribution_versions',
-};
 
 interface DeliveryWriteEnv {
   TINYBIRD_TOKEN: string;
@@ -115,7 +107,7 @@ export async function writeDeliveryCategory(
     await insertRows(
       groups.slice(offset, offset + MAX_FACT_INSERT_PARTITIONS).flat(),
       env.TINYBIRD_TOKEN,
-      FACT_VERSION_DATASOURCES[category],
+      DATASOURCES[category],
       env.TINYBIRD_HOST,
     );
   }

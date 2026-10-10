@@ -25,6 +25,6 @@ Representative fixture window:
 `2026-05-22T00:00:00Z`. The endpoint first prunes
 `agent_session_signals` by `EventDate` to find candidate sessions in the bounded
 window, then merges those sessions back to session grain for final scoring. It
-does not scan `agent_message_facts`,
-`agent_tool_event_facts`, `agent_file_event_facts`, or
-`agent_pull_request_facts` on the read path.
+does not scan `agent_message_fact_versions`,
+`agent_tool_event_fact_versions`, `agent_file_event_fact_versions`, or
+`agent_pull_request_fact_versions` on the read path.

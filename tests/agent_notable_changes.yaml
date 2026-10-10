@@ -1,4 +1,4 @@
-# Fixtures: fixtures/agent_message_facts.ndjson (org_context), rolled into agent_usage_daily.
+# Fixtures: fixtures/agent_message_fact_versions.ndjson (org_context), rolled into agent_usage_daily_snapshots.
 # Selected window [2026-05-20, 2026-05-21) = 1 day. Prior equal window [2026-05-19, 2026-05-20).
 # Trailing baseline = 28 days before the window start [2026-04-22, 2026-05-20); the only fixture
 # day in it is 2026-05-19 (ctx_prior), so baseline_cost = prior_cost and baseline_active_days = 1.

@@ -11,22 +11,9 @@ from tinybird.tb.modules import test_common
 from tinybird.tb.modules.build_common import process as build_project
 from tinybird.tb.modules.local_common import get_tinybird_local_client
 from tinybird.tb.modules.project import Project
-from tinybird_baseline_version_fixtures import (
-    bounded_day_chunks,
-    run_baseline_copy_chunk,
-    verify_baseline_versions,
-)
 
 
 ROOT = Path.cwd()
-BASELINE_SOURCES = (
-    ("capability_snapshots", "agent_capability_snapshot_facts", "EventAt"),
-    ("file_events", "agent_file_event_facts", "EventAt"),
-    ("messages", "agent_message_facts", "EventAt"),
-    ("pull_request_links", "agent_pull_request_facts", "EventAt"),
-    ("review_unit_attributions", "agent_review_unit_attributions", "DecidedAt"),
-    ("tool_events", "agent_tool_event_facts", "EventAt"),
-)
 SNAPSHOT_TARGETS = (
     "agent_context_call_buckets_hourly_snapshots",
     "agent_repositories_snapshots",
@@ -68,38 +55,6 @@ def run_copy(client, pipe: str, params: dict[str, str]) -> None:
     if not isinstance(job_id, str) or not job_id:
         raise RuntimeError(f"{pipe} returned no job receipt")
     client.wait_for_job(job_id, backoff_seconds=0.05, maximum_backoff_seconds=0.25)
-
-
-def seed_versioned_facts(client) -> None:
-    copy_attempt = str(int(time.time() * 1000))
-    for category, datasource, timestamp_column in BASELINE_SOURCES:
-        rows = query_rows(
-            client,
-            f"""
-            SELECT
-                OrgId,
-                toString(min(toDate({timestamp_column}))) AS StartDay,
-                toString(max(toDate({timestamp_column}))) AS EndDay
-            FROM {datasource}
-            GROUP BY OrgId
-            ORDER BY OrgId
-            """,
-        )
-        for row in rows:
-            start_day = str(row["StartDay"])
-            end_day = str(row["EndDay"])
-            for chunk_start_day, chunk_end_day in bounded_day_chunks(start_day, end_day):
-                run_baseline_copy_chunk(
-                    client,
-                    run_copy,
-                    category,
-                    str(row["OrgId"]),
-                    start_day,
-                    end_day,
-                    chunk_start_day,
-                    chunk_end_day,
-                    copy_attempt,
-                )
 
 
 def published_days(client) -> dict[str, list[str]]:
@@ -166,10 +121,8 @@ def main() -> None:
         error = build_project(*args, **kwargs)
         if not error:
             # The official fixture runner has no setup hook between its isolated build and
-            # assertions, so seed through the production Copy contracts at this exact boundary.
-            seed_versioned_facts(client)
+            # assertions, so seed snapshots from directly loaded versioned fixtures at this exact boundary.
             seed_published_snapshots(client)
-            verify_baseline_versions(client, BASELINE_SOURCES, query_rows, run_copy)
         return error
 
     request_ms: dict[str, float] = {}

@@ -1,6 +1,6 @@
 DESCRIPTION >
     One session-to-review-unit attribution decision edge. Rows carry only decision metadata;
-    review-unit cost is computed by joining to agent_session_summaries.
+    review-unit cost is computed by joining to agent_session_summaries_published.
 
 SCHEMA >
     `DeliverySequence` UInt64 `json:$.DeliverySequence`,
@@ -41,5 +41,4 @@ ENGINE_PARTITION_KEY "toYYYYMM(DecidedAt)"
 ENGINE_TTL "toDateTime(DecidedAt) + toIntervalYear(1)"
 
 TOKEN "agent_consumer_versions_append" APPEND
-TOKEN "agent_snapshot_migration" APPEND
 TOKEN trace_flow_agent_facts_append APPEND

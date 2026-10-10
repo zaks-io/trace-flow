@@ -1,4 +1,4 @@
-# Fixtures: fixtures/agent_message_facts.ndjson (org_cov, window [2026-05-20, 2026-05-21)).
+# Fixtures: fixtures/agent_message_fact_versions.ndjson (org_cov, window [2026-05-20, 2026-05-21)).
 # org_cov messages in window:
 #   claude/assistant cost 0.2   (priced)
 #   claude/assistant cost 0.3   (priced)

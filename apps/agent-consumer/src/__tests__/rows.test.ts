@@ -234,7 +234,7 @@ describe('batchContext', () => {
 });
 
 describe('messageRow', () => {
-  it('emits exactly the agent_message_facts schema columns', () => {
+  it('emits exactly the agent_message_fact_versions schema columns', () => {
     expect(keys(messageRow(ctx, messageFact(), 0.000003))).toEqual([...MESSAGE_COLUMNS].sort());
   });
 
@@ -282,7 +282,7 @@ describe('messageRow', () => {
 });
 
 describe('toolEventRow', () => {
-  it('emits exactly the agent_tool_event_facts schema columns', () => {
+  it('emits exactly the agent_tool_event_fact_versions schema columns', () => {
     expect(keys(toolEventRow(ctx, toolEventFact()))).toEqual([...TOOL_EVENT_COLUMNS].sort());
   });
 
@@ -347,7 +347,7 @@ describe('toolEventRow', () => {
 });
 
 describe('fileEventRow', () => {
-  it('emits exactly the agent_file_event_facts schema columns', () => {
+  it('emits exactly the agent_file_event_fact_versions schema columns', () => {
     expect(keys(fileEventRow(ctx, fileEventFact()))).toEqual([...FILE_EVENT_COLUMNS].sort());
   });
 
@@ -359,7 +359,7 @@ describe('fileEventRow', () => {
 });
 
 describe('capabilitySnapshotRow', () => {
-  it('emits exactly the agent_capability_snapshot_facts schema columns', () => {
+  it('emits exactly the agent_capability_snapshot_fact_versions schema columns', () => {
     expect(keys(capabilitySnapshotRow(ctx, capabilitySnapshotFact()))).toEqual(
       [...CAPABILITY_SNAPSHOT_COLUMNS].sort(),
     );
@@ -374,7 +374,7 @@ describe('capabilitySnapshotRow', () => {
 });
 
 describe('pullRequestLinkRow', () => {
-  it('emits exactly the agent_pull_request_facts schema columns', () => {
+  it('emits exactly the agent_pull_request_fact_versions schema columns', () => {
     expect(keys(pullRequestLinkRow(ctx, pullRequestLinkFact()))).toEqual(
       [...PULL_REQUEST_LINK_COLUMNS].sort(),
     );
@@ -388,7 +388,7 @@ describe('pullRequestLinkRow', () => {
 });
 
 describe('reviewUnitAttributionRow', () => {
-  it('emits exactly the agent_review_unit_attributions schema columns', () => {
+  it('emits exactly the agent_review_unit_attribution_versions schema columns', () => {
     expect(keys(reviewUnitAttributionRow(ctx, reviewUnitAttributionFact()))).toEqual(
       [...REVIEW_UNIT_ATTRIBUTION_COLUMNS].sort(),
     );

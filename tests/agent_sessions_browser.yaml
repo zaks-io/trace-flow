@@ -1,4 +1,4 @@
-# Fixtures: fixtures/agent_message_facts.ndjson + fixtures/agent_file_event_facts.ndjson (org_test).
+# Fixtures: fixtures/agent_message_fact_versions.ndjson + fixtures/agent_file_event_fact_versions.ndjson (org_test).
 # Per session in window [2026-05-20, 2026-05-21):
 #   s1: 3 messages at 09:00, 5 file events at 10:00, cost 4.0, duration 1h
 #   s2: 1 message at 10:00, 1 file event  at 10:00, cost 0.1, duration 0

@@ -1,5 +1,5 @@
-# Fixtures: fixtures/agent_message_facts.ndjson (org_test), materialized into
-# agent_session_summaries. Assistant messages per session in window [2026-05-20, 2026-05-21):
+# Fixtures: fixtures/agent_message_fact_versions.ndjson (org_test), materialized into
+# agent_session_summaries_snapshots. Assistant messages per session in window [2026-05-20, 2026-05-21):
 #   s1: cost 1.5+2.0+0.5 = 4.0, 0 generated tokens, last_event 09:00
 #   s2: cost 0.1,            0 generated tokens, last_event 10:00
 #   s3: cost 0.8 (+1 unpriced), 0 generated tokens, last_event 08:30

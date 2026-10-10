@@ -1,4 +1,4 @@
-# Fixtures: fixtures/agent_file_event_facts.ndjson + fixtures/agent_tool_event_facts.ndjson (org_file_attention).
+# Fixtures: fixtures/agent_file_event_fact_versions.ndjson + fixtures/agent_tool_event_fact_versions.ndjson (org_file_attention).
 # Directory grouping is top-level and includes structured file events,
 # coverage-debt hints, unknown paths, and negative offset clamping.
 

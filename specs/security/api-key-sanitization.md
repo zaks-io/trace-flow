@@ -72,7 +72,7 @@ Audit all Tinybird pipes to ensure they use parameterized queries properly:
 
 **Files to audit**:
 
-- `pipes/traces_summary.pipe`
+- `pipes/traces_grouped.pipe`
 - `pipes/traces_list.pipe`
 - `pipes/trace_detail.pipe`
 - `pipes/llm_usage_*.pipe`

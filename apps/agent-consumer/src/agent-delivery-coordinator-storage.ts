@@ -22,7 +22,7 @@ export function initializeCoordinatorSchema(storage: DurableObjectStorage): void
       active_snapshot_generation INTEGER,
       gate_expires_at_ms INTEGER
     );
-    -- Revision 1 belongs to the migrated baseline rows already in Tinybird, so live deliveries start at 2.
+    -- Revision 1 is reserved for historical imports; live deliveries start at 2.
     INSERT OR IGNORE INTO coordinator_state
       (singleton, last_delivery_sequence, last_snapshot_generation, gate_phase,
        active_snapshot_generation, gate_expires_at_ms)

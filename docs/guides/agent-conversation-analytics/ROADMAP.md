@@ -100,7 +100,7 @@ The path is:
 - A valid Collector Credential submission returns `202`.
 - A malformed envelope reaches DLQ or a named error path.
 - Queue depth returns to zero after the consumer runs.
-- The smoke org has visible `agent_message_facts` rows through `/app/agents`.
+- The smoke org has visible `agent_message_fact_versions` rows through `/app/agents`.
 
 ## P2 - Production Collector CLI
 
