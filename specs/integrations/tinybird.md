@@ -17,7 +17,6 @@ Clients never receive Tinybird admin or append tokens.
 | `materializations/`                | materialized-view pipes that write derived datasources |
 | `pipes/`                           | parameterized read endpoints used by Web and MCP       |
 | `tests/`                           | Tinybird Local endpoint fixtures                       |
-| `scripts/check-tinybird.sh`        | local schema validation helper                         |
 | `scripts/deploy-agent-tinybird.sh` | production-safe deploy helper                          |
 
 ## Trace Storage
@@ -36,7 +35,6 @@ Derived trace/LLM tables:
 
 Representative trace pipes:
 
-- `traces_summary`
 - `traces_list`
 - `traces_grouped`
 - `trace_detail`
@@ -56,20 +54,20 @@ Credentials are hidden ingest credentials and should not become read-side identi
 
 Base fact datasources:
 
-- `agent_message_facts`
-- `agent_tool_event_facts`
-- `agent_file_event_facts`
-- `agent_capability_snapshot_facts`
-- `agent_pull_request_facts`
+- `agent_message_fact_versions`
+- `agent_tool_event_fact_versions`
+- `agent_file_event_fact_versions`
+- `agent_capability_snapshot_fact_versions`
+- `agent_pull_request_fact_versions`
 
 Derived agent datasources:
 
-- `agent_session_summaries`
-- `agent_usage_hourly`
-- `agent_usage_daily`
-- `agent_tool_usage_hourly`
-- `agent_tool_usage_daily`
-- `agent_repositories`
+- `agent_session_summaries_snapshots`
+- `agent_usage_hourly_snapshots`
+- `agent_usage_daily_snapshots`
+- `agent_tool_usage_hourly_snapshots`
+- `agent_tool_usage_daily_snapshots`
+- `agent_repositories_snapshots`
 
 Representative agent pipes:
 
@@ -152,8 +150,11 @@ local runtime files. `scripts/dev/verify.sh` runs `tb build` and `tb test run` u
 
 This ordering prevents consumers from writing a row shape the live workspace cannot accept.
 
-Destructive cleanup of legacy Tinybird resources is a separate explicit operation. Do not use
-destructive deploy flags in the normal production workflow.
+PR checks and production deployments use the same retirement-manifest guard. The deploy
+script permits `--allow-destructive-operations` only when every deletion in the provider
+check is listed in `scripts/ci/tinybird-retired-resources.json`; it refuses unlisted names.
+Future retirements add names in a human-reviewed, human-merged PR. Convex deploys after
+Tinybird so compatible pipes exist before Convex issues identifier-scoped read tokens.
 
 ## Quarantine
 

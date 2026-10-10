@@ -247,62 +247,33 @@ export const LLM_API_KEY_DATASOURCES = [
 
 export const AGENT_ORG_DATASOURCES = [
   'agent_capability_snapshot_fact_versions',
-  'agent_capability_snapshot_facts',
-  'agent_context_call_buckets_hourly',
   'agent_context_call_buckets_hourly_snapshots',
   'agent_delivery_receipts',
   'agent_fact_identity_days',
   'agent_file_event_fact_versions',
-  'agent_file_event_facts',
   'agent_message_fact_versions',
-  'agent_message_facts',
   'agent_pull_request_fact_versions',
-  'agent_pull_request_facts',
-  'agent_repositories',
   'agent_repositories_snapshots',
   'agent_review_unit_attribution_versions',
-  'agent_review_unit_attributions',
   'agent_session_file_signals',
   'agent_session_file_signals_snapshots',
   'agent_session_signals',
   'agent_session_signals_snapshots',
-  'agent_session_summaries',
   'agent_session_summaries_snapshots',
   'agent_snapshot_manifest',
   'agent_tool_event_fact_versions',
-  'agent_tool_event_facts',
-  'agent_tool_usage_daily',
   'agent_tool_usage_daily_snapshots',
-  'agent_tool_usage_hourly',
   'agent_tool_usage_hourly_snapshots',
-  'agent_usage_daily',
   'agent_usage_daily_snapshots',
-  'agent_usage_hourly',
   'agent_usage_hourly_snapshots',
 ] as const;
-
-export const LEGACY_AGENT_ORG_DATASOURCES = [
-  'agent_capability_snapshots',
-  'agent_file_events',
-  'agent_messages',
-  'agent_pull_request_links',
-  'agent_sessions',
-  'agent_tool_events',
-  'agent_tool_usage_1d',
-  'agent_tool_usage_1h',
-  'agent_usage_1d',
-  'agent_usage_1h',
-] as const;
-
-const LEGACY_AGENT_ORG_DATASOURCE_SET = new Set<string>(LEGACY_AGENT_ORG_DATASOURCES);
 
 export interface TinybirdDeleteStatement {
   datasource: string;
   condition: string;
-  optional?: true;
 }
 
-export type TinybirdDeleteOutcome = 'deleted' | 'confirmed_missing';
+export type TinybirdDeleteOutcome = 'deleted';
 
 export function buildOrgTraceDeleteConditions(params: {
   analyticsKeyIds: string[];
@@ -327,11 +298,6 @@ export function buildOrgTraceDeleteConditions(params: {
       datasource,
       condition: `OrgId = ${orgIdLiteral}`,
     })),
-    ...LEGACY_AGENT_ORG_DATASOURCES.map((datasource) => ({
-      datasource,
-      condition: `OrgId = ${orgIdLiteral}`,
-      optional: true as const,
-    })),
   );
 
   return statements;
@@ -347,44 +313,9 @@ export async function deleteOrgTraceStatement(
     datasource: statement.datasource,
     condition: statement.condition,
   };
-  try {
-    const jobId = await startDeleteRows(options);
-    await waitForDeleteRows(options, jobId, deadlineAt);
-    return 'deleted';
-  } catch (error) {
-    if (
-      statement.optional &&
-      LEGACY_AGENT_ORG_DATASOURCE_SET.has(statement.datasource) &&
-      isDeleteDatasourceNotFound(error) &&
-      (await confirmDatasourceMissing(statement.datasource))
-    ) {
-      return 'confirmed_missing';
-    }
-    throw error;
-  }
-}
-
-function isDeleteDatasourceNotFound(error: unknown): boolean {
-  return error instanceof Error && error.message === 'Tinybird row deletion failed: HTTP 404';
-}
-
-async function confirmDatasourceMissing(datasource: string): Promise<boolean> {
-  const response = await fetch(
-    new URL(`/v0/datasources/${encodeURIComponent(datasource)}?attrs=name`, tinybirdApiUrl),
-    {
-      headers: { Authorization: `Bearer ${tinybirdAdminToken}` },
-      signal: AbortSignal.timeout(30_000),
-    },
-  );
-  if (response.status === 404) return true;
-  if (!response.ok) {
-    throw new Error(`Tinybird datasource lookup failed: HTTP ${response.status}`);
-  }
-  const body: unknown = await response.json();
-  if (typeof body !== 'object' || body === null || !('name' in body) || body.name !== datasource) {
-    throw new Error('Tinybird datasource lookup identity mismatch');
-  }
-  return false;
+  const jobId = await startDeleteRows(options);
+  await waitForDeleteRows(options, jobId, deadlineAt);
+  return 'deleted';
 }
 
 async function getApiKeyString(ctx: ActionCtx, userId: Id<'users'>): Promise<string> {
@@ -489,11 +420,8 @@ export const deleteOrgTraces = internalAction({
           try {
             if (Date.now() >= deadlineAt)
               throw new Error('Organization analytics deletion deadline exceeded');
-            const outcome = await deleteOrgTraceStatement(statement, deadlineAt);
+            await deleteOrgTraceStatement(statement, deadlineAt);
             results[datasource] = { success: true };
-            if (outcome === 'confirmed_missing') {
-              console.info(`Confirmed optional legacy datasource ${datasource} is absent`);
-            }
           } catch (err) {
             const message =
               err instanceof Error ? err.message : 'Unknown Tinybird deletion failure';

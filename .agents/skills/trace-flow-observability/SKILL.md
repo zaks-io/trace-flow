@@ -51,7 +51,7 @@ Cron: consumer runs `*/5 * * * *` to flush stale TraceBatcher shards.
 ## Tinybird
 
 - Host: `https://api.us-west-2.aws.tinybird.co`
-- Datasources (in `datasources/`): `otel_traces`, `otel_traces_genai`, `llm_requests`, `llm_usage_1h`, `llm_usage_1d`, `llm_usage_1mo`
+- Datasources (in `datasources/`): `otel_trace_spans`, `llm_request_facts`, `llm_usage_hourly`, `llm_usage_daily`, `llm_usage_monthly`
 - Pipes (in `pipes/`): `mcp_*` for MCP-fronted reads, `llm_usage_*` for dashboard usage queries, `llm_request_stats`, `filter_options`, `llm_cost_*`
 - Auth: frontend gets short-lived JWT from Convex (`api.tinybird.generateToken`), 10 min TTL, includes `fixed_params` (api_keys, retention_days). Admin token never reaches the browser.
 

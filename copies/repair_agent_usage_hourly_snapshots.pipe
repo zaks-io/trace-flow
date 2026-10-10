@@ -1,5 +1,5 @@
 DESCRIPTION >
-    Bounded on-demand snapshot of agent_usage_hourly from contributors: usage_hourly.
+    Bounded on-demand agent_usage_hourly_snapshots from versioned canonical facts.
 
 NODE snapshot
 SQL >

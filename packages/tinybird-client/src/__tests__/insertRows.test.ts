@@ -57,11 +57,11 @@ describe('insertRows', () => {
   it('POSTs NDJSON to /v0/events with the bearer token', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(receiptResponse(2));
 
-    await insertRows([{ a: 1 }, { a: 2 }], 'tok', 'agent_message_facts', HOST);
+    await insertRows([{ a: 1 }, { a: 2 }], 'tok', 'agent_message_fact_versions', HOST);
 
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url, init] = fetchMock.mock.calls[0]!;
-    expect(String(url)).toBe(`${HOST}/v0/events?name=agent_message_facts&wait=true`);
+    expect(String(url)).toBe(`${HOST}/v0/events?name=agent_message_fact_versions&wait=true`);
     expect(init?.method).toBe('POST');
     const headers = init?.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer tok');
@@ -81,7 +81,7 @@ describe('insertRows', () => {
   it('serializes an empty row set to an empty body', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(receiptResponse(0));
 
-    await insertRows([], 'tok', 'agent_message_facts', HOST);
+    await insertRows([], 'tok', 'agent_message_fact_versions', HOST);
 
     expect(fetchMock.mock.calls[0]![1]?.body).toBe('');
   });
@@ -89,7 +89,9 @@ describe('insertRows', () => {
   it('throws TinybirdInsertError carrying status + body on a non-2xx', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(errorResponse(422, 'quarantined rows'));
 
-    await expect(insertRows([{ a: 1 }], 'tok', 'agent_message_facts', HOST)).rejects.toMatchObject({
+    await expect(
+      insertRows([{ a: 1 }], 'tok', 'agent_message_fact_versions', HOST),
+    ).rejects.toMatchObject({
       name: 'TinybirdInsertError',
       status: 422,
       responseText: 'quarantined rows',
@@ -103,7 +105,9 @@ describe('insertRows', () => {
       new Response(responseText, { status: 202 }),
     );
 
-    await expect(insertRows([{ a: 1 }], 'tok', 'agent_message_facts', HOST)).rejects.toMatchObject({
+    await expect(
+      insertRows([{ a: 1 }], 'tok', 'agent_message_fact_versions', HOST),
+    ).rejects.toMatchObject({
       name: 'TinybirdInsertError',
       status: 202,
       reason: 'unconfirmed',
@@ -116,7 +120,7 @@ describe('insertRows', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(receiptResponse(2, 1));
 
     await expect(
-      insertRows([{ a: 1 }, { a: 2 }], 'tok', 'agent_message_facts', HOST),
+      insertRows([{ a: 1 }, { a: 2 }], 'tok', 'agent_message_fact_versions', HOST),
     ).rejects.toMatchObject({
       status: 200,
       reason: 'partial-receipt',
@@ -129,7 +133,7 @@ describe('insertRows', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(receiptResponse(1));
 
     await expect(
-      insertRows([{ a: 1 }, { a: 2 }], 'tok', 'agent_message_facts', HOST),
+      insertRows([{ a: 1 }, { a: 2 }], 'tok', 'agent_message_fact_versions', HOST),
     ).rejects.toMatchObject({
       status: 200,
       reason: 'partial-receipt',
@@ -144,7 +148,9 @@ describe('insertRows', () => {
       new Response(responseText, { status: 200 }),
     );
 
-    await expect(insertRows([{ a: 1 }], 'tok', 'agent_message_facts', HOST)).rejects.toMatchObject({
+    await expect(
+      insertRows([{ a: 1 }], 'tok', 'agent_message_fact_versions', HOST),
+    ).rejects.toMatchObject({
       status: 200,
       reason: 'malformed-receipt',
       responseText,
@@ -155,9 +161,9 @@ describe('insertRows', () => {
   it('propagates network errors unchanged', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('Network error'));
 
-    await expect(insertRows([{ a: 1 }], 'tok', 'agent_message_facts', HOST)).rejects.toThrow(
-      'Network error',
-    );
+    await expect(
+      insertRows([{ a: 1 }], 'tok', 'agent_message_fact_versions', HOST),
+    ).rejects.toThrow('Network error');
   });
 
   describe('timeout', () => {
@@ -169,7 +175,7 @@ describe('insertRows', () => {
     it('leaves no pending timer after the receipt is read', async () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(receiptResponse(1));
 
-      await insertRows([{ a: 1 }], 'tok', 'agent_message_facts', HOST);
+      await insertRows([{ a: 1 }], 'tok', 'agent_message_fact_versions', HOST);
 
       expect(vi.getTimerCount()).toBe(0);
     });
@@ -177,7 +183,9 @@ describe('insertRows', () => {
     it('leaves no pending timer after a failed request', async () => {
       vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('Network error'));
 
-      await expect(insertRows([{ a: 1 }], 'tok', 'agent_message_facts', HOST)).rejects.toThrow();
+      await expect(
+        insertRows([{ a: 1 }], 'tok', 'agent_message_fact_versions', HOST),
+      ).rejects.toThrow();
 
       expect(vi.getTimerCount()).toBe(0);
     });
@@ -190,7 +198,7 @@ describe('insertRows', () => {
           }),
       );
 
-      const insert = insertRows([{ a: 1 }], 'tok', 'agent_message_facts', HOST);
+      const insert = insertRows([{ a: 1 }], 'tok', 'agent_message_fact_versions', HOST);
       const settled = insert.catch((error: unknown) => error);
       await vi.advanceTimersByTimeAsync(59_999);
       expect(vi.getTimerCount()).toBe(1);
@@ -213,7 +221,7 @@ describe('insertRows', () => {
         return new Response(body, { status: 200 });
       });
 
-      const settled = insertRows([{ a: 1 }], 'tok', 'agent_message_facts', HOST).catch(
+      const settled = insertRows([{ a: 1 }], 'tok', 'agent_message_fact_versions', HOST).catch(
         (error: unknown) => error,
       );
       await vi.advanceTimersByTimeAsync(60_000);

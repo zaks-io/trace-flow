@@ -1,5 +1,5 @@
 DESCRIPTION >
-    Generation-scoped daily snapshot rows for agent_context_call_buckets_hourly. Publishing a generation through
+    Generation-scoped daily snapshot rows for hourly context buckets. Publishing a generation through
     agent_snapshot_manifest makes a complete replacement visible without exposing partial copies.
 
 SCHEMA >

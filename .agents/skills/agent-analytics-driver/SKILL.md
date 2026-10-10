@@ -98,7 +98,7 @@ review` PR comment and address any blocking finding. **Do not self-merge** — m
 - Worker bindings are **required** — fail loudly, no defensive optionals.
 - **Log every error before returning an HTTP error** (no silent failures).
 - `cost_usd` is the only `Nullable` column; sparse metrics use `0` + coverage columns.
-- No stored `agent_file_events` path may contain a home dir or username.
+- No stored `agent_file_event_fact_versions` path may contain a home dir or username.
 - Never commit secrets; never add `bun.lock`/lockfiles to a feature commit unintentionally.
 - Stay in the task's file lane. Don't refactor or "clean up" outside it.
 

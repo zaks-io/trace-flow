@@ -1,5 +1,5 @@
 DESCRIPTION >
-    Bounded on-demand snapshot of agent_session_file_signals from contributors: session_file_signal_hints, session_file_signals.
+    Bounded on-demand agent_session_file_signals_snapshots from versioned canonical facts.
 
 NODE snapshot
 SQL >

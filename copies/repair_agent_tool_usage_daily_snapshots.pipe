@@ -1,5 +1,5 @@
 DESCRIPTION >
-    Bounded on-demand snapshot of agent_tool_usage_daily from contributors: tool_usage_daily.
+    Bounded on-demand agent_tool_usage_daily_snapshots from versioned canonical facts.
 
 NODE snapshot
 SQL >

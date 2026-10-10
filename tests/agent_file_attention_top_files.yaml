@@ -1,4 +1,4 @@
-# Fixtures: fixtures/agent_file_event_facts.ndjson + fixtures/agent_tool_event_facts.ndjson (org_file_attention).
+# Fixtures: fixtures/agent_file_event_fact_versions.ndjson + fixtures/agent_tool_event_fact_versions.ndjson (org_file_attention).
 # Covers repeated reads, edits, writes, directory reads, missing-file path hints,
 # unknown-path coverage debt, and negative offset clamping.
 

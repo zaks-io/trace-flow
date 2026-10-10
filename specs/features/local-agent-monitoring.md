@@ -254,7 +254,7 @@ permanent row per session claimed and has no delete or patch anywhere in
 The requirement is cross-machine and must scale past one developer's laptop. Local grep does
 not satisfy it. Most of what is needed already exists.
 
-`datasources/agent_tool_event_facts.datasource` already ships, per organization, per session,
+`datasources/agent_tool_event_fact_versions.datasource` already ships, per organization, per session,
 cross-machine: `tool_name`, `command_program`, `command_subcommand`, `status`, `exit_code`,
 `duration_ms`, `repo_relative_paths`, `EventAt`, `command_excerpt`, and `error_excerpt`. That is
 ClickHouse, queryable from anywhere, with no encryption problem and no per-machine index.
@@ -391,7 +391,7 @@ Out of scope:
   Codex records.
 - Tool Event excerpt caps are raised to command 8 KiB / error 56 KiB / 64 KiB total, with a test
   asserting a maximum-sized fact serializes under `MAX_QUEUE_MESSAGE_BYTES`.
-- `agent_tool_event_facts` carries a Checkout column, and concurrent agents in separate
+- `agent_tool_event_fact_versions` carries a Checkout column, and concurrent agents in separate
   worktrees are distinguishable.
 - Divergence between the transcript record and local git at turn boundaries is detected and
   surfaced.

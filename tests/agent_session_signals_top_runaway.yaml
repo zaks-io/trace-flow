@@ -1,5 +1,5 @@
-# Fixtures: fixtures/agent_message_facts.ndjson + fixtures/agent_tool_event_facts.ndjson
-# + fixtures/agent_file_event_facts.ndjson + fixtures/agent_pull_request_facts.ndjson.
+# Fixtures: fixtures/agent_message_fact_versions.ndjson + fixtures/agent_tool_event_fact_versions.ndjson
+# + fixtures/agent_file_event_fact_versions.ndjson + fixtures/agent_pull_request_fact_versions.ndjson.
 # The endpoint reads only agent_session_signals and requires org + repo + time scope.
 
 - name: top_runaway_uses_session_signal_read_model

@@ -1,5 +1,5 @@
 DESCRIPTION >
-    Bounded on-demand snapshot of agent_context_call_buckets_hourly from contributors: context_call_buckets_hourly.
+    Bounded on-demand agent_context_call_buckets_hourly_snapshots from versioned canonical facts.
 
 NODE snapshot
 SQL >
