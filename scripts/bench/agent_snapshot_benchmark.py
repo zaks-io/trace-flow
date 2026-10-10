@@ -68,13 +68,13 @@ def main():
         TB_LOCAL_WORKSPACE_TOKEN=tokens["workspace_token"],
         TRACE_FLOW_TINYBIRD_CONTAINER=container,
         TRACE_FLOW_TINYBIRD_PROJECT=container,
-        TRACE_FLOW_TINYBIRD_MEMORY="6g",
+        TRACE_FLOW_TINYBIRD_MEMORY="8g",
     )
     with tempfile.TemporaryDirectory(prefix="tra-409-") as private:
         env["TRACE_FLOW_TINYBIRD_VOLUMES"] = str(Path(private) / "volumes")
         override = Path(private) / "ownership.yml"
         override.write_text(
-            f"services:\n  tinybird-local:\n    labels:\n      sbx.agent: {agent}\n"
+            f"services:\n  tinybird-local:\n    ports: !override\n      - '127.0.0.1:17181:7181'\n      - '127.0.0.1:17182:7182'\n    labels:\n      sbx.agent: {agent}\n"
         )
         compose = [
             "docker",
@@ -86,6 +86,25 @@ def main():
         ]
         try:
             subprocess.run(compose + ["up", "-d"], env=env, check=True)
+            bindings = json.loads(
+                subprocess.check_output(
+                    [
+                        "docker",
+                        "inspect",
+                        "--format",
+                        "{{json .NetworkSettings.Ports}}",
+                        container,
+                    ],
+                    text=True,
+                )
+            )
+            if any(
+                binding["HostIp"] != "127.0.0.1"
+                for ports in bindings.values()
+                for binding in (ports or [])
+            ):
+                raise RuntimeError("Tinybird Local ports escaped loopback")
+            started_date = datetime.now(timezone.utc).date()
             for _ in range(120):
                 import urllib.request
 
@@ -106,7 +125,7 @@ def main():
                 raise RuntimeError("Tinybird Local did not become healthy")
             project = Path(private) / "project"
             project.mkdir()
-            for folder in ("datasources", "materializations", "pipes", "copies"):
+            for folder in ("datasources", "pipes", "copies"):
                 shutil.copytree(ROOT / folder, project / folder)
             (project / "tinybird.config.json").write_text(
                 json.dumps(
@@ -114,7 +133,6 @@ def main():
                         "dev_mode": "local",
                         "include": [
                             "datasources",
-                            "materializations",
                             "pipes",
                             "copies",
                         ],
@@ -174,8 +192,21 @@ def main():
                     fixture[table] = ch.rows(
                         f"SELECT OrgId, count() AS live_rows, min({timestamp}) AS first_event, max({timestamp}) AS last_event FROM {physical} FINAL WHERE IsDeleted = 0 GROUP BY OrgId ORDER BY OrgId"
                     )
+                expected = fixture_counts(args.messages)
+                for table, organizations in fixture.items():
+                    if (
+                        sum(row["live_rows"] for row in organizations)
+                        != expected[table]["live"]
+                    ):
+                        raise RuntimeError(
+                            f"Synthetic fixture count mismatch for {table}"
+                        )
                 jobs = publish_snapshots(client, ROOT)
                 records = measure(client, endpoints, end_ms, args.runs, args.output)
+                if datetime.now(timezone.utc).date() != started_date:
+                    raise RuntimeError(
+                        "UTC midnight crossed during benchmark; rerun on one date"
+                    )
                 args.output.write_text(
                     json.dumps(
                         {

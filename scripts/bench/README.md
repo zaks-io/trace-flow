@@ -10,16 +10,19 @@ bun install --frozen-lockfile
 bash scripts/bench/run-agent-snapshot-benchmark.sh --output /tmp/agent-snapshot-benchmark.json
 ```
 
-The default fixture has two million base messages over 366 days. Tools have the same
+The default fixture has two million base messages over a calendar retention year (365 or 366 days). Tools have the same
 count, files half, and PR links, capability observations and review attributions one
 hundredth. Four organizations have a 70/10/10/10 distribution. Corrections include
 old-date tombstones and new-date live rows; deleted facts remain physically present.
 Costs use binary fractions so exact numeric parity does not depend on float summation
-order. One session deliberately crosses the requested window boundary.
+order. One session deliberately crosses the requested window boundary. Its recent events
+and high cost put it on the first browser and review-cost pages; its attribution
+decision predates both measured windows.
 
 The runner checks available memory and project processes, uses the repository's Tinybird
-Local Compose file with a 6 GiB container limit, generates private local tokens, and
+Local Compose file with a 8 GiB container limit, generates private local tokens, and
 builds an isolated local workspace through the installed Tinybird CLI Python library.
+Ingestion-only materializations are excluded from this read experiment.
 Its uniquely named container carries `sbx.agent`. TCP ports 17181 and 17182 must be
 available; a collision fails without stopping another server. Cleanup removes only
 this run's Compose resources, including after SIGTERM or Ctrl-C. Generated facts and

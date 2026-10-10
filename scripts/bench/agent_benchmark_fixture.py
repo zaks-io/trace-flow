@@ -3,8 +3,8 @@
 Base ratios to messages: tools 1:1, files 1:2, PRs/capabilities/attributions
 1:100 each (rounded down). Every 20 messages share a session. Each 1,000-message
 block has 70% benchmark-org and 10% each benchmark-org-2/3/4. Smaller populations
-have deterministic rounding. Dates cover the 366 complete UTC days preceding
-end_ms's UTC midnight. With >=11 messages, session zero has facts 45 days older.
+have deterministic rounding. Dates cover the calendar year preceding end_ms's UTC midnight
+(365 or 366 days). With >=11 messages, session zero has facts 45 days older.
 
 Per table, mutation buckets rotate every 100 ordinals to spread versions across
 orgs. Bucket modulo 20 == 19 gets corrections (5%); bucket == 99 moves date
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from datetime import datetime, timezone
 import re
 
 DAY_MS = 86_400_000
@@ -133,7 +134,7 @@ def _expressions(table: str, pk: str, timestamp: str) -> dict[str, str]:
             repo_path_fallback="concat('synthetic-workspace/', repo_name, '/', repeat('component-', 12))",
             git_branch="branch_name",
             git_head_sha="lower(hex(SHA1(toString(s))))",
-            cost_usd="if(m % 41 = 0, NULL, toFloat64(1 + m % 64 + changed * 4) / 1024)",
+            cost_usd="if(m % 41 = 0, NULL, if(s = 0, toFloat64(64), toFloat64(1 + m % 64 + changed * 4) / 1024))",
             parent_vendor_session_id="''",
             parent_session_pk="''",
         )
@@ -200,6 +201,9 @@ def _expressions(table: str, pk: str, timestamp: str) -> dict[str, str]:
         )
     else:
         del fields["dropped_sensitive"]
+        fields["DecidedAt"] = (
+            f"if(s = 0, fromUnixTimestamp64Milli({46 * 86400000} * -1 + ingested_ms - version * 1000), fromUnixTimestamp64Milli(event_ms))"
+        )
         fields.update(
             review_unit_key="concat('hosted:github.com/benchmark-synthetic/', repo_name, ':pull_request:', toString(n + 1))",
             review_url="review_url_value",
@@ -219,7 +223,11 @@ def _expressions(table: str, pk: str, timestamp: str) -> dict[str, str]:
 
 
 def fixture_sql(
-    root: Path, table_map: dict[str, str], messages: int, end_ms: int
+    root: Path,
+    table_map: dict[str, str],
+    messages: int,
+    end_ms: int,
+    batch_rows: int = 100_000,
 ) -> Iterator[tuple[str, str]]:
     """Yield (label, SQL) in insertion order; table_map supplies quoted db.table names.
 
@@ -227,12 +235,20 @@ def fixture_sql(
     defaults, are emitted and cast to their versioned types. Schema drift fails
     before yielding SQL. Execute each statement separately, without force merges.
     """
+    if type(batch_rows) is not int or batch_rows < 1:
+        raise ValueError("batch_rows must be positive")
     counts = fixture_counts(messages)
     if type(end_ms) is not int or end_ms < 366 * DAY_MS:
         raise ValueError(
             "end_ms must be integer epoch milliseconds after the first 366 days"
         )
     anchor = end_ms // DAY_MS * DAY_MS
+    today = datetime.fromtimestamp(anchor / 1000, timezone.utc)
+    try:
+        retained_from = today.replace(year=today.year - 1)
+    except ValueError:
+        retained_from = today.replace(year=today.year - 1, month=3, day=1)
+    retained_days = (today - retained_from).days
     schemas = {}
     expressions = {}
     for table, _, pk, timestamp in TABLES:
@@ -281,11 +297,11 @@ def fixture_sql(
                 f"{version} AS version",
                 f"{deleted} AS deleted",
                 f"{changed} AS changed",
-                "if(s = 0 AND m % 20 >= 10, 46, 1 + s % 366) AS day_offset",
-                f"{anchor} - day_offset * {DAY_MS} + ((s * 137) % 80000 + m % 20) * 1000 AS base_ms",
+                f"if(s = 0 AND m % 20 >= 10, 46, 1 + s % {retained_days}) AS day_offset",
+                f"{anchor} - day_offset * {DAY_MS} + if(day_offset = {retained_days}, {DAY_MS} - 2000, if(s = 0 AND m % 20 < 10, {DAY_MS} - 2000, ((s * 137) % 80000 + m % 20) * 1000)) AS base_ms",
                 f"base_ms + {movement} + changed * 500 AS event_ms",
                 f"{end_ms} + version * 1000 AS ingested_ms",
-                f"{anchor} - if(s = 0, 46, 1 + s % 366) * {DAY_MS} + (s * 137) % 80000 * 1000 AS started_ms",
+                f"{anchor} - if(s = 0, 46, 1 + s % {retained_days}) * {DAY_MS} + (s * 137) % 80000 * 1000 AS started_ms",
                 f"{_id('session', 's')} AS session_id",
                 f"{_id('vendor-session', 's')} AS vendor_session",
                 f"{_id('direct-agent', 's')} AS direct_agent",
@@ -302,4 +318,10 @@ def fixture_sql(
                 + f"\nSELECT\n    {select}\n"
                 + f"FROM numbers({counts[table]['base']})\nWHERE {predicate};"
             )
-            yield f"{table}:{label}", sql
+            for offset in range(0, counts[table]["base"], batch_rows):
+                length = min(batch_rows, counts[table]["base"] - offset)
+                bounded = sql.replace(
+                    f"FROM numbers({counts[table]['base']})",
+                    f"FROM numbers({offset}, {length})",
+                )
+                yield f"{table}:{label}:{offset}", bounded

@@ -55,7 +55,7 @@ class LocalClickHouse:
 def publish_snapshots(client, root):
     copies = sorted((root / "copies").glob("repair_agent_*_snapshots.pipe"))
     rows = client.query(
-        "SELECT OrgId, arraySort(groupUniqArray(toString(toDate(EventAt)))) AS days FROM agent_message_fact_versions FINAL WHERE IsDeleted = 0 GROUP BY OrgId FORMAT JSON"
+        "SELECT OrgId, arraySort(groupUniqArray(toString(toDate(EventAt)))) AS days FROM agent_message_fact_versions FINAL WHERE IsDeleted = 0 GROUP BY OrgId ORDER BY OrgId FORMAT JSON"
     )["data"]
     jobs = []
     for generation, row in enumerate(rows, 1):
