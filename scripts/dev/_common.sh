@@ -54,44 +54,6 @@ source_dev_env() {
   fi
 }
 
-write_runtime_file() {
-  local path="$1"
-  if [[ -f "$path" && "${TRACE_FLOW_OVERWRITE_LOCAL_ENV:-0}" != "1" ]]; then
-    log "keeping existing ${path#$TRACE_FLOW_ROOT/}"
-    return 0
-  fi
-
-  mkdir -p "$(dirname "$path")"
-  cat >"$path"
-  log "wrote ${path#$TRACE_FLOW_ROOT/}"
-}
-
-sync_runtime_env_var() {
-  local path="$1"
-  local key="$2"
-  local value="$3"
-
-  [[ -f "$path" ]] || return 0
-
-  local tmp
-  tmp="$(mktemp "${path}.XXXXXX")"
-  awk -v key="$key" -v value="$value" '
-    BEGIN { done = 0 }
-    $0 ~ "^" key "=" {
-      print key "=" value
-      done = 1
-      next
-    }
-    { print }
-    END {
-      if (done == 0) print key "=" value
-    }
-  ' "$path" >"$tmp"
-
-  chmod --reference="$path" "$tmp" 2>/dev/null || chmod 600 "$tmp"
-  mv "$tmp" "$path"
-}
-
 json_field() {
   local field="$1"
   json_expr "data['$field'] ?? ''"

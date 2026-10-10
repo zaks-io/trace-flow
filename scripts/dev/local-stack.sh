@@ -6,8 +6,7 @@
 #   scripts/dev/local-stack.sh login-url EMAIL  print a one-step sign-in URL
 #   scripts/dev/local-stack.sh seed [EMAIL]     load fixture data for a signed-in user's org
 #   scripts/dev/local-stack.sh logs NAME        follow a service log
-#   scripts/dev/local-stack.sh down [--purge]   stop everything; --purge also deletes all data,
-#                                               including Tinybird Local data shared with start.sh
+#   scripts/dev/local-stack.sh down [--purge]   stop everything; --purge also deletes all data
 #
 # A mock OIDC issuer (mock-oidc.ts) replaces Auth0, Convex runs as a self-hosted
 # Docker backend, Tinybird Local holds analytics data, and a KV bridge Worker
@@ -17,14 +16,35 @@
 # allocated per worktree by sbx-runtime when installed.
 set -euo pipefail
 
+# Help must work before tool discovery or sandbox port/state allocation.
+case "${1:-}" in
+  -h | --help | help | "")
+    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+    printf '\n  install          bun install --frozen-lockfile\n  doctor           check prerequisites without starting services\n  smoke [--tinybird-only]   check an already-running local stack\n  verify [full]    Tinybird tests, types and tests; full adds lint/build\n'
+    exit 0
+    ;;
+  install)
+    cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+    exec bun install --frozen-lockfile
+    ;;
+  up | down | status | login-url | seed | logs | doctor | smoke | verify) ;;
+  *) printf 'Unknown local-stack command: %s\n' "$1" >&2; exit 1 ;;
+esac
+
+STACK_REQUESTED_TINYBIRD_HOST="${TRACE_FLOW_TINYBIRD_HOST:-}"
+
+# shellcheck source=scripts/dev/_common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
+# shellcheck source=scripts/dev/_runtime.sh
 source "$(dirname "${BASH_SOURCE[0]}")/_runtime.sh"
+# shellcheck source=scripts/dev/_tinybird.sh
 source "$(dirname "${BASH_SOURCE[0]}")/_tinybird.sh"
 
 STACK_DIR="${TRACE_FLOW_LOCAL_STACK_DIR:-$TRACE_FLOW_STATE_DIR/local-stack}"
 STACK_LOG_DIR="$STACK_DIR/logs"
 STACK_PID_DIR="$STACK_DIR/pids"
 STACK_SECRETS="$STACK_DIR/secrets.env"
+STACK_TINYBIRD_ENV="$STACK_DIR/tinybird.env"
 STACK_CONVEX_CLI_DIR="$STACK_DIR/convex-cli"
 
 WEB_PORT="${TRACE_FLOW_LOCAL_STACK_WEB_PORT:-3000}"
@@ -38,9 +58,9 @@ CONVEX_SITE_PORT="${TRACE_FLOW_LOCAL_STACK_CONVEX_SITE_PORT:-3211}"
 OIDC_PORT="${TRACE_FLOW_LOCAL_STACK_OIDC_PORT:-3230}"
 
 CONVEX_IMAGE="${TRACE_FLOW_LOCAL_STACK_CONVEX_IMAGE:-ghcr.io/get-convex/convex-backend:latest}"
-CONVEX_CONTAINER="trace-flow-local-convex${SBX_WORKTREE_ID:+-$SBX_WORKTREE_ID}"
+CONVEX_CONTAINER="trace-flow-local-convex-$STACK_RUNTIME_ID"
 CONVEX_VOLUME="$CONVEX_CONTAINER"
-DOCKER_NETWORK="trace-flow-local${SBX_WORKTREE_ID:+-$SBX_WORKTREE_ID}"
+DOCKER_NETWORK="trace-flow-local-$STACK_RUNTIME_ID"
 OIDC_CLIENT_ID="trace-flow-local"
 DEFAULT_EMAIL="${TRACE_FLOW_LOCAL_STACK_EMAIL:-dev@trace-flow.local}"
 
@@ -169,44 +189,25 @@ stop_process() {
   rm -f "$pid_file"
 }
 
-# The project deploys to a workspace named after a hash of the project path, not
-# the default workspace behind `tb local`'s tokens. Convex signs read JWTs and
-# the consumers write spans with that workspace's own admin token.
+# Convex signs read JWTs and consumers write spans with this instance's admin token.
 resolve_tinybird_project_workspace() {
-  local admin_token workspace_name workspace
-  admin_token="$(curl -sf "$TRACE_FLOW_TINYBIRD_HOST/tokens" | json_expr "data.admin_token ?? ''")"
-  workspace_name="Tinybird_Local_Build_$(printf '%s' "$TRACE_FLOW_ROOT" | sha256sum | cut -d' ' -f1)"
-  if [[ -n "${SBX_WORKTREE_ID:-}" ]]; then
-    # Each sandbox worktree owns its whole Tinybird instance and default workspace.
-    workspace_name="Tinybird_Local_Testing"
-  fi
-  workspace="$(curl -sf "$TRACE_FLOW_TINYBIRD_HOST/v1/user/workspaces?with_organization=true&token=$admin_token" |
-    json_expr "JSON.stringify(data.workspaces.find((w) => w.name === '$workspace_name') ?? {})")"
-  local member_token
-  member_token="$(printf '%s' "$workspace" | json_expr "data.token ?? ''")"
-  TINYBIRD_WORKSPACE_ID="$(printf '%s' "$workspace" | json_expr "data.id ?? ''")"
-  [[ -n "$member_token" && -n "$TINYBIRD_WORKSPACE_ID" ]] || fail "Tinybird workspace $workspace_name was not found after deploy"
-  # The listing returns the user's admin token; JWTs must be signed with the
-  # token Tinybird names "workspace admin token".
-  if [[ -n "${SBX_WORKTREE_ID:-}" ]]; then
-    TINYBIRD_WORKSPACE_TOKEN="$(curl -sf "$TRACE_FLOW_TINYBIRD_HOST/tokens" | json_expr "data.workspace_admin_token ?? ''")"
-  else
-  TINYBIRD_WORKSPACE_TOKEN="$(curl -sf -H "Authorization: Bearer $member_token" "$TRACE_FLOW_TINYBIRD_HOST/v0/tokens" |
-    json_expr "data.tokens.find((t) => t.name === 'workspace admin token')?.token ?? ''")"
-  fi
+  local tokens
+  tokens="$(curl -sf "$TRACE_FLOW_TINYBIRD_HOST/tokens")"
+  TINYBIRD_WORKSPACE_TOKEN="$(printf '%s' "$tokens" | json_field workspace_admin_token)"
+  local workspace
+  workspace="$(printf '%s' "$tokens" | json_field admin_token | node "$TRACE_FLOW_DEV_DIR/local-stack-workspace.mjs" "$TRACE_FLOW_TINYBIRD_HOST")"
+  TINYBIRD_WORKSPACE_ID="$(printf '%s' "$workspace" | json_field id)"
   [[ -n "$TINYBIRD_WORKSPACE_TOKEN" && -n "$TINYBIRD_WORKSPACE_ID" ]] ||
-    fail "Tinybird workspace $workspace_name was not found after deploy"
+    fail "Tinybird Local default workspace was not found after deploy"
 }
 
 start_tinybird() {
-  TRACE_FLOW_SKIP_TB_BUILD=1 start_tinybird_local
-  # Without an explicit token, tb deploys to a workspace named after the git branch,
-  # so switching branches would hide the seeded data. With one, it always uses
-  # the project-path workspace that resolve_tinybird_project_workspace reads.
+  start_tinybird_local
+  # An explicit token keeps deploys in the instance's default workspace across branches.
   log "deploying Tinybird project to Tinybird Local"
   local default_token
   default_token="$(curl -sf "$TRACE_FLOW_TINYBIRD_HOST/tokens" | json_expr "data.workspace_admin_token ?? ''")"
-  TB_VERSION_WARNING=0 tb --local --host "$TRACE_FLOW_TINYBIRD_HOST" --token "$default_token" deploy --wait --auto
+  TINYBIRD_WORKSPACE_TOKEN="$default_token" tinybird_cli deploy --wait --auto
   resolve_tinybird_project_workspace
 }
 
@@ -234,7 +235,7 @@ start_convex() {
   # Tinybird Local publishes only on host loopback, so Convex reaches it by name.
   docker network inspect "$DOCKER_NETWORK" >/dev/null 2>&1 || docker network create "$DOCKER_NETWORK" >/dev/null
   if ! docker inspect -f '{{json .NetworkSettings.Networks}}' "$TRACE_FLOW_TINYBIRD_CONTAINER" | grep -q "\"$DOCKER_NETWORK\""; then
-    docker network connect "$DOCKER_NETWORK" "$TRACE_FLOW_TINYBIRD_CONTAINER"
+    docker network connect --alias tinybird-local "$DOCKER_NETWORK" "$TRACE_FLOW_TINYBIRD_CONTAINER"
   fi
   if [[ -z "$(docker ps -q --filter "name=^${CONVEX_CONTAINER}$")" ]]; then
     require_free_port convex "$CONVEX_PORT"
@@ -254,6 +255,7 @@ start_convex() {
     docker run -d \
       --name "$CONVEX_CONTAINER" \
       --label "trace-flow.local-stack.root=$TRACE_FLOW_ROOT" \
+      --label "sbx.agent=${SBX_AGENT_ID:-}" \
       --memory 1g \
       --memory-swap 1g \
       --network "$DOCKER_NETWORK" \
@@ -520,6 +522,7 @@ start_web() {
   chmod 600 "$env_file"
   # shellcheck disable=SC2016 # expanded by the inner shell
   start_process web env -i HOME="$HOME" PATH="$PATH" LANG="${LANG:-C.UTF-8}" TMPDIR="${TMPDIR:-/tmp}" \
+    SBX_AGENT_ID="${SBX_AGENT_ID:-}" SBX_WORKTREE_ID="${SBX_WORKTREE_ID:-}" \
     bash -c 'set -a && source "$1" && set +a && cd "$2" && exec bunx next dev -H 0.0.0.0 -p "$3"' \
     web "$env_file" "$TRACE_FLOW_ROOT/apps/web" "$WEB_PORT"
   wait_for_http web "http://127.0.0.1:$WEB_PORT/" 180
@@ -554,7 +557,7 @@ cmd_up() {
   require_command bun
   require_command node
   require_command tb
-  start_docker_if_possible || fail "Docker is not running"
+  docker info >/dev/null 2>&1 || fail "Docker is not running"
   cd "$TRACE_FLOW_ROOT"
   check_stack_owner
   ensure_secrets
@@ -592,7 +595,7 @@ cmd_down() {
       docker run --rm -v "$TRACE_FLOW_STATE_DIR:/state" --entrypoint sh tinybirdco/tinybird-local:latest \
         -c 'rm -rf /state/tinybird' || warn "could not delete $TRACE_FLOW_STATE_DIR/tinybird"
     fi
-    rm -rf "$STACK_DIR" "$TRACE_FLOW_DEV_ENV"
+    rm -rf "$STACK_DIR"
   fi
   log "local stack is down"
 }
@@ -621,7 +624,13 @@ cmd_status() {
   print_urls
 }
 
+# shellcheck source=scripts/dev/local-stack-checks.sh
+source "$TRACE_FLOW_DEV_DIR/local-stack-checks.sh"
+
 case "${1:-}" in
+  doctor) cmd_doctor ;;
+  smoke) cmd_smoke "${@:2}" ;;
+  verify) cmd_verify "${2:-quick}" ;;
   up) cmd_up ;;
   down) cmd_down "${2:-}" ;;
   status) cmd_status ;;
