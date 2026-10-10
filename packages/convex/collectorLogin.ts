@@ -1,30 +1,10 @@
-import { internalMutation, internalQuery } from './_generated/server';
+import { internalMutation } from './_generated/server';
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import { generateCollectorSecret, hashCollectorSecret } from './collectorCredentials';
 import { rateLimiter } from './rateLimits';
 import type { Id } from './_generated/dataModel';
 import { getActiveOrganizationMembership } from './auth/userHelpers';
-
-// Server-side half of the CLI `trace-flow login` device flow. The public `collectorCredentials.mint`
-// mutation requires a live Convex auth session (`ctx.auth`), which an HTTP callback resolving an Auth0
-// code does not have — the callback authenticates the user itself via the existing `/collector/callback`
-// → `findOrCreateUser` path, then calls this internal mutation with the resolved `userId`. It mirrors
-// `mint` exactly (same rate limit, same KV sync, secret returned once) minus the session check, so the
-// CLI path and the future web UI path mint identical credentials.
-
-/** The org a freshly-authenticated user is bound to. `findOrCreateUser` guarantees one exists. */
-export const resolveLoginOrg = internalQuery({
-  args: { userId: v.id('users') },
-  returns: v.union(v.null(), v.object({ orgId: v.id('organizations'), orgName: v.string() })),
-  handler: async (ctx, args) => {
-    const user = await ctx.db.get(args.userId);
-    if (!user) return null;
-    const active = await getActiveOrganizationMembership(ctx, user);
-    if (!active) return null;
-    return { orgId: active.orgId, orgName: active.organization.name };
-  },
-});
 
 /**
  * Mint a Collector Credential for an already-authenticated `userId`. Returns the plaintext secret

@@ -1,19 +1,13 @@
-import { action, mutation, query, internalQuery, type QueryCtx } from './_generated/server';
+import { mutation, query, internalQuery, type QueryCtx } from './_generated/server';
 import { v } from 'convex/values';
 import { requireAuthenticated } from './auth/auth';
-import { internal } from './_generated/api';
 import {
   getActiveOrganizationMembership,
   getCurrentEnabledUser,
   requireActiveOrganizationMembership,
 } from './auth/users';
-import { requireEnabledActionUser } from './auth/actionUser';
 import { apiKeyValidator } from './validators';
-import {
-  apiKeyPermissionValidator,
-  hasApiKeyPermission,
-  type ApiKeyPermission,
-} from './apiKeyPermissions';
+import { apiKeyPermissionValidator, type ApiKeyPermission } from './apiKeyPermissions';
 import { rateLimiter } from './rateLimits';
 import { analyticsKeyId } from '@trace-flow/utils';
 import type { Doc } from './_generated/dataModel';
@@ -24,13 +18,6 @@ export function canAccessApiKey(
 ): boolean {
   if (apiKey.userId !== user._id) return false;
   return !apiKey.orgId || apiKey.orgId === user.orgId;
-}
-
-export function canManageApiKey(
-  user: Pick<Doc<'users'>, '_id' | 'orgId'>,
-  apiKey: Pick<Doc<'apiKeys'>, 'userId' | 'orgId'>,
-): boolean {
-  return canAccessApiKey(user, apiKey);
 }
 
 async function listAccessibleKeys(ctx: QueryCtx) {
@@ -97,22 +84,6 @@ export const listAnalytics = query({
   },
 });
 
-export const getByKey = query({
-  args: { key: v.string() },
-  returns: v.union(v.null(), apiKeyValidator),
-  handler: async (ctx, args) => {
-    await requireAuthenticated(ctx);
-    const user = await getCurrentEnabledUser(ctx);
-    if (!user) return null;
-    if (!(await getActiveOrganizationMembership(ctx, user))) return null;
-    const apiKey = await ctx.db
-      .query('apiKeys')
-      .filter((q) => q.eq(q.field('key'), args.key))
-      .first();
-    return apiKey && canAccessApiKey(user, apiKey) ? apiKey : null;
-  },
-});
-
 export const create = mutation({
   args: {
     permissions: v.optional(v.array(apiKeyPermissionValidator)),
@@ -140,12 +111,6 @@ export const create = mutation({
       name: args.name,
     });
 
-    await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.syncKeyToKV, {
-      key,
-      expiresAt: args.expiresAt,
-      orgId,
-    });
-
     return id;
   },
 });
@@ -166,7 +131,7 @@ export const update = mutation({
       throw new Error('API key not found');
     }
 
-    if (!canManageApiKey(user, apiKey)) {
+    if (!canAccessApiKey(user, apiKey)) {
       throw new Error('You do not have permission to edit this API key');
     }
 
@@ -175,14 +140,6 @@ export const update = mutation({
     if (args.expiresAt !== undefined) patch.expiresAt = args.expiresAt;
 
     await ctx.db.patch(args.id, patch);
-
-    if (args.expiresAt !== undefined) {
-      await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.syncKeyToKV, {
-        key: apiKey.key,
-        expiresAt: args.expiresAt,
-        orgId: apiKey.orgId,
-      });
-    }
   },
 });
 
@@ -198,60 +155,11 @@ export const remove = mutation({
       throw new Error('API key not found');
     }
 
-    if (!canManageApiKey(user, apiKey)) {
+    if (!canAccessApiKey(user, apiKey)) {
       throw new Error('You do not have permission to delete this API key');
     }
 
     await ctx.db.delete(args.id);
-
-    await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.deleteKeyFromKV, {
-      key: apiKey.key,
-    });
-  },
-});
-
-export const syncToKV = action({
-  args: { id: v.id('apiKeys') },
-  returns: v.object({ synced: v.boolean(), existed: v.boolean() }),
-  handler: async (ctx, args): Promise<{ synced: boolean; existed: boolean }> => {
-    await requireAuthenticated(ctx);
-    const user = await requireEnabledActionUser(ctx);
-
-    const apiKey = await ctx.runQuery(internal.apiKeys.getByIdInternal, { id: args.id });
-    if (!apiKey) {
-      throw new Error('API key not found');
-    }
-    if (!canManageApiKey(user, apiKey)) {
-      throw new Error('You do not have permission to sync this API key');
-    }
-
-    if (!hasApiKeyPermission(apiKey, 'ingest')) {
-      throw new Error('Only keys that allow sending traces can be synced');
-    }
-
-    const existsInKV = await ctx.runAction(internal.integrations.cloudflare.checkKeyInKV, {
-      key: apiKey.key,
-    });
-
-    if (existsInKV) {
-      return { synced: false, existed: true };
-    }
-
-    await ctx.runAction(internal.integrations.cloudflare.syncKeyToKV, {
-      key: apiKey.key,
-      expiresAt: apiKey.expiresAt,
-      orgId: apiKey.orgId,
-    });
-
-    return { synced: true, existed: false };
-  },
-});
-
-export const getByIdInternal = internalQuery({
-  args: { id: v.id('apiKeys') },
-  returns: v.union(v.null(), apiKeyValidator),
-  handler: async (ctx, args) => {
-    return await ctx.db.get(args.id);
   },
 });
 
@@ -284,18 +192,6 @@ export const listForUser = internalQuery({
       .withIndex('by_user_id', (q) => q.eq('userId', args.userId))
       .collect();
     return userKeys.filter((key) => canAccessApiKey(user, key));
-  },
-});
-
-// Internal query - bypasses Convex auth, uses userId directly
-export const listByUserId = internalQuery({
-  args: { userId: v.id('users') },
-  returns: v.array(apiKeyValidator),
-  handler: async (ctx, args) => {
-    return await ctx.db
-      .query('apiKeys')
-      .withIndex('by_user_id', (q) => q.eq('userId', args.userId))
-      .collect();
   },
 });
 

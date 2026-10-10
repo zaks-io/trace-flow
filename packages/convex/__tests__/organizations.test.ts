@@ -33,11 +33,11 @@ describe('createOrgWithDefaultBilling', () => {
     };
   }
 
-  it('creates org, membership, subscription and schedules KV syncs', async () => {
+  it('creates org, membership, subscription and schedules subscription KV sync', async () => {
     const ctx = makeBootstrapCtx() as any;
     const userId = 'user_1' as any;
 
-    const orgId = await createOrgWithDefaultBilling(ctx, userId, 'Alice', 'auth0|123');
+    const orgId = await createOrgWithDefaultBilling(ctx, userId, 'Alice');
 
     expect(orgId).toBe('org_new');
     expect(ctx._dbInsert).toHaveBeenCalledWith(
@@ -66,16 +66,16 @@ describe('createOrgWithDefaultBilling', () => {
         monthlyUnits: TIER_CONFIG.hobby.monthlyUnits,
       }),
     );
-    expect(ctx._schedulerRunAfter).toHaveBeenCalledTimes(2);
-    const calls = ctx._schedulerRunAfter.mock.calls;
-    const userOrgSync = calls.find(
-      (c: unknown[]) =>
-        c[2] && typeof c[2] === 'object' && 'sub' in (c[2] as Record<string, unknown>),
+    expect(ctx._schedulerRunAfter).toHaveBeenCalledTimes(1);
+    expect(ctx._schedulerRunAfter).toHaveBeenCalledWith(
+      0,
+      expect.anything(),
+      expect.objectContaining({
+        orgId: 'org_new',
+        tier: 'hobby',
+        monthlyUnits: TIER_CONFIG.hobby.monthlyUnits,
+      }),
     );
-    expect(userOrgSync).toBeDefined();
-    const args = (userOrgSync as [number, unknown, Record<string, unknown>])[2];
-    expect(args.sub).toBe('auth0|123');
-    expect(args.orgId).toBe('org_new');
   });
 
   it('uses default org name when name not provided', async () => {
@@ -92,7 +92,7 @@ describe('createOrgWithDefaultBilling', () => {
     );
   });
 
-  it('does not schedule user-org KV sync when sub not provided', async () => {
+  it('schedules subscription KV sync with a named organization', async () => {
     const ctx = makeBootstrapCtx() as any;
     const userId = 'user_1' as any;
 

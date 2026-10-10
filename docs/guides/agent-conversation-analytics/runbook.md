@@ -88,9 +88,9 @@ The ingest Worker fetches `/agent-ingest/compatibility-policy` from Convex on ev
 closed with `policy_unavailable` and rejects all ingest — even with correct auth and a correct
 `CONVEX_SITE_URL`. Prod Convex must have one active policy row.
 
-There is no automated prod seed (`setPolicy` requires an authenticated admin user, so `convex run` can't
-call it; `agentE2eSeed:seedDevCollector` is dev-only). Seed it once via the prod Convex **dashboard** →
-Data → `collectorCompatibilityPolicy` → Add document:
+There is no automated policy seed. The unused policy mutation and dev E2E seed were removed in
+TRA-407. Seed the target deployment once via the Convex **dashboard** → Data →
+`collectorCompatibilityPolicy` → Add document. Production changes require approval:
 
 ```json
 {

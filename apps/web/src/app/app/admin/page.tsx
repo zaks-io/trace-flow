@@ -638,11 +638,11 @@ export default function AdminPage() {
           />
           <SyncActionRow
             icon={<Database className="h-4 w-4" />}
-            label="Sync API Keys & Subscriptions"
-            description="Push all API keys and subscriptions to Cloudflare KV"
+            label="Sync Subscriptions & Collector Credentials"
+            description="Push all subscriptions and collector credentials to Cloudflare KV"
             onRun={async () => {
               const r = await syncAll();
-              return `Synced ${r.keySynced} keys, ${r.subSynced} subs`;
+              return `Synced ${r.subSynced} subscriptions, ${r.collectorCredSynced} collector credentials`;
             }}
           />
         </div>
