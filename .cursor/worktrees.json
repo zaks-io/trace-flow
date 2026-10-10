@@ -1,9 +1,3 @@
 {
-  "setup-worktree": [
-    "bun install",
-    "[ ! -f \"$ROOT_WORKTREE_PATH/.env.local\" ] || cp \"$ROOT_WORKTREE_PATH/.env.local\" .env.local",
-    "[ ! -f \"$ROOT_WORKTREE_PATH/apps/proxy-consumer/.dev.vars\" ] || cp \"$ROOT_WORKTREE_PATH/apps/proxy-consumer/.dev.vars\" apps/proxy-consumer/.dev.vars",
-    "[ ! -f \"$ROOT_WORKTREE_PATH/apps/web/.env.local\" ] || cp \"$ROOT_WORKTREE_PATH/apps/web/.env.local\" apps/web/.env.local",
-    "[ ! -f \"$ROOT_WORKTREE_PATH/packages/sdk-tests/.env\" ] || cp \"$ROOT_WORKTREE_PATH/packages/sdk-tests/.env\" packages/sdk-tests/.env"
-  ]
+  "setup-worktree": ["bash setup-worktree.sh"]
 }

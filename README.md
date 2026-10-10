@@ -209,36 +209,30 @@ Point CLI and desktop collectors at the dev endpoints listed in
 
 ### Self-Contained Local
 
-The `scripts/dev` scripts provision **Self-Contained Local** for CI, background agents, and offline
-work: local Workers, Convex local, and Tinybird Local in Docker.
+`scripts/dev/local-stack.sh` owns the disposable stack with mock sign-in, local Workers,
+a Docker Convex backend, and Tinybird Local. Start it only with explicit approval
+and at least 8 GiB available memory.
 
 ```bash
-scripts/dev/install.sh
-scripts/dev/start.sh
-scripts/dev/doctor.sh   # inspect missing prerequisites
+bun install --frozen-lockfile
+scripts/dev/local-stack.sh --help
+scripts/dev/local-stack.sh doctor
+# Only after approval:
+scripts/dev/local-stack.sh up
+scripts/dev/local-stack.sh login-url
+scripts/dev/local-stack.sh smoke
+scripts/dev/local-stack.sh down
 ```
 
-Run the long-lived processes in separate terminals:
-
-```bash
-scripts/dev/convex.sh
-scripts/dev/workers.sh
-scripts/dev/web.sh
-```
-
-`scripts/dev/workers.sh` starts the six core data-plane Workers (Proxy, Proxy Consumer, Raw API,
-Pipes API, Agent Ingest, Agent Consumer) together so local queues, KV, R2, and Durable Objects share
-one persisted state directory. Web, Convex, and MCP are not part of that
-multi-Worker process. See [Local Agent Environment](./docs/agents/local-environment.md) and the
-environment definitions in [CONTEXT.md](./CONTEXT.md).
+See [Local agent environment](./docs/agents/local-environment.md) for prerequisites,
+seeding, private runtime files, and limitations.
 
 ### Verification
 
 ```bash
 bun run ci:check              # full local gate: duplicates, formatting, lint, types, tests, build
-scripts/dev/smoke.sh          # local OTLP ingest -> queue -> Tinybird path
-scripts/dev/verify.sh         # Tinybird build/tests, type-check, tests
-scripts/dev/verify.sh full    # plus lint and TypeScript build
+scripts/dev/local-stack.sh smoke   # already-running approved local OTLP/queue/Tinybird path
+scripts/dev/local-stack.sh verify  # running local Tinybird build/tests, types and tests
 cargo test --workspace --locked
 ```
 
@@ -293,7 +287,7 @@ The license does not grant rights to company or provider trademarks.
 
 ## Sandbox worktrees
 
-When `sbx-runtime` is installed, `bun run dev:all` assigns stable named ports for
+When `sbx-runtime` is installed, `scripts/dev/local-stack.sh up` assigns stable named ports for
 the full stack, including Worker inspectors. Each worktree gets private state
 outside the checkout and its own Convex and Tinybird containers and volumes.
 Use `sbx-runtime list` to find URLs; explicit local-stack port overrides remain

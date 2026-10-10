@@ -21,14 +21,18 @@ tests/config for that area before editing.
 
 ## Environment Setup
 
-Cursor Background Agents use `.cursor/environment.json` and `.cursor/Dockerfile`.
-The image pins Node 24 and Bun 1.3.5. The install command is:
+The checked-in Cursor background-stack bootstrap was removed because its image did not
+provide Docker or Compose, which both local stacks required. Cursor editor rules remain,
+and `.cursor/worktrees.json` runs `bash setup-worktree.sh` for installs and environment files.
+
+Use the pinned package manager:
 
 ```sh
-bun install
+bun install --frozen-lockfile
 ```
 
-The package manager is pinned in `package.json`.
+Approved self-contained runs use `scripts/dev/local-stack.sh` on a Linux host with Docker,
+Compose v2, Node 24, Bun 1.3.5, and the Tinybird CLI. See `local-environment.md`.
 
 ## Repo-Local Skills
 
@@ -68,19 +72,16 @@ Before handoff, run the ticket-specific verification and then:
 bun run ci:check
 ```
 
-Run local stack smoke when the change touches proxy, queue, consumer, API body
-retrieval, or shared runtime behavior:
+Starting a self-contained stack requires Isaac's explicit approval. For an approved supervised
+self-contained run with at least 8 GiB available memory:
 
 ```sh
-bun run dev:all
+scripts/dev/local-stack.sh up
+scripts/dev/local-stack.sh smoke
+scripts/dev/local-stack.sh down
 ```
 
-The web app requires Convex in a separate terminal:
-
-```sh
-bunx convex dev
-bun run dev:web
-```
+Everyday development uses `bun run dev:web` against cloud dev.
 
 ## Hosted Secrets And Deploys
 
