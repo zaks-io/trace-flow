@@ -6,7 +6,7 @@ import math
 import statistics
 import time
 
-from agent_benchmark_queries import SIGNALS
+from agent_benchmark_queries import SIGNALS, LIFETIME
 
 
 def output_hash(endpoint, data):
@@ -35,12 +35,12 @@ def summarize(samples):
 
 def measure(client, endpoints, end_ms, runs, output):
     records = []
-    for days in (7, 30):
+    for days, retention in ((7, 7), (7, 30), (30, 30)):
         base = {
             "org_id": "benchmark-org",
             "start_time_ms": str(end_ms - days * 86400000),
             "end_time_ms": str(end_ms),
-            "retention_days": str(days),
+            "retention_days": str(retention),
         }
         for endpoint in endpoints:
             params = dict(base)
@@ -58,17 +58,17 @@ def measure(client, endpoints, end_ms, runs, output):
                 else endpoint
             )
             paths = {"current": current, "direct": "bench_direct_" + endpoint}
-            samples = {"current": [], "direct": []}
-            hashes = {"current": [], "direct": []}
+            if endpoint in LIFETIME:
+                paths["two_stage"] = "bench_two_stage_" + endpoint
+            samples = {path: [] for path in paths}
+            hashes = {path: [] for path in paths}
             output_rows = {}
             examples = {}
             error = None
             try:
                 for iteration in range(runs + 1):
                     order = (
-                        ("current", "direct")
-                        if iteration % 2 == 0
-                        else ("direct", "current")
+                        tuple(paths) if iteration % 2 == 0 else tuple(reversed(paths))
                     )
                     for path in order:
                         started = time.perf_counter()
@@ -95,7 +95,9 @@ def measure(client, endpoints, end_ms, runs, output):
             record = {
                 "endpoint": endpoint,
                 "days": days,
+                "retention_days": retention,
                 "params": params,
+                "parity_examples": examples,
                 "samples": samples,
                 "output_rows": output_rows,
                 "hashes": hashes,
@@ -103,24 +105,36 @@ def measure(client, endpoints, end_ms, runs, output):
             }
             if not error:
                 record.update(
-                    current=summarize(samples["current"]),
-                    direct=summarize(samples["direct"]),
+                    {path: summarize(values) for path, values in samples.items()}
                 )
-                record["parity"] = len(set(hashes["current"] + hashes["direct"])) == 1
-                if not record["parity"]:
-                    record["parity_examples"] = examples
                 current_bytes = record["current"]["bytes_read"]
-                record["byte_ratio"] = (
-                    record["direct"]["bytes_read"] / current_bytes
-                    if current_bytes
-                    else None
-                )
-                record["passed"] = (
-                    record["parity"]
-                    and record["direct"]["median_ms"] <= 1000
-                    and record["direct"]["p95_ms"] <= 2000
-                    and record["direct"]["bytes_read"] <= current_bytes * 3
-                )
+                for path in paths:
+                    if path == "current":
+                        continue
+                    parity = len(set(hashes["current"] + hashes[path])) == 1
+                    stats = record[path]
+                    budget = (
+                        stats["median_ms"] <= 1000
+                        and stats["p95_ms"] <= 2000
+                        and stats["bytes_read"] <= current_bytes * 3
+                    )
+                    ratio = (
+                        stats["bytes_read"] / current_bytes if current_bytes else None
+                    )
+                    if path == "direct":
+                        record.update(
+                            parity=parity,
+                            budget_passed=budget,
+                            byte_ratio=ratio,
+                            passed=parity and budget,
+                        )
+                    else:
+                        record["two_stage_result"] = dict(
+                            parity=parity,
+                            budget_passed=budget,
+                            byte_ratio=ratio,
+                            passed=parity and budget,
+                        )
             records.append(record)
             output.write_text(json.dumps(records, indent=2) + "\n")
             print(
@@ -130,9 +144,12 @@ def measure(client, endpoints, end_ms, runs, output):
                         for k in (
                             "endpoint",
                             "days",
+                            "retention_days",
                             "current",
                             "direct",
                             "parity",
+                            "two_stage",
+                            "two_stage_result",
                             "passed",
                             "error",
                         )

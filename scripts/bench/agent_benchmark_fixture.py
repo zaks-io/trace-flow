@@ -3,8 +3,8 @@
 Base ratios to messages: tools 1:1, files 1:2, PRs/capabilities/attributions
 1:100 each (rounded down). Every 20 messages share a session. Each 1,000-message
 block has 70% benchmark-org and 10% each benchmark-org-2/3/4. Smaller populations
-have deterministic rounding. Dates cover the calendar year preceding end_ms's UTC midnight
-(365 or 366 days). With >=11 messages, session zero has facts 45 days older.
+have deterministic rounding. Dates cover a calendar year plus the end day. Special sessions cross the 7/30-day
+window starts, contain 45-day-old history, and have activity just after end_ms.
 
 Per table, mutation buckets rotate every 100 ordinals to spread versions across
 orgs. Bucket modulo 20 == 19 gets corrections (5%); bucket == 99 moves date
@@ -177,6 +177,9 @@ def _expressions(table: str, pk: str, timestamp: str) -> dict[str, str]:
             operation="['read', 'edit', 'write', 'create'][1 + n % 4]",
         )
     elif table == TABLES[3][0]:
+        fields["EventAt"] = (
+            "fromUnixTimestamp64Milli(if(s = 3200, ingested_ms - version * 1000 + 1000, event_ms), 'UTC')"
+        )
         fields.update(
             source_event_id=_id("review-event", "n"),
             stable_turn_index="m % 20",
@@ -288,7 +291,7 @@ def fixture_sql(
             for name, kind in schemas[table]
         )
         for label, version, deleted, changed, moved, predicate in stages:
-            movement = f"if(day_offset = 1, -{DAY_MS}, {DAY_MS})" if moved else "0"
+            movement = f"if(day_offset <= 1, -{DAY_MS}, {DAY_MS})" if moved else "0"
             aliases = [
                 "toInt64(number) AS n",
                 f"n * {stride} AS m",
@@ -297,8 +300,8 @@ def fixture_sql(
                 f"{version} AS version",
                 f"{deleted} AS deleted",
                 f"{changed} AS changed",
-                f"if(s = 0 AND m % 20 >= 10, 46, 1 + s % {retained_days}) AS day_offset",
-                f"{anchor} - day_offset * {DAY_MS} + if(day_offset = {retained_days}, {DAY_MS} - 2000, if(s = 0 AND m % 20 < 10, {DAY_MS} - 2000, ((s * 137) % 80000 + m % 20) * 1000)) AS base_ms",
+                f"multiIf(s = 0 AND m % 20 >= 10, 46, s IN (0, 128, 256, 2560, 3200), 0, s = 1920, if(m % 20 < 10, 8, 6), s = 1280, if(m % 20 < 10, 31, 29), 1 + s % {retained_days}) AS day_offset",
+                f"if(day_offset = 0, {end_ms} + multiIf((s = 256 AND m % 20 >= 10) OR s = 2560, 1000 + m % 20 * 1000, s = 128, -3600000 + m % 20 * 1000, -120000 + m % 20 * 1000), {anchor} - day_offset * {DAY_MS} + if(day_offset = {retained_days}, {DAY_MS} - 2000, (({(end_ms - anchor) // 1000} + 14400 + (s * 137) % 40000 + m % 20) % 86400) * 1000)) AS base_ms",
                 f"base_ms + {movement} + changed * 500 AS event_ms",
                 f"{end_ms} + version * 1000 AS ingested_ms",
                 f"{anchor} - if(s = 0, 46, 1 + s % {retained_days}) * {DAY_MS} + (s * 137) % 80000 * 1000 AS started_ms",

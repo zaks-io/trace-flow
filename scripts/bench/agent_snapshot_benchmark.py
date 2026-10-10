@@ -20,18 +20,18 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--messages", type=int, default=2_000_000)
+    parser.add_argument("--messages", type=int, default=1_000_000)
     parser.add_argument("--runs", type=int, default=10)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--setup-only", action="store_true")
-    parser.add_argument("--write-queries", action="store_true")
+    parser.add_argument("--write-queries", type=Path, metavar="TEMP_PROJECT")
     args = parser.parse_args()
     args.output = args.output.resolve()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     if args.write_queries:
         from agent_benchmark_queries import endpoint_inventory, write_variants
 
-        write_variants(ROOT, ROOT / "scripts/bench", endpoint_inventory(ROOT))
+        write_variants(ROOT, args.write_queries, endpoint_inventory(ROOT))
         return
     if args.messages < 1 or args.runs < 10:
         parser.error("Positive fixture size and at least ten runs are required")
@@ -175,7 +175,7 @@ def main():
                 table_map = ch.tables(client)
                 end_ms = int(
                     datetime.now(timezone.utc)
-                    .replace(hour=0, minute=0, second=0, microsecond=0)
+                    .replace(second=0, microsecond=0)
                     .timestamp()
                     * 1000
                 )
@@ -202,6 +202,15 @@ def main():
                             f"Synthetic fixture count mismatch for {table}"
                         )
                 jobs = publish_snapshots(client, ROOT)
+                from agent_benchmark_evidence import (
+                    provenance,
+                    parts_at_start,
+                    boundary_evidence,
+                )
+
+                evidence = provenance(ROOT, project, ch, container)
+                parts = parts_at_start(ch)
+                boundaries = boundary_evidence(ch, table_map, end_ms)
                 records = measure(client, endpoints, end_ms, args.runs, args.output)
                 if datetime.now(timezone.utc).date() != started_date:
                     raise RuntimeError(
@@ -210,6 +219,9 @@ def main():
                 args.output.write_text(
                     json.dumps(
                         {
+                            "provenance": evidence,
+                            "parts_at_measurement_start": parts,
+                            "boundary_evidence": boundaries,
                             "messages": args.messages,
                             "runs": args.runs,
                             "end_ms": end_ms,

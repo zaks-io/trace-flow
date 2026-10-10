@@ -1,4 +1,4 @@
-"""Benchmark-only direct variants preserve serving SQL and Copy aggregation states."""
+"""Generate benchmark SQL only in a caller-owned temporary Tinybird project."""
 
 from pathlib import Path
 import re
@@ -12,7 +12,16 @@ SIGNALS = {
     "agent_notable_changes",
     "agent_context_health",
 }
+LIFETIME = {
+    "agent_sessions_browser",
+    "agent_session_cost_distribution",
+    "agent_session_signals_top_runaway",
+    "agent_review_unit_costs",
+}
 EXTRAS = {"agent_priced_usage", "agent_priced_coverage"} | SIGNALS
+START = "fromUnixTimestamp64Milli({{ Int64(start_time_ms) }})"
+END = "fromUnixTimestamp64Milli({{ Int64(end_time_ms) }})"
+RETENTION = "now() - toIntervalDay({{ Int32(retention_days, 7) }})"
 
 
 def endpoint_inventory(root: Path) -> list[str]:
@@ -34,62 +43,116 @@ def endpoint_inventory(root: Path) -> list[str]:
     return sorted(names)
 
 
-def bounded_raw_reads(text: str) -> str:
-    # Date predicates use replacement-key columns; mutable role/status filters stay after FINAL.
-    pattern = r"(FROM (agent_\w+(?:fact_versions|attribution_versions))(?: AS (\w+))? FINAL\s+WHERE)"
+def retained_start(text: str) -> str:
+    lower = START
+    if "prior_start_dt" in text:
+        lower = "fromUnixTimestamp64Milli({{ Int64(start_time_ms) }} - ({{ Int64(end_time_ms) }} - {{ Int64(start_time_ms) }}))"
+    if "baseline_start_dt" in text:
+        lower = f"least({lower}, {START} - toIntervalDay(28))"
+    return f"greatest({lower}, {RETENTION})"
 
-    def replace(match):
-        alias = match[3] or match[2]
-        timestamp = (
-            "DecidedAt" if match[2].endswith("attribution_versions") else "EventAt"
-        )
-        return (
-            match[1]
-            + "\n        "
-            + alias
-            + ".OrgId = {{ String(org_id) }}"
-            + "\n        AND "
-            + alias
-            + "."
-            + timestamp
-            + " >= fromUnixTimestamp64Milli({{ Int64(start_time_ms) }})"
-            + "\n        AND "
-            + alias
-            + "."
-            + timestamp
-            + " < fromUnixTimestamp64Milli({{ Int64(end_time_ms) }}) AND"
-        )
 
-    return re.sub(pattern, replace, text)
+def copy_sql(copy: Path, lower: str, extra: str = "") -> str:
+    sql = copy.read_text().split("SQL >", 1)[1].split("\nTYPE COPY", 1)[0]
+    sql = re.sub(r"\s+SETTINGS max_threads = 1\s*$", "", sql)
+    sql = sql.replace(
+        "IN {{ Array(snapshot_days, 'Date') }}",
+        f">= toDate({lower})\n      AND toDate(EventAt) <= toDate({END} - toIntervalMillisecond(1)){extra}",
+    )
+    return sql.replace("{{ UInt64(snapshot_generation) }}", "toUInt64(1)").replace(
+        "{{ UInt64(copy_attempt) }}", "toUInt64(1)"
+    )
+
+
+def activity_node(root: Path, signal: bool, lower: str) -> str:
+    # Match each Copy's live contributors and billable-message predicate before discovering sessions.
+    tables = ["message", "tool_event", "file_event", "pull_request"]
+    selects = []
+    for category in tables:
+        predicate = " AND role = 'assistant'" if category == "message" else ""
+        if category == "pull_request":
+            predicate = " AND url != ''"
+        selects.append(
+            "SELECT session_pk, repo_fingerprint, EventAt "
+            f"FROM agent_{category}_fact_versions FINAL "
+            "WHERE OrgId = {{ String(org_id) }} "
+            f"AND toDate(EventAt) >= toDate({lower}) "
+            "AND toDate(EventAt) <= today() "
+            f"AND EventAt >= {lower} AND EventAt < now() AND IsDeleted = 0{predicate}"
+        )
+    keys = "repo_fingerprint, session_pk" if signal else "session_pk"
+    return (
+        "NODE retention_candidates\nSQL >\n    %\n"
+        f"    SELECT {keys} FROM ({' UNION ALL '.join(selects)}) "
+        f"GROUP BY {keys} HAVING max(EventAt) >= {lower} AND max(EventAt) < {END}\n\n"
+    )
 
 
 def write_variants(root: Path, project: Path, endpoints: list[str]) -> None:
-    replacements = {}
+    if project.resolve().is_relative_to((root / "scripts/bench").resolve()):
+        raise ValueError("Benchmark resources must be generated outside scripts/bench")
+    (project / "pipes").mkdir(parents=True, exist_ok=True)
+    copies = {}
     for copy in sorted((root / "copies").glob("repair_agent_*_snapshots.pipe")):
         target = re.search(r"^TARGET_DATASOURCE (\w+)$", copy.read_text(), re.M)[1]
-        published = target.removesuffix("_snapshots") + "_published"
-        name = "bench_direct_" + published
-        replacements[published] = name
-        sql = copy.read_text().split("SQL >", 1)[1].split("\nTYPE COPY", 1)[0]
-        sql = re.sub(r"\s+SETTINGS max_threads = 1\s*$", "", sql)
-        sql = sql.replace(
-            "IN {{ Array(snapshot_days, 'Date') }}",
-            ">= toDate(fromUnixTimestamp64Milli({{ Int64(start_time_ms) }}))\n"
-            "      AND toDate(EventAt) < toDate(fromUnixTimestamp64Milli({{ Int64(end_time_ms) }}))",
-        )
-        sql = sql.replace("{{ UInt64(snapshot_generation) }}", "toUInt64(1)")
-        sql = sql.replace("{{ UInt64(copy_attempt) }}", "toUInt64(1)")
-        (project / f"pipes/{name}.pipe").write_text("NODE direct\nSQL >" + sql + "\n")
+        copies[target.removesuffix("_snapshots") + "_published"] = copy
     for endpoint in endpoints:
-        text = (root / f"pipes/{endpoint}.pipe").read_text()
-        for published, direct in replacements.items():
-            text = re.sub(rf"\b{published}\b", direct, text)
-        text = bounded_raw_reads(text)
-        if endpoint == "agent_priced_usage":
-            text += "\nTYPE ENDPOINT\n"
-        (project / f"pipes/bench_direct_{endpoint}.pipe").write_text(text)
-        if endpoint == "agent_priced_usage":
-            # This diagnostic generic pipe already reads FINAL. Expose it locally for identical stats.
-            (project / f"pipes/bench_current_{endpoint}.pipe").write_text(
-                (root / f"pipes/{endpoint}.pipe").read_text() + "\nTYPE ENDPOINT\n"
-            )
+        original = (root / f"pipes/{endpoint}.pipe").read_text()
+        for kind in ("direct", "two_stage") if endpoint in LIFETIME else ("direct",):
+            text = original
+            aggregate_nodes = ""
+            lower = retained_start(original)
+            prefix = f"bench_{kind}_{endpoint}"
+            for published, copy in copies.items():
+                if not re.search(rf"\b{published}\b", original):
+                    continue
+                name = (
+                    prefix
+                    + "_"
+                    + published.removeprefix("agent_").removesuffix("_published")
+                )
+                extra = ""
+                if kind == "two_stage":
+                    keys = (
+                        "(repo_fingerprint, session_pk)"
+                        if endpoint.endswith("top_runaway")
+                        else "session_pk"
+                    )
+                    extra = f"\n      AND EventAt >= {RETENTION} AND EventAt < {END}\n      AND {keys} IN (SELECT {keys} FROM retention_candidates)"
+                    lower = RETENTION
+                if kind == "two_stage":
+                    aggregate_nodes += (
+                        f"NODE {name}\nSQL >" + copy_sql(copy, lower, extra) + "\n\n"
+                    )
+                else:
+                    (project / f"pipes/{name}.pipe").write_text(
+                        "NODE direct\nSQL >" + copy_sql(copy, lower, extra) + "\n"
+                    )
+                text = re.sub(rf"\b{published}\b", name, text)
+            if endpoint == "agent_review_unit_costs":
+                lower = RETENTION if kind == "two_stage" else retained_start(original)
+                text = text.replace(
+                    "AND rua.IsDeleted = 0",
+                    f"AND toDate(rua.DecidedAt) >= toDate({lower})\n"
+                    f"      AND toDate(rua.DecidedAt) <= toDate({END} - toIntervalMillisecond(1))\n"
+                    f"      AND rua.DecidedAt >= {lower} AND rua.DecidedAt < {END}\n"
+                    + (
+                        "      AND rua.session_pk IN (SELECT session_pk FROM retention_candidates)\n"
+                        if kind == "two_stage"
+                        else ""
+                    )
+                    + "      AND rua.IsDeleted = 0",
+                )
+            if kind == "two_stage":
+                text = (
+                    activity_node(
+                        root, endpoint.endswith("top_runaway"), retained_start(original)
+                    )
+                    + aggregate_nodes
+                    + text
+                )
+            if endpoint == "agent_priced_usage":
+                # Already FINAL and plan-clamped, with no selected-window contract. Preserve it.
+                text += "\nTYPE ENDPOINT\n"
+                (project / f"pipes/bench_current_{endpoint}.pipe").write_text(text)
+            (project / f"pipes/{prefix}.pipe").write_text(text)

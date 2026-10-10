@@ -1,65 +1,86 @@
 # Agent snapshot retirement benchmark
 
-This is the TRA-409 experiment, not a deployment or an accepted replacement design.
-It uses synthetic facts and an owned Tinybird Local container. It never starts Workers.
+TRA-409 is a measured proposal. It uses synthetic facts in an owned Tinybird Local
+container and starts no Workers.
 
-From the repository root:
+From an isolated worktree with `SBX_AGENT_ID` set:
 
 ```sh
 bun install --frozen-lockfile
-bash scripts/bench/run-agent-snapshot-benchmark.sh --output /tmp/agent-snapshot-benchmark.json
-```
-
-The default fixture has two million base messages over a calendar retention year (365 or 366 days). Tools have the same
-count, files half, and PR links, capability observations and review attributions one
-hundredth. Four organizations have a 70/10/10/10 distribution. Corrections include
-old-date tombstones and new-date live rows; deleted facts remain physically present.
-Costs use binary fractions so exact numeric parity does not depend on float summation
-order. One session deliberately crosses the requested window boundary. Its recent events
-and high cost put it on the first browser and review-cost pages; its attribution
-decision predates both measured windows.
-
-The runner checks available memory and project processes, uses the repository's Tinybird
-Local Compose file with a 8 GiB container limit, generates private local tokens, and
-builds an isolated local workspace through the installed Tinybird CLI Python library.
-Ingestion-only materializations are excluded from this read experiment.
-Its uniquely named container carries `sbx.agent`. TCP ports 17181 and 17182 must be
-available; a collision fails without stopping another server. Cleanup removes only
-this run's Compose resources, including after SIGTERM or Ctrl-C. Generated facts and
-database storage are temporary and never enter Git.
-
-Facts load with deterministic `INSERT SELECT numbers()` statements. The actual nine
-repository snapshot Copy pipes run serially for each organization over these facts.
-A synchronous manifest append publishes each complete generation. This setup tests
-read behavior and excludes the ingest transport and scheduling delays.
-
-All web/MCP agent endpoints plus pricing and ADR 0019 signals are discovered by the
-inventory function. `pipes/` here contains generated benchmark-only direct variants,
-outside the deployment includes in the root Tinybird config. They reuse Copy
-aggregation states and the current endpoint SQL, replacing published relations with
-org-scoped canonical `FINAL` reads over the requested dates. Existing raw reads also
-receive explicit bounds. This intentionally tests whether the bounded shape preserves
-current results; lifetime session totals and attribution decisions may fail parity.
-
-The runner alternates paths, discards one warmup per path, and records ten measured
-requests per path for both 7 and 30 days. HTTP timing includes client JSON parsing.
-Database timing, rows read and bytes read come from the endpoint's query statistics.
-p95 uses nearest rank, so ten runs use the slowest measured request. The reported scan
-volume is the maximum observed. Output hashes preserve row order and exact values.
-Only `agent_priced_usage`, an unordered generic relation exposed as a local endpoint,
-uses an exact row multiset. Duplicate multiplicity remains significant.
-
-A negative budget or parity result is a completed experiment. Endpoint errors make the
-runner exit nonzero after writing available evidence and cleaning up. The output
-contains samples, hashes, mismatch examples, Copy timings and the actual fixture counts.
-Timing varies with shared sandbox load. Use the guide's recorded image and CLI versions
-when comparing reruns. The generated SQL can be refreshed without starting a container:
-
-```sh
-bash scripts/bench/run-agent-snapshot-benchmark.sh --write-queries --output /tmp/unused.json
+bash scripts/bench/run-agent-snapshot-benchmark.sh \
+  --messages 1000000 --runs 10 --output /tmp/agent-snapshot-benchmark.json
 python3 -m unittest discover -s scripts/bench -p 'test_*.py'
 ```
 
-Use `--messages 20000` for a small end-to-end validation run. It proves the setup and
-query path, not the full-scale performance budget. `--setup-only` builds every variant
-and cleans up without loading facts or measuring requests.
+The default and largest safely completed scale is one million base messages. Two
+million failed during round 1 loading; 2M, cloud timing and concurrency remain
+unvalidated. This round keeps the same 8 GiB container memory limit.
+
+The fixture covers a calendar retention year plus the partial end day. Tools have
+one row per message, files half, and PR links, capability observations and review
+attributions one hundredth. Four organizations have a 70/10/10/10 distribution.
+Corrections include old-date tombstones and new-date live rows. Deleted facts
+remain physically present. Costs use binary fractions for exact numeric parity.
+Sessions cross the 7-day and 30-day window starts; session zero has 45-day-old
+messages and an old attribution. End-day facts include activity after the selected
+minute-snapped end. The artifact records actual boundary counts and session dates.
+The new generator was needed because `generate-agent-snapshot-benchmark.mjs`
+generates manifest commits, rather than canonical facts for comparing both paths.
+
+The runner checks `free -h`, requires 8 GiB available, prints `uptime` and `sbx-ps`,
+and builds a private workspace using the installed Tinybird CLI Python library.
+Ingestion-only materializations are excluded from this read experiment. Its
+uniquely named container carries `sbx.agent`; ports 17181 and 17182 bind only to
+loopback. A collision fails without stopping another server. Cleanup removes only
+this run's Compose resources, including after SIGTERM or Ctrl-C. Fixture data and
+database storage stay in temporary directories and never enter Git.
+
+Batched deterministic `INSERT SELECT numbers()` statements load the six canonical
+fact categories. The nine repository snapshot Copy pipes run serially for each
+organization, followed by a synchronous manifest append. Both paths read the same
+facts. This tests reads and excludes ingest transport and scheduling delays.
+
+The inventory discovers all web/MCP agent endpoints plus pricing and ADR 0019
+signals. The runner generates benchmark `.pipe` files **only in its temporary
+project**. No `.pipe` or `.datasource` may exist anywhere under `scripts/bench`;
+the safety test checks recursively. Deployment safety therefore holds regardless
+of Tinybird scan depth or deployment include settings.
+
+Direct variants reuse Copy aggregation states and current serving SQL. Date-key
+bounds include the partial end day with `toDate(EventAt) <= toDate(end - 1ms)`.
+Start bounds mirror the endpoint's plan clamp, including prior periods and the
+notable-changes trailing baseline. Downstream bucket/session predicates stay
+unchanged. Three already-raw endpoints retain their existing contracts; priced
+usage reads plan-visible facts and ignores the selected window.
+
+Four lifetime-session endpoints also receive a two-stage variant. It discovers
+sessions with last activity in the requested window or distribution's prior
+period, probing through `now()` to exclude later activity. It then aggregates only
+those sessions' facts from `now() - retention_days` to the selected end, using the
+organization/date/session key prefix. Review attribution decisions are clipped to
+that plan range too. These results inform a product decision about session history;
+they do not silently redefine the deployed endpoints.
+
+The runner measures 7/7, production-default 7/30 and 30/30 window/retention sets
+with a minute-snapped end. It alternates path order, discards one warmup per path,
+and records ten samples per path. HTTP timing includes JSON parsing. Database
+timing and scan volume come from query statistics; p95 uses nearest rank and scan
+volume uses the maximum observed. Hashes preserve exact values and row order;
+only the unordered priced-usage relation uses an exact row multiset.
+
+A parity or budget failure is a completed experiment. Endpoint errors cause a
+nonzero exit after evidence and cleanup. The artifact retains synthetic parity
+examples, samples, hashes, Copy timings, fixture counts, source/query hashes, CLI,
+Python, ClickHouse and image versions, resource limits, and `system.parts` counts
+at measurement start. Timing varies with shared sandbox load.
+
+To inspect generated SQL without starting a container, use an external directory:
+
+```sh
+bash scripts/bench/run-agent-snapshot-benchmark.sh \
+  --write-queries /tmp/tra-409-queries --output /tmp/unused.json
+```
+
+Use `--messages 20000` for a small end-to-end check of the setup and query paths.
+It does not validate performance or every full-scale boundary session.
+`--setup-only` builds every variant and cleans up without loading facts.
