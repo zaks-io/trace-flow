@@ -484,6 +484,33 @@ describe('preview credential boundary', () => {
 });
 
 describe('credentialed CI checks', () => {
+  test('runs destructive guard and resource verification tests for Tinybird changes', () => {
+    const filters = YAML.parse(
+      ci.jobs.changes.steps.find((step) => step.id === 'filter').with.filters,
+    );
+    for (const path of [
+      'scripts/ci/tinybird-destructive-diff.mjs',
+      'scripts/ci/tinybird-retired-resources.json',
+      'scripts/ci/verify-tinybird-resources.mjs',
+      'datasources/agent_message_fact_versions.datasource',
+      'pipes/agent_usage_summary.pipe',
+    ]) {
+      expect(matchesFilter(filters, 'workflows', path)).toBe(true);
+    }
+    const helpers = ci.jobs.actionlint.steps.find((step) => step.name === 'Test workflow helpers');
+    expect(helpers.run).toContain('scripts/ci/tinybird-destructive-diff.test.mjs');
+    expect(helpers.run).toContain('scripts/ci/verify-tinybird-resources.test.mjs');
+  });
+
+  test('validates exact token scopes during the offline PR schema check', () => {
+    const check = ci.jobs['tinybird-schema-check'].steps.find(
+      (step) => step.name === 'Build and test against Tinybird Local',
+    );
+    expect(check.run).toContain(
+      'node scripts/ci/configure-agent-tinybird-tokens-datafiles.mjs --validate-datafiles .',
+    );
+  });
+
   test('Tinybird fixtures have their runtimes and workspace dependencies', () => {
     const steps = ci.jobs['tinybird-schema-check'].steps;
     const fixture = steps.findIndex(

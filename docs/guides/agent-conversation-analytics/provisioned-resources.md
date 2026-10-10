@@ -81,8 +81,9 @@ behind `scripts/assert-agent-prod-resources.sh`, which fails the deploy if any d
 ### Tinybird
 
 Agent datasources + pipes deploy to `trace_flow_prod` (`a0263248-b28b-49de-804f-1ec97c244b96`) through
-`TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh` — opt-in only; the script refuses
-prod without that variable. The consumer holds a `DATASOURCE:APPEND` token for that workspace as a
+the merge-to-main `deploy-tinybird-schema` job in `.github/workflows/deploy.yml`.
+The CI deploy credential selects the workspace; `scripts/deploy-agent-tinybird.sh` uses the
+retirement manifest to refuse unlisted deletions. The consumer holds a `DATASOURCE:APPEND` token for that workspace as a
 Worker secret. No client or smoke test ever receives a Tinybird token.
 
 ## Teardown

@@ -42,14 +42,6 @@ const repoScopedSignalPipes = new Set([
   'agent_session_signals_top_runaway',
 ]);
 
-const signalMaterializationTargets = new Set([
-  'agent_context_call_buckets_hourly',
-  'agent_repositories',
-  'agent_session_file_signals',
-  'agent_session_signals',
-  'agent_session_summaries',
-]);
-
 const performanceProbes = [
   {
     family: 'session risk',
@@ -67,7 +59,6 @@ const performanceProbes = [
 
 const failures = [];
 const checkedEndpoints = [];
-const checkedMaterializations = [];
 
 function fail(file, message) {
   failures.push(`${file}: ${message}`);
@@ -201,45 +192,8 @@ function checkEndpoint(relativePath) {
   }
 }
 
-function materializationTarget(content) {
-  const match = content.match(/\bDATASOURCE\s+([A-Za-z0-9_]+)/);
-  return match?.[1];
-}
-
-function checkMaterialization(relativePath) {
-  const content = read(relativePath);
-  const target = materializationTarget(content);
-  const isSignalTarget =
-    (target && signalMaterializationTargets.has(target)) ||
-    /agent_.*(signal|baseline)/.test(relativePath);
-  if (!isSignalTarget) return;
-
-  const sql = compactSql(content);
-  checkedMaterializations.push(relativePath);
-
-  if (!/\bTYPE\s+MATERIALIZED\b/i.test(sql)) {
-    fail(relativePath, 'signal serving writes must be incremental TYPE MATERIALIZED resources');
-  }
-  if (/\bCOPY_SCHEDULE\b/i.test(sql) || /\bCOPY_MODE\s+replace\b/i.test(sql)) {
-    fail(relativePath, 'scheduled or replacement signal materialization is not allowed');
-  }
-  if (/\bPOPULATE\b/i.test(sql)) {
-    fail(relativePath, 'signal materialization must not backfill all history with POPULATE');
-  }
-  if (/\bFINAL\b/i.test(sql)) {
-    fail(relativePath, 'signal materialization must not read raw tables with FINAL');
-  }
-  if (!/\bGROUP\s+BY\b[^;]*(\bOrgId\b)/i.test(sql)) {
-    fail(relativePath, 'signal materialization must aggregate by OrgId and a stable serving grain');
-  }
-}
-
 for (const file of listFiles('pipes', '.pipe')) {
   checkEndpoint(file);
-}
-
-for (const file of listFiles('materializations', '.pipe')) {
-  checkMaterialization(file);
 }
 
 for (const probe of performanceProbes) {
@@ -261,7 +215,6 @@ if (failures.length > 0) {
 
 console.log('Agent signal query guardrails passed');
 console.log(`Checked signal endpoints: ${checkedEndpoints.sort().join(', ')}`);
-console.log(`Checked signal materializations: ${checkedMaterializations.sort().join(', ')}`);
 console.log(
   `Representative performance probes: ${performanceProbes
     .map((probe) => `${probe.family}=${probe.pipe}/${probe.test}`)

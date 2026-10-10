@@ -115,7 +115,7 @@ future dead letters in the shared `__dlq__` instance. TRA-298 completes after de
 confirming the storage drop. Cloudflare documents the permanent deletion in its
 [legacy class migration reference](https://developers.cloudflare.com/durable-objects/reference/durable-object-class-migrations-legacy/).
 
-TRA-405 retires the legacy Tinybird datasources, baseline copies, six frozen signal writers and the deployment overlay under Isaac's 2026-10-09 approval. Signal datasources, endpoints and snapshot copies remain. Production now deploys repository resources directly, with a scoped one-time retirement approval and a fresh dated approval requirement for subsequent destructive changes. Post-deploy read-only Tinybird inventories prove retained resources present and retired resources absent, alongside Worker binding checks and `Deployment Status`.
+TRA-405 retires the legacy Tinybird datasources, baseline copies, six frozen signal writers and the deployment overlay under Isaac's 2026-10-09 approval. Signal datasources, endpoints and snapshot copies remain. Production now deploys repository resources directly, with destructive operations allowed only when every deletion is listed in `scripts/ci/tinybird-retired-resources.json`. Future retirements require adding names to that manifest in a human-reviewed, human-merged PR. Post-deploy read-only Tinybird inventories prove retained resources present and retired resources absent, alongside Worker binding checks and `Deployment Status`.
 
 The historical migration below describes the completed cutover, not the current deployment procedure.
 

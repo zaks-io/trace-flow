@@ -1,6 +1,6 @@
 DESCRIPTION >
     One session-to-review-unit attribution decision edge. Rows carry only decision metadata;
-    review-unit cost is computed by joining to agent_session_summaries.
+    review-unit cost is computed by joining to agent_session_summaries_published.
 
 SCHEMA >
     `DeliverySequence` UInt64 `json:$.DeliverySequence`,

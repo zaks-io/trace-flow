@@ -3,7 +3,6 @@
 # may be deleted; PR checks and production deploys use the same guard.
 set -euo pipefail
 export CI="${CI:-1}"
-TARGET_WORKSPACE="${TB_TARGET_WORKSPACE:-trace_flow_dev}"
 CHECK_ONLY=0
 if [[ "${1:-}" == "--check" ]]; then
   CHECK_ONLY=1
@@ -11,10 +10,6 @@ elif [[ -n "${1:-}" ]]; then
   echo "Usage: $0 [--check]" >&2
   exit 2
 fi
-case "$TARGET_WORKSPACE" in
-  trace_flow_dev | trace_flow_prod) ;;
-  *) echo "Unknown TB_TARGET_WORKSPACE: $TARGET_WORKSPACE" >&2; exit 1 ;;
-esac
 ROOT_DIR="$(pwd)"
 "$ROOT_DIR/scripts/verify-tinybird-copy-policy.sh"
 if [[ "${TB_SKIP_BUILD:-}" != "1" ]]; then

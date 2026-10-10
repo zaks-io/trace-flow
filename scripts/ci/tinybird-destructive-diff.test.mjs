@@ -82,7 +82,30 @@ test('parses real CLI human output followed by JSON and fails closed on incomple
   expect(() =>
     allowDestructiveOperations(result([], [], [], [{ change_type: 'unknown' }])),
   ).toThrow('Unknown Tinybird token change');
-  expect(() =>
-    allowDestructiveOperations(result([], [], [], [{ change_type: 'updated' }])),
-  ).toThrow('removed token permissions');
+  for (const removed_permissions of [null, {}, 'invalid']) {
+    expect(() =>
+      allowDestructiveOperations(
+        result(
+          [],
+          [],
+          [],
+          [{ change_type: 'updated', permission_changes: { removed_permissions } }],
+        ),
+      ),
+    ).toThrow('removed token permissions');
+  }
+});
+
+test('accepts additive token updates when removed_permissions is omitted', () => {
+  for (const permission_changes of [
+    undefined,
+    {},
+    { added_permissions: [{ resource_type: 'pipe', resource_name: 'agent_usage_summary' }] },
+  ]) {
+    expect(
+      allowDestructiveOperations(
+        result([], [], [], [{ change_type: 'updated', permission_changes }]),
+      ),
+    ).toBe(false);
+  }
 });

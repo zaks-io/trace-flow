@@ -34,9 +34,10 @@ export function allowDestructiveOperations(result) {
   for (const change of result.token_changes) {
     if (change.change_type === 'deleted') drops.push(['tokens', change.token_name]);
     else if (change.change_type === 'updated') {
-      if (!Array.isArray(change.permission_changes?.removed_permissions))
-        throw new Error('Tinybird check returned no removed token permissions');
-      for (const permission of change.permission_changes.removed_permissions) {
+      const removedPermissions = change.permission_changes?.removed_permissions;
+      if (removedPermissions !== undefined && !Array.isArray(removedPermissions))
+        throw new Error('Tinybird check returned invalid removed token permissions');
+      for (const permission of removedPermissions ?? []) {
         const kind = { datasource: 'datasources', pipe: 'pipes', connection: 'connections' }[
           permission.resource_type
         ];

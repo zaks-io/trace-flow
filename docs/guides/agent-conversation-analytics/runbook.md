@@ -126,7 +126,7 @@ Schema deployment uses the `TINYBIRD_DEPLOY_TOKEN` repository secret with `WORKS
 
 ### Tinybird schema rollout
 
-The production workflow deploys compatible Convex erasure code, deploys the repository schema, deploys the Agent Consumer, verifies live Tinybird resource names, and then deploys Agent Ingest. Ingestion uses encrypted R2 delivery references and versioned canonical facts. The legacy write mode and producer maintenance settings are retired.
+The production workflow deploys the repository schema before compatible Convex erasure code, deploys the Agent Consumer, verifies live Tinybird resource names, and then deploys Agent Ingest. During the accepted cleanup window between schema and Convex, organization deletion fails loudly after `beginOrgDeletion`. Check scheduled deletion jobs before merging and re-run `admin.deleteOrgData` for any affected organization after Convex deploys. Ingestion uses encrypted R2 delivery references and versioned canonical facts. The legacy write mode and producer maintenance settings are retired.
 
 After the approved production deploy, require green `Deployment Status`, run `scripts/assert-agent-prod-resources.sh` for Worker bindings, and verify all live Tinybird resources are present and every retired resource and token is absent. CI runs `bun scripts/ci/verify-tinybird-resources.mjs` using read-only GET requests. Agents can obtain the corresponding inventories with `sbx-tinybird prod datasource ls --format json` and `sbx-tinybird prod pipe ls --format json` and compare against repository resources and the retirement inventory. These checks do not apply a deployment or delete rows.
 
@@ -232,7 +232,7 @@ A production release is valid only if all checks pass:
 
 1. `tb --local build` + `tb --local test run` + Tinybird deploy `--check` against `trace_flow_prod` —
    PR-time gate, `ci.yml` `tinybird-schema-check`
-2. Compatible Convex erasure deploy, then Tinybird schema apply to `trace_flow_prod` — `deploy.yml` `deploy-tinybird-schema`, before consumers
+2. Tinybird schema apply to `trace_flow_prod`, then compatible Convex erasure deploy, before consumers. The accepted organization-deletion window and recovery are documented in [Tinybird schema](#tinybird-schema).
 3. production Worker config assertion (`scripts/assert-agent-prod-resources.sh`)
 4. Worker deploy (`deploy --env production`, both agent jobs in `.github/workflows/deploy.yml`)
 5. synthetic Collector Credential mint through the real authenticated control plane

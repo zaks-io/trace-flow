@@ -248,7 +248,6 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -263,7 +262,6 @@ jobs:
       - name: Deploy schema in trace_flow_prod
         run: ./scripts/deploy-agent-tinybird.sh
         env:
-          TB_TARGET_WORKSPACE: trace_flow_prod
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
           TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
@@ -522,7 +520,6 @@ jobs:
     environment: Production
     permissions:
       contents: read
-      deployments: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -541,36 +538,6 @@ jobs:
         env:
           TB_TOKEN: ${{ secrets.TINYBIRD_OPERATOR_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
-
-      - name: Record deployed Agent Tinybird ref
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        with:
-          script: |
-            const { data: deployment } = await github.rest.repos.createDeployment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: context.sha,
-              task: 'deploy-agent-tinybird',
-              environment: 'Production',
-              description: 'Agent Tinybird resources verified successfully',
-              auto_merge: false,
-              required_contexts: [],
-              transient_environment: false,
-              production_environment: true,
-            });
-            if (!deployment.id) {
-              core.setFailed('GitHub did not create the Agent Tinybird deployment marker');
-              return;
-            }
-            await github.rest.repos.createDeploymentStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              deployment_id: deployment.id,
-              state: 'success',
-              environment: 'Production',
-              description: 'Live resource verification completed',
-              log_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-            });
 
   deploy-analyst-sandbox:
     name: Deploy Analyst Sandbox Worker

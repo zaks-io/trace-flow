@@ -1,5 +1,5 @@
 DESCRIPTION >
-    Generation-scoped daily snapshot rows for agent_tool_usage_daily. Publishing a generation through
+    Generation-scoped daily snapshot rows for daily tool usage. Publishing a generation through
     agent_snapshot_manifest makes a complete replacement visible without exposing partial copies.
 
 SCHEMA >

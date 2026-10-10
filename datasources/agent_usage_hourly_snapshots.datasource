@@ -1,5 +1,5 @@
 DESCRIPTION >
-    Generation-scoped daily snapshot rows for agent_usage_hourly. Publishing a generation through
+    Generation-scoped daily snapshot rows for hourly usage. Publishing a generation through
     agent_snapshot_manifest makes a complete replacement visible without exposing partial copies.
 
 SCHEMA >
