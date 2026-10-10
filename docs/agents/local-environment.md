@@ -57,9 +57,10 @@ flush, and queries Tinybird by the key's `sha256:` analytics ID. It never prints
 `--tinybird-only` inserts and queries a trace without Workers. Neither mode starts services.
 Smoke rows remain in the disposable database until it is purged.
 
-`verify` requires the existing local Tinybird instance, builds in the CLI's isolated build workspace
-and runs tests in disposable test workspaces, then runs repository type checks and tests.
-Verification does not build into the stack's live workspace. `full` also runs lint and build. For code checks without a running stack,
+`verify` requires the existing local Tinybird instance. It builds in the dedicated
+`Trace_Flow_Local_Verification` workspace. The CLI's test command creates disposable test workspaces.
+It then runs repository type checks and tests. Neither build nor tests target the stack's live
+workspace. `full` also runs lint and build. For code checks without a running stack,
 use `bun run ci:check`; it does not require stack setup.
 
 Normal `down` stops processes and containers and retains data. `down --purge` permanently deletes
@@ -82,8 +83,8 @@ The stack starts:
 - Proxy and Proxy Consumer in one Wrangler process, Agent Ingest and Agent Consumer in another,
   and separate Pipes API, Raw API, and KV bridge processes. Producer/consumer pairs share their
   process so local queues connect. All use the same private persisted Worker state.
-- `kv-bridge.ts`, which receives local Convex writes for API keys, subscriptions, Collector
-  Credentials, and pricing into the local KV namespaces the Workers read.
+- `kv-bridge.ts`, which receives local Convex writes for subscriptions, Collector Credentials,
+  and pricing into the local KV namespaces the Workers read. Proxy API keys are authorized by Convex.
 - Web through `next dev`, with only the stack's generated environment values.
 
 Generated secrets, logs, Worker mirrors, and the private Convex CLI directory live under
@@ -92,7 +93,9 @@ Worker mirrors exclude dotenv files and contain only that Worker's required loca
 Web blanks keys declared in its dotenv files before adding stack values. Convex runs from a private
 CLI directory because the CLI rewrites `.env.local`. Tinybird also uses a private CLI
 directory, pinned to the local default workspace, so an existing cloud `.tinyb` cannot redirect
-local deploys. Verification has a separate private CLI directory pinned to `Trace_Flow_Local_Verification`. Mock sign-in and generated credentials stay
+local deploys. Verification has a separate private CLI
+directory that pins builds to `Trace_Flow_Local_Verification`; tests use CLI-created disposable
+workspaces. Mock sign-in and generated credentials stay
 in local runtime state, never in deploy configuration.
 
 When `sbx-runtime` is installed, the stack allocates stable named ports, private state outside the

@@ -93,6 +93,7 @@ globalThis.fetch = async (url, init = {}) => {
       TRACE_FLOW_TINYBIRD_HOST: 'http://127.0.0.1:7181',
       TINYBIRD_WORKSPACE_TOKEN: 'fixture-token',
       STACK_PROXY_URL: 'http://127.0.0.1:8787',
+      // Legacy inputs let the prior implementation reach its 401 instead of failing during setup.
       STACK_KV_BRIDGE_URL: 'http://127.0.0.1:8791',
       KV_BRIDGE_TOKEN: 'fixture-bridge',
       STACK_API_KEYS_KV_ID: 'fixture-namespace',
