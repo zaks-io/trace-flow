@@ -65,7 +65,8 @@ they do not silently redefine the deployed endpoints. File attention discovers
 repo/session/path candidates using the Copy's structured-file and error-hint
 contributors, then preserves candidate path membership after retained aggregation.
 Other lifetime endpoints discover sessions from their message/tool/file/PR contributors.
-Stage 1 has no `EventAt < now()` predicate, matching current published-day views.
+Candidate subqueries may be evaluated repeatedly across contributors; reported
+timing and scan costs include that work. Stage 1 has no `EventAt < now()` predicate, matching current published-day views.
 Generated bounds reuse each endpoint's normalized `WITH` start/end expressions,
 including its default and reversed-window behavior.
 
