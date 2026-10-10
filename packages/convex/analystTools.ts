@@ -7,7 +7,8 @@ import {
   type ToolCallParams,
   type ToolCallResult,
 } from '@trace-flow/mcp-core';
-import { getEnabledActionUser, getEnabledUserById, requireAnalystProEntitlement } from './analyst';
+import { getEnabledActionUser, requireAnalystProEntitlement } from './analyst';
+import { internal } from './_generated/api';
 import { createMcpBackend } from './mcp/backend';
 import { withTinybirdTracing } from './tinybirdTracing';
 import type { ActionCtx } from './_generated/server';
@@ -18,13 +19,13 @@ const TINYBIRD_BASE_URL = process.env.TINYBIRD_API_URL ?? 'https://api.us-west-2
 async function runTraceFlowTool(
   ctx: ActionCtx,
   userId: Id<'users'>,
+  orgId: Id<'organizations'>,
   params: ToolCallParams,
 ): Promise<ToolCallResult> {
-  const user = await getEnabledUserById(ctx, userId);
-  await requireAnalystProEntitlement(ctx, user.orgId);
+  await requireAnalystProEntitlement(ctx, orgId);
   const response = await withTinybirdTracing((sentryScope) =>
     dispatchToolCall(
-      createMcpBackend(ctx, userId, sentryScope),
+      createMcpBackend(ctx, userId, sentryScope, orgId),
       TINYBIRD_BASE_URL,
       Date.now(),
       params,
@@ -55,10 +56,19 @@ export function buildAnalystTools() {
           definition.inputSchema as Parameters<typeof jsonSchema>[0],
         ),
         execute: async (ctx: ToolCtx<DataModel>, input) => {
+          if (!ctx.threadId) throw new Error('Conversation not found');
           const userId = ctx.userId
             ? (ctx.userId as Id<'users'>)
             : (await getEnabledActionUser(ctx))._id;
-          return runTraceFlowTool(ctx, userId, { name: definition.name, arguments: input });
+          const thread = await ctx.runQuery(internal.analyst.getThreadByAgentThreadIdForAction, {
+            agentThreadId: ctx.threadId,
+            userId,
+          });
+          if (!thread) throw new Error('Conversation not found');
+          return runTraceFlowTool(ctx, userId, thread.orgId, {
+            name: definition.name,
+            arguments: input,
+          });
         },
       }),
     ]),

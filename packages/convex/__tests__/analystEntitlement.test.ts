@@ -6,6 +6,7 @@ import { buildAnalystTools } from '../analystTools';
 import { dispatchToolCall, LATEST_PROTOCOL_VERSION } from '@trace-flow/mcp-core';
 import { createMcpBackend } from '../mcp/backend';
 import { decodeJwt } from 'jose';
+import { getFunctionName } from 'convex/server';
 import { analyticsKeyId } from '@trace-flow/utils';
 import type { ActionCtx } from '../_generated/server';
 import { initConvexTest, type ConvexTest } from './convexTest.setup';
@@ -14,6 +15,7 @@ interface AnalystWorld {
   t: ConvexTest;
   userId: Id<'users'>;
   orgId: Id<'organizations'>;
+  threadId: Id<'analystThreads'>;
   tokenIdentifier: string;
 }
 
@@ -56,10 +58,12 @@ async function seedAnalystWorld(subscription?: {
 
     return { userId, orgId };
   });
-  return { t, userId, orgId, tokenIdentifier };
+  const world = { t, userId, orgId, tokenIdentifier };
+  const threadId = await insertAnalystThread(world);
+  return { ...world, threadId };
 }
 
-async function insertAnalystThread(world: AnalystWorld) {
+async function insertAnalystThread(world: Omit<AnalystWorld, 'threadId'>) {
   return world.t.run((ctx) =>
     ctx.db.insert('analystThreads', {
       creatorUserId: world.userId,
@@ -98,7 +102,7 @@ describe('Analyst Pro entitlement', () => {
     const threadCount = await world.t.run(
       async (ctx) => (await ctx.db.query('analystThreads').collect()).length,
     );
-    expect(threadCount).toBe(0);
+    expect(threadCount).toBe(1);
   });
 
   it('allows active Pro to create and schedule an Analyst conversation', async () => {
@@ -119,7 +123,7 @@ describe('Analyst Pro entitlement', () => {
 
   it('blocks a scheduled Analyst inference after the organization downgrades', async () => {
     const world = await seedAnalystWorld({ tier: 'hobby', status: 'active' });
-    const threadId = await insertAnalystThread(world);
+    const threadId = world.threadId;
 
     await expect(
       world.t.action(internal.analyst.streamMessage, {
@@ -137,11 +141,14 @@ describe('Analyst Pro entitlement', () => {
     world: AnalystWorld,
     name = 'describe_agent_analytics',
     input: Record<string, unknown> = { include_values: false },
+    threadId: string | undefined = 'agent-thread',
   ) {
     return world.t.action(async (ctx) => {
       const tool = buildAnalystTools()[name];
       return tool.execute!.call(
-        Object.assign(tool, { ctx: { ...ctx, userId: String(world.userId) } }),
+        Object.assign(tool, {
+          ctx: { ...ctx, userId: String(world.userId), threadId },
+        }),
         input,
         {
           toolCallId: 'test-call',
@@ -192,9 +199,11 @@ describe('Analyst Pro entitlement', () => {
   it('mints query access only for current ingest keys in the active organization', async () => {
     const world = await seedAnalystWorld({ tier: 'pro', status: 'active' });
     const activeKey = '33333333-3333-3333-3333-333333333333';
+    const legacyUserKey = '88888888-8888-8888-8888-888888888888';
     await world.t.run(async (ctx) => {
       for (const [key, expiresAt, permissions] of [
         [activeKey, Date.now() + 60_000, ['ingest']],
+        [legacyUserKey, Date.now() + 60_000, ['ingest']],
         ['44444444-4444-4444-4444-444444444444', 1, ['ingest']],
         ['55555555-5555-5555-5555-555555555555', Date.now() + 60_000, ['mcp:read']],
       ] as const) {
@@ -203,7 +212,7 @@ describe('Analyst Pro entitlement', () => {
           expiresAt,
           permissions: [...permissions],
           userId: world.userId,
-          orgId: world.orgId,
+          ...(key === legacyUserKey ? {} : { orgId: world.orgId }),
         });
       }
     });
@@ -225,7 +234,9 @@ describe('Analyst Pro entitlement', () => {
           type: 'PIPES:READ',
           resource: 'llm_usage_summary',
           fixed_params: {
-            api_keys: await analyticsKeyId(activeKey),
+            api_keys: [await analyticsKeyId(activeKey), await analyticsKeyId(legacyUserKey)].join(
+              ',',
+            ),
             retention_days: 30,
             org_id: world.orgId,
           },
@@ -253,6 +264,134 @@ describe('Analyst Pro entitlement', () => {
         .first();
       await ctx.db.patch(member!._id, { status: 'removed' });
     });
-    await expect(executeTool(world)).rejects.toThrow('User not found or not enabled');
+    await expect(executeTool(world)).rejects.toThrow('Conversation not found');
   });
+
+  async function moveCreatorToAnotherProOrg(world: AnalystWorld) {
+    await world.t.run(async (ctx) => {
+      const member = await ctx.db
+        .query('organizationMembers')
+        .withIndex('by_user_id', (q) => q.eq('userId', world.userId))
+        .first();
+      await ctx.db.patch(member!._id, { status: 'removed' });
+      const orgId = await ctx.db.insert('organizations', {
+        name: 'New Pro org',
+        ownerId: world.userId,
+      });
+      await ctx.db.patch(world.userId, { orgId });
+      await ctx.db.insert('organizationMembers', {
+        orgId,
+        userId: world.userId,
+        role: 'owner',
+        status: 'active',
+        joinedAt: 2,
+      });
+      await ctx.db.insert('subscriptions', {
+        orgId,
+        tier: 'pro',
+        status: 'active',
+        monthlyUnits: 1_000,
+        addonUnits: 0,
+        currentPeriodStart: 1,
+        currentPeriodEnd: 2,
+        currentPeriodOverageSpentCents: 0,
+        addonPurchaseCount: 0,
+      });
+      await ctx.db.insert('apiKeys', {
+        key: '66666666-6666-6666-6666-666666666666',
+        userId: world.userId,
+        orgId,
+        name: 'New org data',
+        expiresAt: Date.now() + 60_000,
+      });
+    });
+  }
+
+  it('denies tools in the original thread after its creator moves to another Pro org', async () => {
+    const world = await seedAnalystWorld({ tier: 'pro', status: 'active' });
+    await moveCreatorToAnotherProOrg(world);
+    const fetchData = vi.fn(async () => new Response(JSON.stringify({ data: [{ org: 'B' }] })));
+    vi.stubGlobal('fetch', fetchData);
+    await expect(executeTool(world, 'get_usage_summary', {})).rejects.toThrow(
+      'Conversation not found',
+    );
+    expect(fetchData).not.toHaveBeenCalled();
+  });
+
+  it('denies query access if the creator moves orgs after tool authorization', async () => {
+    const world = await seedAnalystWorld({ tier: 'pro', status: 'active' });
+    await world.t.run((ctx) =>
+      ctx.db.insert('apiKeys', {
+        key: '77777777-7777-7777-7777-777777777777',
+        userId: world.userId,
+        orgId: world.orgId,
+        expiresAt: Date.now() + 60_000,
+      }),
+    );
+    const fetchData = vi.fn();
+    let moved = false;
+    vi.stubGlobal('fetch', async (input: string) => {
+      if (input.includes('tinybird.co')) fetchData(input);
+      return new Response(JSON.stringify({ data: [] }));
+    });
+    await expect(
+      world.t.action(async (ctx) => {
+        const toolCtx = {
+          ...ctx,
+          userId: String(world.userId),
+          threadId: 'agent-thread',
+          runQuery: async (
+            query: Parameters<typeof ctx.runQuery>[0],
+            queryArgs: Parameters<typeof ctx.runQuery>[1],
+          ) => {
+            const result = await ctx.runQuery(query, queryArgs);
+            if (!moved && getFunctionName(query) === 'apiKeys:listForUser') {
+              moved = true;
+              await moveCreatorToAnotherProOrg(world);
+            }
+            return result;
+          },
+        };
+        const tool = buildAnalystTools().get_usage_summary;
+        return tool.execute!.call(
+          Object.assign(tool, { ctx: toolCtx }),
+          {},
+          {
+            toolCallId: 'mid-call-move',
+            messages: [],
+          },
+        );
+      }),
+    ).rejects.toThrow('Internal tool error');
+    expect(moved).toBe(true);
+    expect(fetchData).not.toHaveBeenCalled();
+  });
+
+  it('denies tools without an agent thread id', async () => {
+    const world = await seedAnalystWorld({ tier: 'pro', status: 'active' });
+    await expect(executeTool(world, 'describe_agent_analytics', {}, '')).rejects.toThrow(
+      'Conversation not found',
+    );
+  });
+
+  it.each(['missing', 'another creator', 'archived'])(
+    'denies tools for a %s thread',
+    async (state) => {
+      const world = await seedAnalystWorld({ tier: 'pro', status: 'active' });
+      await world.t.run(async (ctx) => {
+        if (state === 'missing') await ctx.db.delete(world.threadId);
+        if (state === 'archived') await ctx.db.patch(world.threadId, { status: 'archived' });
+        if (state === 'another creator') {
+          const creatorUserId = await ctx.db.insert('users', {
+            tokenIdentifier: 'other-creator',
+            email: 'other@example.com',
+            enabled: true,
+            isAdmin: false,
+          });
+          await ctx.db.patch(world.threadId, { creatorUserId });
+        }
+      });
+      await expect(executeTool(world)).rejects.toThrow('Conversation not found');
+    },
+  );
 });

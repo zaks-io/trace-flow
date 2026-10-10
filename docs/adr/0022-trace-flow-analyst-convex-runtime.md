@@ -5,8 +5,8 @@
 Isaac decided to remove the Analyst sandbox container. This update supersedes the
 external code-execution and sandbox-run decisions below. The Analyst Runtime runs in
 Convex and exposes the existing `@trace-flow/mcp-core` Analyst tool definitions. It
-executes those tools through `runTraceFlowTool` with the current user's active
-membership, Pro entitlement, and unexpired scoped keys. MCP tool definitions and
+executes those tools through `runTraceFlowTool` with the creator's active membership,
+Pro entitlement, and unexpired scoped keys bound to the thread's organization. MCP tool definitions and
 outputs remain unchanged. Chat model usage and cost accounting remain in Convex.
 
 Code, CI, preview, and deploy no longer run the sandbox Worker, container, or Pi agent.
@@ -18,7 +18,9 @@ Every prior backup has a `snapshots/<orgId>/...` key. Keep the backup bucket lif
 configuration and the verified `expire-analyst-snapshots-7d` rule on `snapshots/` until
 bucket deletion. Prior backups expire within seven days after writers stop. An
 organization deleted within seven days after this deploy can retain its prior Analyst
-backups until lifecycle expiry. This residual follows the expiry approach for delivery
+backups until lifecycle expiry. Member removal also no longer erases that member's
+Analyst backups or clears thread backup handles; the same seven-day `snapshots/`
+lifecycle bounds backup retention. This residual follows the expiry approach for delivery
 orphans in [ADR 0024](0024-bounded-agent-ingestion.md).
 
 Production cleanup requires Isaac's separate approval: delete the deployed
