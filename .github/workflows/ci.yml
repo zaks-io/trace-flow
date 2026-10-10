@@ -21,17 +21,6 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      proxy: ${{ steps.filter.outputs.proxy }}
-      proxy-consumer: ${{ steps.filter.outputs.proxy-consumer }}
-      api: ${{ steps.filter.outputs.api }}
-      web: ${{ steps.filter.outputs.web }}
-      utils: ${{ steps.filter.outputs.utils }}
-      types: ${{ steps.filter.outputs.types }}
-      convex: ${{ steps.filter.outputs.convex }}
-      pricing: ${{ steps.filter.outputs.pricing }}
-      agent-ingest: ${{ steps.filter.outputs.agent-ingest }}
-      agent-consumer: ${{ steps.filter.outputs.agent-consumer }}
-      mcp: ${{ steps.filter.outputs.mcp }}
       duplicates: ${{ steps.filter.outputs.duplicates }}
       rust: ${{ steps.filter.outputs.rust }}
       desktop: ${{ steps.filter.outputs.desktop }}
@@ -39,58 +28,15 @@ jobs:
       workflows: ${{ steps.filter.outputs.workflows }}
       tinybird: ${{ steps.filter.outputs.tinybird }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 2
+          persist-credentials: false
 
-      - uses: dorny/paths-filter@v4
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
         id: filter
         with:
           filters: |
-            proxy:
-              - 'apps/proxy/**'
-              - 'packages/utils/**'
-              - 'packages/types/**'
-            proxy-consumer:
-              - 'apps/proxy-consumer/**'
-              - 'packages/utils/**'
-              - 'packages/types/**'
-              - 'packages/pricing/**'
-            api:
-              - 'apps/api/**'
-              - 'apps/pipes-api/**'
-              - 'packages/types/**'
-              - 'packages/logging/**'
-              - 'packages/utils/**'
-            web:
-              - 'apps/web/**'
-              - 'packages/utils/**'
-              - 'packages/types/**'
-            utils:
-              - 'packages/utils/**'
-            types:
-              - 'packages/types/**'
-            convex:
-              - 'packages/convex/**'
-            pricing:
-              - 'packages/pricing/**'
-              - 'packages/types/**'
-            agent-ingest:
-              - 'apps/agent-ingest/**'
-              - 'packages/types/**'
-              - 'packages/utils/**'
-              - 'packages/logging/**'
-            agent-consumer:
-              - 'apps/agent-consumer/**'
-              - 'packages/types/**'
-              - 'packages/logging/**'
-              - 'packages/pricing/**'
-              - 'packages/tinybird-client/**'
-            mcp:
-              - 'apps/mcp/**'
-              - 'packages/mcp-core/**'
-              - 'packages/logging/**'
-              - 'packages/utils/**'
             duplicates:
               - '.jscpd.json'
               - 'package.json'
@@ -156,6 +102,9 @@ jobs:
               - 'scripts/ci/ubuntu_https_sources.py'
               - 'scripts/ci/ubuntu_https_sources_test.py'
               - '.github/workflows/**'
+              - '.github/actions/**'
+              - 'turbo.json'
+              - 'scripts/bench/**'
             tinybird:
               - 'copies/**'
               - 'datasources/**'
@@ -174,6 +123,44 @@ jobs:
               - 'scripts/verify-tinybird-copy-policy.sh'
               - 'scripts/verify-tinybird-cost-contract.sh'
 
+  affected:
+    name: Affected Package Checks
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read
+    env:
+      TURBO_SCM_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+      TURBO_SCM_HEAD: ${{ github.sha }}
+      VITEST_MAX_WORKERS: 2
+      NEXT_PUBLIC_CONVEX_URL: ${{ vars.NEXT_PUBLIC_CONVEX_URL }}
+      NEXT_PUBLIC_AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
+      NEXT_PUBLIC_AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
+      NEXT_PUBLIC_TINYBIRD_API_URL: ${{ vars.NEXT_PUBLIC_TINYBIRD_API_URL }}
+      NEXT_PUBLIC_PIPES_API_URL: https://pipes.trace-flow.dev
+      NEXT_PUBLIC_RAW_API_URL: https://raw.trace-flow.dev
+    steps:
+      # A local composite action needs its bootstrap checkout before it can be loaded.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          fetch-depth: 0
+      - name: Cache Turbo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-
+      - name: Format check
+        run: bun prettier --check "**/*.{ts,tsx,js,jsx,json,css,md}"
+      - name: Check unused code
+        run: bun run knip
+      - name: Check affected packages
+        run: bun turbo run lint type-check test build --affected --concurrency=2 --summarize
+
   actionlint:
     name: Lint GitHub Actions
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -182,13 +169,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 2
-      - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24
+          persist-credentials: false
+      - uses: ./.github/actions/setup
       - name: Test workflow helpers
         run: |
           bun test \
@@ -199,7 +184,9 @@ jobs:
             scripts/ci/workflow-permissions.test.mjs
           node --test scripts/ci/configure-proxy-tinybird-token.test.mjs
           python3 scripts/ci/ubuntu_https_sources_test.py
-      - uses: devops-actions/actionlint@v0.1.12
+          python3 -m unittest discover -s scripts/bench -p 'test_*.py'
+          bash scripts/ci/deploy-agent-tinybird-tree.test.sh
+      - uses: devops-actions/actionlint@9fb9c192862f19e684586ca84b500461bcd8a541 # v0.1.12
 
   # Tinybird's recommended CI pattern (docs: forward/test-and-deploy/deployments/cicd): build + fixture
   # tests against a Tinybird Local service container (offline, no token), then a cloud deploy --check
@@ -271,19 +258,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 2
           persist-credentials: false
 
-      - uses: oven-sh/setup-bun@v2
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+      - uses: ./.github/actions/setup
 
       - name: Test ingest recovery tooling
         run: |
@@ -291,470 +271,6 @@ jobs:
 
       - name: Check duplicate code
         run: bun run duplicates:check
-
-  utils:
-    name: Utils Package
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [changes]
-    if: needs.changes.outputs.utils == 'true' || needs.changes.outputs.root == 'true'
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-
-      - uses: oven-sh/setup-bun@v2
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Cache Turbo
-        uses: actions/cache@v6
-        with:
-          path: .turbo
-          key: ${{ runner.os }}-turbo-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-turbo-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Format check
-        run: bun prettier --check "packages/utils/**/*.{ts,tsx,js,jsx,json}"
-
-      - name: Lint
-        run: bunx turbo run lint --filter=@trace-flow/utils
-
-      - name: Type check
-        run: bunx turbo run type-check --filter=@trace-flow/utils
-
-      - name: Test
-        run: bunx turbo run test --filter=@trace-flow/utils
-
-  types:
-    name: Types Package
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [changes]
-    if: needs.changes.outputs.types == 'true' || needs.changes.outputs.root == 'true'
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-
-      - uses: oven-sh/setup-bun@v2
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Cache Turbo
-        uses: actions/cache@v6
-        with:
-          path: .turbo
-          key: ${{ runner.os }}-turbo-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-turbo-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Format check
-        run: bun prettier --check "packages/types/**/*.{ts,tsx,js,jsx,json}"
-
-      - name: Lint
-        run: bunx turbo run lint --filter=@trace-flow/types
-
-      - name: Type check
-        run: bunx turbo run type-check --filter=@trace-flow/types
-
-  convex:
-    name: Convex Backend
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [changes]
-    if: needs.changes.outputs.convex == 'true' || needs.changes.outputs.root == 'true'
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-
-      - uses: oven-sh/setup-bun@v2
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Format check
-        run: bun prettier --check "packages/convex/**/*.{ts,tsx,js,jsx,json}"
-
-      - name: Lint
-        run: bunx turbo run lint --filter=@trace-flow/convex
-
-      - name: Type check
-        run: bunx turbo run type-check --filter=@trace-flow/convex
-
-      - name: Test
-        run: bun --cwd packages/convex test
-
-  proxy:
-    name: Proxy Worker
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [changes]
-    if: needs.changes.outputs.proxy == 'true' || needs.changes.outputs.root == 'true'
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-
-      - uses: oven-sh/setup-bun@v2
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Cache Turbo
-        uses: actions/cache@v6
-        with:
-          path: .turbo
-          key: ${{ runner.os }}-turbo-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-turbo-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Format check
-        run: bun prettier --check "apps/proxy/**/*.{ts,tsx,js,jsx,json}"
-
-      - name: Lint
-        run: bunx turbo run lint --filter=@trace-flow/proxy
-
-      - name: Type check
-        run: bunx turbo run type-check --filter=@trace-flow/proxy
-
-      - name: Test
-        run: bunx turbo run test --filter=@trace-flow/proxy
-
-      - name: Build
-        run: bunx turbo run build --filter=@trace-flow/proxy
-
-  proxy-consumer:
-    name: Proxy Consumer Worker
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [changes]
-    if: needs.changes.outputs.proxy-consumer == 'true' || needs.changes.outputs.root == 'true'
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-
-      - uses: oven-sh/setup-bun@v2
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Cache Turbo
-        uses: actions/cache@v6
-        with:
-          path: .turbo
-          key: ${{ runner.os }}-turbo-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-turbo-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Format check
-        run: bun prettier --check "apps/proxy-consumer/**/*.{ts,tsx,js,jsx,json}"
-
-      - name: Lint
-        run: bunx turbo run lint --filter=@trace-flow/proxy-consumer
-
-      - name: Type check
-        run: bunx turbo run type-check --filter=@trace-flow/proxy-consumer
-
-      - name: Test
-        run: bunx turbo run test --filter=@trace-flow/proxy-consumer
-
-      - name: Build
-        run: bunx turbo run build --filter=@trace-flow/proxy-consumer
-
-  api:
-    name: API Worker
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    permissions:
-      contents: read
-    needs: [changes]
-    if: needs.changes.outputs.api == 'true' || needs.changes.outputs.root == 'true'
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-
-      - uses: oven-sh/setup-bun@v2
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Cache Turbo
-        uses: actions/cache@v6
-        with:
-          path: .turbo
-          key: ${{ runner.os }}-turbo-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-turbo-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Format check
-        run: bun prettier --check "apps/{api,pipes-api}/**/*.{ts,tsx,js,jsx,json}"
-
-      - name: Lint
-        run: bunx turbo run lint --filter=@trace-flow/api --filter=@trace-flow/pipes-api
-
-      - name: Type check
-        run: bunx turbo run type-check --filter=@trace-flow/api --filter=@trace-flow/pipes-api
-
-      - name: Test
-        run: bunx turbo run test --filter=@trace-flow/api --filter=@trace-flow/pipes-api
-
-  web:
-    name: Web Worker
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [changes]
-    if: needs.changes.outputs.web == 'true' || needs.changes.outputs.root == 'true'
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-
-      - uses: oven-sh/setup-bun@v2
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Cache Next.js
-        uses: actions/cache@v6
-        with:
-          path: apps/web/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/bun.lock') }}-${{ hashFiles('**/*.[jt]s', '**/*.[jt]sx') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('**/bun.lock') }}-
-
-      - name: Cache Turbo
-        uses: actions/cache@v6
-        with:
-          path: .turbo
-          key: ${{ runner.os }}-turbo-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-turbo-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Format check
-        run: bun prettier --check "apps/web/**/*.{ts,tsx,js,jsx,json,css}"
-
-      - name: Lint
-        run: bunx turbo run lint --filter=@trace-flow/web
-
-      - name: Type check
-        run: bunx turbo run type-check --filter=@trace-flow/web
-
-      - name: Test
-        run: bunx turbo run test --filter=@trace-flow/web
-
-      - name: Build
-        env:
-          NEXT_PUBLIC_CONVEX_URL: ${{ vars.NEXT_PUBLIC_CONVEX_URL }}
-          NEXT_PUBLIC_AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
-          NEXT_PUBLIC_AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
-          NEXT_PUBLIC_TINYBIRD_API_URL: ${{ vars.NEXT_PUBLIC_TINYBIRD_API_URL }}
-          NEXT_PUBLIC_PIPES_API_URL: https://pipes.trace-flow.dev
-          NEXT_PUBLIC_RAW_API_URL: https://raw.trace-flow.dev
-        run: bunx turbo run build --filter=@trace-flow/web
-
-  pricing:
-    name: Pricing Package
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [changes]
-    if: needs.changes.outputs.pricing == 'true' || needs.changes.outputs.root == 'true'
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-          persist-credentials: false
-
-      - uses: oven-sh/setup-bun@v2
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Cache Turbo
-        uses: actions/cache@v6
-        with:
-          path: .turbo
-          key: ${{ runner.os }}-turbo-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-turbo-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Format check
-        run: bun prettier --check "packages/pricing/**/*.{ts,tsx,js,jsx,json}"
-
-      - name: Lint
-        run: bunx turbo run lint --filter=@trace-flow/pricing
-
-      - name: Type check
-        run: bunx turbo run type-check --filter=@trace-flow/pricing
-
-      - name: Test
-        run: bunx turbo run test --filter=@trace-flow/pricing
-
-  agent-ingest:
-    name: Agent Ingest Worker
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [changes]
-    if: needs.changes.outputs.agent-ingest == 'true' || needs.changes.outputs.root == 'true'
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-          persist-credentials: false
-
-      - uses: oven-sh/setup-bun@v2
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Cache Turbo
-        uses: actions/cache@v6
-        with:
-          path: .turbo
-          key: ${{ runner.os }}-turbo-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-turbo-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Format check
-        run: bun prettier --check "apps/agent-ingest/**/*.{ts,tsx,js,jsx,json}"
-
-      - name: Lint
-        run: bunx turbo run lint --filter=@trace-flow/agent-ingest
-
-      - name: Type check
-        run: bunx turbo run type-check --filter=@trace-flow/agent-ingest
-
-      - name: Test
-        run: bunx turbo run test --filter=@trace-flow/agent-ingest
-
-      - name: Build
-        run: bunx turbo run build --filter=@trace-flow/agent-ingest
-
-  agent-consumer:
-    name: Agent Consumer Worker
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [changes]
-    if: needs.changes.outputs.agent-consumer == 'true' || needs.changes.outputs.root == 'true'
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-          persist-credentials: false
-
-      - uses: oven-sh/setup-bun@v2
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Cache Turbo
-        uses: actions/cache@v6
-        with:
-          path: .turbo
-          key: ${{ runner.os }}-turbo-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-turbo-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Format check
-        run: bun prettier --check "apps/agent-consumer/**/*.{ts,tsx,js,jsx,json}"
-
-      - name: Lint
-        run: bunx turbo run lint --filter=@trace-flow/agent-consumer
-
-      - name: Type check
-        run: bunx turbo run type-check --filter=@trace-flow/agent-consumer
-
-      - name: Test
-        run: bunx turbo run test --filter=@trace-flow/agent-consumer
-
-      - name: Build
-        run: bunx turbo run build --filter=@trace-flow/agent-consumer
-
-  mcp:
-    name: MCP Worker
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [changes]
-    if: needs.changes.outputs.mcp == 'true' || needs.changes.outputs.root == 'true'
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-          persist-credentials: false
-
-      - uses: oven-sh/setup-bun@v2
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Format check
-        run: bun prettier --check "apps/mcp/**/*.{ts,tsx,js,jsx,json}"
-
-      # Invoke package scripts directly. Turbo's MCP type-check/test hashes do not
-      # include workspace runtime sources, so a cached turbo run can stay green
-      # after a packages/mcp-core, logging, or utils-only change.
-      - name: Lint
-        run: bun --cwd apps/mcp lint
-
-      - name: Type check
-        run: bun --cwd apps/mcp type-check
-
-      - name: Test
-        run: bun --cwd apps/mcp test
-
-      - name: Validate Wrangler environments
-        working-directory: apps/mcp
-        run: |
-          bunx wrangler deploy --env="" --dry-run
-          bunx wrangler deploy --env preview --dry-run
-          bunx wrangler deploy --env production --dry-run
 
   # Collector Rust workspace (packages/collector-*, apps/cli, apps/desktop). Kept out of Turbo.
   # fmt is OS-independent so it runs once on linux; check/test/clippy run per OS because the CLI
@@ -864,20 +380,10 @@ jobs:
     if: always()
     needs:
       - changes
+      - affected
       - actionlint
       - tinybird-schema-check
       - duplicates
-      - utils
-      - types
-      - convex
-      - proxy
-      - proxy-consumer
-      - api
-      - web
-      - pricing
-      - agent-ingest
-      - agent-consumer
-      - mcp
       - rust
       - desktop-build
     steps:

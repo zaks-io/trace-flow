@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { Glob, YAML } from 'bun';
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 
 function workflow(name) {
   return YAML.parse(
@@ -12,6 +13,15 @@ const claude = workflow('claude');
 const ci = workflow('ci');
 const preview = workflow('preview');
 const deploy = workflow('deploy');
+const setup = YAML.parse(
+  readFileSync(new URL('../../.github/actions/setup/action.yml', import.meta.url), 'utf8'),
+);
+
+function setupSteps(job) {
+  return job.steps.flatMap((step) =>
+    step.uses === './.github/actions/setup' ? setup.runs.steps : [step],
+  );
+}
 
 describe('direct Convex Analyst delivery', () => {
   test('workflows have no Analyst execution job, filter, URL, or credential', () => {
@@ -288,7 +298,7 @@ describe('preview credential boundary', () => {
       ci.jobs.changes.steps.find((step) => step.id === 'filter').with.filters,
     );
     expect(filters.workflows).toContain('scripts/ci/configure-proxy-tinybird-token*');
-    const steps = ci.jobs.actionlint.steps;
+    const steps = setupSteps(ci.jobs.actionlint);
     const testIndex = steps.findIndex((step) => step.name === 'Test workflow helpers');
     expect(steps[testIndex].run).toContain(
       'node --test scripts/ci/configure-proxy-tinybird-token.test.mjs',
@@ -630,12 +640,14 @@ describe('production Worker secret boundary', () => {
         /wrangler|assert-agent-prod-resources/.test(`${step.uses ?? ''} ${step.run ?? ''}`),
       );
       if (wranglerIndex === undefined || wranglerIndex < 0) continue;
-      const setupIndex = job.steps.findIndex((step) =>
-        step.uses?.startsWith('actions/setup-node@'),
+      const steps = setupSteps(job);
+      const expandedWranglerIndex = steps.findIndex((step) =>
+        /wrangler|assert-agent-prod-resources/.test(`${step.uses ?? ''} ${step.run ?? ''}`),
       );
+      const setupIndex = steps.findIndex((step) => step.uses?.startsWith('actions/setup-node@'));
       expect(setupIndex).toBeGreaterThanOrEqual(0);
-      expect(setupIndex).toBeLessThan(wranglerIndex);
-      expect(job.steps[setupIndex].with['node-version']).toBe(24);
+      expect(setupIndex).toBeLessThan(expandedWranglerIndex);
+      expect(steps[setupIndex].with['node-version']).toBe(24);
       checkedJobs++;
     }
     expect(checkedJobs).toBeGreaterThan(0);
@@ -685,90 +697,167 @@ function matchesFilter(filters, name, path) {
   return filters[name].some((pattern) => new Glob(pattern).match(path));
 }
 
-describe('MCP Worker change detection', () => {
-  const filters = YAML.parse(
-    ci.jobs.changes.steps.find((step) => step.id === 'filter').with.filters,
-  );
-  const mcpJob = ci.jobs.mcp;
-  const stepCommands = mcpJob.steps.map((step) => step.run ?? '').join('\n');
-
-  test('exposes an mcp change output and schedules the MCP Worker job from it', () => {
-    expect(ci.jobs.changes.outputs.mcp).toBe('${{ steps.filter.outputs.mcp }}');
-    expect(mcpJob.name).toBe('MCP Worker');
-    expect(mcpJob.if).toBe(
-      "needs.changes.outputs.mcp == 'true' || needs.changes.outputs.root == 'true'",
+describe('affected package CI', () => {
+  test('replaces only package filters and gates with the affected graph', () => {
+    const filters = YAML.parse(
+      ci.jobs.changes.steps.find((step) => step.id === 'filter').with.filters,
     );
-    expect(ci.jobs.status.needs).toContain('mcp');
-    expect(ci.jobs.status.steps[0].run).toContain("contains(needs.*.result, 'failure')");
-    expect(ci.jobs.status.steps[0].run).toContain("contains(needs.*.result, 'cancelled')");
-  });
-
-  test('app-only MCP changes select the MCP Worker', () => {
-    expect(matchesFilter(filters, 'mcp', 'apps/mcp/src/index.ts')).toBe(true);
-    expect(matchesFilter(filters, 'mcp', 'apps/mcp/src/__tests__/index.test.ts')).toBe(true);
-    expect(matchesFilter(filters, 'mcp', 'apps/web/src/app/page.tsx')).toBe(false);
-  });
-
-  test('MCP runtime dependency changes select the MCP Worker and remaining package checks', () => {
-    expect(matchesFilter(filters, 'mcp', 'packages/mcp-core/src/index.ts')).toBe(true);
-    expect(matchesFilter(filters, 'mcp', 'packages/logging/src/index.ts')).toBe(true);
-    expect(matchesFilter(filters, 'mcp', 'packages/utils/src/index.ts')).toBe(true);
-    expect(matchesFilter(filters, 'utils', 'packages/utils/src/index.ts')).toBe(true);
-  });
-
-  test('MCP Worker check runs format, lint, type-check, tests, and local Wrangler validation', () => {
-    expect(stepCommands).toContain('bun prettier --check "apps/mcp/**/*.{ts,tsx,js,jsx,json}"');
-    expect(stepCommands).toContain('bun --cwd apps/mcp lint');
-    expect(stepCommands).toContain('bun --cwd apps/mcp type-check');
-    expect(stepCommands).toContain('bun --cwd apps/mcp test');
-    const wranglerCommands = stepCommands
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.includes('wrangler deploy'));
-    expect(wranglerCommands).toEqual([
-      'bunx wrangler deploy --env="" --dry-run',
-      'bunx wrangler deploy --env preview --dry-run',
-      'bunx wrangler deploy --env production --dry-run',
+    expect(Object.keys(filters).sort()).toEqual([
+      'desktop',
+      'duplicates',
+      'root',
+      'rust',
+      'tinybird',
+      'workflows',
     ]);
+    for (const name of [
+      'utils',
+      'types',
+      'convex',
+      'proxy',
+      'proxy-consumer',
+      'api',
+      'web',
+      'pricing',
+      'agent-ingest',
+      'agent-consumer',
+      'mcp',
+    ]) {
+      expect(ci.jobs).not.toHaveProperty(name);
+      expect(ci.jobs.changes.outputs).not.toHaveProperty(name);
+    }
+    const job = ci.jobs.affected;
+    expect(job.if).toBeUndefined();
+    expect(job.permissions).toEqual({ contents: 'read' });
+    expect(job.steps.find((step) => step.name === 'Check affected packages').run).toBe(
+      'bun turbo run lint type-check test build --affected --concurrency=2 --summarize',
+    );
+    expect(job.steps.some((step) => step.run === 'bun run knip')).toBe(true);
+    expect(job.env.TURBO_SCM_BASE).toBe(
+      "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}",
+    );
+    expect(job.env.TURBO_SCM_HEAD).toBe('${{ github.sha }}');
+    expect(job.env.VITEST_MAX_WORKERS).toBe(2);
+    for (const step of job.steps.filter(
+      (step) =>
+        step.uses?.startsWith('actions/checkout@') || step.uses === './.github/actions/setup',
+    )) {
+      expect(step.with['fetch-depth']).toBe(0);
+    }
   });
 
-  test('dependency-only MCP changes cannot reuse a stale Turbo type-check or test cache', () => {
-    const result = Bun.spawnSync({
-      cmd: [
-        'bunx',
-        'turbo',
-        'run',
-        'type-check',
-        'test',
-        '--filter=@trace-flow/mcp',
-        '--dry-run=json',
+  test('only the existing guarded Tinybird cloud check receives an explicit secret', () => {
+    for (const [name, job] of Object.entries(ci.jobs)) {
+      const secretSteps = (job.steps ?? []).filter((step) =>
+        JSON.stringify(step).includes('secrets.'),
+      );
+      if (name === 'tinybird-schema-check') {
+        expect(secretSteps).toHaveLength(1);
+        expect(secretSteps[0].name).toBe('Tinybird deploy --check (trace_flow_prod)');
+        expect(secretSteps[0].env.TB_TOKEN).toBe('${{ secrets.TINYBIRD_DEPLOY_TOKEN }}');
+      } else {
+        expect(secretSteps).toEqual([]);
+      }
+      expect(JSON.stringify(job.env ?? {})).not.toContain('secrets.');
+    }
+    expect(JSON.stringify(setup)).not.toContain('secrets.');
+  });
+
+  test('CI Status fails for affected failures and cancellations, and accepts specialized skips', () => {
+    expect(ci.jobs.status.name).toBe('CI Status');
+    expect(ci.jobs.status.if).toBe('always()');
+    expect(ci.jobs.status.needs).toContain('affected');
+    for (const result of ['success', 'failure', 'cancelled']) {
+      const results = ci.jobs.status.needs.map((name) =>
+        name === 'affected' ? result : 'skipped',
+      );
+      const script = ci.jobs.status.steps[0].run.replace(
+        /\$\{\{ contains\(needs\.\*\.result, '(failure|cancelled)'\) \}\}/g,
+        (_, state) => String(results.includes(state)),
+      );
+      expect(spawnSync('bash', ['-euo', 'pipefail', '-c', script]).status).toBe(
+        result === 'success' ? 0 : 1,
+      );
+    }
+  });
+
+  test('shared setup uses the same immutable toolchain pins as bootstrap checkout', () => {
+    expect(setup.runs.using).toBe('composite');
+    expect(setup.inputs['persist-credentials'].default).toBe('false');
+    for (const step of setup.runs.steps.filter((step) => step.uses)) {
+      expect(step.uses).toMatch(/@[a-f0-9]{40}$/);
+    }
+    expect(
+      setup.runs.steps.find((step) => step.uses?.startsWith('oven-sh/setup-bun@')).with[
+        'bun-version'
       ],
+    ).toBe('1.3.5');
+    expect(
+      setup.runs.steps.find((step) => step.uses?.startsWith('actions/setup-node@')).with[
+        'node-version'
+      ],
+    ).toBe(24);
+    expect(setup.runs.steps.find((step) => step.name === 'Install dependencies').run).toBe(
+      'bun install --frozen-lockfile',
+    );
+    for (const delivery of [ci, deploy]) {
+      for (const job of Object.values(delivery.jobs)) {
+        const shared = job.steps?.findIndex((step) => step.uses === './.github/actions/setup');
+        if (shared === undefined || shared < 0) continue;
+        const bootstrap = job.steps
+          .slice(0, shared)
+          .find((step) => step.uses?.startsWith('actions/checkout@'));
+        expect(bootstrap.uses).toBe(setup.runs.steps[0].uses);
+        const persistence = job.steps[shared].with?.['persist-credentials'] ?? false;
+        expect(persistence).toBe(bootstrap.with?.['persist-credentials'] ?? true);
+      }
+    }
+  });
+
+  test('workflow and bench guard changes run their helper checks', () => {
+    const filters = YAML.parse(
+      ci.jobs.changes.steps.find((step) => step.id === 'filter').with.filters,
+    );
+    for (const path of [
+      '.github/actions/setup/action.yml',
+      'turbo.json',
+      'scripts/bench/test_agent_benchmark.py',
+    ]) {
+      expect(matchesFilter(filters, 'workflows', path)).toBe(true);
+    }
+    const helpers = ci.jobs.actionlint.steps.find((step) => step.name === 'Test workflow helpers');
+    expect(helpers.run).toContain("python3 -m unittest discover -s scripts/bench -p 'test_*.py'");
+    expect(helpers.run).toContain('bash scripts/ci/deploy-agent-tinybird-tree.test.sh');
+  });
+
+  test('MCP type checks and tests hash their source dependency graph', () => {
+    const result = Bun.spawnSync({
+      cmd: ['bun', 'turbo', 'run', 'type-check', 'test', '--filter=@trace-flow/mcp', '--dry=json'],
       cwd: new URL('../..', import.meta.url).pathname,
       stdout: 'pipe',
       stderr: 'pipe',
     });
     expect(result.exitCode).toBe(0);
-
-    const stdout = result.stdout.toString();
-    const dryRun = JSON.parse(stdout.slice(stdout.indexOf('{')));
-    expect(dryRun.tasks.map((task) => task.taskId).sort()).toEqual([
-      '@trace-flow/mcp#test',
-      '@trace-flow/mcp#type-check',
-    ]);
-
-    for (const task of dryRun.tasks) {
-      expect(task.dependencies).toEqual([]);
-      expect(task.resolvedTaskDefinition.dependsOn).toEqual([]);
-      expect(task.resolvedTaskDefinition.cache).toBe(true);
-      const hashedPaths = Object.keys(task.inputs);
-      expect(hashedPaths.length).toBeGreaterThan(0);
-      expect(hashedPaths.every((path) => !path.includes('packages/'))).toBe(true);
-      expect(hashedPaths.some((path) => path.startsWith('src/'))).toBe(true);
+    const dryRun = JSON.parse(result.stdout.toString());
+    for (const task of dryRun.tasks.filter(
+      (task) => task.package === '@trace-flow/mcp' && ['type-check', 'test'].includes(task.task),
+    )) {
+      expect(task.dependencies).toContain('@trace-flow/mcp#transit');
     }
+    const transit = dryRun.tasks.find((task) => task.taskId === '@trace-flow/mcp#transit');
+    expect(transit.dependencies).toContain('@trace-flow/mcp-core#transit');
+    expect(transit.dependencies).toContain('@trace-flow/logging#transit');
+    expect(transit.dependencies).toContain('@trace-flow/utils#transit');
+  });
 
-    expect(mcpJob.steps.some((step) => step.name === 'Cache Turbo')).toBe(false);
-    expect(stepCommands).not.toContain('turbo run');
-    expect(stepCommands).toContain('bun --cwd apps/mcp type-check');
-    expect(stepCommands).toContain('bun --cwd apps/mcp test');
+  test('MCP builds preserve all Wrangler environment validations', () => {
+    const manifest = JSON.parse(
+      readFileSync(new URL('../../apps/mcp/package.json', import.meta.url), 'utf8'),
+    );
+    expect(manifest.scripts.build.split(' && ')).toEqual([
+      'wrangler deploy --env="" --dry-run',
+      'wrangler deploy --env preview --dry-run',
+      'wrangler deploy --env production --dry-run',
+    ]);
   });
 });
