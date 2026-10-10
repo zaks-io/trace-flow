@@ -1,0 +1,29 @@
+NODE direct
+SQL >
+    %
+    SELECT
+        toStartOfHour(toDateTime(EventAt)) AS BucketStart,
+        OrgId,
+        source,
+        model,
+        repo_fingerprint,
+        countState() AS MessageCount,
+        uniqState(session_pk) AS SessionCount,
+        sumState(toUInt64(input_tokens)) AS InputTokens,
+        sumState(toUInt64(output_tokens)) AS OutputTokens,
+        sumState(toUInt64(cache_read_tokens)) AS CacheReadTokens,
+        sumState(toUInt64(cache_creation_tokens)) AS CacheCreationTokens,
+        sumState(toUInt64(reasoning_tokens)) AS ReasoningTokens,
+        sumState(toUInt64(cost_usd IS NOT NULL)) AS PricedMessageCount,
+        sumState(ifNull(cost_usd, 0.)) AS CostUsd,
+        toDate(EventAt) AS SnapshotDay,
+        toUInt64(1) AS SnapshotGeneration,
+        toUInt64(1) AS CopyAttempt,
+        'usage_hourly' AS SourceContributor
+    FROM agent_message_fact_versions FINAL
+    WHERE OrgId = {{ String(org_id) }}
+      AND toDate(EventAt) >= toDate(fromUnixTimestamp64Milli({{ Int64(start_time_ms) }}))
+      AND toDate(EventAt) < toDate(fromUnixTimestamp64Milli({{ Int64(end_time_ms) }}))
+      AND IsDeleted = 0
+      AND role = 'assistant'
+    GROUP BY BucketStart, OrgId, source, model, repo_fingerprint, SnapshotDay

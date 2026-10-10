@@ -1,0 +1,44 @@
+DESCRIPTION >
+    Tool failure leaderboard. Reads the incremental hourly tool serving table only.
+
+NODE leaderboard
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms,
+        {{ Int64(end_time_ms, 0) }} AS end_ms,
+        if(start_ms = 0, toDateTime64(now() - toIntervalDay(7), 3), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
+        if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt
+    SELECT
+        tool_name,
+        command_family,
+        sum(finalizeAggregation(EventCount)) AS event_count,
+        sum(finalizeAggregation(SuccessCount)) AS success_count,
+        sum(finalizeAggregation(FailureCount)) AS failure_count,
+        sum(finalizeAggregation(UnknownCount)) AS unknown_count,
+        if(
+            success_count + failure_count = 0,
+            CAST(NULL, 'Nullable(Float64)'),
+            round(failure_count / (success_count + failure_count), 4)
+        ) AS failure_rate
+    FROM bench_direct_agent_tool_usage_hourly_published
+    WHERE OrgId = {{ String(org_id, '') }}
+        AND BucketStart >= start_dt
+        AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+        AND BucketStart < end_dt
+        {% if defined(sources) %}
+        AND source IN splitByChar(',', {{ String(sources) }})
+        {% end %}
+        {% if defined(repos) %}
+        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+        {% end %}
+        {% if defined(repo_fingerprint) %}
+        AND repo_fingerprint = {{ String(repo_fingerprint) }}
+        {% end %}
+    GROUP BY tool_name, command_family
+    HAVING event_count >= {{ Int32(min_events, 10) }}
+    ORDER BY failure_rate DESC NULLS LAST, event_count DESC, tool_name ASC, command_family ASC
+    LIMIT greatest(1, least({{ Int32(limit, 100) }}, 100))
+    OFFSET {{ Int32(offset, 0) }}
+
+TYPE ENDPOINT

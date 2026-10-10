@@ -1,0 +1,30 @@
+DESCRIPTION >
+    Repo directory for the Agent usage explorer. Reads the incremental repo dimension table.
+
+NODE directory
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms,
+        {{ Int64(end_time_ms, 0) }} AS end_ms,
+        if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
+        if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt
+    SELECT
+        repo_fingerprint,
+        argMaxMerge(normalized_git_remote) AS normalized_git_remote,
+        argMaxMerge(repo_path_fallback) AS repo_path_fallback,
+        argMaxMerge(repo_source) AS repo_source
+    FROM bench_direct_agent_repositories_published
+    WHERE OrgId = {{ String(org_id, '') }}
+        {% if defined(repos) %}
+        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+        {% end %}
+    GROUP BY repo_fingerprint
+    HAVING maxMerge(LastSeenAt) >= start_dt
+        AND maxMerge(LastSeenAt) >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+        AND maxMerge(LastSeenAt) < end_dt
+    ORDER BY repo_fingerprint ASC
+    LIMIT greatest(1, least({{ Int32(limit, 100) }}, 100))
+    OFFSET greatest(0, {{ Int32(offset, 0) }})
+
+TYPE ENDPOINT
