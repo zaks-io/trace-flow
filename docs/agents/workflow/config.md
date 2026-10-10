@@ -80,7 +80,8 @@ workflow logic lives in the centrally managed org skills pinned by
 - Gate parity: hosted `CI Status` aggregates one package gate running
   `turbo run lint type-check test build --affected --concurrency=2`, plus knip
   and formatting. The affected comparison uses full Git history, the PR base
-  SHA for pull requests, and the previous main SHA for pushes. Local
+  SHA for pull requests, and the previous main SHA for pushes. Shared TypeScript
+  and ESLint configuration are global dependencies in the Turbo graph. Local
   `bun run ci:check` runs the same package tasks for every workspace. Specialized
   path-filtered hosted gates remain separate: workflow/actionlint helpers,
   duplicate code, Rust, desktop, and Tinybird schema/cloud deploy check. Local

@@ -105,6 +105,8 @@ jobs:
               - '.github/actions/**'
               - 'turbo.json'
               - 'scripts/bench/**'
+              - 'scripts/ci/deploy-agent-tinybird-tree.test.sh'
+              - 'scripts/deploy-agent-tinybird.sh'
             tinybird:
               - 'copies/**'
               - 'datasources/**'
@@ -158,8 +160,24 @@ jobs:
         run: bun prettier --check "**/*.{ts,tsx,js,jsx,json,css,md}"
       - name: Check unused code
         run: bun run knip
+      - name: Select affected packages
+        id: graph
+        run: |
+          bun turbo run lint type-check test build --affected --concurrency=2 --dry=json > "$RUNNER_TEMP/turbo-affected.json"
+          node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          import { readFileSync } from 'node:fs';
+          const graph = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/turbo-affected.json`, 'utf8'));
+          console.log(`mcp=${graph.packages.includes('@trace-flow/mcp')}`);
+          NODE
       - name: Check affected packages
         run: bun turbo run lint type-check test build --affected --concurrency=2 --summarize
+      - name: Validate affected MCP environments
+        if: steps.graph.outputs.mcp == 'true'
+        working-directory: apps/mcp
+        run: |
+          bunx wrangler deploy --env="" --dry-run
+          bunx wrangler deploy --env preview --dry-run
+          bunx wrangler deploy --env production --dry-run
 
   actionlint:
     name: Lint GitHub Actions
@@ -205,18 +223,13 @@ jobs:
         ports:
           - 7181:7181
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
-      - uses: oven-sh/setup-bun@v2
-
-      - uses: actions/setup-node@v6
+      - uses: ./.github/actions/setup
         with:
-          node-version: 24
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+          fetch-depth: 1
 
       - name: Install Tinybird CLI
         run: |

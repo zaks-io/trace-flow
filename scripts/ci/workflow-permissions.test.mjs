@@ -557,20 +557,20 @@ describe('credentialed CI checks', () => {
   });
 
   test('Tinybird fixtures have their runtimes and workspace dependencies', () => {
-    const steps = ci.jobs['tinybird-schema-check'].steps;
+    const steps = setupSteps(ci.jobs['tinybird-schema-check']);
     const fixture = steps.findIndex(
       (step) => step.name === 'Build and test against Tinybird Local',
     );
     const prerequisites = steps.slice(0, fixture);
     expect(fixture).toBeGreaterThan(0);
-    expect(prerequisites.some((step) => step.uses === 'oven-sh/setup-bun@v2')).toBe(true);
+    expect(prerequisites.some((step) => step.uses?.startsWith('oven-sh/setup-bun@'))).toBe(true);
     expect(
       prerequisites.some(
-        (step) => step.uses === 'actions/setup-node@v6' && step.with['node-version'] === 24,
+        (step) => step.uses?.startsWith('actions/setup-node@') && step.with['node-version'] === 24,
       ),
     ).toBe(true);
     const install = prerequisites.findIndex((step) => step.run === 'bun install --frozen-lockfile');
-    const bun = prerequisites.findIndex((step) => step.uses === 'oven-sh/setup-bun@v2');
+    const bun = prerequisites.findIndex((step) => step.uses?.startsWith('oven-sh/setup-bun@'));
     expect(install).toBeGreaterThan(bun);
   });
 
@@ -789,9 +789,9 @@ describe('affected package CI', () => {
     }
     expect(
       setup.runs.steps.find((step) => step.uses?.startsWith('oven-sh/setup-bun@')).with[
-        'bun-version'
+        'bun-version-file'
       ],
-    ).toBe('1.3.5');
+    ).toBe('package.json');
     expect(
       setup.runs.steps.find((step) => step.uses?.startsWith('actions/setup-node@')).with[
         'node-version'
@@ -822,6 +822,8 @@ describe('affected package CI', () => {
       '.github/actions/setup/action.yml',
       'turbo.json',
       'scripts/bench/test_agent_benchmark.py',
+      'scripts/ci/deploy-agent-tinybird-tree.test.sh',
+      'scripts/deploy-agent-tinybird.sh',
     ]) {
       expect(matchesFilter(filters, 'workflows', path)).toBe(true);
     }
@@ -850,14 +852,43 @@ describe('affected package CI', () => {
     expect(transit.dependencies).toContain('@trace-flow/utils#transit');
   });
 
-  test('MCP builds preserve all Wrangler environment validations', () => {
+  test('MCP validation follows affected selection without changing deployment tasks', () => {
+    const selection = ci.jobs.affected.steps.find((step) => step.id === 'graph');
+    const source = selection.run.match(
+      /node --input-type=module <<'NODE' >> "\$GITHUB_OUTPUT"\n([\s\S]*?)\nNODE/,
+    )[1];
+    for (const [packages, expected] of [
+      [['@trace-flow/mcp'], 'mcp=true'],
+      [[], 'mcp=false'],
+      [['@trace-flow/proxy'], 'mcp=false'],
+    ]) {
+      const evaluate = new Function(
+        'readFileSync',
+        'process',
+        'console',
+        source.replace("import { readFileSync } from 'node:fs';", ''),
+      );
+      const output = [];
+      evaluate(
+        () => JSON.stringify({ packages }),
+        { env: { RUNNER_TEMP: '/tmp' } },
+        { log: (value) => output.push(value) },
+      );
+      expect(output).toEqual([expected]);
+    }
+    const validation = ci.jobs.affected.steps.find(
+      (step) => step.name === 'Validate affected MCP environments',
+    );
+    expect(validation.if).toBe("steps.graph.outputs.mcp == 'true'");
+    expect(validation['working-directory']).toBe('apps/mcp');
+    expect(validation.run.trim().split('\n')).toEqual([
+      'bunx wrangler deploy --env="" --dry-run',
+      'bunx wrangler deploy --env preview --dry-run',
+      'bunx wrangler deploy --env production --dry-run',
+    ]);
     const manifest = JSON.parse(
       readFileSync(new URL('../../apps/mcp/package.json', import.meta.url), 'utf8'),
     );
-    expect(manifest.scripts.build.split(' && ')).toEqual([
-      'wrangler deploy --env="" --dry-run',
-      'wrangler deploy --env preview --dry-run',
-      'wrangler deploy --env production --dry-run',
-    ]);
+    expect(manifest.scripts.build).toBeUndefined();
   });
 });

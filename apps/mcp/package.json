@@ -11,8 +11,7 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
-    "build": "wrangler deploy --env=\"\" --dry-run && wrangler deploy --env preview --dry-run && wrangler deploy --env production --dry-run"
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@sentry/cloudflare": "^10.73.0",

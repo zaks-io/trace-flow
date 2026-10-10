@@ -85,5 +85,6 @@
     "transit": {
       "dependsOn": ["^transit"]
     }
-  }
+  },
+  "globalDependencies": ["tsconfig.json", "eslint.config.js"]
 }
