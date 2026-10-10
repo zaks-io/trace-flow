@@ -47,7 +47,7 @@ export function registerMcpBackendRoutes(app: HonoWithConvex<ActionCtx>): void {
     if (!isRecord(body) || typeof body.key !== 'string' || body.key.length === 0) {
       return c.json({ error: 'key is required' }, 400);
     }
-    const key = await c.env.runQuery(internal.integrations.cloudflare.getApiKeySyncData, {
+    const key = await c.env.runQuery(internal.integrations.cloudflare.getApiKeyAuthorizationData, {
       key: body.key,
     });
     const reason = !key

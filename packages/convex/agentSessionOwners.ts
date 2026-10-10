@@ -25,49 +25,6 @@ export function decideClaim(existingUserId: string | null, userId: string): Clai
 }
 
 /**
- * Claim `OrgId + session_pk` for `userId`. Convex OCC makes this a true
- * first-writer guard: two concurrent claims both read the empty `by_org_session`
- * range, but only one insert commits — the loser's read range is invalidated, it
- * retries, sees the committed owner, and resolves to `owned` or `conflict`. No
- * torn state, never two owner rows.
- *
- * - `claimed`: this call created the owner row.
- * - `owned`: already owned by the same user (idempotent re-sync).
- * - `conflict`: owned by a different user → `session_owner_conflict`.
- */
-export const claimSession = internalMutation({
-  args: {
-    orgId: v.id('organizations'),
-    sessionPk: v.string(),
-    userId: v.id('users'),
-    collectorId: v.string(),
-  },
-  returns: v.object({
-    status: claimStatusValidator,
-    ownerUserId: v.id('users'),
-  }),
-  handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query('agentSessionOwners')
-      .withIndex('by_org_session', (q) => q.eq('orgId', args.orgId).eq('sessionPk', args.sessionPk))
-      .unique();
-
-    if (!existing) {
-      await ctx.db.insert('agentSessionOwners', {
-        orgId: args.orgId,
-        sessionPk: args.sessionPk,
-        userId: args.userId,
-        collectorId: args.collectorId,
-        claimedAt: Date.now(),
-      });
-      return { status: 'claimed' as const, ownerUserId: args.userId };
-    }
-
-    return { status: decideClaim(existing.userId, args.userId), ownerUserId: existing.userId };
-  },
-});
-
-/**
  * Batched first-writer claim: resolve many `session_pk`s in ONE mutation instead of one mutation per
  * session. A multi-session ingest envelope (the collector batches its backfill) would otherwise pay a
  * separate Convex round-trip + OCC transaction per session, serializing the whole batch behind the

@@ -1,16 +1,9 @@
-import { hasApiKeyPermission } from '../apiKeyPermissions';
 import { internalAction, internalQuery, action } from '../_generated/server';
 import { v } from 'convex/values';
 import { axiomConfigFromEnv, createConvexLogger } from '@trace-flow/logging';
 import { internal } from '../_generated/api';
 import { requireAuthenticated } from '../auth/auth';
-import { extractSub } from '../auth/users';
-import {
-  apiKeyValidator,
-  collectorCredentialValidator,
-  subscriptionValidator,
-  userValidator,
-} from '../validators';
+import { collectorCredentialValidator, subscriptionValidator } from '../validators';
 import { getActiveOrganizationMembership, isLiveOrganization } from '../auth/userHelpers';
 import type { Id } from '../_generated/dataModel';
 import { cloudflareKvValuesUrl } from './cloudflareApi';
@@ -100,7 +93,7 @@ function collectorKvKey(hashedSecret: string): string {
   return `collector:${hashedSecret}`;
 }
 
-export const getApiKeySyncData = internalQuery({
+export const getApiKeyAuthorizationData = internalQuery({
   args: { key: v.string() },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -145,42 +138,6 @@ export const getSubscriptionSyncData = internalQuery({
       .query('subscriptions')
       .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
       .first();
-  },
-});
-
-export const getUserOrgSyncData = internalQuery({
-  args: { sub: v.string(), userId: v.id('users') },
-  returns: v.union(v.null(), v.object({ orgId: v.id('organizations') })),
-  handler: async (ctx, args) => {
-    const user = await ctx.db.get(args.userId);
-    if (!user || extractSub(user.tokenIdentifier) !== args.sub) return null;
-    const active = await getActiveOrganizationMembership(ctx, user);
-    return active ? { orgId: active.orgId } : null;
-  },
-});
-
-export const syncKeyToKV = internalAction({
-  args: {
-    key: v.string(),
-    expiresAt: v.number(),
-    orgId: v.optional(v.string()),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const current = await ctx.runQuery(internal.integrations.cloudflare.getApiKeySyncData, {
-      key: args.key,
-    });
-    if (!current || !hasApiKeyPermission(current, 'ingest')) {
-      await kvDelete(getCloudflareConfig(), args.key);
-      return null;
-    }
-    const value = JSON.stringify({
-      expiresAt: current.expiresAt,
-      createdAt: current._creationTime,
-      orgId: current.orgId,
-    });
-
-    await putKV(args.key, value);
   },
 });
 
@@ -333,87 +290,12 @@ export const syncSubscriptionToKV = internalAction({
   },
 });
 
-export const syncUserOrgToKV = internalAction({
-  args: {
-    sub: v.string(),
-    userId: v.id('users'),
-    orgId: v.string(),
-    retryCount: v.optional(v.number()),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    try {
-      const current = await ctx.runQuery(internal.integrations.cloudflare.getUserOrgSyncData, {
-        sub: args.sub,
-        userId: args.userId,
-      });
-      if (current) {
-        await putKV(`user-org:${args.sub}`, JSON.stringify(current));
-      } else {
-        await kvDelete(getCloudflareConfig(), `user-org:${args.sub}`);
-      }
-    } catch (e) {
-      const attempt = args.retryCount ?? 0;
-      if (attempt < 3) {
-        await ctx.scheduler.runAfter(30_000, internal.integrations.cloudflare.syncUserOrgToKV, {
-          ...args,
-          retryCount: attempt + 1,
-        });
-        return;
-      }
-      throw e;
-    }
-  },
-});
-
-export const deleteUserOrgFromKV = internalAction({
-  args: {
-    sub: v.string(),
-    userId: v.id('users'),
-    retryCount: v.optional(v.number()),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const current = await ctx.runQuery(internal.integrations.cloudflare.getUserOrgSyncData, {
-      sub: args.sub,
-      userId: args.userId,
-    });
-    if (current) {
-      await putKV(`user-org:${args.sub}`, JSON.stringify(current));
-      return null;
-    }
-    const { accountId, apiToken, namespaceId } = getCloudflareConfig();
-    const url = `${cloudflareKvValuesUrl(accountId, namespaceId)}/user-org:${encodeURIComponent(args.sub)}`;
-
-    const response = await fetch(url, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${apiToken}` },
-    });
-
-    if (!response.ok && response.status !== 404) {
-      const attempt = args.retryCount ?? 0;
-      if (attempt < 3) {
-        await ctx.scheduler.runAfter(30_000, internal.integrations.cloudflare.deleteUserOrgFromKV, {
-          sub: args.sub,
-          userId: args.userId,
-          retryCount: attempt + 1,
-        });
-        return;
-      }
-      const errorText = await response.text();
-      throw new Error(
-        `Failed to delete user-org KV: ${response.status} ${response.statusText} - ${errorText}`,
-      );
-    }
-  },
-});
-
-export const checkKeyInKV = internalAction({
-  args: { key: v.string() },
+export const checkSubscriptionInKV = internalAction({
+  args: { orgId: v.id('organizations') },
   returns: v.boolean(),
   handler: async (_ctx, args): Promise<boolean> => {
     const { accountId, apiToken, namespaceId } = getCloudflareConfig();
-    const url = `${cloudflareKvValuesUrl(accountId, namespaceId)}/${encodeURIComponent(args.key)}`;
+    const url = kvValueUrl({ accountId, apiToken, namespaceId }, `sub:${args.orgId}`);
 
     const response = await fetch(url, {
       method: 'GET',
@@ -441,17 +323,13 @@ export const isCallerAdmin = internalQuery({
 export const getAllSyncData = internalQuery({
   args: {},
   returns: v.object({
-    apiKeys: v.array(apiKeyValidator),
     subscriptions: v.array(subscriptionValidator),
-    users: v.array(userValidator),
     collectorCredentials: v.array(collectorCredentialValidator),
   }),
   handler: async (ctx) => {
-    const apiKeys = await ctx.db.query('apiKeys').collect();
     const subscriptions = await ctx.db.query('subscriptions').collect();
-    const users = await ctx.db.query('users').collect();
     const collectorCredentials = await ctx.db.query('collectorCredentials').collect();
-    return { apiKeys, subscriptions, users, collectorCredentials };
+    return { subscriptions, collectorCredentials };
   },
 });
 
@@ -464,25 +342,15 @@ async function runBatched<T>(items: T[], concurrency: number, fn: (item: T) => P
 export const syncAll = action({
   args: {},
   returns: v.object({
-    keySynced: v.number(),
     subSynced: v.number(),
-    userOrgSynced: v.number(),
     collectorCredSynced: v.number(),
   }),
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
     const isAdmin = await ctx.runQuery(internal.integrations.cloudflare.isCallerAdmin);
     if (!isAdmin) throw new Error('Admin access required');
-    const { apiKeys, subscriptions, users, collectorCredentials } = await ctx.runQuery(
+    const { subscriptions, collectorCredentials } = await ctx.runQuery(
       internal.integrations.cloudflare.getAllSyncData,
-    );
-
-    await runBatched(apiKeys, 10, (key) =>
-      ctx.runAction(internal.integrations.cloudflare.syncKeyToKV, {
-        key: key.key,
-        expiresAt: key.expiresAt,
-        orgId: key.orgId,
-      }),
     );
 
     await runBatched(subscriptions, 10, (sub) =>
@@ -500,18 +368,6 @@ export const syncAll = action({
       }),
     );
 
-    // Sync user→org mappings for API worker body retrieval auth
-    const usersWithOrg = users.filter((u) => u.orgId && u.tokenIdentifier);
-    await runBatched(usersWithOrg, 10, (user) => {
-      const sub = extractSub(user.tokenIdentifier);
-      if (!sub || !user.orgId) return Promise.resolve();
-      return ctx.runAction(internal.integrations.cloudflare.syncUserOrgToKV, {
-        sub,
-        userId: user._id,
-        orgId: user.orgId,
-      });
-    });
-
     // Only active credentials belong in KV; revoked ones must stay un-synced so
     // their secret hash can never re-authenticate.
     const activeCreds = collectorCredentials.filter((c) => c.status === 'active');
@@ -528,31 +384,8 @@ export const syncAll = action({
     );
 
     return {
-      keySynced: apiKeys.length,
       subSynced: subscriptions.length,
-      userOrgSynced: usersWithOrg.length,
       collectorCredSynced: activeCreds.length,
     };
-  },
-});
-
-export const deleteKeyFromKV = internalAction({
-  args: { key: v.string(), retryCount: v.optional(v.number()) },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    try {
-      await kvDelete(getCloudflareConfig(), args.key);
-    } catch (e) {
-      const attempt = args.retryCount ?? 0;
-      console.error('convex.cloudflare_delete_key_failed', { attempt, error: e });
-      if (attempt < 3) {
-        await ctx.scheduler.runAfter(30_000, internal.integrations.cloudflare.deleteKeyFromKV, {
-          ...args,
-          retryCount: attempt + 1,
-        });
-        return;
-      }
-      throw e;
-    }
   },
 });

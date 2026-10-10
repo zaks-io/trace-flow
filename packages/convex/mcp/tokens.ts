@@ -156,30 +156,6 @@ export async function validateAccessToken(
   }
 }
 
-export const createRefreshToken = internalMutation({
-  args: {
-    userId: v.id('users'),
-    clientId: v.string(),
-    resource: v.string(),
-    auth0RefreshToken: v.string(),
-  },
-  returns: v.string(),
-  handler: async (ctx, args): Promise<string> => {
-    const tokenId = crypto.randomUUID();
-    const hashedTokenId = await sha256Hex(tokenId);
-    await insertRefreshTokenRecord(ctx, {
-      hashedTokenId,
-      userId: args.userId,
-      clientId: args.clientId,
-      resource: args.resource,
-      auth0RefreshToken: args.auth0RefreshToken,
-      expiresAt: refreshTokenExpiresAt(),
-    });
-
-    return tokenId;
-  },
-});
-
 export const getRefreshToken = internalQuery({
   args: { tokenId: v.string() },
   returns: v.union(
@@ -210,18 +186,6 @@ export const getRefreshToken = internalQuery({
     }
 
     return token;
-  },
-});
-
-export const deleteRefreshToken = internalMutation({
-  args: { tokenId: v.string() },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<void> => {
-    const { token } = await getRefreshTokenByTokenId(ctx, args.tokenId);
-
-    if (token) {
-      await ctx.db.delete(token._id);
-    }
   },
 });
 
@@ -279,21 +243,6 @@ export const rotateRefreshToken = internalMutation({
       resource: args.resource,
       ...(token.rotatedAt === undefined ? {} : { reusedRotatedAt: token.rotatedAt }),
     };
-  },
-});
-
-export const deleteUserRefreshTokens = internalMutation({
-  args: { userId: v.id('users') },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<void> => {
-    const tokens = await ctx.db
-      .query('mcpRefreshTokens')
-      .withIndex('by_user_id', (q) => q.eq('userId', args.userId))
-      .collect();
-
-    for (const token of tokens) {
-      await ctx.db.delete(token._id);
-    }
   },
 });
 

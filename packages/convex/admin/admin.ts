@@ -7,7 +7,7 @@ import {
   type MutationCtx,
 } from '../_generated/server';
 import { v } from 'convex/values';
-import { requireAdmin, extractSub } from '../auth/users';
+import { requireAdmin } from '../auth/users';
 import { requireAuthenticated } from '../auth/auth';
 import { internal } from '../_generated/api';
 import { organizationValidator } from '../validators';
@@ -261,8 +261,8 @@ export const forceActivateAndVerify = action({
       cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
     });
 
-    const kvVerified = await ctx.runAction(internal.integrations.cloudflare.checkKeyInKV, {
-      key: `sub:${args.orgId}`,
+    const kvVerified = await ctx.runAction(internal.integrations.cloudflare.checkSubscriptionInKV, {
+      orgId: args.orgId,
     });
 
     return { success: true, kvVerified };
@@ -512,8 +512,6 @@ export const deleteOrgRecordsBatch = internalMutation({
       return ops >= PAGE_SIZE;
     }
 
-    // Delete API keys. Also purge them from the proxy edge KV, or the deleted org's keys keep
-    // authenticating at the edge until their (possibly far-future) expiry.
     const apiKeys = await ctx.db
       .query('apiKeys')
       .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
@@ -521,9 +519,6 @@ export const deleteOrgRecordsBatch = internalMutation({
     for (const apiKey of apiKeys) {
       if (ops >= PAGE_SIZE) return { counts, hasMore: true };
       await ctx.db.delete(apiKey._id);
-      await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.deleteKeyFromKV, {
-        key: apiKey.key,
-      });
       counts.apiKeys++;
       ops++;
     }
@@ -572,13 +567,6 @@ export const deleteOrgRecordsBatch = internalMutation({
         orgId: undefined,
         ...(invite?.orgId === args.orgId ? { inviteId: undefined } : {}),
       });
-      const sub = extractSub(user.tokenIdentifier);
-      if (sub) {
-        await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.deleteUserOrgFromKV, {
-          sub,
-          userId: user._id,
-        });
-      }
       ops++;
     }
     if (ops >= PAGE_SIZE) return { counts, hasMore: true };
@@ -593,15 +581,6 @@ export const deleteOrgRecordsBatch = internalMutation({
 
       if (member.status !== 'removed') {
         await ctx.db.patch(member._id, { status: 'removed', removedAt: Date.now() });
-        // Drop the member's user→org routing entry from KV so it doesn't dangle to the deleted org.
-        const memberUser = await ctx.db.get(member.userId);
-        const sub = memberUser ? extractSub(memberUser.tokenIdentifier) : null;
-        if (sub) {
-          await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.deleteUserOrgFromKV, {
-            sub,
-            userId: member.userId,
-          });
-        }
         counts.membersRemoved++;
         ops++;
       }

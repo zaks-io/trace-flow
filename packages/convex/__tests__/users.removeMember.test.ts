@@ -152,11 +152,7 @@ describe('auth.users.removeMember', () => {
 
     const scheduledArgs = schedulerRunAfter.mock.calls.map((call) => call[2]);
     expect(scheduledArgs).toEqual(
-      expect.arrayContaining([
-        { key: apiKeys[0].key },
-        { hashedSecret: collectorCredentials[0].hashedSecret },
-        { sub: 'auth0|removed', userId: removedUser._id },
-      ]),
+      expect.arrayContaining([{ hashedSecret: collectorCredentials[0].hashedSecret }]),
     );
   });
 

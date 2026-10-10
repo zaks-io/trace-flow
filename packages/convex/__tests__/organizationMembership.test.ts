@@ -32,9 +32,7 @@ async function expectNoOrganizationData(world: MembershipWorld, disabled = false
   const reads = [
     [() => owner.query(api.auth.organizations.get, {}), null],
     [() => owner.query(api.auth.organizations.getMembers, {}), []],
-    [() => owner.query(api.billing.subscriptions.getForCurrentUser, {}), null],
     [() => owner.query(api.billing.subscriptions.getBillingSummaryForCurrentUser, {}), null],
-    [() => owner.query(api.billing.usage.getCurrentUsage, {}), null],
     [
       () => owner.query(api.costAlerts.listForCurrentOrg, {}),
       { rules: [], channels: [], states: [], apiKeys: [], isOwner: false },
@@ -158,9 +156,6 @@ describe('organization membership authorization across public handlers', () => {
       await expect(
         world.owner.query(api.billing.subscriptions.getBillingSummaryForCurrentUser, {}),
       ).resolves.toMatchObject({ role: 'owner' });
-      await expect(world.owner.query(api.billing.usage.getCurrentUsage, {})).resolves.toMatchObject(
-        { _id: world.usageId },
-      );
       await expect(world.owner.query(api.app.sessionContext, {})).resolves.toMatchObject({
         subscription: { _id: world.subscriptionId },
         onboardingCompletedAt: 1,

@@ -76,19 +76,6 @@ export async function scheduleKVSync(ctx: MutationCtx, subscriptionId: Id<'subsc
   });
 }
 
-export const getForCurrentUser = query({
-  args: {},
-  returns: v.union(v.null(), subscriptionValidator),
-  handler: async (ctx) => {
-    await requireAuthenticated(ctx);
-    const user = await getCurrentEnabledUser(ctx);
-    const active = await getActiveOrganizationMembership(ctx, user);
-    if (!active) return null;
-
-    return getSubscriptionByOrgId(ctx, active.orgId);
-  },
-});
-
 export const ensureBillingForCurrentUser = mutation({
   args: {},
   returns: v.null(),
@@ -155,26 +142,6 @@ export const setTier = internalMutation({
       tier: args.tier,
       monthlyUnits: config.monthlyUnits,
     });
-
-    await scheduleKVSync(ctx, subscription._id);
-  },
-});
-
-export const addAddonUnits = internalMutation({
-  args: {
-    orgId: v.id('organizations'),
-    units: v.number(),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    if (args.units <= 0) throw new Error('Units must be positive');
-
-    const subscription = await getSubscriptionByOrgId(mutationReadCtx(ctx), args.orgId);
-
-    if (!subscription) throw new Error('Subscription not found');
-
-    const newAddonUnits = subscription.addonUnits + args.units;
-    await ctx.db.patch(subscription._id, { addonUnits: newAddonUnits });
 
     await scheduleKVSync(ctx, subscription._id);
   },
