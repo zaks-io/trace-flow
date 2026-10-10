@@ -128,17 +128,18 @@ Security properties:
 
 ## Local Development
 
-The local scripts own Tinybird Local setup:
+`scripts/dev/local-stack.sh` owns Tinybird Local setup for approved self-contained runs:
 
 ```bash
-scripts/dev/start.sh
-tb build
-tb test run
+# Only after approval:
+scripts/dev/local-stack.sh up
+scripts/dev/local-stack.sh verify
+scripts/dev/local-stack.sh down
 ```
 
-`scripts/dev/start.sh` discovers or creates the local Tinybird workspace token and writes ignored
-local runtime files. `scripts/dev/verify.sh` runs `tb build` and `tb test run` unless
-`TRACE_FLOW_SKIP_TINYBIRD=1` is set.
+The stack creates private local tokens and deploys to its instance's default workspace.
+`verify` runs Tinybird build/tests against that same instance, then code checks. It requires
+an already-running stack and never starts Workers. Schema and CI commands remain unchanged.
 
 ## Production Deployment
 

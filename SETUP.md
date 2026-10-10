@@ -11,44 +11,33 @@ This file is the setup map. For architecture details, read `specs/architecture/o
 
 ## Local Development
 
-The scripted contract provisions **Self-Contained Local**. It does not connect to the dev
-environment unless you explicitly supply the dev endpoints and tokens described in
-`docs/agents/local-environment.md`. Everyday development runs only Web locally against the dev
-environment: `bun run dev:web`.
+Everyday development runs only Web locally against the dev environment: `bun run dev:web`.
+The single **Self-Contained Local** stack uses `scripts/dev/local-stack.sh` with mock sign-in,
+a Docker Convex backend, Tinybird Local, and six Workers plus the local KV bridge. It generates
+private state without rewriting linked `.env.local` or `.dev.vars` files.
+
+Starting a self-contained stack requires Isaac's explicit approval. Before an approved supervised run,
+check `free -h` for at least 8 GiB available and inspect prerequisites:
 
 ```bash
-scripts/dev/install.sh
-scripts/dev/start.sh
-scripts/dev/workers.sh
-scripts/dev/web.sh
-scripts/dev/smoke.sh
-scripts/dev/verify.sh
+bun install --frozen-lockfile
+scripts/dev/local-stack.sh --help
+scripts/dev/local-stack.sh doctor
+# Only after approval:
+scripts/dev/local-stack.sh up
+scripts/dev/local-stack.sh login-url
+scripts/dev/local-stack.sh smoke
+scripts/dev/local-stack.sh down
 ```
 
-`scripts/dev/start.sh` provisions Self-Contained Local by default:
+See [Local agent environment](docs/agents/local-environment.md) for seeding, verification,
+plain-machine prerequisites, sandbox allocations, and limitations. Worktree setup installs
+dependencies and preserves existing environment files; it does not start a stack.
 
-- Tinybird Local with committed `datasources/`, `materializations/`, `pipes/`, and `tests/`
-- generated ignored Worker `.dev.vars`
-- generated `apps/web/.env.local`
-- generated `.trace-flow/dev.env`
-
-`scripts/dev/workers.sh` runs the six non-Web Workers together with shared local state:
-
-- `apps/proxy`
-- `apps/proxy-consumer`
-- `apps/api` (Raw API)
-- `apps/pipes-api`
-- `apps/agent-ingest`
-- `apps/agent-consumer`
-
-It does not start Web, Convex, or MCP.
-
-Run Convex and Web separately:
-
-```bash
-scripts/dev/convex.sh
-scripts/dev/web.sh
-```
+Standalone **Local Workers** remain `bun run dev:all` through `scripts/dev/workers.sh`.
+That command runs the six non-Web Workers with their existing environment and shared
+`.wrangler/state`. It does not start Web, Convex, Tinybird, or mock sign-in. Existing
+`TRACE_FLOW_WORKERS_ENV_FILE` support is unchanged.
 
 For day-to-day collector testing, run Web locally but point the collector at the deployed
 `-dev` Agent Ingest Worker and the Convex dev site. The collector embeds production URLs,
@@ -245,9 +234,9 @@ Never manually deploy production without explicit approval.
 
 Use the narrowest verification that covers the change:
 
-- `scripts/dev/smoke.sh` for local proxy/queue/Tinybird flow
-- `scripts/dev/verify.sh` for local Tinybird tests, type checks, and tests
-- `scripts/dev/verify.sh full` for lint and build as well
+- `scripts/dev/local-stack.sh smoke` for the approved, already-running local proxy/queue/Tinybird flow
+- `scripts/dev/local-stack.sh verify` for the running local Tinybird tests, types, and tests
+- `bun run ci:check` for the full local code gate without starting services
 - `scripts/agent-ingest-smoke.sh` only for the explicit agent-ingest smoke contract described in the runbook
 
 Agent Conversation Analytics is not production-ready until the roadmap gates are green. The Rust CI,

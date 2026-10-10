@@ -49,7 +49,7 @@ workflow logic lives in the centrally managed org skills pinned by
   unless the user or issue asks otherwise
 - Package manager: bun (`packageManager: bun@1.3.5`, lockfile `bun.lock`)
 - Install: `bun install`; CI and remote setup use `bun install --frozen-lockfile`
-- Cursor install: `TRACE_FLOW_AUTO_INSTALL_TOOLS=1 scripts/dev/install.sh`
+- Worktree install: `bash setup-worktree.sh`; standalone install: `bun install --frozen-lockfile`
 - Full local gate: `bun run ci:check` (`scripts/ci-check.sh` sets non-production
   placeholder env, runs `bun run duplicates:check`, then `bun run check`)
 - `bun run check`: prettier check for `ts/tsx/js/jsx/json/css/md`, then
@@ -392,8 +392,10 @@ workflow logic lives in the centrally managed org skills pinned by
 - Claude Code imports: `CLAUDE.md` imports `@AGENTS.md`
 - Claude Code skills: no `.claude/skills` symlinks; use repo instructions and
   `.agents/skills` as the shared source
-- Remote Cursor environment: `.cursor/environment.json` and `.cursor/Dockerfile`
-  install Node 24, Bun 1.3.5, and run `scripts/dev/start.sh`
+- Remote Cursor environment: no checked-in background stack bootstrap. The former image
+  lacked Docker/Compose, required by either stack. Cursor editor rules remain;
+  `.cursor/worktrees.json` runs `bash setup-worktree.sh`. Approved self-contained
+  runs use `scripts/dev/local-stack.sh` on a Linux host with the documented prerequisites.
 - Remote worker gate enforcement: install path and Husky hooks are verified in
   repo files; live Cursor push-hook execution was not verified. Remote workers
   must still run ticket-specific checks and `bun run ci:check` before PR handoff.
@@ -434,13 +436,15 @@ workflow logic lives in the centrally managed org skills pinned by
 ## Environments
 
 - Local modes:
-  - Self-Contained Local / Cursor-mode: local Workers, local Convex, Tinybird
-    Local through `scripts/dev/start.sh`
+  - Self-Contained Local: disposable local Workers, Docker Convex and Tinybird
+    Local, mock sign-in through `scripts/dev/local-stack.sh up`; explicit approval
+    required before starting the stack
   - Dev collector testing: deployed `-dev` ingest Worker and Convex dev
     deployment; only the web dev server should be local unless the
     user explicitly asks for local Workers
-- Local commands: `bun run dev:setup`; `bun run dev:all`; `bunx convex dev`;
-  `bun run dev:web`; `bun run dev:verify`; `bun run dev:smoke`
+- Self-contained commands: `bun run dev:setup`; `bun run dev:doctor`;
+  `bun run dev:seed`; `bun run dev:verify`; `bun run dev:smoke`. All use `local-stack.sh`.
+- Everyday Web: `bun run dev:web`. Local Workers: `bun run dev:all`.
 - Local services: proxy, proxy-consumer, raw API, pipes API, web, agent-ingest,
   agent-consumer, Convex, Tinybird Local
 - Development backing services: Convex dev, Tinybird, Cloudflare dev resources

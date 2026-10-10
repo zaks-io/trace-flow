@@ -197,7 +197,14 @@ The six non-Web Workers run as local `wrangler dev` processes via `bun run dev:a
 _Avoid_: assuming a local `wrangler dev` process shares state with the deployed `*-dev` Worker of the same name.
 
 **Self-Contained Local**:
-A fully local, no-cloud-credentials stack: **Local Workers** plus **Convex local** (`127.0.0.1:3210`) and **Tinybird Local** in Docker (`127.0.0.1:7181`). Built so isolated runtimes (Cursor Background Agents, CI) can run the whole stack without cloud access. This is what `scripts/dev/start.sh` provisions **by default** (memory-limited Tinybird Local container, generated local tokens; see `docs/agents/local-environment.md`). Data is visible only locally, never in a cloud dashboard.
+The disposable no-cloud-credentials stack owned by `scripts/dev/local-stack.sh`: **Local Workers**,
+a self-hosted Convex backend and **Tinybird Local** in Docker, Web, a mock OIDC issuer, and a local
+KV bridge. Generated secrets and state are private to the checkout; sandbox ports and state use
+`sbx-runtime` when installed. Plain machines use checkout-local state and explicit/default ports.
+Mock sign-in accepts any email and must stay local-only. An approved run starts everything with
+`up`; `smoke` checks the running proxy/queue/Tinybird path and `down` stops the stack.
+Starting the self-contained stack requires explicit approval. See `docs/agents/local-environment.md`.
+Data stays local and cannot appear in the Dev Environment dashboard.
 _Avoid_: conflating with the **Dev Environment**; assuming agents on this stack can see Dev Environment data, or vice versa.
 
 **Control Plane** / **Data Plane**:
@@ -495,4 +502,4 @@ _Avoid_: "hung" or "crashed" (the Supervisor observes silence, not process death
 - **"session start"** conflated the time we can first observe with the time a Source declares. _Resolved_: **StartedAt** is the earliest observed turn; **EventAt** is the fact retention and partition anchor; **LastEventAt** anchors session-summary retention; **VendorStartedAt** is the Source's own declared start, captured as metadata where available.
 - **"transcript"** was used for both local `.jsonl` source files and parsed agent facts. _Resolved_: use **Transcript File** for the machine-local input and **Agent Facts** for the uploaded data. The code's bare `walk_transcripts` / "transcript root" naming refers to Transcript Files.
 - **"worktree"** — the live monitoring board must distinguish ~20 concurrent agents running in separate worktrees of the same repository, but **Repo** normalizes to the git remote so every one of them collapses to a single `repo_fingerprint`. _Resolved_: the on-disk working copy is a **Checkout**, a display-and-grouping label only. **Repo** keeps its collapsing behavior and stays the fact-table grain.
-- **"dev"** was used for the deployed `*-dev` Workers, a local `wrangler dev` process, and the fully local stack the setup scripts provision by default. _Resolved_: "dev" means the **Dev Environment** (deployed `*-dev` Workers, Convex dev, Tinybird dev, local Web). A local `wrangler dev` process is **Local Workers**; the scripted default is **Self-Contained Local** (for Cursor/CI).
+- **"dev"** was used for the deployed `*-dev` Workers, a local `wrangler dev` process, and the fully local stack the setup scripts provision by default. _Resolved_: "dev" means the **Dev Environment** (deployed `*-dev` Workers, Convex dev, Tinybird dev, local Web). A local `wrangler dev` process is **Local Workers**; the single disposable stack is **Self-Contained Local**, started only for approved local runs.

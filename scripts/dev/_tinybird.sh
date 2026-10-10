@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tinybird Local helpers shared by start.sh (Self-Contained Local) and local-stack.sh.
+# Tinybird Local helpers for the disposable local stack.
 # Source after _common.sh.
 TRACE_FLOW_TINYBIRD_CONTAINER="${TRACE_FLOW_TINYBIRD_CONTAINER:-tinybird-local}"
 TRACE_FLOW_TINYBIRD_PROJECT="${TRACE_FLOW_TINYBIRD_PROJECT:-trace-flow-tinybird}"
@@ -9,99 +9,29 @@ tinybird_local_running() {
   curl -s -o /dev/null --max-time 2 "$TRACE_FLOW_TINYBIRD_HOST/"
 }
 
-start_docker_if_possible() {
-  if ! command_exists docker; then
-    warn "docker is unavailable; skipping Tinybird Local startup"
-    return 1
-  fi
-
-  if docker info >/dev/null 2>&1; then
-    return 0
-  fi
-
-  if command_exists sudo && command_exists service; then
-    log "starting Docker service"
-    sudo service docker start >/dev/null 2>&1 || true
-  fi
-
-  docker info >/dev/null 2>&1
-}
-
 ensure_tinybird_tokens() {
   ensure_state_dir
-  if [[ -f "$TRACE_FLOW_DEV_ENV" ]]; then
-    source_dev_env
+  if [[ -f "$STACK_TINYBIRD_ENV" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$STACK_TINYBIRD_ENV"
+    set +a
   fi
-
-  if [[ "${TRACE_FLOW_SKIP_TINYBIRD:-0}" == "1" ]]; then
-    TB_LOCAL_USER_TOKEN="${TB_LOCAL_USER_TOKEN:-local-tinybird-user-token}"
-    TB_LOCAL_WORKSPACE_TOKEN="${TB_LOCAL_WORKSPACE_TOKEN:-local-tinybird-workspace-token}"
-    write_dev_env "$TB_LOCAL_USER_TOKEN" "$TB_LOCAL_WORKSPACE_TOKEN"
-    source_dev_env
-    return 0
-  fi
-
-  require_command tb
-
-  local current_info
-  if [[ -n "${SBX_WORKTREE_ID:-}" ]]; then
-    # CLI global config can point at another worktree. Generate private local tokens.
-    if [[ -n "${TB_LOCAL_USER_TOKEN:-}" && -n "${TB_LOCAL_WORKSPACE_TOKEN:-}" ]]; then
-      return 0
-    fi
-  elif current_info="$(TB_VERSION_WARNING=0 tb --output=json info 2>/dev/null)"; then
-    local current_user_token
-    local current_workspace_token
-    local current_api
-    current_user_token="$(printf '%s' "$current_info" | json_expr "data.local?.user_token ?? ''")"
-    current_workspace_token="$(printf '%s' "$current_info" | json_expr "data.local?.token ?? ''")"
-    current_api="$(printf '%s' "$current_info" | json_expr "data.local?.api ?? ''")"
-
-    if [[ -n "$current_user_token" && -n "$current_workspace_token" ]]; then
-      TRACE_FLOW_TINYBIRD_HOST="${current_api:-$TRACE_FLOW_TINYBIRD_HOST}"
-      write_dev_env "$current_user_token" "$current_workspace_token"
-      source_dev_env
-      return 0
-    fi
-  fi
-
   if [[ -n "${TB_LOCAL_USER_TOKEN:-}" && -n "${TB_LOCAL_WORKSPACE_TOKEN:-}" ]]; then
     return 0
   fi
-
-  log "generating Tinybird Local tokens"
-  local tokens
+  require_command tb
+  local tokens user_token workspace_token
   tokens="$(TB_VERSION_WARNING=0 tb --output=json local generate-tokens)"
-  local user_token
-  local workspace_token
   user_token="$(printf '%s' "$tokens" | json_field user_token)"
   workspace_token="$(printf '%s' "$tokens" | json_field workspace_token)"
-
-  [[ -n "$user_token" ]] || fail "Tinybird did not return a user token"
-  [[ -n "$workspace_token" ]] || fail "Tinybird did not return a workspace token"
-
-  write_dev_env "$user_token" "$workspace_token"
-  source_dev_env
-}
-
-write_dev_env() {
-  local user_token="$1"
-  local workspace_token="$2"
-
-  cat >"$TRACE_FLOW_DEV_ENV" <<EOF
-TB_LOCAL_USER_TOKEN=$user_token
-TB_LOCAL_WORKSPACE_TOKEN=$workspace_token
-TRACE_FLOW_TINYBIRD_HOST=$TRACE_FLOW_TINYBIRD_HOST
-TRACE_FLOW_CONVEX_URL=$TRACE_FLOW_CONVEX_URL
-TRACE_FLOW_CONVEX_SITE_URL=$TRACE_FLOW_CONVEX_SITE_URL
-TRACE_FLOW_PIPES_API_URL=$TRACE_FLOW_PIPES_API_URL
-TRACE_FLOW_RAW_API_URL=$TRACE_FLOW_RAW_API_URL
-TRACE_FLOW_BODY_ENCRYPTION_ROOT_KEY=$TRACE_FLOW_BODY_ENCRYPTION_ROOT_KEY
-TRACE_FLOW_BODY_ACCESS_JWT_SECRET=$TRACE_FLOW_BODY_ACCESS_JWT_SECRET
-TRACE_FLOW_USAGE_SYNC_SECRET=$TRACE_FLOW_USAGE_SYNC_SECRET
-TRACE_FLOW_AGENT_INGEST_SHARED_SECRET=$TRACE_FLOW_AGENT_INGEST_SHARED_SECRET
-EOF
-  chmod 600 "$TRACE_FLOW_DEV_ENV"
+  [[ -n "$user_token" && -n "$workspace_token" ]] || fail "Tinybird did not return local tokens"
+  umask 077
+  printf 'TB_LOCAL_USER_TOKEN=%s\nTB_LOCAL_WORKSPACE_TOKEN=%s\n' "$user_token" "$workspace_token" >"$STACK_TINYBIRD_ENV"
+  set -a
+  # shellcheck disable=SC1090
+  source "$STACK_TINYBIRD_ENV"
+  set +a
 }
 
 ensure_tinybird_local_container() {
@@ -126,7 +56,7 @@ ensure_tinybird_local_container() {
         warn "Tinybird Local was started outside scripts/dev and has no memory limit"
         return 0
       else
-        fail "a stopped tinybird-local container from outside scripts/dev is in the way; remove it with 'docker rm "$TRACE_FLOW_TINYBIRD_CONTAINER"'"
+        fail "a stopped tinybird-local container from outside scripts/dev is in the way; remove it from its owning checkout first"
       fi
     fi
   fi
@@ -138,23 +68,21 @@ ensure_tinybird_local_container() {
 }
 
 start_tinybird_local() {
-  if [[ "${TRACE_FLOW_SKIP_TINYBIRD:-0}" == "1" ]]; then
-    log "skipping Tinybird Local"
-    return 0
-  fi
-
   require_command tb
   ensure_tinybird_tokens
-
-  if ! start_docker_if_possible; then
-    fail "Docker is not running; set TRACE_FLOW_SKIP_TINYBIRD=1 to skip Tinybird Local"
-  fi
+  docker info >/dev/null 2>&1 || fail "Docker is not running"
   docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required for Tinybird Local"
-
   ensure_tinybird_local_container
+}
 
-  if [[ "${TRACE_FLOW_SKIP_TB_BUILD:-0}" != "1" ]]; then
-    log "building Tinybird project against local Tinybird"
-    TB_VERSION_WARNING=0 tb --host "$TRACE_FLOW_TINYBIRD_HOST" build
-  fi
+# Tinybird CLI prefers .tinyb's workspace name over an explicit token. Keep its
+# writable config private, so an existing cloud selection cannot redirect local deploys.
+tinybird_cli() {
+  local cli_dir="$STACK_DIR/tinybird-cli"
+  mkdir -p "$cli_dir"
+  chmod 700 "$cli_dir"
+  node -e 'require("node:fs").writeFileSync(process.argv[1], JSON.stringify({name: "Tinybird_Local_Testing", cwd: process.argv[2]}), {mode: 0o600})' \
+    "$cli_dir/.tinyb" "$TRACE_FLOW_ROOT"
+  (cd "$cli_dir" && TB_VERSION_WARNING=0 TB_HOST="$TRACE_FLOW_TINYBIRD_HOST" \
+    TB_TOKEN="$TINYBIRD_WORKSPACE_TOKEN" tb --local "$@")
 }

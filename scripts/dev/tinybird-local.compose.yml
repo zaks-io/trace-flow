@@ -1,4 +1,4 @@
-# Tinybird Local for Self-Contained Local, started by scripts/dev/start.sh.
+# Tinybird Local for Self-Contained Local, started by scripts/dev/local-stack.sh up.
 # `tb local start` cannot set limits, so an unbounded container sized itself from host RAM and CPUs
 # (~3.8 GB idle). Keep the container name, ports, and data layout identical to `tb local start` so
 # the tb CLI keeps working against it.
@@ -8,6 +8,8 @@ services:
   tinybird-local:
     image: tinybirdco/tinybird-local:latest
     container_name: ${TRACE_FLOW_TINYBIRD_CONTAINER:-tinybird-local}
+    labels:
+      sbx.agent: ${SBX_AGENT_ID:-}
     ports:
       - '${TB_LOCAL_PORT:-7181}:7181'
       - '${TB_LOCAL_CLICKHOUSE_INTERFACE_PORT:-7182}:7182'
