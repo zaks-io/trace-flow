@@ -1,12 +1,7 @@
 import { action, internalAction, type ActionCtx } from '../_generated/server';
 import { v } from 'convex/values';
 import { SignJWT } from 'jose';
-import {
-  TinybirdQueryError,
-  startDeleteRows,
-  waitForDeleteRows,
-} from '@trace-flow/tinybird-client';
-import { runAdminSql } from '../tinybirdTracing';
+import { startDeleteRows, waitForDeleteRows } from '@trace-flow/tinybird-client';
 import { requireAuthenticated } from '../auth/auth';
 import { requireEnabledActionUser } from '../auth/actionUser';
 import type { Doc } from '../_generated/dataModel';
@@ -34,8 +29,6 @@ const tinybirdAdminToken = adminToken;
 if (!workspaceId) {
   throw new Error('TINYBIRD_WORKSPACE_ID environment variable is not set');
 }
-
-const NANOSECONDS_PER_DAY = 24 * 60 * 60 * 1_000_000_000;
 
 interface TinybirdScope {
   type: string;
@@ -438,80 +431,5 @@ export const deleteOrgTraces = internalAction({
     if (failed.length > 0)
       throw new Error(`Organization analytics deletion incomplete: ${failed.join(', ')}`);
     return { deleted: true as const, results };
-  },
-});
-
-/**
- * Extends retention for existing traces when a user upgrades from hobby to pro.
- * Updates RetentionExpiresAt and TierAtIngestion in every retention-scoped LLM datasource.
- *
- * Only extends data that hasn't already expired (RetentionExpiresAt > now).
- */
-export const extendRetention = internalAction({
-  args: {
-    orgId: v.id('organizations'),
-  },
-  returns: v.union(
-    v.object({ updated: v.literal(false), reason: v.string() }),
-    v.object({
-      updated: v.literal(true),
-      results: v.record(
-        v.string(),
-        v.object({ success: v.boolean(), error: v.optional(v.string()) }),
-      ),
-    }),
-  ),
-  handler: async (ctx, args) => {
-    // Get all API keys for this organization
-    const apiKeys = await ctx.runQuery(internal.apiKeys.listByOrgId, { orgId: args.orgId });
-    const analyticsKeyIds = sanitizeAnalyticsKeyIds(
-      await Promise.all(apiKeys.map((apiKey: { key: string }) => analyticsKeyId(apiKey.key))),
-    );
-
-    if (analyticsKeyIds.length === 0) {
-      return { updated: false as const, reason: 'No API keys found for organization' };
-    }
-
-    // Calculate the extension: difference between pro and hobby retention in nanoseconds
-    const extensionNanos = (RETENTION_DAYS.pro - RETENTION_DAYS.hobby) * NANOSECONDS_PER_DAY;
-    const nowNanos = Date.now() * 1_000_000;
-
-    const analyticsKeyIdsInClause = analyticsKeyIds.map(sqlStringLiteral).join(',');
-
-    // Datasources to update
-    const datasources = [
-      'otel_trace_spans',
-      'otel_genai_spans',
-      'llm_request_facts',
-      'llm_execution_accounts',
-    ];
-
-    const results: Record<string, { success: boolean; error?: string }> = {};
-
-    for (const datasource of datasources) {
-      // ALTER TABLE UPDATE extends retention for all traces with these API keys.
-      // Only rows where RetentionExpiresAt > now (not yet expired) and
-      // TierAtIngestion is 'hobby' or '' (not already pro).
-      const sql = `
-        ALTER TABLE ${datasource}
-        UPDATE
-          RetentionExpiresAt = RetentionExpiresAt + ${extensionNanos},
-          TierAtIngestion = 'pro'
-        WHERE ${NORMALIZED_API_KEY_SQL} IN (${analyticsKeyIdsInClause})
-          AND RetentionExpiresAt > ${nowNanos}
-          AND TierAtIngestion IN ('hobby', '')
-      `;
-
-      try {
-        await runAdminSql({ baseUrl: tinybirdApiUrl, adminToken, sql });
-        results[datasource] = { success: true };
-      } catch (err) {
-        const message = err instanceof TinybirdQueryError ? err.message : (err as Error).message;
-        results[datasource] = { success: false, error: message };
-        console.error(`Failed to extend retention for ${datasource}:`, message);
-      }
-    }
-
-    return { updated: true as const, results };
   },
 });

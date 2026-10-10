@@ -1,61 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { cloudflareKvFailureMessage } from '../integrations/cloudflare';
 
-// ---------------------------------------------------------------------------
-// cloudflare.ts handler logic tests
-//
-// The KV sync actions all call fetch() against Cloudflare's API — those are
-// network-bound and tested via integration. What we test here:
-//
-// 1. KV payload shapes — the JSON written for api keys and subscriptions
-// 2. isCallerAdmin handler logic
-// 3. runBatched concurrency pattern (via extracted equivalent logic)
-// 4. URL construction and error handling for putKV / deleteKeyFromKV
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// KV payload shape for syncKeyToKV
-// ---------------------------------------------------------------------------
-
-describe('syncKeyToKV KV payload shape', () => {
-  it('includes expiresAt, createdAt, and orgId', () => {
-    const args = {
-      key: 'uuid-key',
-      expiresAt: 1700000000000,
-      orgId: 'org_abc',
-    };
-
-    const payload = JSON.stringify({
-      expiresAt: args.expiresAt,
-      createdAt: Date.now(),
-      orgId: args.orgId,
-    });
-
-    const parsed = JSON.parse(payload);
-    expect(parsed.expiresAt).toBe(1700000000000);
-    expect(parsed.orgId).toBe('org_abc');
-    expect(typeof parsed.createdAt).toBe('number');
-  });
-
-  it('includes undefined orgId when not provided', () => {
-    const args = { key: 'uuid-key', expiresAt: 1700000000000, orgId: undefined };
-
-    const payload = JSON.stringify({
-      expiresAt: args.expiresAt,
-      createdAt: Date.now(),
-      orgId: args.orgId,
-    });
-
-    const parsed = JSON.parse(payload);
-    // JSON.stringify drops undefined values
-    expect('orgId' in parsed).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// KV payload shape for syncSubscriptionToKV
-// ---------------------------------------------------------------------------
-
 describe('syncSubscriptionToKV KV payload shape', () => {
   it('writes correct key format: sub:{orgId}', () => {
     const orgId = 'org_123abc';
@@ -160,43 +105,10 @@ describe('syncSubscriptionToKV KV payload shape', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Cloudflare API URL construction
-// ---------------------------------------------------------------------------
-
-describe('Cloudflare KV URL construction', () => {
-  it('builds correct PUT URL for syncKeyToKV', () => {
-    const accountId = 'acc_123';
-    const namespaceId = 'ns_456';
-    const key = 'my-api-key';
-    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/${key}`;
-    expect(url).toBe(
-      'https://api.cloudflare.com/client/v4/accounts/acc_123/storage/kv/namespaces/ns_456/values/my-api-key',
-    );
-  });
-
-  it('builds correct GET URL for checkKeyInKV', () => {
-    const accountId = 'acc_123';
-    const namespaceId = 'ns_456';
-    const key = 'check-this-key';
-    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/${key}`;
-    expect(url).toContain('/storage/kv/namespaces/');
-    expect(url).toContain(key);
-  });
-
-  it('builds correct DELETE URL for deleteKeyFromKV', () => {
-    const accountId = 'acc_123';
-    const namespaceId = 'ns_456';
-    const key = 'delete-this-key';
-    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/${key}`;
-    expect(url).toContain('delete-this-key');
-  });
-});
-
-// ---------------------------------------------------------------------------
 // putKV error handling
 // ---------------------------------------------------------------------------
 
-describe('putKV / deleteKeyFromKV error handling', () => {
+describe('Cloudflare KV error handling', () => {
   it('throws descriptive error on non-ok PUT response', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: false,
@@ -401,12 +313,5 @@ describe('runBatched logic', () => {
         return Promise.resolve();
       }),
     ).rejects.toThrow('item 2 failed');
-  });
-
-  it('returns correct counts for syncAll', () => {
-    const apiKeys = [{ key: 'k1' }, { key: 'k2' }, { key: 'k3' }];
-    const subscriptions = [{ orgId: 'o1' }, { orgId: 'o2' }];
-    const result = { keySynced: apiKeys.length, subSynced: subscriptions.length };
-    expect(result).toEqual({ keySynced: 3, subSynced: 2 });
   });
 });

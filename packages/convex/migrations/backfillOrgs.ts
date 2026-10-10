@@ -48,7 +48,7 @@ export const backfillOrgs = internalMutation({
         addonPurchaseCount: 0,
       });
 
-      // Re-sync all API keys for this user with orgId
+      // Bind existing API keys to the user's organization.
       const userKeys = await ctx.db
         .query('apiKeys')
         .withIndex('by_user_id', (q) => q.eq('userId', user._id))
@@ -56,11 +56,6 @@ export const backfillOrgs = internalMutation({
 
       for (const key of userKeys) {
         await ctx.db.patch(key._id, { orgId });
-        await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.syncKeyToKV, {
-          key: key.key,
-          expiresAt: key.expiresAt,
-          orgId,
-        });
       }
 
       await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.syncSubscriptionToKV, {

@@ -1,8 +1,6 @@
-import { internalQuery, mutation, query } from './_generated/server';
+import { internalQuery } from './_generated/server';
 import type { QueryCtx } from './_generated/server';
 import { v, type Infer } from 'convex/values';
-import { requireAuthenticated } from './auth/auth';
-import { requireEnabledUser } from './auth/users';
 
 // Worker-side compatibility policy, owned in Convex so minimum versions and the
 // emergency denylist change without a Worker deploy. The active policy is the
@@ -33,16 +31,6 @@ async function readActivePolicy(ctx: QueryCtx): Promise<ActivePolicy | null> {
   };
 }
 
-export const getActivePolicy = query({
-  args: {},
-  returns: v.union(v.null(), policyValidator),
-  handler: async (ctx) => {
-    await requireAuthenticated(ctx);
-    await requireEnabledUser(ctx);
-    return await readActivePolicy(ctx);
-  },
-});
-
 // Internal read for the shared-secret-guarded `/agent-ingest/compatibility-policy`
 // route — no Convex user auth (the ingest Worker authenticates with its secret).
 export const getActivePolicyInternal = internalQuery({
@@ -50,29 +38,5 @@ export const getActivePolicyInternal = internalQuery({
   returns: v.union(v.null(), policyValidator),
   handler: async (ctx) => {
     return await readActivePolicy(ctx);
-  },
-});
-
-export const setPolicy = mutation({
-  args: {
-    minDesktopVersion: v.string(),
-    minParserVersion: v.string(),
-    denylistedVersions: v.array(v.string()),
-  },
-  returns: v.id('collectorCompatibilityPolicy'),
-  handler: async (ctx, args) => {
-    await requireAuthenticated(ctx);
-    const user = await requireEnabledUser(ctx);
-    if (!user.isAdmin) {
-      throw new Error('Admin access required');
-    }
-
-    return await ctx.db.insert('collectorCompatibilityPolicy', {
-      minDesktopVersion: args.minDesktopVersion,
-      minParserVersion: args.minParserVersion,
-      denylistedVersions: args.denylistedVersions,
-      updatedByUserId: user._id,
-      updatedAt: Date.now(),
-    });
   },
 });

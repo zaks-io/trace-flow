@@ -1,9 +1,9 @@
-import { mutation, query, internalQuery } from './_generated/server';
+import { mutation, query } from './_generated/server';
 import { v } from 'convex/values';
 import { requireAuthenticated } from './auth/auth';
 import { internal } from './_generated/api';
 import { requireActiveOrganizationMembership } from './auth/userHelpers';
-import { collectorCredentialPublicValidator, collectorCredentialValidator } from './validators';
+import { collectorCredentialPublicValidator } from './validators';
 import { rateLimiter } from './rateLimits';
 import type { Doc } from './_generated/dataModel';
 
@@ -154,24 +154,5 @@ export const revoke = mutation({
     });
 
     return null;
-  },
-});
-
-export const getByIdInternal = internalQuery({
-  args: { id: v.id('collectorCredentials') },
-  returns: v.union(v.null(), collectorCredentialValidator),
-  handler: async (ctx, args) => {
-    return await ctx.db.get(args.id);
-  },
-});
-
-export const listByOrgId = internalQuery({
-  args: { orgId: v.id('organizations') },
-  returns: v.array(collectorCredentialValidator),
-  handler: async (ctx, args) => {
-    return await ctx.db
-      .query('collectorCredentials')
-      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .collect();
   },
 });

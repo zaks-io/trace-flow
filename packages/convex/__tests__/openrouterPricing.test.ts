@@ -64,7 +64,7 @@ describe('OpenRouter catalog refresh', () => {
     }
   });
 
-  it('preserves a manual override during refresh and on-demand import', async () => {
+  it('preserves a manual override during refresh', async () => {
     const t = initConvexTest();
     await t.mutation(internal.billing.modelPricing.upsertInternal, {
       provider: 'openrouter',
@@ -75,9 +75,6 @@ describe('OpenRouter catalog refresh', () => {
     });
     await t.action(internal.billing.modelPricing.importFromOpenRouterInternal, {});
     await t.finishAllScheduledFunctions(vi.runAllTimers);
-    await t.action(internal.billing.modelPricing.importOneFromOpenRouterInternal, {
-      model: alias.id,
-    });
     expect(
       await t.query(internal.billing.modelPricing.getInternal, {
         provider: 'openrouter',

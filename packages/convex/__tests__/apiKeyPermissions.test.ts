@@ -78,17 +78,13 @@ describe('API key permissions', () => {
       permissions: ['mcp:read'],
     });
 
-    await expect(asUser.action(api.apiKeys.syncToKV, { id: readId })).rejects.toThrow(
-      'Only keys that allow sending traces can be synced',
-    );
-
     expect(userId).toBeDefined();
   });
 
   it('keeps missing legacy permissions readable through the persisted key validator', async () => {
     const t = initConvexTest();
     const tokenIdentifier = 'https://auth.example/|auth0|api-key-permissions-legacy';
-    const keyId = await t.run(async (ctx) => {
+    await t.run(async (ctx) => {
       const userId = await ctx.db.insert('users', {
         tokenIdentifier,
         email: 'legacy@example.com',
@@ -111,8 +107,10 @@ describe('API key permissions', () => {
       });
     });
 
-    await expect(t.query(internal.apiKeys.getByIdInternal, { id: keyId })).resolves.toMatchObject({
-      key: 'legacy-ingest-key',
-    });
+    await expect(
+      t.query(internal.integrations.cloudflare.getApiKeyAuthorizationData, {
+        key: 'legacy-ingest-key',
+      }),
+    ).resolves.toMatchObject({ key: 'legacy-ingest-key' });
   });
 });

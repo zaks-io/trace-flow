@@ -315,32 +315,3 @@ describe('stripeEvents.markFailed handler logic', () => {
     );
   });
 });
-
-// ---------------------------------------------------------------------------
-// getByEventId handler logic
-// ---------------------------------------------------------------------------
-
-describe('stripeEvents.getByEventId handler logic', () => {
-  it('returns event doc when found', async () => {
-    const existing = makeEventDoc();
-    const ctx = makeCtx();
-    ctx.db.query = vi.fn().mockReturnValue({
-      withIndex: vi.fn().mockReturnThis(),
-      first: vi.fn().mockResolvedValue(existing),
-    });
-
-    const result = await ctx.db.query('stripeEvents').withIndex('by_event_id').first();
-    expect(result).toEqual(existing);
-  });
-
-  it('returns null when event not found', async () => {
-    const ctx = makeCtx();
-    ctx.db.query = vi.fn().mockReturnValue({
-      withIndex: vi.fn().mockReturnThis(),
-      first: vi.fn().mockResolvedValue(null),
-    });
-
-    const result = await ctx.db.query('stripeEvents').withIndex('by_event_id').first();
-    expect(result).toBeNull();
-  });
-});

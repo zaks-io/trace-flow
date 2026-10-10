@@ -47,9 +47,12 @@ export function registerWorkerAuthorizationRoutes(app: HonoWithConvex<ActionCtx>
     if (!body || typeof body.key !== 'string' || body.key.length === 0) {
       return c.json({ error: 'Invalid request' }, 400);
     }
-    const apiKey = await c.env.runQuery(internal.integrations.cloudflare.getApiKeySyncData, {
-      key: body.key,
-    });
+    const apiKey = await c.env.runQuery(
+      internal.integrations.cloudflare.getApiKeyAuthorizationData,
+      {
+        key: body.key,
+      },
+    );
     if (!apiKey) {
       return c.json({ authorized: false as const, reason: 'invalid' });
     }

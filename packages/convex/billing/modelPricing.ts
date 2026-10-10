@@ -10,7 +10,6 @@ import {
 } from '../_generated/server';
 import {
   convertOpenRouterModelRates,
-  findOpenRouterModel,
   indexOpenRouterModels,
   OPENROUTER_MODELS_URL,
   parseModelPricing,
@@ -73,25 +72,6 @@ export const list = query({
         .collect();
     }
     return ctx.db.query('modelPricing').collect();
-  },
-});
-
-export const get = query({
-  args: {
-    provider: v.string(),
-    model: v.string(),
-  },
-  returns: v.union(modelPricingDoc, v.null()),
-  handler: async (ctx, args) => {
-    await requireAuthenticated(ctx);
-    await requireEnabledUser(ctx);
-
-    return ctx.db
-      .query('modelPricing')
-      .withIndex('by_provider_model', (q) =>
-        q.eq('provider', args.provider).eq('model', args.model),
-      )
-      .first();
   },
 });
 
@@ -241,32 +221,6 @@ export const importFromOpenRouter = action({
   },
 });
 
-/**
- * Import a single OpenRouter model's rate from the live catalog and push it to the worker KV.
- * Internal so it can run unauthenticated (e.g. seeding a newly-configured analyst model whose
- * daily import hasn't landed yet) using the same OpenRouter conversion as the bulk import.
- */
-export const importOneFromOpenRouterInternal = internalAction({
-  args: { model: v.string() },
-  returns: v.object({ imported: v.boolean() }),
-  handler: async (ctx, args) => {
-    const models = indexOpenRouterModels(await fetchOpenRouterModels());
-    const orModel = findOpenRouterModel(models, args.model);
-    if (!orModel) return { imported: false };
-    const existing = await ctx.runQuery(internal.billing.modelPricing.getInternal, {
-      provider: 'openrouter',
-      model: args.model,
-    });
-    if (existing?.source === 'manual') return { imported: true };
-    await importOpenRouterModel(ctx, args.model, orModel);
-    await ctx.runAction(internal.billing.pricingSync.syncToKV, {
-      provider: 'openrouter',
-      model: args.model,
-    });
-    return { imported: true };
-  },
-});
-
 export const syncDefaults = action({
   args: {},
   returns: v.object({ synced: v.number() }),
@@ -298,75 +252,6 @@ export const syncDefaults = action({
     }
 
     return { synced };
-  },
-});
-
-const GROQ_GPT_OSS_120B = {
-  provider: 'groq',
-  model: 'openai/gpt-oss-120b',
-} as const;
-
-export const repairGroqGptOss120bDefaultInternal = internalMutation({
-  args: {},
-  returns: v.object({ updated: v.boolean(), preservedOverride: v.boolean() }),
-  handler: async (ctx) => {
-    const { provider, model } = GROQ_GPT_OSS_120B;
-    const pricing = DEFAULT_PRICING.find(
-      (candidate) => candidate.provider === provider && candidate.model === model,
-    );
-    if (!pricing) {
-      throw new Error(`Missing default pricing for ${provider}/${model}`);
-    }
-
-    const existing = await ctx.db
-      .query('modelPricing')
-      .withIndex('by_provider_model', (q) => q.eq('provider', provider).eq('model', model))
-      .first();
-    const preservedOverride = existing !== null && existing.source !== 'default';
-    const matchesDefault =
-      existing?.source === 'default' &&
-      existing.promptCostPerMillion === pricing.promptCostPerMillion &&
-      existing.completionCostPerMillion === pricing.completionCostPerMillion &&
-      existing.cacheReadCostPerMillion === pricing.cacheReadCostPerMillion &&
-      existing.cacheWriteCostPerMillion === pricing.cacheWriteCostPerMillion &&
-      existing.cacheWrite1hCostPerMillion === pricing.cacheWrite1hCostPerMillion &&
-      existing.reasoningCostPerMillion === undefined &&
-      existing.contextTier === undefined;
-    const updated = !preservedOverride && !matchesDefault;
-
-    if (updated) {
-      await writeModelPricing(ctx, {
-        provider,
-        model,
-        promptCostPerMillion: pricing.promptCostPerMillion,
-        completionCostPerMillion: pricing.completionCostPerMillion,
-        cacheReadCostPerMillion: pricing.cacheReadCostPerMillion,
-        cacheWriteCostPerMillion: pricing.cacheWriteCostPerMillion,
-        cacheWrite1hCostPerMillion: pricing.cacheWrite1hCostPerMillion,
-        source: 'default',
-      });
-    }
-
-    return { updated, preservedOverride };
-  },
-});
-
-/**
- * Deploy-time repair for the built-in Groq GPT-OSS 120B cached-input rate. Existing non-default
- * rows are explicit operator overrides, so the repair preserves them and only refreshes their KV
- * serialization.
- */
-export const syncGroqGptOss120bDefaultInternal = internalAction({
-  args: {},
-  returns: v.object({ updated: v.boolean(), preservedOverride: v.boolean() }),
-  handler: async (ctx) => {
-    const { provider, model } = GROQ_GPT_OSS_120B;
-    const result = await ctx.runMutation(
-      internal.billing.modelPricing.repairGroqGptOss120bDefaultInternal,
-      {},
-    );
-    await ctx.runAction(internal.billing.pricingSync.syncToKV, { provider, model });
-    return result;
   },
 });
 
@@ -532,14 +417,5 @@ export const importFromModelsDevInternal = internalAction({
     }
 
     return { imported, skipped };
-  },
-});
-
-export const importFromModelsDev = action({
-  args: {},
-  returns: v.object({ imported: v.number(), skipped: v.number() }),
-  handler: async (ctx) => {
-    await requireAdminAction(ctx);
-    return ctx.runAction(internal.billing.modelPricing.importFromModelsDevInternal, {});
   },
 });

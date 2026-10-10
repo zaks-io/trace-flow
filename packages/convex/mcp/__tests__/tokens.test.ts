@@ -10,12 +10,26 @@ async function setup() {
   const userId = await t.run((ctx) =>
     ctx.db.insert('users', { tokenIdentifier: 'auth0|u1', email: 'u1@example.com', enabled: true }),
   );
-  const tokenId = await t.mutation(internal.mcp.tokens.createRefreshToken, {
+  const codeVerifier = 'test-code-verifier';
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(codeVerifier));
+  const code = await t.mutation(internal.mcp.tokens.createAuthCode, {
     userId,
     clientId: CLIENT_ID,
     resource: RESOURCE,
+    redirectUri: 'https://client.example/callback',
+    codeChallenge: Buffer.from(digest).toString('base64url'),
+    codeChallengeMethod: 'S256',
     auth0RefreshToken: 'auth0-refresh',
   });
+  const grant = await t.mutation(internal.mcp.tokens.exchangeAuthCode, {
+    code,
+    clientId: CLIENT_ID,
+    resource: RESOURCE,
+    redirectUri: 'https://client.example/callback',
+    codeVerifier,
+  });
+  if ('error' in grant) throw new Error(grant.error_description);
+  const tokenId = grant.tokenId;
   return { t, tokenId };
 }
 

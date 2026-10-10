@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal, api } from '../_generated/api';
-import { get, list } from '../billing/modelPricing';
+import { list } from '../billing/modelPricing';
 import schema from '../schema';
 import { initConvexTest } from './convexTest.setup';
 
@@ -75,14 +75,9 @@ describe('service tier pricing storage', () => {
       ctx.db.insert('users', { tokenIdentifier, email: 'reader@example.com', enabled: true }),
     );
     const reader = t.withIdentity({ tokenIdentifier });
-    const publicGet = await reader.query(api.billing.modelPricing.get, {
-      provider: pricing.provider,
-      model: pricing.model,
-    });
     const publicList = await reader.query(api.billing.modelPricing.list, {
       provider: pricing.provider,
     });
-    expect(publicGet?.serviceTiers?.flex).toEqual(flex);
     expect(publicList[0]?.serviceTiers?.flex).toEqual(flex);
   });
 
@@ -105,12 +100,8 @@ describe('service tier pricing storage', () => {
     const admin = t.withIdentity({ tokenIdentifier });
     await admin.mutation(api.billing.modelPricing.upsert, pricing);
     expect(
-      (
-        await admin.query(api.billing.modelPricing.get, {
-          provider: pricing.provider,
-          model: pricing.model,
-        })
-      )?.serviceTiers,
+      (await admin.query(api.billing.modelPricing.list, { provider: pricing.provider }))[0]
+        ?.serviceTiers,
     ).toEqual({ flex });
     await t.finishAllScheduledFunctions(() => vi.runAllTimers());
     expect(JSON.parse(vi.mocked(fetch).mock.calls[0]?.[1]?.body as string).serviceTiers).toEqual({
@@ -119,12 +110,8 @@ describe('service tier pricing storage', () => {
 
     await admin.mutation(api.billing.modelPricing.upsert, { ...pricing, serviceTiers: {} });
     expect(
-      (
-        await admin.query(api.billing.modelPricing.get, {
-          provider: pricing.provider,
-          model: pricing.model,
-        })
-      )?.serviceTiers,
+      (await admin.query(api.billing.modelPricing.list, { provider: pricing.provider }))[0]
+        ?.serviceTiers,
     ).toEqual({});
     await t.finishAllScheduledFunctions(() => vi.runAllTimers());
     const calls = vi.mocked(fetch).mock.calls;
@@ -157,21 +144,17 @@ describe('service tier pricing storage', () => {
 });
 
 describe('public pricing return contracts', () => {
-  it('returns every schema field, including service tiers, from get and list', () => {
+  it('returns every schema field, including service tiers, from list', () => {
     const schemaFields = (
       schema.tables.modelPricing.validator as unknown as {
         json: { value: Record<string, unknown> };
       }
     ).json.value;
-    const getReturns = JSON.parse((get as unknown as { exportReturns(): string }).exportReturns());
-    const getDocument = getReturns.value.find(
-      (member: { type: string }) => member.type === 'object',
-    );
     const listDocument = JSON.parse(
       (list as unknown as { exportReturns(): string }).exportReturns(),
     ).value;
 
-    for (const document of [getDocument, listDocument]) {
+    for (const document of [listDocument]) {
       const { _id, _creationTime, ...returnedFields } = document.value;
       expect(_id.fieldType).toEqual({ type: 'id', tableName: 'modelPricing' });
       expect(_creationTime.fieldType).toEqual({ type: 'number' });

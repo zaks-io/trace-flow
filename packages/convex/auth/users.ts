@@ -1,4 +1,4 @@
-import { mutation, query, internalMutation, internalQuery } from '../_generated/server';
+import { mutation, internalMutation, internalQuery } from '../_generated/server';
 import { v } from 'convex/values';
 import { type QueryCtx, type MutationCtx } from '../_generated/server';
 import { type Doc, type Id } from '../_generated/dataModel';
@@ -7,7 +7,6 @@ import { createOrgWithDefaultBilling, ensureOrgHasSubscription } from './organiz
 import {
   getActiveOrganizationMembership,
   getCurrentEnabledUser,
-  getCurrentUser,
   isLiveOrganization,
   requireEnabledUser,
   requireOrganizationOwner,
@@ -61,36 +60,6 @@ function hasUserDataChanged(existingUser: Doc<'users'>, newUserInfo: UserInfo): 
   );
 }
 
-async function scheduleUserOrgSync(
-  ctx: MutationCtx,
-  userId: Id<'users'>,
-  tokenIdentifier: string,
-  orgId: Id<'organizations'>,
-) {
-  const sub = extractSub(tokenIdentifier);
-  if (sub) {
-    await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.syncUserOrgToKV, {
-      sub,
-      userId,
-      orgId,
-    });
-  }
-}
-
-async function scheduleUserOrgRemoval(
-  ctx: MutationCtx,
-  userId: Id<'users'>,
-  tokenIdentifier: string,
-) {
-  const sub = extractSub(tokenIdentifier);
-  if (sub) {
-    await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.deleteUserOrgFromKV, {
-      sub,
-      userId,
-    });
-  }
-}
-
 async function revokeApiKeysForUser(
   ctx: MutationCtx,
   orgId: Id<'organizations'>,
@@ -104,9 +73,6 @@ async function revokeApiKeysForUser(
   for (const key of keys) {
     if (key.orgId !== orgId) continue;
     await ctx.db.delete(key._id);
-    await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.deleteKeyFromKV, {
-      key: key.key,
-    });
   }
 }
 
@@ -199,7 +165,6 @@ async function clearStaleOrganizationAssociation(
     orgId: undefined,
     ...(invite?.orgId === user.orgId ? { inviteId: undefined } : {}),
   });
-  await scheduleUserOrgRemoval(ctx, user._id, user.tokenIdentifier);
   return (await ctx.db.get(userId))!;
 }
 
@@ -240,7 +205,6 @@ async function reconcileAcceptedInvite(
   }
 
   if (nextOrgId) {
-    await scheduleUserOrgSync(ctx, userId, userInfo.tokenIdentifier, nextOrgId);
     await ensureOrgHasSubscription(ctx, nextOrgId);
   }
 }
@@ -277,7 +241,7 @@ export const removeMember = mutation({
       removedAt: Date.now(),
     });
 
-    // Clear the removed user's orgId and revoke their KV mapping
+    // Clear the removed user's orgId before revoking their credentials.
     const removedUser = await ctx.db.get(membership.userId);
     if (removedUser) {
       // Expire the accepted invite that ties this user to the org and drop the matching inviteId.
@@ -294,9 +258,6 @@ export const removeMember = mutation({
         await ctx.db.patch(acceptedInvite._id, { status: 'expired' });
       }
       await revokeCredentialsAfterMemberRemoval(ctx, membership.orgId, removedUser._id);
-      if (removedUser.tokenIdentifier) {
-        await scheduleUserOrgRemoval(ctx, removedUser._id, removedUser.tokenIdentifier);
-      }
     }
   },
 });
@@ -342,12 +303,7 @@ export const initializeUser = mutation({
 
       const refreshed = await clearStaleOrganizationAssociation(ctx, existingUser._id);
       if (!refreshed.orgId) {
-        await createOrgWithDefaultBilling(
-          ctx,
-          refreshed._id,
-          refreshed.name,
-          extractSub(userInfo.tokenIdentifier) ?? undefined,
-        );
+        await createOrgWithDefaultBilling(ctx, refreshed._id, refreshed.name);
       } else {
         await ensureOrgHasSubscription(ctx, refreshed.orgId);
       }
@@ -373,41 +329,12 @@ export const initializeUser = mutation({
     if (acceptedInvite?.orgId) {
       await ctx.db.patch(userId, { orgId: acceptedInvite.orgId });
       await ensureOrgMembership(ctx, acceptedInvite.orgId, userId);
-      await scheduleUserOrgSync(ctx, userId, userInfo.tokenIdentifier, acceptedInvite.orgId);
       await ensureOrgHasSubscription(ctx, acceptedInvite.orgId);
     } else {
-      await createOrgWithDefaultBilling(
-        ctx,
-        userId,
-        userInfo.name,
-        extractSub(userInfo.tokenIdentifier) ?? undefined,
-      );
+      await createOrgWithDefaultBilling(ctx, userId, userInfo.name);
     }
 
     return { userId };
-  },
-});
-
-export const getCurrentUserQuery = query({
-  args: {},
-  returns: v.union(userValidator, v.null()),
-  handler: async (ctx) => {
-    return await getCurrentUser(ctx);
-  },
-});
-
-export const getUser = query({
-  args: { id: v.id('users') },
-  returns: v.union(userValidator, v.null()),
-  handler: async (ctx, args) => {
-    const currentUser = await getCurrentEnabledUser(ctx);
-    if (!currentUser) throw new Error('Authentication required');
-    // A stale users.orgId outlives removal, so only an active member may view the org's users.
-    const active = await getActiveOrganizationMembership(ctx, currentUser);
-    if (!active) return null;
-    const target = await ctx.db.get(args.id);
-    if (target?.orgId !== active.orgId) return null;
-    return target;
   },
 });
 
@@ -458,12 +385,7 @@ export const findOrCreateUser = internalMutation({
 
       const refreshed = await clearStaleOrganizationAssociation(ctx, existingUser._id);
       if (!refreshed.orgId) {
-        await createOrgWithDefaultBilling(
-          ctx,
-          refreshed._id,
-          refreshed.name,
-          extractSub(args.tokenIdentifier) ?? undefined,
-        );
+        await createOrgWithDefaultBilling(ctx, refreshed._id, refreshed.name);
       } else {
         await ensureOrgHasSubscription(ctx, refreshed.orgId);
       }
@@ -484,15 +406,9 @@ export const findOrCreateUser = internalMutation({
     if (acceptedInvite?.orgId) {
       await ctx.db.patch(userId, { orgId: acceptedInvite.orgId });
       await ensureOrgMembership(ctx, acceptedInvite.orgId, userId);
-      await scheduleUserOrgSync(ctx, userId, args.tokenIdentifier, acceptedInvite.orgId);
       await ensureOrgHasSubscription(ctx, acceptedInvite.orgId);
     } else {
-      await createOrgWithDefaultBilling(
-        ctx,
-        userId,
-        args.name,
-        extractSub(args.tokenIdentifier) ?? undefined,
-      );
+      await createOrgWithDefaultBilling(ctx, userId, args.name);
     }
 
     return userId;
@@ -524,15 +440,6 @@ export const hasActiveOrganizationMembership = internalQuery({
   handler: async (ctx, args) => {
     const user = await ctx.db.get(args.userId);
     return user ? Boolean(await getActiveOrganizationMembership(ctx, user)) : false;
-  },
-});
-
-export const isAdmin = query({
-  args: {},
-  returns: v.boolean(),
-  handler: async (ctx) => {
-    const user = await getCurrentEnabledUser(ctx);
-    return user?.isAdmin === true;
   },
 });
 

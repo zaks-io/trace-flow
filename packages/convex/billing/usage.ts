@@ -1,35 +1,8 @@
-import { query, internalMutation, internalQuery } from '../_generated/server';
+import { internalMutation } from '../_generated/server';
 import { v } from 'convex/values';
-import { requireAuthenticated } from '../auth/auth';
-import { getCurrentEnabledUser, getActiveOrganizationMembership } from '../auth/userHelpers';
 import { internal } from '../_generated/api';
 import { TIER_CONFIG } from '@trace-flow/types';
-import { getCurrentBillingPeriod, getSubscriptionByOrgId, mutationReadCtx } from './currentPeriod';
-
-const usageDocValidator = v.union(
-  v.object({
-    _id: v.id('usage'),
-    _creationTime: v.number(),
-    orgId: v.id('organizations'),
-    periodStart: v.number(),
-    periodEnd: v.number(),
-    subscriptionUnitsUsed: v.number(),
-    addonUnitsUsed: v.number(),
-  }),
-  v.null(),
-);
-
-export const getCurrentUsage = query({
-  args: {},
-  returns: usageDocValidator,
-  handler: async (ctx) => {
-    await requireAuthenticated(ctx);
-    const user = await getCurrentEnabledUser(ctx);
-    const active = await getActiveOrganizationMembership(ctx, user);
-    if (!active) return null;
-    return (await getCurrentBillingPeriod(ctx, active.orgId))?.usage ?? null;
-  },
-});
+import { getSubscriptionByOrgId, mutationReadCtx } from './currentPeriod';
 
 export const recordUsage = internalMutation({
   args: {
@@ -72,14 +45,6 @@ export const recordUsage = internalMutation({
         addonUnitsUsed: args.addonUnitsUsed,
       });
     }
-  },
-});
-
-export const getForOrgInternal = internalQuery({
-  args: { orgId: v.id('organizations') },
-  returns: usageDocValidator,
-  handler: async (ctx, args) => {
-    return (await getCurrentBillingPeriod(ctx, args.orgId))?.usage ?? null;
   },
 });
 

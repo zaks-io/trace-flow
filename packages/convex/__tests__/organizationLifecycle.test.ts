@@ -43,9 +43,6 @@ describe('deleted organization authorization', () => {
       }),
     ).resolves.toBeDefined();
     await expect(
-      t.query(internal.collectorLogin.resolveLoginOrg, { userId }),
-    ).resolves.toMatchObject({ orgId });
-    await expect(
       t.query(internal.bodyAccess.authorizeSubject, {
         userId,
         orgId,
@@ -67,7 +64,6 @@ describe('deleted organization authorization', () => {
         collectorId: 'collector',
       }),
     ).rejects.toThrow('Active organization membership required');
-    await expect(t.query(internal.collectorLogin.resolveLoginOrg, { userId })).resolves.toBeNull();
     await expect(
       t.query(internal.bodyAccess.authorizeSubject, {
         userId,
@@ -160,7 +156,6 @@ describe('deleted organization authorization', () => {
     await expect(member.query(api.apiKeys.list, {})).resolves.toMatchObject([
       { key: 'member-secret' },
     ]);
-    await expect(member.query(api.apiKeys.getByKey, { key: 'owner-secret' })).resolves.toBeNull();
     await expect(member.query(api.apiKeys.listAnalytics, {})).resolves.toHaveLength(2);
     await expect(
       t.query(internal.bodyAccess.authorizeSubject, {
@@ -199,7 +194,6 @@ describe('deleted organization authorization', () => {
       { key: 'owner-secret' },
     ]);
     await expect(member.query(api.apiKeys.list, {})).resolves.toEqual([]);
-    await expect(member.query(api.apiKeys.getByKey, { key: 'owner-secret' })).resolves.toBeNull();
     await expect(
       t.query(internal.bodyAccess.authorizeSubject, {
         userId: memberId,
@@ -215,10 +209,12 @@ describe('deleted organization authorization', () => {
       }),
     ).resolves.toBeNull();
     await expect(
-      t.query(internal.integrations.cloudflare.getApiKeySyncData, { key: 'owner-secret' }),
+      t.query(internal.integrations.cloudflare.getApiKeyAuthorizationData, { key: 'owner-secret' }),
     ).resolves.toMatchObject({ key: 'owner-secret' });
     await expect(
-      t.query(internal.integrations.cloudflare.getApiKeySyncData, { key: 'member-secret' }),
+      t.query(internal.integrations.cloudflare.getApiKeyAuthorizationData, {
+        key: 'member-secret',
+      }),
     ).resolves.toBeNull();
     const keys = await t.run((ctx) =>
       ctx.db
@@ -475,11 +471,6 @@ describe('deleted organization authorization', () => {
       return { userId, orgId };
     });
 
-    await t.action(internal.integrations.cloudflare.syncKeyToKV, {
-      key: 'stale-api-key',
-      expiresAt: now + 60_000,
-      orgId,
-    });
     await t.action(internal.integrations.cloudflare.syncCollectorCredToKV, {
       hashedSecret: 'stale-collector-hash',
       orgId,
@@ -498,13 +489,7 @@ describe('deleted organization authorization', () => {
       currentPeriodStart: now,
       currentPeriodEnd: now + 60_000,
     });
-    await t.action(internal.integrations.cloudflare.syncUserOrgToKV, {
-      sub: 'auth0|kv-retry',
-      userId,
-      orgId,
-    });
-
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls.every((call) => call[1]?.method === 'DELETE')).toBe(true);
   });
 });

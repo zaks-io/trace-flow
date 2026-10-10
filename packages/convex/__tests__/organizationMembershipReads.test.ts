@@ -18,18 +18,18 @@ describe('organization-scoped direct reads', () => {
 
   it('shows org members to an active member only', async () => {
     const world = await seedOrganizationMembership();
-    const read = () => world.member.query(api.auth.users.getUser, { id: world.ownerId });
-    await expect(read()).resolves.toMatchObject({ _id: world.ownerId });
+    const read = () => world.member.query(api.auth.organizations.getMembers, {});
+    await expect(read()).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ userId: world.ownerId })]),
+    );
 
     await world.t.run((ctx) => ctx.db.patch(world.memberMembershipId, { status: 'removed' }));
-    await expect(read()).resolves.toBeNull();
+    await expect(read()).resolves.toEqual([]);
   });
 
   it('shows no org members while the org is being deleted', async () => {
     const world = await seedOrganizationMembership();
     await world.t.run((ctx) => ctx.db.patch(world.orgId, { deletionStartedAt: 1 }));
-    await expect(
-      world.member.query(api.auth.users.getUser, { id: world.ownerId }),
-    ).resolves.toBeNull();
+    await expect(world.member.query(api.auth.organizations.getMembers, {})).resolves.toEqual([]);
   });
 });

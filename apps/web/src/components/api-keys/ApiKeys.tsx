@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { type Preloaded, usePreloadedQuery, useMutation, useAction, useQuery } from 'convex/react';
+import { type Preloaded, usePreloadedQuery, useMutation, useQuery } from 'convex/react';
 import { api } from '@trace-flow/convex/_generated/api';
 import {
   apiKeyPermissions,
@@ -48,7 +48,6 @@ export default function ApiKeys({
   const createApiKey = useMutation(api.apiKeys.create);
   const updateApiKey = useMutation(api.apiKeys.update);
   const deleteApiKey = useMutation(api.apiKeys.remove);
-  const syncToKV = useAction(api.apiKeys.syncToKV);
 
   const [isCreating, setIsCreating] = useState(false);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -65,7 +64,6 @@ export default function ApiKeys({
   const [pendingDelete, setPendingDelete] = useState<{ id: Id<'apiKeys'>; key: string } | null>(
     null,
   );
-  const [syncingId, setSyncingId] = useState<Id<'apiKeys'> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{
     message: string;
@@ -115,23 +113,6 @@ export default function ApiKeys({
           setSuccess({ message: 'API key deleted successfully' });
         } finally {
           setDeletingId(null);
-        }
-      },
-    );
-  };
-
-  const handleSyncKey = (id: Id<'apiKeys'>) => {
-    setSyncingId(id);
-    void withGuard(
-      () => {},
-      async () => {
-        try {
-          const result = await syncToKV({ id });
-          setSuccess({
-            message: result.existed ? 'API key already exists in KV' : 'API key synced to KV',
-          });
-        } finally {
-          setSyncingId(null);
         }
       },
     );
@@ -462,15 +443,6 @@ export default function ApiKeys({
                         >
                           Edit
                         </button>
-                        {hasApiKeyPermission(apiKey, 'ingest') && (
-                          <button
-                            onClick={() => handleSyncKey(apiKey._id)}
-                            disabled={syncingId === apiKey._id}
-                            className="mr-3 font-medium text-primary transition-colors hover:text-primary/80 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {syncingId === apiKey._id ? 'Syncing...' : 'Sync'}
-                          </button>
-                        )}
                         <button
                           onClick={() => setPendingDelete({ id: apiKey._id, key: apiKey.key })}
                           disabled={deletingId === apiKey._id}

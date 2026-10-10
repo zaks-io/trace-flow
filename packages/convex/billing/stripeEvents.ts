@@ -1,4 +1,4 @@
-import { internalMutation, internalQuery, type QueryCtx } from '../_generated/server';
+import { internalMutation, type QueryCtx } from '../_generated/server';
 import { v } from 'convex/values';
 import type { Doc } from '../_generated/dataModel';
 
@@ -15,27 +15,6 @@ function getStripeEventByEventId(
     .withIndex('by_event_id', (q) => q.eq('eventId', eventId))
     .first();
 }
-
-export const getByEventId = internalQuery({
-  args: { eventId: v.string() },
-  returns: v.union(
-    v.object({
-      _id: v.id('stripeEvents'),
-      _creationTime: v.number(),
-      eventId: v.string(),
-      eventType: v.string(),
-      stripeObjectId: v.optional(v.string()),
-      status: v.union(v.literal('processing'), v.literal('processed'), v.literal('failed')),
-      processingStartedAt: v.optional(v.number()),
-      processedAt: v.optional(v.number()),
-      error: v.optional(v.string()),
-    }),
-    v.null(),
-  ),
-  handler: async (ctx, args) => {
-    return getStripeEventByEventId(ctx, args.eventId);
-  },
-});
 
 export const startProcessing = internalMutation({
   args: {

@@ -90,18 +90,6 @@ export const getByIdInternal = internalQuery({
   },
 });
 
-export const getActiveMemberCountInternal = internalQuery({
-  args: { orgId: v.id('organizations') },
-  returns: v.number(),
-  handler: async (ctx, args) => {
-    const members = await ctx.db
-      .query('organizationMembers')
-      .withIndex('by_org_id_status', (q) => q.eq('orgId', args.orgId).eq('status', 'active'))
-      .collect();
-    return members.length;
-  },
-});
-
 export const setStripeCustomerId = internalMutation({
   args: {
     orgId: v.id('organizations'),
@@ -165,7 +153,6 @@ export async function createOrgWithDefaultBilling(
   ctx: MutationCtx,
   userId: Id<'users'>,
   name?: string,
-  sub?: string,
 ): Promise<Id<'organizations'>> {
   const orgName = name ? `${name}'s Org` : 'My Organization';
   const orgId = await ctx.db.insert('organizations', {
@@ -182,14 +169,6 @@ export async function createOrgWithDefaultBilling(
   });
 
   await insertHobbySubscription(ctx, orgId);
-
-  if (sub) {
-    await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.syncUserOrgToKV, {
-      sub,
-      userId,
-      orgId,
-    });
-  }
 
   return orgId;
 }
