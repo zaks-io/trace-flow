@@ -63,3 +63,6 @@ copy_from_main "apps/agent-consumer/.dev.vars"
 copy_from_main "packages/sdk-tests/.env"
 
 echo "✓ Worktree setup complete!"
+echo "Everyday development: bun run dev:web"
+echo "Approved self-contained runs: scripts/dev/local-stack.sh up"
+echo "Prerequisites: scripts/dev/local-stack.sh doctor"

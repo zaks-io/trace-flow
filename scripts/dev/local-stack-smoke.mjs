@@ -1,53 +1,47 @@
-import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, existsSync, openSync, readFileSync } from 'node:fs';
-import path from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { localStackAccount } from './local-stack-convex.mjs';
 
-const root = process.env.TRACE_FLOW_ROOT ?? process.cwd();
-const devDir = process.env.TRACE_FLOW_DEV_DIR ?? path.join(root, 'scripts/dev');
-const stateDir = process.env.TRACE_FLOW_STATE_DIR ?? path.join(root, '.trace-flow');
-const devEnvPath = process.env.TRACE_FLOW_DEV_ENV ?? path.join(stateDir, 'dev.env');
-
-loadDevEnv(devEnvPath);
-
-const tinybirdInfo = discoverTinybirdLocal();
-const tinybirdHost = stripTrailingSlash(
-  tinybirdInfo?.api ?? process.env.TRACE_FLOW_TINYBIRD_HOST ?? 'http://127.0.0.1:7181',
-);
-const tinybirdToken = tinybirdInfo?.token ?? process.env.TB_LOCAL_WORKSPACE_TOKEN;
-const workerUrl = stripTrailingSlash(process.env.TRACE_FLOW_WORKER_URL ?? 'http://127.0.0.1:8787');
-const timeoutMs = Number(process.env.TRACE_FLOW_SMOKE_TIMEOUT_MS ?? 60_000);
-const tinybirdOnly =
-  process.env.TRACE_FLOW_SMOKE_TINYBIRD_ONLY === '1' || process.argv.includes('--tinybird-only');
-const startWorkers =
-  !tinybirdOnly &&
-  process.env.TRACE_FLOW_SMOKE_START_WORKERS !== '0' &&
-  !process.argv.includes('--no-start-workers');
-
-if (!tinybirdToken) {
-  fail(`missing TB_LOCAL_WORKSPACE_TOKEN in ${devEnvPath}; run scripts/dev/start.sh first`);
+const tinybirdHost = requireLocalUrl('TRACE_FLOW_TINYBIRD_HOST');
+const tinybirdToken = requireEnv('TINYBIRD_WORKSPACE_TOKEN');
+const workerUrl = requireLocalUrl('STACK_PROXY_URL');
+const timeoutMs = Number(process.env.TRACE_FLOW_SMOKE_TIMEOUT_MS ?? 120_000);
+const tinybirdOnly = process.argv.includes('--tinybird-only');
+for (const arg of process.argv.slice(2)) {
+  if (arg !== '--tinybird-only') throw new Error(`unknown smoke argument: ${arg}`);
 }
 
 const nowMs = Date.now();
 const nowNs = BigInt(nowMs) * 1_000_000n;
 const traceId = process.env.TRACE_FLOW_SMOKE_TRACE_ID ?? randomBytes(16).toString('hex');
 const spanId = process.env.TRACE_FLOW_SMOKE_SPAN_ID ?? randomBytes(8).toString('hex');
-const apiKey =
-  process.env.TRACE_FLOW_SMOKE_API_KEY ?? `tf-smoke-${nowMs}-${randomBytes(4).toString('hex')}`;
-const orgId = process.env.TRACE_FLOW_SMOKE_ORG_ID ?? 'org_smoke_local';
-
-let workers;
+let apiKey;
+let analyticsKey;
 
 try {
   log('checking Tinybird Local');
   await tinybirdSql('SELECT 1 AS ok');
 
   if (tinybirdOnly) {
+    apiKey = randomBytes(32).toString('hex');
+  } else {
+    const { apiKeys } = localStackAccount(requireEnv('STACK_EMAIL'));
+    const key = apiKeys.find(
+      (record) =>
+        typeof record.key === 'string' &&
+        record.key &&
+        record.expiresAt > nowMs &&
+        (record.permissions ?? ['ingest']).includes('ingest'),
+    );
+    if (!key)
+      throw new Error('org has no unexpired ingest API key; create one in the web app first');
+    apiKey = key.key;
+  }
+  analyticsKey = `sha256:${createHash('sha256').update(apiKey).digest('hex')}`;
+
+  if (tinybirdOnly) {
     log('inserting smoke trace directly into Tinybird');
     await insertTinybirdTrace();
   } else {
-    await seedLocalApiKey();
-    workers = await ensureWorkers();
     await postOtlpTrace();
   }
 
@@ -58,23 +52,23 @@ try {
   await assertTraceSummary();
 
   log(`smoke test passed (${tinybirdOnly ? 'tinybird-only' : 'runtime'})`);
-} finally {
-  if (workers?.started) {
-    log('stopping smoke worker process');
-    stopProcessGroup(workers.process);
-  }
+} catch (error) {
+  console.error(`[trace-flow-smoke] ${error.message}`);
+  process.exitCode = 1;
 }
 
-function loadDevEnv(file) {
-  if (!existsSync(file)) return;
-  const content = readFileSync(file, 'utf8');
-  for (const line of content.split(/\r?\n/)) {
-    if (!line || line.trimStart().startsWith('#')) continue;
-    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
-    if (!match) continue;
-    const [, key, value] = match;
-    process.env[key] ??= value;
+function requireEnv(name) {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required; run scripts/dev/local-stack.sh smoke`);
+  return value;
+}
+
+function requireLocalUrl(name) {
+  const url = new URL(requireEnv(name));
+  if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1') {
+    throw new Error(`${name} must use local loopback HTTP`);
   }
+  return stripTrailingSlash(url.href);
 }
 
 function stripTrailingSlash(value) {
@@ -83,44 +77,6 @@ function stripTrailingSlash(value) {
 
 function log(message) {
   console.log(`[trace-flow-smoke] ${message}`);
-}
-
-function fail(message) {
-  console.error(`[trace-flow-smoke] error: ${message}`);
-  process.exit(1);
-}
-
-function run(command, args, opts = {}) {
-  const result = spawnSync(command, args, {
-    cwd: root,
-    env: process.env,
-    encoding: 'utf8',
-    stdio: opts.quiet ? 'pipe' : 'inherit',
-  });
-
-  if (result.status !== 0) {
-    const stderr = result.stderr?.trim();
-    const suffix = stderr ? `\n${stderr}` : '';
-    throw new Error(`${command} ${args.join(' ')} failed${suffix}`);
-  }
-
-  return result.stdout ?? '';
-}
-
-function discoverTinybirdLocal() {
-  try {
-    const output = run('tb', ['--output=json', 'info'], { quiet: true });
-    const parsed = JSON.parse(output);
-    if (parsed?.local?.token) {
-      return {
-        api: parsed.local.api,
-        token: parsed.local.token,
-      };
-    }
-  } catch {
-    // Fall back to .trace-flow/dev.env. The explicit Tinybird probe below will fail clearly if stale.
-  }
-  return null;
 }
 
 async function fetchJson(url, init = {}) {
@@ -134,7 +90,7 @@ async function fetchJson(url, init = {}) {
   }
 
   if (!response.ok) {
-    throw new Error(`${url} returned ${response.status}: ${JSON.stringify(body).slice(0, 500)}`);
+    throw new Error(`local smoke endpoint returned HTTP ${response.status}`);
   }
 
   return { response, body };
@@ -164,93 +120,6 @@ async function tinybirdEvents(datasource, rows) {
   });
 }
 
-async function seedLocalApiKey() {
-  log('seeding local Worker KV');
-  const expiresAt = nowMs + 24 * 60 * 60 * 1000;
-  const periodEnd = nowMs + 30 * 24 * 60 * 60 * 1000;
-  const apiKeyRecord = JSON.stringify({ expiresAt, createdAt: nowMs, orgId });
-  const subscriptionRecord = JSON.stringify({
-    tier: 'pro',
-    status: 'active',
-    monthlyUnits: 100_000,
-    addonUnits: 0,
-    currentPeriodStart: nowMs,
-    currentPeriodEnd: periodEnd,
-  });
-
-  const baseArgs = [
-    'wrangler',
-    'kv',
-    'key',
-    'put',
-    '--config',
-    'apps/proxy/wrangler.toml',
-    '--binding',
-    'API_KEYS',
-    '--local',
-    '--persist-to',
-    '.wrangler/state',
-  ];
-
-  run('bunx', [...baseArgs, apiKey, apiKeyRecord], { quiet: true });
-  run('bunx', [...baseArgs, `sub:${orgId}`, subscriptionRecord], { quiet: true });
-}
-
-async function ensureWorkers() {
-  if (await endpointReady(`${workerUrl}/openapi.json`)) {
-    log(`using existing Worker dev server at ${workerUrl}`);
-    return { started: false };
-  }
-
-  if (!startWorkers) {
-    throw new Error(
-      `Worker dev server is not reachable at ${workerUrl}; start scripts/dev/workers.sh or remove --no-start-workers`,
-    );
-  }
-
-  log('starting Worker dev server');
-  const logPath = path.join(stateDir, 'smoke-workers.log');
-  const logFd = openSync(logPath, 'a');
-  const child = spawn('bash', [path.join(devDir, 'workers.sh')], {
-    cwd: root,
-    env: process.env,
-    detached: process.platform !== 'win32',
-    stdio: ['ignore', logFd, logFd],
-  });
-  closeSync(logFd);
-
-  child.on('exit', (code, signal) => {
-    if (code !== null && code !== 0) {
-      console.error(`[trace-flow-smoke] worker process exited with ${code}`);
-    } else if (signal) {
-      console.error(`[trace-flow-smoke] worker process exited with ${signal}`);
-    }
-  });
-
-  try {
-    await waitUntil(
-      () => endpointReady(`${workerUrl}/openapi.json`),
-      timeoutMs,
-      1000,
-      `Worker dev server did not become ready. See ${logPath}`,
-    );
-  } catch (error) {
-    stopProcessGroup(child);
-    throw error;
-  }
-
-  return { started: true, process: child };
-}
-
-async function endpointReady(url) {
-  try {
-    const response = await fetch(url);
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
 function otlpPayload() {
   const endNs = nowNs + 50_000_000n;
   return {
@@ -264,7 +133,7 @@ function otlpPayload() {
         },
         scopeSpans: [
           {
-            scope: { name: 'scripts/dev/smoke' },
+            scope: { name: 'scripts/dev/local-stack-smoke' },
             spans: [
               {
                 traceId,
@@ -293,7 +162,7 @@ function otlpPayload() {
 
 async function postOtlpTrace() {
   log('posting OTLP smoke trace through Worker');
-  const { response, body } = await fetchJson(`${workerUrl}/v1/traces`, {
+  const { response } = await fetchJson(`${workerUrl}/v1/traces`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -304,9 +173,7 @@ async function postOtlpTrace() {
 
   const recording = response.headers.get('X-Trace-Flow-Recording');
   if (recording !== 'true') {
-    throw new Error(
-      `Worker accepted the request but did not record it: ${JSON.stringify(body).slice(0, 500)}`,
-    );
+    throw new Error('Worker accepted the request but did not record it');
   }
 }
 
@@ -334,7 +201,7 @@ async function insertTinybirdTrace() {
       Duration: 50_000_000,
       StatusCode: 'STATUS_CODE_OK',
       StatusMessage: '',
-      ApiKey: apiKey,
+      ApiKey: analyticsKey,
       'Events.Timestamp': [],
       'Events.Name': [],
       'Events.Attributes': [],
@@ -355,7 +222,7 @@ async function waitForTrace() {
         'SELECT count() AS count',
         'FROM otel_trace_spans',
         `WHERE TraceId = '${traceId}'`,
-        `AND ApiKey = '${apiKey}'`,
+        `AND ApiKey = '${analyticsKey}'`,
       ].join(' ');
       const body = await tinybirdSql(sql);
       const count = Number(body?.data?.[0]?.count ?? 0);
@@ -369,7 +236,7 @@ async function waitForTrace() {
 
 async function assertTraceSummary() {
   const url = new URL('/v0/pipes/mcp_trace_summaries.json', tinybirdHost);
-  url.searchParams.set('api_keys', apiKey);
+  url.searchParams.set('api_keys', analyticsKey);
   url.searchParams.set('retention_days', '7');
   url.searchParams.set('trace_id', traceId);
   const { body } = await fetchJson(url, {
@@ -403,21 +270,4 @@ async function waitUntil(predicate, maxMs, intervalMs, errorMessage) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function stopProcessGroup(child) {
-  if (!child?.pid) return;
-  try {
-    if (process.platform === 'win32') {
-      child.kill('SIGTERM');
-    } else {
-      process.kill(-child.pid, 'SIGTERM');
-    }
-  } catch {
-    try {
-      child.kill('SIGTERM');
-    } catch {
-      // Process already exited.
-    }
-  }
 }

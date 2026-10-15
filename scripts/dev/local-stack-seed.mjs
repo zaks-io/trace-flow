@@ -4,13 +4,12 @@
 // Spans are scoped by API-key analytics id and agent facts by OrgId, so the
 // fixtures' placeholder owners must be replaced before the dashboard shows them.
 // Run through `scripts/dev/local-stack.sh seed [email]`; seeding twice adds rows again.
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { localStackAccount } from './local-stack-convex.mjs';
 
 const root = requireEnv('TRACE_FLOW_ROOT');
-const convexCliDir = requireEnv('STACK_CONVEX_CLI_DIR');
 const tinybirdHost = requireEnv('TRACE_FLOW_TINYBIRD_HOST');
 const tinybirdToken = requireEnv('TINYBIRD_WORKSPACE_TOKEN');
 const email = (process.argv[2] ?? requireEnv('STACK_EMAIL')).toLowerCase();
@@ -20,17 +19,7 @@ const SPAN_TIME_FIELDS = ['ReceivedAt', 'Timestamp'];
 const FACT_TIME_FIELDS = ['EventAt', 'IngestedAt', 'VendorStartedAt', 'DecidedAt'];
 const NEWEST_ROW_AGE_MS = 60 * 60 * 1000;
 
-const user = convexJsonl(['data', 'users', '--format', 'jsonl', '--limit', '10000']).find(
-  (row) => row.email === email,
-);
-if (!user?.orgId) {
-  fail(
-    `no user with an org for ${email}; sign in first with: scripts/dev/local-stack.sh login-url ${email}`,
-  );
-}
-const apiKeys = convexJson(['run', 'apiKeys:listByOrgId', JSON.stringify({ orgId: user.orgId })]);
-if (apiKeys.length === 0)
-  fail(`org ${user.orgId} has no API keys; finish onboarding in the web app first`);
+const { user, apiKeys } = localStackAccount(email);
 const analyticsKey = `sha256:${createHash('sha256').update(apiKeys[0].key).digest('hex')}`;
 
 const fixturesDir = join(root, 'fixtures');
@@ -195,21 +184,6 @@ function parseClickHouseTime(value) {
 
 function formatClickHouseTime(ms) {
   return new Date(ms).toISOString().replace('T', ' ').replace('Z', '');
-}
-
-function convexJsonl(args) {
-  return convex(args)
-    .split('\n')
-    .filter((line) => line.trim().startsWith('{'))
-    .map((line) => JSON.parse(line));
-}
-
-function convexJson(args) {
-  return JSON.parse(convex(args));
-}
-
-function convex(args) {
-  return execFileSync('bunx', ['convex', ...args], { cwd: convexCliDir, encoding: 'utf8' });
 }
 
 function requireEnv(name) {

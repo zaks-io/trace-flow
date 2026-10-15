@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck source=scripts/dev/_common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 source_dev_env
 
