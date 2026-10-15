@@ -86,5 +86,11 @@
       "dependsOn": ["^transit"]
     }
   },
-  "globalDependencies": ["tsconfig.json", "eslint.config.js"]
+  "globalDependencies": [
+    "tsconfig.json",
+    "eslint.config.js",
+    "package.json",
+    "patches/**",
+    ".github/actions/setup/**"
+  ]
 }

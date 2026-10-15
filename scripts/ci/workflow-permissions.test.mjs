@@ -729,6 +729,7 @@ describe('affected package CI', () => {
       expect(ci.jobs.changes.outputs).not.toHaveProperty(name);
     }
     const job = ci.jobs.affected;
+    expect(ci.jobs.changes.outputs.root).toBe('${{ steps.filter.outputs.root }}');
     expect(job.needs).toEqual(['changes']);
     expect(job.if).toBeUndefined();
     expect(job.permissions).toEqual({ contents: 'read' });
@@ -768,6 +769,8 @@ describe('affected package CI', () => {
   test.each([
     ['true', ''],
     ['false', '--affected'],
+    ['', ''],
+    ['unexpected', ''],
   ])('root=%s selects the same flags for graph and package execution', (root, flags) => {
     const selection = ci.jobs.affected.steps.find((step) => step.id === 'selection');
     expect(selection.env.ROOT_CHANGED).toBe('${{ needs.changes.outputs.root }}');
@@ -801,7 +804,7 @@ describe('affected package CI', () => {
       expect(result.status).toBe(0);
       const args = result.stdout.trim().split('\n');
       expect(args.slice(0, 6)).toEqual(['turbo', 'run', 'lint', 'type-check', 'test', 'build']);
-      expect(args.includes('--affected')).toBe(root !== 'true');
+      expect(args.includes('--affected')).toBe(root === 'false');
       expect(args).toContain('--concurrency=2');
     }
   });
@@ -823,22 +826,27 @@ describe('affected package CI', () => {
     expect(JSON.stringify(setup)).not.toContain('secrets.');
   });
 
-  test('CI Status fails for affected failures and cancellations, and accepts specialized skips', () => {
+  test.each([
+    ['success', 'success', 0],
+    ['success', 'failure', 1],
+    ['success', 'cancelled', 1],
+    ['failure', 'skipped', 1],
+    ['cancelled', 'skipped', 1],
+  ])('CI Status handles changes=%s and affected=%s', (changes, affected, exitCode) => {
     expect(ci.jobs.status.name).toBe('CI Status');
     expect(ci.jobs.status.if).toBe('always()');
+    expect(ci.jobs.status.needs).toContain('changes');
     expect(ci.jobs.status.needs).toContain('affected');
-    for (const result of ['success', 'failure', 'cancelled']) {
-      const results = ci.jobs.status.needs.map((name) =>
-        name === 'affected' ? result : 'skipped',
-      );
-      const script = ci.jobs.status.steps[0].run.replace(
-        /\$\{\{ contains\(needs\.\*\.result, '(failure|cancelled)'\) \}\}/g,
-        (_, state) => String(results.includes(state)),
-      );
-      expect(spawnSync('bash', ['-euo', 'pipefail', '-c', script]).status).toBe(
-        result === 'success' ? 0 : 1,
-      );
-    }
+    const results = ci.jobs.status.needs.map((name) => {
+      if (name === 'changes') return changes;
+      if (name === 'affected') return affected;
+      return 'skipped';
+    });
+    const script = ci.jobs.status.steps[0].run.replace(
+      /\$\{\{ contains\(needs\.\*\.result, '(failure|cancelled)'\) \}\}/g,
+      (_, state) => String(results.includes(state)),
+    );
+    expect(spawnSync('bash', ['-euo', 'pipefail', '-c', script]).status).toBe(exitCode);
   });
 
   test('shared setup uses the same immutable toolchain pins as bootstrap checkout', () => {

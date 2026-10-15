@@ -168,10 +168,10 @@ jobs:
         env:
           ROOT_CHANGED: ${{ needs.changes.outputs.root }}
         run: |
-          if [[ "$ROOT_CHANGED" == 'true' ]]; then
-            echo 'flags=' >> "$GITHUB_OUTPUT"
-          else
+          if [[ "$ROOT_CHANGED" == 'false' ]]; then
             echo 'flags=--affected' >> "$GITHUB_OUTPUT"
+          else
+            echo 'flags=' >> "$GITHUB_OUTPUT"
           fi
       - name: Select affected packages
         id: graph

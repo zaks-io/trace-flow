@@ -81,11 +81,16 @@ workflow logic lives in the centrally managed org skills pinned by
   `turbo run lint type-check test build --affected --concurrency=2`, plus knip
   and formatting. The affected comparison uses full Git history, the PR base
   SHA for pull requests, and the previous main SHA for pushes. Shared TypeScript
-  and ESLint configuration are global dependencies in the Turbo graph. Changes
-  matching the CI `root` filter, including the root package manifest, shared setup
+  and ESLint configuration, the root package manifest, dependency patches and
+  shared setup action are global dependencies in the Turbo graph, so their
+  contents invalidate cached tasks in PR CI, deploy CI and local runs. Turbo
+  2.10.12 documents `globalDependencies` as globs relative to `turbo.json` in
+  its [configuration reference](https://github.com/vercel/turborepo/blob/v2.10.12/apps/docs/content/docs/reference/configuration.mdx#globaldependencies).
+  Changes matching the CI `root` filter, including the root package manifest, shared setup
   action and dependency patches, run all package tasks without `--affected`.
-  The graph selection and package run share the same flags, so full runs also
-  validate all MCP environments. Local
+  Only an explicit `root=false` selects `--affected`; missing or unexpected
+  outputs select the full task set. The graph selection and package run share
+  the same flags, so full runs also validate all MCP environments. Local
   `bun run ci:check` runs the same package tasks for every workspace. Specialized
   path-filtered hosted gates remain separate: workflow/actionlint helpers,
   duplicate code, Rust, desktop, and Tinybird schema/cloud deploy check. Local
