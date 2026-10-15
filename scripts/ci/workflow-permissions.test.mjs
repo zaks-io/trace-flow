@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { Glob, YAML } from 'bun';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 function workflow(name) {
@@ -727,10 +729,11 @@ describe('affected package CI', () => {
       expect(ci.jobs.changes.outputs).not.toHaveProperty(name);
     }
     const job = ci.jobs.affected;
+    expect(job.needs).toEqual(['changes']);
     expect(job.if).toBeUndefined();
     expect(job.permissions).toEqual({ contents: 'read' });
     expect(job.steps.find((step) => step.name === 'Check affected packages').run).toBe(
-      'bun turbo run lint type-check test build --affected --concurrency=2 --summarize',
+      'bun turbo run lint type-check test build ${{ steps.selection.outputs.flags }} --concurrency=2 --summarize',
     );
     expect(job.steps.some((step) => step.run === 'bun run knip')).toBe(true);
     expect(job.env.TURBO_SCM_BASE).toBe(
@@ -743,6 +746,63 @@ describe('affected package CI', () => {
         step.uses?.startsWith('actions/checkout@') || step.uses === './.github/actions/setup',
     )) {
       expect(step.with['fetch-depth']).toBe(0);
+    }
+  });
+
+  test('root changes include toolchain setup and dependency patches', () => {
+    const filters = YAML.parse(
+      ci.jobs.changes.steps.find((step) => step.id === 'filter').with.filters,
+    );
+    for (const path of [
+      'package.json',
+      '.github/actions/setup/action.yml',
+      '.github/actions/setup/nested/helper.sh',
+      'patches/@sentry%2Fcloudflare@10.0.0.patch',
+    ]) {
+      expect(matchesFilter(filters, 'root', path)).toBe(true);
+    }
+    expect(matchesFilter(filters, 'root', 'docs/agents/repo-navigation.md')).toBe(false);
+    expect(matchesFilter(filters, 'root', '.github/workflows/ci.yml')).toBe(false);
+  });
+
+  test.each([
+    ['true', ''],
+    ['false', '--affected'],
+  ])('root=%s selects the same flags for graph and package execution', (root, flags) => {
+    const selection = ci.jobs.affected.steps.find((step) => step.id === 'selection');
+    expect(selection.env.ROOT_CHANGED).toBe('${{ needs.changes.outputs.root }}');
+    const directory = mkdtempSync(join(tmpdir(), 'workflow-selection-'));
+    const output = join(directory, 'output');
+    try {
+      const selected = spawnSync('bash', ['-euo', 'pipefail', '-c', selection.run], {
+        env: { ...process.env, ROOT_CHANGED: root, GITHUB_OUTPUT: output },
+        encoding: 'utf8',
+      });
+      expect(selected.status).toBe(0);
+      expect(readFileSync(output, 'utf8').trim()).toBe(`flags=${flags}`);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+    const graph = ci.jobs.affected.steps.find((step) => step.id === 'graph');
+    const check = ci.jobs.affected.steps.find((step) => step.name === 'Check affected packages');
+    const graphCommand = graph.run.split('\n')[0].split(' > ')[0];
+    for (const command of [graphCommand, check.run]) {
+      expect(command).toContain('${{ steps.selection.outputs.flags }}');
+      const result = spawnSync(
+        'bash',
+        [
+          '-euo',
+          'pipefail',
+          '-c',
+          `bun() { printf '%s\\n' "$@"; }; ${command.replace('${{ steps.selection.outputs.flags }}', flags)}`,
+        ],
+        { encoding: 'utf8' },
+      );
+      expect(result.status).toBe(0);
+      const args = result.stdout.trim().split('\n');
+      expect(args.slice(0, 6)).toEqual(['turbo', 'run', 'lint', 'type-check', 'test', 'build']);
+      expect(args.includes('--affected')).toBe(root !== 'true');
+      expect(args).toContain('--concurrency=2');
     }
   });
 

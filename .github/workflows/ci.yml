@@ -83,6 +83,8 @@ jobs:
               - 'apps/desktop/**'
             root:
               - 'package.json'
+              - '.github/actions/setup/**'
+              - 'patches/**'
               - 'bun.lock'
               - 'turbo.json'
               - 'eslint.config.js'
@@ -128,6 +130,7 @@ jobs:
   affected:
     name: Affected Package Checks
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [changes]
     permissions:
       contents: read
     env:
@@ -160,17 +163,27 @@ jobs:
         run: bun prettier --check "**/*.{ts,tsx,js,jsx,json,css,md}"
       - name: Check unused code
         run: bun run knip
+      - name: Select package check scope
+        id: selection
+        env:
+          ROOT_CHANGED: ${{ needs.changes.outputs.root }}
+        run: |
+          if [[ "$ROOT_CHANGED" == 'true' ]]; then
+            echo 'flags=' >> "$GITHUB_OUTPUT"
+          else
+            echo 'flags=--affected' >> "$GITHUB_OUTPUT"
+          fi
       - name: Select affected packages
         id: graph
         run: |
-          bun turbo run lint type-check test build --affected --concurrency=2 --dry=json > "$RUNNER_TEMP/turbo-affected.json"
+          bun turbo run lint type-check test build ${{ steps.selection.outputs.flags }} --concurrency=2 --dry=json > "$RUNNER_TEMP/turbo-affected.json"
           node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
           import { readFileSync } from 'node:fs';
           const graph = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/turbo-affected.json`, 'utf8'));
           console.log(`mcp=${graph.packages.includes('@trace-flow/mcp')}`);
           NODE
       - name: Check affected packages
-        run: bun turbo run lint type-check test build --affected --concurrency=2 --summarize
+        run: bun turbo run lint type-check test build ${{ steps.selection.outputs.flags }} --concurrency=2 --summarize
       - name: Validate affected MCP environments
         if: steps.graph.outputs.mcp == 'true'
         working-directory: apps/mcp

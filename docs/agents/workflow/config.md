@@ -81,7 +81,11 @@ workflow logic lives in the centrally managed org skills pinned by
   `turbo run lint type-check test build --affected --concurrency=2`, plus knip
   and formatting. The affected comparison uses full Git history, the PR base
   SHA for pull requests, and the previous main SHA for pushes. Shared TypeScript
-  and ESLint configuration are global dependencies in the Turbo graph. Local
+  and ESLint configuration are global dependencies in the Turbo graph. Changes
+  matching the CI `root` filter, including the root package manifest, shared setup
+  action and dependency patches, run all package tasks without `--affected`.
+  The graph selection and package run share the same flags, so full runs also
+  validate all MCP environments. Local
   `bun run ci:check` runs the same package tasks for every workspace. Specialized
   path-filtered hosted gates remain separate: workflow/actionlint helpers,
   duplicate code, Rust, desktop, and Tinybird schema/cloud deploy check. Local
