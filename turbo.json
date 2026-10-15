@@ -44,18 +44,24 @@
       "outputs": ["src/generated/agent-skills.ts"]
     },
     "@trace-flow/web#test": {
-      "dependsOn": ["docs:generate", "skills:generate"]
+      "dependsOn": ["transit", "docs:generate", "skills:generate"]
     },
     "@trace-flow/web#type-check": {
-      "dependsOn": ["docs:generate", "skills:generate"]
+      "dependsOn": ["transit", "docs:generate", "skills:generate"]
     },
     "dev": {
       "cache": false,
       "persistent": true
     },
-    "lint": {},
-    "type-check": {},
-    "test": {},
+    "lint": {
+      "dependsOn": ["transit"]
+    },
+    "type-check": {
+      "dependsOn": ["transit"]
+    },
+    "test": {
+      "dependsOn": ["transit"]
+    },
     "test:watch": {
       "cache": false,
       "persistent": true
@@ -75,6 +81,16 @@
       "dependsOn": ["build"],
       "cache": false,
       "passThroughEnv": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"]
+    },
+    "transit": {
+      "dependsOn": ["^transit"]
     }
-  }
+  },
+  "globalDependencies": [
+    "tsconfig.json",
+    "eslint.config.js",
+    "package.json",
+    "patches/**",
+    ".github/actions/setup/**"
+  ]
 }

@@ -77,12 +77,27 @@ workflow logic lives in the centrally managed org skills pinned by
   provider error, not a code change. This is historical evidence; that deployment
   job was removed by the 2026-10-09 Analyst decision. Rerunning a production deploy
   needs explicit production approval.
-- Gate parity: config-gap. The required hosted `CI Status` does not invoke the
-  single local entrypoint `bun run ci:check`; it fans out path-filtered jobs.
-  Local `ci:check` also does not cover every hosted gate, including Rust,
-  desktop, and Tinybird cloud deploy check.
+- Gate parity: hosted `CI Status` aggregates one package gate running
+  `turbo run lint type-check test build --affected --concurrency=2`, plus knip
+  and formatting. The affected comparison uses full Git history, the PR base
+  SHA for pull requests, and the previous main SHA for pushes. Shared TypeScript
+  and ESLint configuration, the root package manifest, dependency patches and
+  shared setup action are global dependencies in the Turbo graph, so their
+  contents invalidate cached tasks in PR CI, deploy CI and local runs. Turbo
+  2.10.12 documents `globalDependencies` as globs relative to `turbo.json` in
+  its [configuration reference](https://github.com/vercel/turborepo/blob/v2.10.12/apps/docs/content/docs/reference/configuration.mdx#globaldependencies).
+  Changes matching the CI `root` filter, including the root package manifest, shared setup
+  action and dependency patches, run all package tasks without `--affected`.
+  Only an explicit `root=false` selects `--affected`; missing or unexpected
+  outputs select the full task set. The graph selection and package run share
+  the same flags, so full runs also validate all MCP environments. Local
+  `bun run ci:check` runs the same package tasks for every workspace. Specialized
+  path-filtered hosted gates remain separate: workflow/actionlint helpers,
+  duplicate code, Rust, desktop, and Tinybird schema/cloud deploy check. Local
+  `ci:check` does not cover all those hosted gates; `bun run knip` also remains
+  a separate local check.
 - Separate hosted gates: `Tinybird Schema Check`, `Duplicate Code Check`,
-  package/app jobs, `Rust Collector`, `Tauri Desktop Build`, and deploy workflow
+  `Affected Package Checks`, `Lint GitHub Actions`, `Rust Collector`, `Tauri Desktop Build`, and deploy workflow
   `Deployment Status`
 - Coverage and secret-scan scope: `bun run test:coverage` exists but is not a
   required hosted gate; no gitleaks/trivy/semgrep/secret-scan workflow was
@@ -498,5 +513,5 @@ escalation rubric. `ziw-code-review` must load it for this repo.
       pins hashes but not a source tag or commit.
 - [ ] Live Cursor remote push-hook execution was not verified. Repo files verify
       install path and hooks, but not provider-side enforcement.
-- [ ] Gate parity gap remains: required `CI Status` does not invoke
-      `bun run ci:check`; local `ci:check` does not include all hosted gates.
+- [ ] Local `ci:check` does not include all specialized hosted gates or knip;
+      hosted package tasks use the same Turbo graph with affected selection.
