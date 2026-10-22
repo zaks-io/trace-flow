@@ -56,3 +56,6 @@ bun-debug.log
 # Stray copies dropped by the skills installer; canonical copies live in .agents/skills/
 /agent/
 /skills/ziw-*
+
+# Python bytecode from scripts/ci tests run by ci:check
+__pycache__/
