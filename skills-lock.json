@@ -5,61 +5,61 @@
       "source": "zaks-io/skills",
       "sourceType": "github",
       "skillPath": "skills/ziw-architecture/SKILL.md",
-      "computedHash": "0085ae98b5aaeb30a6047214a69dbf28e544a1e12137509525db8b6b13402cc0"
+      "computedHash": "a595ff62ae26ce7e8d8a5b53393906e545a472f458b6259606484a68043adacb"
     },
     "ziw-code-review": {
       "source": "zaks-io/skills",
       "sourceType": "github",
       "skillPath": "skills/ziw-code-review/SKILL.md",
-      "computedHash": "e3ebb78ed18084a5f66c1875b751904ff6b0802231c9a47ce13862a76611bf4b"
+      "computedHash": "7bd47e5bd8ac70f89cbbaa527079cfae212ca987da02e4b7500d7818d5fd2a12"
     },
     "ziw-debug": {
       "source": "zaks-io/skills",
       "sourceType": "github",
       "skillPath": "skills/ziw-debug/SKILL.md",
-      "computedHash": "dd77d20479e852b8b995accc66166d26fec2919c5f13e7234b6ca31076bcf98a"
+      "computedHash": "0a103c85744a6f133ec1ff28c76b914a09b88117cb8bd8bda1b5ccd6d6165d70"
     },
     "ziw-grill": {
       "source": "zaks-io/skills",
       "sourceType": "github",
       "skillPath": "skills/ziw-grill/SKILL.md",
-      "computedHash": "98f103fbe653b6b928ed96ee4a18a571ed578d34acfd6267a7dd1726157c1ad8"
+      "computedHash": "a0bb3c04be3220ff076baef37242ec28578ec8ecc5a890d3733e35748ad419a9"
     },
     "ziw-implement": {
       "source": "zaks-io/skills",
       "sourceType": "github",
       "skillPath": "skills/ziw-implement/SKILL.md",
-      "computedHash": "c3f8c8dc8f1a9408f61bfe6ac396ff7d4d37323527e9aa8a36256e479ee644d4"
+      "computedHash": "36f5d2cbc764b60b5f6174c270f2fad32ce4f2265670716cc9b948b4ecb5e860"
     },
     "ziw-orchestrate": {
       "source": "zaks-io/skills",
       "sourceType": "github",
       "skillPath": "skills/ziw-orchestrate/SKILL.md",
-      "computedHash": "6afbeb2fee2411697e230c772c13b2f71029e7151942d714a508dd667b9bba2a"
+      "computedHash": "6ac95cc2467c2d7c82db64fc422be6a88889da6a76939204e16bb338cf02fc51"
     },
     "ziw-pr": {
       "source": "zaks-io/skills",
       "sourceType": "github",
       "skillPath": "skills/ziw-pr/SKILL.md",
-      "computedHash": "96b3958725100e9ffbba378f03f97465d82caf6e0210f9158c05b9c481673ad9"
+      "computedHash": "74bcd5305949cef7dedc3e37f6e9532ae497ac02cd57a04dc7a71c77a95db67d"
     },
     "ziw-setup": {
       "source": "zaks-io/skills",
       "sourceType": "github",
       "skillPath": "skills/ziw-setup/SKILL.md",
-      "computedHash": "888d546e04b1da8478c45a481a30a1407523e6e3ec26826b85b31d497efba406"
+      "computedHash": "ab38feee32e5f75ac40beb5f7bb6c0dda8a29438b9d81a571539ed5910c33f85"
     },
     "ziw-to-issues": {
       "source": "zaks-io/skills",
       "sourceType": "github",
       "skillPath": "skills/ziw-to-issues/SKILL.md",
-      "computedHash": "3e18d017bb947704ad131183c5cdbf794e1752aa47219345ba2b488ad4c09746"
+      "computedHash": "e7c72f7e6dd0763e983dfeb502c1ccb99bdb3b50a729053054b8a8b7d2f214bd"
     },
     "ziw-triage": {
       "source": "zaks-io/skills",
       "sourceType": "github",
       "skillPath": "skills/ziw-triage/SKILL.md",
-      "computedHash": "bbbf6e5e2882a692ea630d55589ff236d844d896d2bc6c2cd840e1b10c38c32c"
+      "computedHash": "98da896a27272c5d5d4c67d6cd737c9c313a7a9a11b76963f0db06fc621ab612"
     }
   }
 }
