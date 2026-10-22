@@ -28,15 +28,51 @@ const POLICY_FRESH_TTL_MS = 60_000;
 const POLICY_TIMEOUT_MS = 5000;
 
 /**
+ * Cache API path for the data-center copy. Isolates are short-lived, so isolate memory alone missed
+ * on about half of ingests. The key uses the request's own origin so the entry stays in this zone and
+ * preview and production, which share the trace-flow.dev zone, never read each other's policy. It
+ * also names the Convex host because a preview redeploy keeps its domain but can switch deployments.
+ */
+const SHARED_POLICY_PATH = '/_internal/compatibility-policy';
+
+interface PolicyEnv {
+  CONVEX_SITE_URL: string;
+  AGENT_INGEST_SHARED_SECRET: string;
+}
+
+interface CachedPolicy {
+  policy: CompatibilityPolicy;
+  fetchedAt: number;
+}
+
+function isCachedPolicy(value: unknown): value is CachedPolicy {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.fetchedAt === 'number' && isCompatibilityPolicy(v.policy);
+}
+
+function isFresh(entry: CachedPolicy): boolean {
+  return Date.now() - entry.fetchedAt < POLICY_FRESH_TTL_MS;
+}
+
+function sharedPolicyKey(convexSiteUrl: string, requestUrl: string): string {
+  return new URL(`${SHARED_POLICY_PATH}/${new URL(convexSiteUrl).host}`, requestUrl).toString();
+}
+
+/**
  * Module-scope last-good policy, persisted across requests within a V8 isolate. Enables
  * stale-while-degraded: a transient Convex failure serves the last good policy rather than failing
  * closed, but a cold isolate with no cached policy fails closed (`policy_unavailable`).
  */
-let cached: { policy: CompatibilityPolicy; fetchedAt: number } | null = null;
+let cached: CachedPolicy | null = null;
 
-/** Visible for testing — clears the module-scope cache between cases. */
-export function __resetPolicyCache(): void {
+/** Visible for testing: clears the isolate and data-center caches between cases. */
+export async function __resetPolicyCache(
+  env: Pick<PolicyEnv, 'CONVEX_SITE_URL'>,
+  requestUrl: string,
+): Promise<void> {
   cached = null;
+  await caches.default.delete(sharedPolicyKey(env.CONVEX_SITE_URL, requestUrl));
 }
 
 type PolicyResult =
@@ -44,18 +80,65 @@ type PolicyResult =
   | { ok: false; reason: 'policy_unavailable' };
 
 /**
- * Returns the active compatibility policy, edge-cached for 60s. On a fetch failure it serves the
- * last good policy (degraded) if one exists, else fails closed — a cold-miss plus an unreachable
- * control plane must never fail open into accepting unknown-version uploads.
+ * Returns the active compatibility policy, fresh for 60s from when Convex served it, checking isolate
+ * memory, then the data center's Cache API, then Convex. On a fetch failure it serves the last good
+ * policy (degraded) if one exists, else fails closed — a cold-miss plus an unreachable control plane
+ * must never fail open into accepting unknown-version uploads.
  */
 export async function getCompatibilityPolicy(
-  env: { CONVEX_SITE_URL: string; AGENT_INGEST_SHARED_SECRET: string },
+  env: PolicyEnv,
   logger: Logger,
+  requestUrl: string,
 ): Promise<PolicyResult> {
-  if (cached && Date.now() - cached.fetchedAt < POLICY_FRESH_TTL_MS) {
+  if (cached && isFresh(cached)) {
     return { ok: true, policy: cached.policy, degraded: false };
   }
 
+  const key = sharedPolicyKey(env.CONVEX_SITE_URL, requestUrl);
+  const shared = await readSharedPolicy(key, logger);
+  if (shared) {
+    cached = shared;
+    return { ok: true, policy: shared.policy, degraded: false };
+  }
+
+  const fetched = await fetchPolicy(env, logger);
+  if (!fetched) return degradeOrFail(logger);
+  cached = fetched;
+  await writeSharedPolicy(key, fetched, logger);
+  return { ok: true, policy: fetched.policy, degraded: false };
+}
+
+/** The data-center copy only saves Convex round trips, so its failures fall through to Convex. */
+async function readSharedPolicy(key: string, logger: Logger): Promise<CachedPolicy | null> {
+  try {
+    const res = await caches.default.match(key);
+    if (!res) return null;
+    const entry: unknown = await res.json();
+    if (!isCachedPolicy(entry)) {
+      logger.warn('agent_ingest.policy_cache_malformed');
+      return null;
+    }
+    return isFresh(entry) ? entry : null;
+  } catch (err) {
+    logger.error('agent_ingest.policy_cache_read_failed', err);
+    return null;
+  }
+}
+
+async function writeSharedPolicy(key: string, entry: CachedPolicy, logger: Logger): Promise<void> {
+  try {
+    await caches.default.put(
+      key,
+      Response.json(entry, {
+        headers: { 'Cache-Control': `max-age=${POLICY_FRESH_TTL_MS / 1000}` },
+      }),
+    );
+  } catch (err) {
+    logger.error('agent_ingest.policy_cache_write_failed', err);
+  }
+}
+
+async function fetchPolicy(env: PolicyEnv, logger: Logger): Promise<CachedPolicy | null> {
   try {
     const res = await fetch(`${env.CONVEX_SITE_URL}/agent-ingest/compatibility-policy`, {
       headers: internalTraceHeaders({ Authorization: `Bearer ${env.AGENT_INGEST_SHARED_SECRET}` }),
@@ -63,18 +146,17 @@ export async function getCompatibilityPolicy(
     });
     if (!res.ok) {
       logger.error('agent_ingest.policy_fetch_failed', undefined, { status: res.status });
-      return degradeOrFail(logger);
+      return null;
     }
     const parsed: unknown = await res.json();
     if (!isCompatibilityPolicy(parsed)) {
       logger.error('agent_ingest.policy_malformed');
-      return degradeOrFail(logger);
+      return null;
     }
-    cached = { policy: parsed, fetchedAt: Date.now() };
-    return { ok: true, policy: parsed, degraded: false };
+    return { policy: parsed, fetchedAt: Date.now() };
   } catch (err) {
     logger.error('agent_ingest.policy_fetch_error', err);
-    return degradeOrFail(logger);
+    return null;
   }
 }
 

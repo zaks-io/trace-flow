@@ -18,6 +18,7 @@ import { emptyFacts, envelope, facts, messageFact, toolEventFact } from './facto
 
 const CONVEX = 'https://convex.test';
 const SECRET = 'valid-collector-secret';
+const INGEST_URL = 'https://ingest.test/v1/ingest';
 const ROOT_KEY = btoa('0123456789abcdef'.repeat(2));
 
 const IDENTITY_FIELDS = {
@@ -101,7 +102,7 @@ function conflictOf(queueFacts: AgentIngestQueueFacts): AgentFactIdentityConflic
 }
 
 async function post(env: AgentIngestEnv, body: unknown): Promise<Response> {
-  const request = new Request('https://ingest.test/v1/ingest', {
+  const request = new Request(INGEST_URL, {
     method: 'POST',
     headers: {
       'X-Trace-Flow-Collector-Secret': SECRET,
@@ -154,9 +155,9 @@ async function firstQueued(
 }
 
 describe('generated fact identity conflicts', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1_700_000_001_000);
-    __resetPolicyCache();
+    await __resetPolicyCache({ CONVEX_SITE_URL: CONVEX }, INGEST_URL);
   });
 
   afterEach(() => vi.restoreAllMocks());

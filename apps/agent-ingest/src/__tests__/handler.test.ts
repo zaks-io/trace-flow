@@ -37,9 +37,7 @@ function chunkedBody(...chunkSizes: number[]): ReadableStream<Uint8Array> {
 }
 
 describe('POST /v1/ingest', () => {
-  beforeEach(() => {
-    resetHandlerRequestMocks();
-  });
+  beforeEach(resetHandlerRequestMocks);
 
   afterEach(() => {
     vi.restoreAllMocks();
@@ -292,6 +290,16 @@ describe('POST /v1/ingest', () => {
     const res = await post(env, JSON.stringify(envelope()), authHeaders);
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ error: 'policy_unavailable' });
+  });
+
+  it('202s when the data-center policy cache is unavailable', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    vi.spyOn(Cache.prototype, 'match').mockRejectedValue(new Error('cache unavailable'));
+    vi.spyOn(Cache.prototype, 'put').mockRejectedValue(new Error('cache unavailable'));
+    interceptAccepted();
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+    expect(res.status).toBe(202);
+    expect(queueSend).toHaveBeenCalledTimes(1);
   });
 
   it('426s a client below the minimum version', async () => {

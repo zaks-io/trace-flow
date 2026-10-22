@@ -92,12 +92,14 @@ function installFetchMock(): void {
   });
 }
 
+const INGEST_URL = 'https://ingest.test/v1/ingest';
+
 export async function post(
   env: AgentIngestEnv,
   body: BodyInit,
   headers: Record<string, string>,
 ): Promise<Response> {
-  const req = new Request('https://ingest.test/v1/ingest', { method: 'POST', headers, body });
+  const req = new Request(INGEST_URL, { method: 'POST', headers, body });
   const ctx = createExecutionContext();
   const res = await app.fetch(req, env, ctx);
   await waitOnExecutionContext(ctx);
@@ -109,9 +111,9 @@ export const authHeaders = {
   'Content-Type': 'application/json',
 };
 
-export function resetHandlerRequestMocks(): void {
+export async function resetHandlerRequestMocks(): Promise<void> {
   vi.spyOn(Date, 'now').mockReturnValue(TEST_NOW);
-  __resetPolicyCache();
+  await __resetPolicyCache({ CONVEX_SITE_URL: CONVEX }, INGEST_URL);
   responses.policy = null;
   responses.claim = null;
   installFetchMock();
