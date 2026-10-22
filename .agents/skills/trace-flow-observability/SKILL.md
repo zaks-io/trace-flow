@@ -20,14 +20,14 @@ Reference for investigating Trace Flow systems. All four workers run on Cloudfla
 
 Four workers, three environments each (`dev`, `preview`, `production`). Names follow `trace-flow-<role>[-<env>]`.
 
-| Role     | Prod name (worker tag)                                     | Dev name (tag)                                                 | Preview name (tag)                                                 | Routes / domain                        |
-| -------- | ---------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------- |
-| Proxy    | `trace-flow-proxy` (`851c8b5cb6e9414f9a40c9c4d7563241`)    | `trace-flow-proxy-dev` (`c2dcbee4c3ed4a68a08dbd9627f93e10`)    | `trace-flow-proxy-preview` (`b38b99a10a424d2c95b7018c34ff9d2b`)    | `gateway.trace-flow.dev/*`             |
-| Consumer | `trace-flow-consumer` (`bd6990f8779c4b08a13d09891ddec100`) | `trace-flow-consumer-dev` (`586d2324fac9438dae024d1e8a809ad7`) | `trace-flow-consumer-preview` (`17184c68ab07464bbad12d05eeb3c23d`) | (queue + cron, no public route)        |
-| API      | `trace-flow-api` (`e2506f205a4948aeb8a4d112b7c86679`)      | `trace-flow-api-dev` (`2b791615e88d4de994c19e5bd9ca1668`)      | `trace-flow-api-preview` (`08e5e21f11d5441184a5d6d5c53393e7`)      | `api.trace-flow.dev/*`                 |
-| Web      | `trace-flow-web` (`9043998632db45a29bd6f93524a65bcf`)      | `trace-flow-web-dev` (`e580dd1223134b04a08ab84f1c0e6a66`)      | (n/a)                                                              | `trace-flow.dev` (OpenNext on Workers) |
+| Role     | Prod name (worker tag)                                     | Dev name (tag)                                                 | Preview name (tag)                                                 | Routes / domain                                    |
+| -------- | ---------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------- |
+| Proxy    | `trace-flow-proxy` (`851c8b5cb6e9414f9a40c9c4d7563241`)    | `trace-flow-proxy-dev` (`c2dcbee4c3ed4a68a08dbd9627f93e10`)    | `trace-flow-proxy-preview` (`b38b99a10a424d2c95b7018c34ff9d2b`)    | `gateway.trace-flow.dev/*`                         |
+| Consumer | `trace-flow-consumer` (`bd6990f8779c4b08a13d09891ddec100`) | `trace-flow-consumer-dev` (`586d2324fac9438dae024d1e8a809ad7`) | `trace-flow-consumer-preview` (`17184c68ab07464bbad12d05eeb3c23d`) | (queue + cron, no public route)                    |
+| API      | `trace-flow-raw-api` (`533b955224604d9b949533d2394dade1`)  | `trace-flow-raw-api-dev` (`bbe616da20314910862c3ee50b47d1e5`)  | `trace-flow-raw-api-preview` (`a86539f2d9c243c097e7ac5cc4fa2d38`)  | `raw.trace-flow.dev`, `raw.preview.trace-flow.dev` |
+| Web      | `trace-flow-web` (`9043998632db45a29bd6f93524a65bcf`)      | `trace-flow-web-dev` (`e580dd1223134b04a08ab84f1c0e6a66`)      | (n/a)                                                              | `trace-flow.dev` (OpenNext on Workers)             |
 
-Public surfaces: `https://gateway.trace-flow.dev` (proxy), `https://api.trace-flow.dev` (API), `https://trace-flow.dev` (web), `https://mcp.trace-flow.dev/mcp` (MCP).
+Public surfaces: `https://gateway.trace-flow.dev` (proxy), `https://raw.trace-flow.dev` (Raw API), `https://trace-flow.dev` (web), `https://mcp.trace-flow.dev/mcp` (MCP).
 
 ## Cloudflare resource IDs
 
@@ -160,7 +160,7 @@ The only way to read trace data without a Tinybird JWT. Scoped to the API keys t
 
 ## Common investigation patterns
 
-- **"Why did this request fail?"** Get `requestId` -> `trace-flow-prod.get_trace` for spans/events -> if body needed, hit `https://api.trace-flow.dev/bodies/<requestId>` (auth required, Auth0 JWT) -> Axiom query on `cloudflare` dataset filtering `request_id` for proxy/consumer logs.
+- **"Why did this request fail?"** Get `requestId` -> `trace-flow-prod.get_trace` for spans/events -> if body needed, send `GET https://raw.trace-flow.dev/bodies/<requestId>` with `Authorization: Bearer <body-access JWT>` (request-scoped HS256 token issued by Convex, with live authorization checked by the Raw API) -> Axiom query on `cloudflare` dataset filtering `request_id` for proxy/consumer logs.
 - **"Queue is backed up."** Cloudflare MCP `workers_get_worker` for `trace-flow-consumer` deploy state -> Axiom on `service == "proxy-consumer"` for batcher errors (look at `data.unhealthyShards`, `data.queuedTraces`, `data.lastSuccessfulFlushAgeMs`) -> check DLQ `trace-flow-requests-dlq-prod` via Cloudflare dashboard. Fix history: see commits 2b45bbf (stale TraceBatcher) and 8e585ce (SQL param overflow).
 - **"Spike in errors."** Sentry `search_issues` filtered by `environment:prod` -> cross-reference Axiom `convex` or `cloudflare` for the same window -> if proxy error, check `trace-flow-proxy` analytics dataset for skip rate.
 - **"Tinybird query slow."** Check sorting key order in the relevant `.datasource` (highest-cardinality filter first), prefer `PREWHERE` on small columns, filter before joins. Pipes live in `pipes/`.

@@ -222,9 +222,7 @@ jobs:
           bun scripts/ci/provision-agent-delivery.mjs dev
           bun scripts/setup-r2-lifecycle.ts \
             trace-flow-storage-dev \
-            trace-flow-agent-deliveries-dev \
-            trace-flow-analyst-sandbox-backups-dev \
-            trace-flow-analyst-sandbox-backups-preview
+            trace-flow-agent-deliveries-dev
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

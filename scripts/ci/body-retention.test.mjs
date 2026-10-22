@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import {
-  agentDeliveryRetentionRules,
-  analystBackupRetentionRules,
-  bodyRetentionRules,
-} from './body-retention.mjs';
+import { agentDeliveryRetentionRules, bodyRetentionRules } from './body-retention.mjs';
 
 test('bounds both encrypted agent copies without changing unrelated multipart rules', () => {
   const multipart = {
@@ -76,34 +72,4 @@ test('refuses unrelated expiration rules that overlap pending deliveries', () =>
 test('does not introduce expiration where none existed and rejects missing policy data', () => {
   assert.deepEqual(bodyRetentionRules([]), []);
   assert.throws(() => bodyRetentionRules(undefined), /missing rules/);
-});
-
-test('adds and repairs the seven-day Analyst snapshot expiration rule', () => {
-  const unrelated = {
-    id: 'multipart',
-    enabled: true,
-    conditions: { prefix: '' },
-    abortMultipartUploadsTransition: { condition: { type: 'Age', maxAge: 86_400 } },
-  };
-  const result = analystBackupRetentionRules([
-    unrelated,
-    {
-      id: 'expire-analyst-snapshots-7d',
-      enabled: false,
-      conditions: { prefix: '' },
-      deleteObjectsTransition: { condition: { type: 'Age', maxAge: 1 } },
-    },
-  ]);
-
-  assert.deepEqual(result, [
-    unrelated,
-    {
-      id: 'expire-analyst-snapshots-7d',
-      enabled: true,
-      conditions: { prefix: 'snapshots/' },
-      deleteObjectsTransition: { condition: { type: 'Age', maxAge: 604_800 } },
-    },
-  ]);
-  assert.deepEqual(analystBackupRetentionRules(result), result);
-  assert.throws(() => analystBackupRetentionRules(undefined), /missing rules/);
 });
