@@ -37,9 +37,7 @@ function chunkedBody(...chunkSizes: number[]): ReadableStream<Uint8Array> {
 }
 
 describe('POST /v1/ingest', () => {
-  beforeEach(() => {
-    resetHandlerRequestMocks();
-  });
+  beforeEach(resetHandlerRequestMocks);
 
   afterEach(() => {
     vi.restoreAllMocks();

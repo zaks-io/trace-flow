@@ -6,14 +6,23 @@ import {
   getCompatibilityPolicy,
   type CompatibilityPolicy,
 } from '../policy';
+import type * as PolicyModule from '../policy';
 
 const CONVEX = 'https://convex.test';
+const OTHER_CONVEX = 'https://other-convex.test';
 const env = { CONVEX_SITE_URL: CONVEX, AGENT_INGEST_SHARED_SECRET: 'shared-secret' };
+const REQUEST_URL = 'https://ingest.test/v1/ingest';
 
 const logger = createWorkerLogger({
   service: 'agent-ingest',
-  request: new Request('https://ingest.test/v1/ingest', { method: 'POST' }),
+  request: new Request(REQUEST_URL, { method: 'POST' }),
 });
+
+/** A new module instance has empty isolate memory but shares `caches.default`, like a new isolate. */
+async function loadInNewIsolate(): Promise<typeof PolicyModule> {
+  vi.resetModules();
+  return import('../policy');
+}
 
 const policy: CompatibilityPolicy = {
   minDesktopVersion: '1.0.0',
@@ -39,7 +48,7 @@ function installFetchMock(): void {
     const url = new URL(req.url);
     if (
       req.method === 'GET' &&
-      url.origin === CONVEX &&
+      (url.origin === CONVEX || url.origin === OTHER_CONVEX) &&
       url.pathname === '/agent-ingest/compatibility-policy'
     ) {
       const next = policyResponses.shift();
@@ -104,47 +113,110 @@ describe('checkCompatibility', () => {
 });
 
 describe('getCompatibilityPolicy', () => {
-  beforeEach(() => {
-    __resetPolicyCache();
+  beforeEach(async () => {
+    await __resetPolicyCache(env, REQUEST_URL);
     policyResponses = [];
     installFetchMock();
   });
 
-  afterEach(() => {
-    __resetPolicyCache();
+  afterEach(async () => {
+    await __resetPolicyCache(env, REQUEST_URL);
     vi.restoreAllMocks();
   });
 
   it('fetches and returns a fresh policy', async () => {
     interceptPolicy(200, policy);
-    const res = await getCompatibilityPolicy(env, logger);
+    const res = await getCompatibilityPolicy(env, logger, REQUEST_URL);
     expect(res).toEqual({ ok: true, policy, degraded: false });
   });
 
   it('serves the cached policy without re-fetching while fresh', async () => {
     interceptPolicy(200, policy);
-    await getCompatibilityPolicy(env, logger);
+    await getCompatibilityPolicy(env, logger, REQUEST_URL);
     // No second intercept registered: a fetch here would fail net-connect. A fresh cache hit avoids it.
-    const res = await getCompatibilityPolicy(env, logger);
+    const res = await getCompatibilityPolicy(env, logger, REQUEST_URL);
     expect(res).toEqual({ ok: true, policy, degraded: false });
+  });
+
+  it('serves a policy another isolate fetched without calling Convex again', async () => {
+    interceptPolicy(200, policy);
+    await getCompatibilityPolicy(env, logger, REQUEST_URL);
+
+    // No second intercept registered: only the data-center copy can answer.
+    const isolate = await loadInNewIsolate();
+    const res = await isolate.getCompatibilityPolicy(env, logger, REQUEST_URL);
+    expect(res).toEqual({ ok: true, policy, degraded: false });
+  });
+
+  it('refetches in a new isolate once the data-center copy is past the TTL', async () => {
+    const t0 = 1_700_000_000_000;
+    let now = t0;
+    const realNow = Date.now;
+    Date.now = () => now;
+    try {
+      interceptPolicy(200, policy);
+      await getCompatibilityPolicy(env, logger, REQUEST_URL);
+
+      now = t0 + 61_000;
+      const updated: CompatibilityPolicy = { ...policy, minDesktopVersion: '2.0.0' };
+      interceptPolicy(200, updated);
+      const isolate = await loadInNewIsolate();
+      const res = await isolate.getCompatibilityPolicy(env, logger, REQUEST_URL);
+      expect(res).toEqual({ ok: true, policy: updated, degraded: false });
+      expect(policyResponses).toHaveLength(0);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  it('keeps data-center copies separate per request origin', async () => {
+    interceptPolicy(200, policy);
+    await getCompatibilityPolicy(env, logger, REQUEST_URL);
+
+    const previewPolicy: CompatibilityPolicy = { ...policy, minParserVersion: '3.0.0' };
+    interceptPolicy(200, previewPolicy);
+    const isolate = await loadInNewIsolate();
+    const previewUrl = 'https://preview.ingest.test/v1/ingest';
+    try {
+      const res = await isolate.getCompatibilityPolicy(env, logger, previewUrl);
+      expect(res).toEqual({ ok: true, policy: previewPolicy, degraded: false });
+    } finally {
+      await isolate.__resetPolicyCache(env, previewUrl);
+    }
+  });
+
+  it('keeps data-center copies separate per Convex deployment', async () => {
+    interceptPolicy(200, policy);
+    await getCompatibilityPolicy(env, logger, REQUEST_URL);
+
+    const redeployedEnv = { ...env, CONVEX_SITE_URL: OTHER_CONVEX };
+    const redeployedPolicy: CompatibilityPolicy = { ...policy, denylistedVersions: [] };
+    interceptPolicy(200, redeployedPolicy);
+    const isolate = await loadInNewIsolate();
+    try {
+      const res = await isolate.getCompatibilityPolicy(redeployedEnv, logger, REQUEST_URL);
+      expect(res).toEqual({ ok: true, policy: redeployedPolicy, degraded: false });
+    } finally {
+      await isolate.__resetPolicyCache(redeployedEnv, REQUEST_URL);
+    }
   });
 
   it('fails closed on a cold miss when the control plane is unreachable', async () => {
     interceptPolicy(503, { error: 'down' });
-    const res = await getCompatibilityPolicy(env, logger);
+    const res = await getCompatibilityPolicy(env, logger, REQUEST_URL);
     expect(res).toEqual({ ok: false, reason: 'policy_unavailable' });
   });
 
   it('fails closed on a cold miss when the policy payload is malformed', async () => {
     interceptPolicy(200, { minDesktopVersion: '1.0.0' }); // missing denylistedVersions/updatedAt
-    const res = await getCompatibilityPolicy(env, logger);
+    const res = await getCompatibilityPolicy(env, logger, REQUEST_URL);
     expect(res).toEqual({ ok: false, reason: 'policy_unavailable' });
   });
 
   it('logs policy_unavailable before the cold-miss fail-closed return (no silent error)', async () => {
     const errorSpy = vi.spyOn(logger, 'error');
     interceptPolicy(503, { error: 'down' });
-    await getCompatibilityPolicy(env, logger);
+    await getCompatibilityPolicy(env, logger, REQUEST_URL);
     expect(errorSpy).toHaveBeenCalledWith('agent_ingest.policy_unavailable');
     errorSpy.mockRestore();
   });
@@ -156,11 +228,11 @@ describe('getCompatibilityPolicy', () => {
     Date.now = () => now;
     try {
       interceptPolicy(200, policy);
-      await getCompatibilityPolicy(env, logger);
+      await getCompatibilityPolicy(env, logger, REQUEST_URL);
 
       now = t0 + 61_000; // past the 60s freshness TTL → forces a refresh
       interceptPolicy(503, { error: 'down' });
-      const res = await getCompatibilityPolicy(env, logger);
+      const res = await getCompatibilityPolicy(env, logger, REQUEST_URL);
       expect(res).toEqual({ ok: true, policy, degraded: true });
     } finally {
       Date.now = realNow;

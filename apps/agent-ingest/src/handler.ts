@@ -179,7 +179,7 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
     const envelope = parsedEnvelope as AgentIngestEnvelope;
     const { batch, facts } = envelope;
 
-    const policy = await getCompatibilityPolicy(c.env, logger);
+    const policy = await getCompatibilityPolicy(c.env, logger, c.req.url);
     if (!policy.ok) return c.json({ error: 'policy_unavailable' }, 503);
     const compat = checkCompatibility(policy.policy, batch.desktop_version, batch.parser_version);
     if (!compat.ok) {
