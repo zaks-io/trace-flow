@@ -201,6 +201,37 @@ describe('getCompatibilityPolicy', () => {
     }
   });
 
+  it('fetches from Convex when the data-center cache read fails', async () => {
+    const errorSpy = vi.spyOn(logger, 'error');
+    vi.spyOn(Cache.prototype, 'match').mockRejectedValueOnce(new Error('cache unavailable'));
+    interceptPolicy(200, policy);
+    const res = await getCompatibilityPolicy(env, logger, REQUEST_URL);
+    expect(res).toEqual({ ok: true, policy, degraded: false });
+    expect(errorSpy).toHaveBeenCalledWith(
+      'agent_ingest.policy_cache_read_failed',
+      expect.any(Error),
+    );
+  });
+
+  it('fetches from Convex when the data-center copy is not valid JSON', async () => {
+    vi.spyOn(Cache.prototype, 'match').mockResolvedValueOnce(new Response('{'));
+    interceptPolicy(200, policy);
+    const res = await getCompatibilityPolicy(env, logger, REQUEST_URL);
+    expect(res).toEqual({ ok: true, policy, degraded: false });
+  });
+
+  it('serves the fetched policy when the data-center cache write fails', async () => {
+    const errorSpy = vi.spyOn(logger, 'error');
+    vi.spyOn(Cache.prototype, 'put').mockRejectedValueOnce(new Error('cache unavailable'));
+    interceptPolicy(200, policy);
+    const res = await getCompatibilityPolicy(env, logger, REQUEST_URL);
+    expect(res).toEqual({ ok: true, policy, degraded: false });
+    expect(errorSpy).toHaveBeenCalledWith(
+      'agent_ingest.policy_cache_write_failed',
+      expect.any(Error),
+    );
+  });
+
   it('fails closed on a cold miss when the control plane is unreachable', async () => {
     interceptPolicy(503, { error: 'down' });
     const res = await getCompatibilityPolicy(env, logger, REQUEST_URL);
@@ -231,6 +262,25 @@ describe('getCompatibilityPolicy', () => {
       await getCompatibilityPolicy(env, logger, REQUEST_URL);
 
       now = t0 + 61_000; // past the 60s freshness TTL → forces a refresh
+      interceptPolicy(503, { error: 'down' });
+      const res = await getCompatibilityPolicy(env, logger, REQUEST_URL);
+      expect(res).toEqual({ ok: true, policy, degraded: true });
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  it('serves the last-good policy (degraded) when the cache read and refresh both fail', async () => {
+    const t0 = 1_700_000_000_000;
+    let now = t0;
+    const realNow = Date.now;
+    Date.now = () => now;
+    try {
+      interceptPolicy(200, policy);
+      await getCompatibilityPolicy(env, logger, REQUEST_URL);
+
+      now = t0 + 61_000;
+      vi.spyOn(Cache.prototype, 'match').mockRejectedValueOnce(new Error('cache unavailable'));
       interceptPolicy(503, { error: 'down' });
       const res = await getCompatibilityPolicy(env, logger, REQUEST_URL);
       expect(res).toEqual({ ok: true, policy, degraded: true });

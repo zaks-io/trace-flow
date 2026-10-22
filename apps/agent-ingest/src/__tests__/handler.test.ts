@@ -292,6 +292,16 @@ describe('POST /v1/ingest', () => {
     expect(await res.json()).toMatchObject({ error: 'policy_unavailable' });
   });
 
+  it('202s when the data-center policy cache is unavailable', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    vi.spyOn(Cache.prototype, 'match').mockRejectedValue(new Error('cache unavailable'));
+    vi.spyOn(Cache.prototype, 'put').mockRejectedValue(new Error('cache unavailable'));
+    interceptAccepted();
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+    expect(res.status).toBe(202);
+    expect(queueSend).toHaveBeenCalledTimes(1);
+  });
+
   it('426s a client below the minimum version', async () => {
     const { env } = makeEnv({ creds: await validCredEntries() });
     interceptPolicy(200, { ...POLICY, minDesktopVersion: '2.0.0' });

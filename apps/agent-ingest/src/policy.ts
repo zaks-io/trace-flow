@@ -104,24 +104,38 @@ export async function getCompatibilityPolicy(
   const fetched = await fetchPolicy(env, logger);
   if (!fetched) return degradeOrFail(logger);
   cached = fetched;
-  await caches.default.put(
-    key,
-    Response.json(fetched, {
-      headers: { 'Cache-Control': `max-age=${POLICY_FRESH_TTL_MS / 1000}` },
-    }),
-  );
+  await writeSharedPolicy(key, fetched, logger);
   return { ok: true, policy: fetched.policy, degraded: false };
 }
 
+/** The data-center copy only saves Convex round trips, so its failures fall through to Convex. */
 async function readSharedPolicy(key: string, logger: Logger): Promise<CachedPolicy | null> {
-  const res = await caches.default.match(key);
-  if (!res) return null;
-  const entry: unknown = await res.json();
-  if (!isCachedPolicy(entry)) {
-    logger.warn('agent_ingest.policy_cache_malformed');
+  try {
+    const res = await caches.default.match(key);
+    if (!res) return null;
+    const entry: unknown = await res.json();
+    if (!isCachedPolicy(entry)) {
+      logger.warn('agent_ingest.policy_cache_malformed');
+      return null;
+    }
+    return isFresh(entry) ? entry : null;
+  } catch (err) {
+    logger.error('agent_ingest.policy_cache_read_failed', err);
     return null;
   }
-  return isFresh(entry) ? entry : null;
+}
+
+async function writeSharedPolicy(key: string, entry: CachedPolicy, logger: Logger): Promise<void> {
+  try {
+    await caches.default.put(
+      key,
+      Response.json(entry, {
+        headers: { 'Cache-Control': `max-age=${POLICY_FRESH_TTL_MS / 1000}` },
+      }),
+    );
+  } catch (err) {
+    logger.error('agent_ingest.policy_cache_write_failed', err);
+  }
 }
 
 async function fetchPolicy(env: PolicyEnv, logger: Logger): Promise<CachedPolicy | null> {
