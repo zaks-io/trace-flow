@@ -44,20 +44,16 @@ describe('direct Convex Analyst delivery', () => {
     expect(Object.keys(filters).some((name) => /analyst/i.test(name))).toBe(false);
   });
 
-  test('prior Analyst backups keep their lifecycle configuration until bucket cleanup', () => {
-    const production = deploy.jobs['deploy-proxy-consumer'].steps.find(
-      (step) => step.name === 'Configure R2 retention',
-    );
-    const previewRetention = preview.jobs.preview.steps.find(
-      (step) => step.name === 'Configure R2 retention',
-    );
-    for (const [step, environments] of [
-      [production, ['production']],
-      [previewRetention, ['dev', 'preview']],
-    ]) {
-      expect(step.run).toContain('bun scripts/setup-r2-lifecycle.ts');
-      for (const environment of environments) {
-        expect(step.run).toMatch(new RegExp(`trace-flow-analyst-\\S+-backups-${environment}\\b`));
+  test('no workflow step references retired Analyst backup buckets', () => {
+    const directory = new URL('../../.github/workflows/', import.meta.url).pathname;
+    const paths = [...new Glob('*.{yml,yaml}').scanSync({ cwd: directory, absolute: true })];
+    expect(paths.length).toBeGreaterThan(0);
+    for (const path of paths) {
+      const delivery = YAML.parse(readFileSync(path, 'utf8'));
+      for (const job of Object.values(delivery.jobs)) {
+        for (const step of job.steps ?? []) {
+          expect(JSON.stringify(step)).not.toContain('trace-flow-analyst-sandbox-backups-');
+        }
       }
     }
   });

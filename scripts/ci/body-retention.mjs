@@ -20,25 +20,6 @@ export function bodyRetentionRules(rules) {
   return next;
 }
 
-const ANALYST_BACKUP_TTL_SECONDS = 7 * 24 * 60 * 60;
-
-export function analystBackupRetentionRules(rules) {
-  if (!Array.isArray(rules)) throw new Error('R2 lifecycle response is missing rules');
-  const next = structuredClone(rules);
-  const managedRule = {
-    id: 'expire-analyst-snapshots-7d',
-    enabled: true,
-    conditions: { prefix: 'snapshots/' },
-    deleteObjectsTransition: {
-      condition: { type: 'Age', maxAge: ANALYST_BACKUP_TTL_SECONDS },
-    },
-  };
-  const managedIndex = next.findIndex((rule) => rule.id === managedRule.id);
-  if (managedIndex === -1) next.push(managedRule);
-  else next[managedIndex] = managedRule;
-  return next;
-}
-
 export function agentDeliveryRetentionRules(rules) {
   if (!Array.isArray(rules)) throw new Error('R2 lifecycle response is missing rules');
   const managedIds = new Set(['expire-agent-deliveries-4d', 'expire-agent-delivery-rows-4d']);
