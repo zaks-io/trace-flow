@@ -1,4 +1,5 @@
 import { Auth0Client } from '@auth0/nextjs-auth0/server';
+import { handleAuthCallback } from './auth-callback';
 
 // scripts/dev/local-stack.sh replaces Auth0 with a plain-HTTP mock issuer
 // (scripts/dev/mock-oidc.ts). Production builds never allow an insecure issuer.
@@ -10,6 +11,7 @@ export const auth0 = new Auth0Client({
   allowInsecureRequests: allowInsecureIssuer,
   httpTimeout: 15000,
   signInReturnToPath: '/app',
+  onCallback: handleAuthCallback,
   logoutStrategy: 'v2',
   authorizationParameters: {
     scope: 'openid profile email offline_access',

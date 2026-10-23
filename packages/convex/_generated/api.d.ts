@@ -1558,6 +1558,7 @@ export declare const internal: {
         },
         Id<"users">
       >;
+      getAdminEmails: FunctionReference<"query", "internal", {}, Array<string>>;
       getUserById: FunctionReference<
         "query",
         "internal",
@@ -2450,6 +2451,18 @@ export declare const internal: {
         { email: string; token: string },
         null
       >;
+      sendSignupAdminEmail: FunctionReference<
+        "action",
+        "internal",
+        {
+          email: string;
+          emailVerified: boolean;
+          invited: boolean;
+          name?: string;
+          userId: Id<"users">;
+        },
+        null
+      >;
       sendWaitlistAdminEmail: FunctionReference<
         "action",
         "internal",
@@ -2636,9 +2649,6 @@ export declare const internal: {
         { migrated: number; scanned: number }
       >;
     };
-  };
-  waitlist: {
-    getAdminEmails: FunctionReference<"query", "internal", {}, Array<string>>;
   };
 };
 

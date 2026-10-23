@@ -14,6 +14,7 @@ vi.mock('../rateLimits', () => ({ rateLimiter: { limit: vi.fn() } }));
 const modules = {
   '../_generated/server.ts': () => import('../_generated/server'),
   '../waitlist.ts': () => import('../waitlist'),
+  '../auth/users.ts': () => import('../auth/users'),
   '../integrations/emails.ts': () => import('../integrations/emails'),
 };
 
@@ -89,7 +90,7 @@ describe('waitlist admin notifications', () => {
         waitlistId,
         email: 'new@example.com',
       }),
-    ).rejects.toThrow('Waitlist admin email delivery failed');
+    ).rejects.toThrow('Admin email delivery failed');
     expect(send).toHaveBeenCalledTimes(2);
   });
 
