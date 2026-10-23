@@ -325,6 +325,13 @@ export const initializeUser = mutation({
       enabled: true,
       inviteId: acceptedInvite?._id,
     });
+    await ctx.scheduler.runAfter(0, internal.integrations.emails.sendSignupAdminEmail, {
+      userId,
+      email: userInfo.email,
+      emailVerified: canUseEmailInvitation,
+      name: userInfo.name,
+      invited: acceptedInvite !== null,
+    });
 
     if (acceptedInvite?.orgId) {
       await ctx.db.patch(userId, { orgId: acceptedInvite.orgId });
@@ -402,6 +409,14 @@ export const findOrCreateUser = internalMutation({
       enabled: true,
       inviteId: acceptedInvite?._id,
     });
+    await ctx.scheduler.runAfter(0, internal.integrations.emails.sendSignupAdminEmail, {
+      userId,
+      email,
+      // The MCP callback rejects unverified emails before creating users.
+      emailVerified: true,
+      name: args.name,
+      invited: acceptedInvite !== null,
+    });
 
     if (acceptedInvite?.orgId) {
       await ctx.db.patch(userId, { orgId: acceptedInvite.orgId });
@@ -449,5 +464,19 @@ export const isAdminInternal = internalQuery({
   handler: async (ctx) => {
     const user = await getCurrentEnabledUser(ctx);
     return user?.isAdmin === true;
+  },
+});
+
+export const getAdminEmails = internalQuery({
+  args: {},
+  returns: v.array(v.string()),
+  handler: async (ctx) => {
+    const admins = await ctx.db
+      .query('users')
+      .filter((q) => q.and(q.eq(q.field('isAdmin'), true), q.eq(q.field('enabled'), true)))
+      .collect();
+    const emails = admins.map((admin) => normalizeEmail(admin.email));
+    if (emails.some((email) => !email)) throw new Error('Admin email is missing');
+    return [...new Set(emails)];
   },
 });
