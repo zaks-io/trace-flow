@@ -18,9 +18,9 @@ use std::time::Duration;
 use std::{fmt, fs, io};
 
 use collector_contracts::AgentSource;
+use collector_embedder::config_file;
 use collector_embedder::cycle;
 use collector_embedder::keychain::CredentialStoreKind;
-use collector_embedder::private_file;
 use collector_embedder::sources::SourceHomes;
 use collector_embedder::sync::{self, Window};
 use serde::{Deserialize, Serialize};
@@ -105,18 +105,17 @@ const HEADER: &str = "\
 
 impl Config {
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
-        let config: Self = toml::from_str(text).map_err(|err| ConfigError(err.to_string()))?;
+        let config: Self = toml::from_str(text).map_err(|err| parse_error(text, &err))?;
         config.validate()?;
         Ok(config)
     }
 
     /// Read `path`, or `None` when it does not exist. The config decides which homes are uploaded,
-    /// so like ssh it must belong to the current user or root and no one else may be able to
-    /// change it; it may be a symlink to such a file (see [`private_file::read_config`]).
+    /// so only you or root may be able to change it or which file its path selects (see
+    /// [`config_file::read`]).
     pub fn load(path: &Path) -> anyhow::Result<Option<Self>> {
         // A config it may not trust or read needs a person, like one that does not parse.
-        let text =
-            private_file::read_config(path).map_err(|err| ConfigError(format!("{err:#}")))?;
+        let text = config_file::read(path).map_err(|err| ConfigError(format!("{err:#}")))?;
         let Some(text) = text else {
             return Ok(None);
         };
@@ -321,6 +320,29 @@ impl Input {
     }
 }
 
+/// Where the text fails to parse, but not the parser's message: that quotes the input, and a file
+/// that does not parse may not be a config at all. Validation errors come only after the text has
+/// parsed as a config, so those may name its values.
+fn parse_error(text: &str, err: &toml::de::Error) -> ConfigError {
+    const FORMAT: &str = "see apps/cli/README.md for the format";
+    let Some(span) = err.span() else {
+        return ConfigError(format!(
+            "not a valid collector.toml (bad TOML, or a missing or unknown key); {FORMAT}"
+        ));
+    };
+    let before = text.get(..span.start).unwrap_or(text);
+    let line = before.matches('\n').count() + 1;
+    let column = before
+        .rsplit('\n')
+        .next()
+        .map_or(0, |last| last.chars().count())
+        + 1;
+    ConfigError(format!(
+        "not a valid collector.toml at line {line}, column {column} (bad TOML, or an unknown key or \
+         invalid value); {FORMAT}"
+    ))
+}
+
 fn is_glob(text: &str) -> bool {
     text.contains(['*', '?', '['])
 }
@@ -365,8 +387,8 @@ mod tests {
         let cases = [
             ("interval_minutes = 0\n", "interval_minutes"),
             ("first_backfill = \"2w\"\n", "first_backfill"),
-            ("credential_store = \"vault\"\n", "credential_store"),
-            ("colour = \"blue\"\n", "colour"),
+            ("credential_store = \"vault\"\n", "line 1, column"),
+            ("colour = \"blue\"\n", "line 1, column 1"),
         ];
         for (prefix, expected) in cases {
             let err = Config::parse(&format!("{prefix}{MINIMAL}"))
@@ -382,6 +404,20 @@ mod tests {
         let duplicate = format!("{MINIMAL}{MINIMAL}");
         assert!(Config::parse(&duplicate).unwrap_err().0.contains("twice"));
         assert!(Config::parse("interval_minutes = 5\ninputs = []\n").is_err());
+    }
+
+    #[test]
+    fn parse_errors_never_quote_the_file() {
+        // What a config path pointed at a credential or other private file could contain.
+        for text in [
+            "tfc_marker_value\n",
+            "tfc_marker_key = 1\n",
+            "interval_minutes = \"tfc_marker_value\"\n",
+        ] {
+            let err = Config::parse(text).unwrap_err().to_string();
+            assert!(!err.contains("tfc_marker"), "{err}");
+            assert!(err.contains("line 1"), "{err}");
+        }
     }
 
     #[test]

@@ -143,8 +143,11 @@ users can read. Set `credential_store = "keyring"` before `login` to use the Sec
 Windows default to the OS keychain.
 
 The state directory is `0700`, and the CLI refuses to use it while it holds a file another user
-owns. Like ssh, it reads a config only if you or root own it and other users cannot change it; the
-config may be a symlink to such a file. It also refuses a connection or state file that is a symlink or that other users can change,
+owns. Like ssh's `StrictModes`, it reads a config only through a path that only you or root can
+change: every directory on the way must belong to you or root and be writable by no one else
+(sticky directories such as `/tmp` are fine for entries you own), symlinks are followed only from
+such directories, and the file must belong to you or root and be writable by no one else. Run
+`chmod go-w` on whatever it names. An invalid config is reported by line and column, never quoted. It also refuses a connection or state file that is a symlink or that other users can change,
 because the connection decides where the credential is sent.
 
 `login --no-browser` prints a sign-in address to open in a browser on any device. After sign-in that

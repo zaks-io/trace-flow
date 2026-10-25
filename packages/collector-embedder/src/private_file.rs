@@ -17,10 +17,6 @@
 //! - reads open with `O_NOFOLLOW` and check the opened handle. Both readers refuse a file another
 //!   user owns; [`read`] (secrets) also refuses one other users can read, the way ssh refuses such a
 //!   key, and [`read_owned`] (metadata) one other users can write.
-//! - [`read_config`] applies ssh's rule for config files: it may follow symlinks, but the file it
-//!   opens must belong to the current user or root and no one else may be able to change it. The
-//!   check is on the opened file, so no path spelling, nesting, or swap can substitute another
-//!   user's config.
 //! - every reader here opens with `O_NONBLOCK` and accepts only a regular file, so a FIFO planted
 //!   in a file's place cannot hang the Collector before these checks run.
 
@@ -72,23 +68,6 @@ pub fn read_owned(path: &Path) -> Result<Option<Vec<u8>>> {
     Ok(Some(contents))
 }
 
-/// Read a config file at `path`, or `None` when it does not exist. It may be a symlink, as managed
-/// dotfiles often are, but must resolve to a regular file that the current user or root owns and
-/// that other users cannot change.
-pub fn read_config(path: &Path) -> Result<Option<String>> {
-    let mut file = match open_regular(path) {
-        Ok(file) => file,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err).with_context(|| format!("open {}", path.display())),
-    };
-    ensure_regular(&file, path)?;
-    ensure_owned(&file, path, Guard::Config)?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)
-        .with_context(|| format!("read {}", path.display()))?;
-    Ok(Some(contents))
-}
-
 /// What a reader refuses besides symlinks and other owners.
 #[derive(Clone, Copy)]
 enum Guard {
@@ -96,8 +75,6 @@ enum Guard {
     Secret,
     /// Permission bits that let other users change the file.
     Trusted,
-    /// Like `Trusted`, but root may own the file too, as with an `/etc` config.
-    Config,
 }
 
 fn open_checked(path: &Path, guard: Guard) -> Result<Option<fs::File>> {
@@ -116,7 +93,7 @@ fn open_checked(path: &Path, guard: Guard) -> Result<Option<fs::File>> {
 }
 
 /// `O_NONBLOCK` let a FIFO or device open without waiting; reading one could still block.
-fn ensure_regular(file: &fs::File, path: &Path) -> Result<()> {
+pub(crate) fn ensure_regular(file: &fs::File, path: &Path) -> Result<()> {
     let meta = file
         .metadata()
         .with_context(|| format!("stat {}", path.display()))?;
@@ -143,7 +120,7 @@ fn temp_path(path: &Path) -> Result<PathBuf> {
 /// Create `dir` (and missing ancestors) as `0700`, or make an existing one private, and refuse it
 /// while it holds another user's entries.
 #[cfg(unix)]
-pub(crate) fn ensure_private_dir(dir: &Path) -> Result<()> {
+pub fn ensure_private_dir(dir: &Path) -> Result<()> {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
     fs::DirBuilder::new()
         .recursive(true)
@@ -212,14 +189,6 @@ fn open_no_follow(path: &Path) -> io::Result<fs::File> {
     Ok(fs::File::from(fd))
 }
 
-#[cfg(unix)]
-fn open_regular(path: &Path) -> io::Result<fs::File> {
-    use rustix::fs::{Mode, OFlags};
-    let flags = OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC;
-    let fd = rustix::fs::open(path, flags, Mode::empty())?;
-    Ok(fs::File::from(fd))
-}
-
 /// `O_NOFOLLOW` fails with `ELOOP` when the last component is a symlink.
 #[cfg(unix)]
 fn is_symlink_refusal(err: &io::Error) -> bool {
@@ -232,26 +201,8 @@ fn ensure_owned(file: &fs::File, path: &Path, guard: Guard) -> Result<()> {
     let meta = file
         .metadata()
         .with_context(|| format!("stat {}", path.display()))?;
-    let owner = meta.uid();
     let mode = meta.mode() & 0o777;
-    if let Guard::Config = guard {
-        if owner != rustix::process::geteuid().as_raw() && owner != 0 {
-            bail!(
-                "{} belongs to another user (uid {owner}), so it cannot be trusted; use a config \
-                 you or root own",
-                path.display()
-            );
-        }
-        if mode & 0o022 != 0 {
-            bail!(
-                "{} is writable by other users (mode {mode:o}), so it cannot be trusted; run \
-                 `chmod go-w` on it",
-                path.display()
-            );
-        }
-        return Ok(());
-    }
-    if owner != rustix::process::geteuid().as_raw() {
+    if meta.uid() != rustix::process::geteuid().as_raw() {
         bail!(
             "{} belongs to another user, so it cannot be trusted; delete it and run the command again",
             path.display()
@@ -272,7 +223,7 @@ fn ensure_owned(file: &fs::File, path: &Path, guard: Guard) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-pub(crate) fn ensure_private_dir(dir: &Path) -> Result<()> {
+pub fn ensure_private_dir(dir: &Path) -> Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))
 }
 
@@ -286,11 +237,6 @@ fn create_exclusive(path: &Path) -> io::Result<fs::File> {
 
 #[cfg(not(unix))]
 fn open_no_follow(path: &Path) -> io::Result<fs::File> {
-    fs::File::open(path)
-}
-
-#[cfg(not(unix))]
-fn open_regular(path: &Path) -> io::Result<fs::File> {
     fs::File::open(path)
 }
 
@@ -402,39 +348,9 @@ mod tests {
         assert!(made.success());
         fs::set_permissions(&fifo, fs::Permissions::from_mode(0o600)).unwrap();
 
-        for err in [
-            read(&fifo).unwrap_err(),
-            read_owned(&fifo).unwrap_err(),
-            read_config(&fifo).unwrap_err(),
-        ] {
+        for err in [read(&fifo).unwrap_err(), read_owned(&fifo).unwrap_err()] {
             assert!(err.to_string().contains("not a regular file"), "{err}");
         }
-    }
-
-    #[test]
-    fn config_reads_follow_symlinks_but_refuse_files_others_can_change() {
-        let root = tempfile::tempdir().unwrap();
-        let target = root.path().join("collector.toml");
-        fs::write(&target, "interval_minutes = 5").unwrap();
-        fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();
-        let link = root.path().join("link.toml");
-        symlink(&target, &link).unwrap();
-        assert_eq!(
-            read_config(&link).unwrap().as_deref(),
-            Some("interval_minutes = 5")
-        );
-        assert_eq!(read_config(&root.path().join("missing")).unwrap(), None);
-
-        // The check is on the file the link reaches, not on the link.
-        fs::set_permissions(&target, fs::Permissions::from_mode(0o664)).unwrap();
-        let err = read_config(&link).unwrap_err().to_string();
-        assert!(err.contains("writable by other users"), "{err}");
-    }
-
-    #[test]
-    fn root_owned_configs_are_trusted() {
-        // A root-owned regular file that other users cannot change, like an /etc config.
-        assert!(read_config(Path::new("/etc/passwd")).unwrap().is_some());
     }
 
     #[test]

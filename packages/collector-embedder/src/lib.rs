@@ -14,6 +14,7 @@
 //! - [`connection`] — the non-secret connection state + state-dir layout (shared by CLI and desktop,
 //!   so a login from either is interchangeable).
 //! - [`private_file`] — files in the state dir that other local users can neither read nor steer.
+//! - [`config_file`] — config files read only through paths other local users cannot steer.
 //! - [`sources`] — where each agent Source writes its transcripts and which are ingestable today.
 //! - [`login`] — the browser device flow that mints a Collector Credential over a loopback redirect.
 //! - [`sync`] — the one-pass-per-source drive over `collector-sync` that POSTs and advances cursors
@@ -23,6 +24,7 @@
 //!   baked default so a normal user never has to know or set a URL.
 
 pub mod backoff;
+pub mod config_file;
 pub mod connection;
 pub mod cycle;
 pub mod defaults;
