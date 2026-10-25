@@ -142,8 +142,9 @@ users can read. Set `credential_store = "keyring"` before `login` to use the Sec
 `login` records the store it used, and later commands read the credential from there. macOS and
 Windows default to the OS keychain.
 
-The state directory is `0700`. The CLI refuses a connection or state file that is a symlink or that
-another user owns or can change, because the connection decides where the credential is sent.
+The state directory is `0700`, and the CLI refuses to use it while it holds a file another user
+owns. It also refuses a connection or state file that is a symlink or that other users can change,
+because the connection decides where the credential is sent.
 
 `login --no-browser` prints a sign-in address to open in a browser on any device. After sign-in that
 browser fails to load a `127.0.0.1` page; copy its full address and paste it at the hidden prompt.

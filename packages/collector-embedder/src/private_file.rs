@@ -7,9 +7,10 @@
 //! decides where that secret is sent, so other local users must never be able to read the secret
 //! or plant a file that redirects it. On Unix:
 //! - the directory is created `0700` before anything is written in it and must belong to the
-//!   current user. One that an older version or a loose umask left open is tightened to `0700`; if
-//!   others could write to it, every entry must belong to the current user, because anything else
-//!   in it was planted.
+//!   current user. One that an older version or a loose umask left open is tightened to `0700`.
+//!   Every entry must belong to the current user, checked on every use, because anything else was
+//!   planted while the directory was open. That also covers files opened by other code, such as
+//!   the SQLite cursor store and its sidecars.
 //! - writes go to a freshly and exclusively created `0600` temp file (`O_EXCL | O_NOFOLLOW`, random
 //!   name) that is renamed over the target, so a pre-created file or planted symlink is never
 //!   reused or followed, and a crash never leaves a truncated file.
@@ -116,35 +117,40 @@ pub(crate) fn ensure_private_dir(dir: &Path) -> Result<()> {
             dir.display()
         );
     }
-    if meta.mode() & 0o077 == 0 {
-        return Ok(());
+    if meta.mode() & 0o077 != 0 {
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("restrict {} to its owner", dir.display()))?;
     }
-    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
-        .with_context(|| format!("restrict {} to its owner", dir.display()))?;
-    if meta.mode() & 0o022 == 0 {
-        return Ok(());
+    // Nobody else can add entries now, so this cannot race. It runs every time rather than only
+    // when the mode changed: a refused attempt has already tightened the directory, and a retry
+    // must refuse the planted entry again.
+    if let Some(planted) = foreign_entry(dir, uid)? {
+        bail!(
+            "{} belongs to another user, so it was planted while other users could write to {}; \
+             delete it and run the command again",
+            planted.display(),
+            dir.display()
+        );
     }
-    // Until the chmod above, other users could create entries here. Nobody else can now, so this
-    // check cannot race. `DirEntry::metadata` does not follow symlinks: a planted link is its
-    // creator's.
+    Ok(())
+}
+
+/// The first entry of `dir` not owned by `uid`. `DirEntry::metadata` does not follow symlinks, so a
+/// planted link counts as its creator's.
+#[cfg(unix)]
+fn foreign_entry(dir: &Path, uid: u32) -> Result<Option<PathBuf>> {
+    use std::os::unix::fs::MetadataExt;
     let entries = fs::read_dir(dir).with_context(|| format!("list {}", dir.display()))?;
     for entry in entries {
         let entry = entry.with_context(|| format!("list {}", dir.display()))?;
-        let path = entry.path();
-        let owner = entry
+        let meta = entry
             .metadata()
-            .with_context(|| format!("stat {}", path.display()))?
-            .uid();
-        if owner != uid {
-            bail!(
-                "{} belongs to another user and appeared while other users could write to {}; \
-                 delete it and run the command again",
-                path.display(),
-                dir.display()
-            );
+            .with_context(|| format!("stat {}", entry.path().display()))?;
+        if meta.uid() != uid {
+            return Ok(Some(entry.path()));
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 #[cfg(unix)]
@@ -256,6 +262,25 @@ mod tests {
         ensure_private_dir(&dir).unwrap();
         assert_eq!(mode(&dir), 0o700);
         assert_eq!(mode(&root.path().join("a")), 0o700);
+    }
+
+    #[test]
+    fn entries_another_user_owns_are_found_whatever_the_directory_mode() {
+        use std::os::unix::fs::MetadataExt;
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("state");
+        ensure_private_dir(&dir).unwrap();
+        // The target is root's; the link is this user's, and only the link counts.
+        symlink("/", dir.join("cursors-org.sqlite3")).unwrap();
+        ensure_private_dir(&dir).unwrap();
+
+        let uid = fs::metadata(&dir).unwrap().uid();
+        assert_ne!(uid, 0, "run these tests as a regular user");
+        assert_eq!(foreign_entry(&dir, uid).unwrap(), None);
+        assert_eq!(
+            foreign_entry(&dir, uid + 1).unwrap(),
+            Some(dir.join("cursors-org.sqlite3"))
+        );
     }
 
     #[test]

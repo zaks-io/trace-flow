@@ -120,8 +120,9 @@ impl Paths {
         self.root.join("scratch")
     }
 
-    /// Create the state dir and its scratch subdir private (`0700`), or make existing ones private.
-    /// Idempotent. See [`crate::private_file`] for what an existing open dir must pass.
+    /// Create the state dir and its scratch subdir private (`0700`), or make existing ones private,
+    /// and refuse them while they hold another user's files. Idempotent; runs before the cursor
+    /// store opens. See [`crate::private_file`].
     pub fn ensure(&self) -> Result<()> {
         private_file::ensure_private_dir(&self.root)?;
         private_file::ensure_private_dir(&self.scratch_dir())
