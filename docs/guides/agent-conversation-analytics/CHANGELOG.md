@@ -23,8 +23,10 @@ host-wide (`--system`, root with only `CAP_DAC_READ_SEARCH`). `collector.toml` l
 globs re-expanded every cycle. `sync --watch` shares Desktop's cycle policy through the new
 `collector-embedder::cycle` module. Linux defaults to an owner-only credential file. `login
 --no-browser` accepts the pasted callback address. `service install|uninstall` shows inputs before
-egress and manages the unit. The state directory is private from creation, and the connection file,
-which now records the credential store, refuses symlinks and other users' files. ADR 0015 gains a
+egress and manages the unit. The config and the state directory are reached only through paths
+other users cannot change, the state directory is private from creation and refused while others
+can write to it, and the connection file, which now records the credential store, refuses symlinks
+and other users' files. ADR 0015 gains a
 Linux Service amendment; ADR 0012 points to it.
 **Verified:** `cargo fmt`, `cargo clippy --workspace --all-targets -D warnings`, and `cargo test
 --workspace` pass. In a sandbox, the user unit ran against a local fake ingest: first-run backfill,

@@ -34,3 +34,20 @@ pub mod login;
 pub mod private_file;
 pub mod sources;
 pub mod sync;
+#[cfg(unix)]
+mod trusted_path;
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    /// A temp dir only the current user can enter. A plain one takes its mode from the umask, and
+    /// a group-writable one fails the trusted-path checks of everything under it.
+    pub(crate) fn private_tempdir() -> tempfile::TempDir {
+        let mut builder = tempfile::Builder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(std::fs::Permissions::from_mode(0o700));
+        }
+        builder.tempdir().unwrap()
+    }
+}

@@ -120,9 +120,9 @@ impl Paths {
         self.root.join("scratch")
     }
 
-    /// Create the state dir and its scratch subdir private (`0700`), or make existing ones private,
-    /// and refuse them while they hold another user's files. Idempotent; runs before the cursor
-    /// store opens. See [`crate::private_file`].
+    /// Create the state dir and its scratch subdir private (`0700`), or hide existing ones other
+    /// users can read, and refuse them while others can write to them or they hold another user's
+    /// files. Idempotent; runs before the cursor store opens. See [`crate::private_file`].
     pub fn ensure(&self) -> Result<()> {
         private_file::ensure_private_dir(&self.root)?;
         private_file::ensure_private_dir(&self.scratch_dir())
@@ -143,7 +143,7 @@ impl Paths {
     /// Persist the connection state, atomically replacing (never following) whatever is there.
     pub fn save_connection(&self, conn: &Connection) -> Result<()> {
         let json = serde_json::to_vec_pretty(conn).context("serialize connection")?;
-        private_file::write(&self.root, &self.connection_file(), &json)
+        private_file::write(&self.connection_file(), &json)
     }
 
     /// Remove the connection file and the org's cursor DB. Used by `disconnect`. Missing files are
@@ -185,7 +185,6 @@ pub(crate) fn sanitize(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     fn conn() -> Connection {
         Connection {
@@ -200,7 +199,7 @@ mod tests {
 
     #[test]
     fn connection_round_trips_through_disk() {
-        let dir = TempDir::new().unwrap();
+        let dir = crate::test_support::private_tempdir();
         let paths = Paths::at(dir.path().join("state"));
         paths.ensure().unwrap();
         assert_eq!(paths.load_connection().unwrap(), None);
@@ -230,7 +229,7 @@ mod tests {
 
     #[test]
     fn disconnect_removes_connection_and_cursor_db_idempotently() {
-        let dir = TempDir::new().unwrap();
+        let dir = crate::test_support::private_tempdir();
         let paths = Paths::at(dir.path().join("state"));
         paths.ensure().unwrap();
         paths.save_connection(&conn()).unwrap();
@@ -245,7 +244,7 @@ mod tests {
 
     #[test]
     fn clear_connection_only_preserves_cursor_db() {
-        let dir = TempDir::new().unwrap();
+        let dir = crate::test_support::private_tempdir();
         let paths = Paths::at(dir.path().join("state"));
         paths.ensure().unwrap();
         paths.save_connection(&conn()).unwrap();
@@ -289,10 +288,10 @@ mod tests {
     #[test]
     fn a_planted_connection_file_is_refused_on_read_and_replaced_on_write() {
         use std::os::unix::fs::{symlink, PermissionsExt};
-        let dir = TempDir::new().unwrap();
+        let dir = crate::test_support::private_tempdir();
         let paths = Paths::at(dir.path().join("state"));
         std::fs::create_dir(paths.root()).unwrap();
-        std::fs::set_permissions(paths.root(), std::fs::Permissions::from_mode(0o775)).unwrap();
+        std::fs::set_permissions(paths.root(), std::fs::Permissions::from_mode(0o755)).unwrap();
         let elsewhere = dir.path().join("elsewhere.json");
         let mut redirected = conn();
         redirected.ingest_url = "https://attacker.example.test".to_string();

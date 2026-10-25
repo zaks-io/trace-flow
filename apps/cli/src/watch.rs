@@ -89,12 +89,11 @@ pub fn load_state(paths_root: &Path) -> Result<ServiceState> {
 
 fn save_state(paths_root: &Path, state: &ServiceState) -> Result<()> {
     let json = serde_json::to_vec_pretty(state).context("serialize service state")?;
-    private_file::write(paths_root, &state_file(paths_root), &json)
+    private_file::write(&state_file(paths_root), &json)
 }
 
 /// Run sync cycles until SIGTERM or SIGINT.
 pub async fn run(layout: &Layout) -> Result<()> {
-    layout.paths.ensure()?;
     let Some(config) = layout.config()? else {
         return Err(ConfigError(format!(
             "`sync --watch` reads its inputs from {}, which does not exist; run `trace-flow{} service install` to create it",
@@ -103,6 +102,7 @@ pub async fn run(layout: &Layout) -> Result<()> {
         ))
         .into());
     };
+    layout.paths.ensure()?;
     let interval = config.interval();
     let first_backfill = config.first_backfill();
     let mut state = load_state(layout.paths.root())?;
@@ -246,9 +246,20 @@ pub fn now_ms() -> i64 {
 mod tests {
     use super::*;
 
+    /// The state dir must be private, and a plain temp dir takes its mode from the umask.
+    fn private_tempdir() -> tempfile::TempDir {
+        let mut builder = tempfile::Builder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(std::fs::Permissions::from_mode(0o700));
+        }
+        builder.tempdir().unwrap()
+    }
+
     #[test]
     fn state_round_trips_and_a_missing_file_is_a_fresh_service() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = private_tempdir();
         assert_eq!(load_state(dir.path()).unwrap(), ServiceState::default());
 
         let state = ServiceState {
@@ -280,8 +291,9 @@ mod tests {
 
     #[test]
     fn a_corrupt_state_file_is_an_error_not_a_fresh_backfill() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(state_file(dir.path()), b"{not json").unwrap();
-        assert!(load_state(dir.path()).is_err());
+        let dir = private_tempdir();
+        private_file::write(&state_file(dir.path()), b"{not json").unwrap();
+        let err = load_state(dir.path()).unwrap_err();
+        assert!(format!("{err:#}").contains("parse"), "{err:#}");
     }
 }

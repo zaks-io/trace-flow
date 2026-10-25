@@ -14,7 +14,6 @@ use std::process::Command;
 use anyhow::{Context, Result};
 use collector_embedder::connection::Paths;
 use collector_embedder::keychain::{CredentialStore, CredentialStoreKind};
-use collector_embedder::private_file;
 use collector_embedder::sources::SourceHomes;
 
 use crate::config::{Config, ConfigError};
@@ -92,23 +91,8 @@ impl Layout {
     }
 
     /// The config, or `None` when its file does not exist yet. It is read only through a path that
-    /// only you or root can change (see [`Config::load`]). The per-user default sits in the
-    /// Collector's own directory, normally the state dir, so that directory is made private first
-    /// instead of refused when an older version or a loose umask left it open.
+    /// only you or root can change (see [`Config::load`]).
     pub fn config(&self) -> Result<Option<Config>> {
-        if self.scope == Scope::User && !self.config_overridden {
-            let dir = self
-                .config_file
-                .parent()
-                .context("config path has no directory")?;
-            // No directory, no config: leave creating it to the commands that write one.
-            if dir
-                .try_exists()
-                .with_context(|| format!("check {}", dir.display()))?
-            {
-                private_file::ensure_private_dir(dir)?;
-            }
-        }
         Config::load(&self.config_file)
     }
 

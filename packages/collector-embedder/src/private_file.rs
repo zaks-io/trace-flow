@@ -6,40 +6,48 @@
 //! The state directory holds the file credential store's secret and the connection metadata that
 //! decides where that secret is sent, so other local users must never be able to read the secret
 //! or plant a file that redirects it. On Unix:
-//! - the directory is created `0700` before anything is written in it and must belong to the
-//!   current user. One that an older version or a loose umask left open is tightened to `0700`.
-//!   Every entry must belong to the current user, checked on every use, because anything else was
-//!   planted while the directory was open. That also covers files opened by other code, such as
-//!   the SQLite cursor store and its sidecars.
-//! - writes go to a freshly and exclusively created `0600` temp file (`O_EXCL | O_NOFOLLOW`, random
-//!   name) that is renamed over the target, so a pre-created file or planted symlink is never
-//!   reused or followed, and a crash never leaves a truncated file.
+//! - the directory is reached only through directories other users cannot change, following only
+//!   symlinks the current user or root placed, so no link another user plants can point it
+//!   elsewhere. Missing directories are created `0700` before anything is written in them.
+//! - it must belong to the current user. One other users can only read, as an older version or a
+//!   loose umask could leave it, is made `0700`. One they can write to is refused, never
+//!   tightened: they could have swapped or planted files in it, and only its owner can tell.
+//! - every entry must belong to the current user, checked on every use. That also covers files
+//!   opened by other code, such as the SQLite cursor store and its sidecars.
+//! - files are written and read through the handle of that checked directory. Writes go to a
+//!   freshly and exclusively created `0600` temp file (`O_EXCL | O_NOFOLLOW`, random name) that is
+//!   renamed over the target, so a pre-created file or planted symlink is never reused or followed,
+//!   and a crash never leaves a truncated file.
 //! - reads open with `O_NOFOLLOW` and check the opened handle. Both readers refuse a file another
 //!   user owns; [`read`] (secrets) also refuses one other users can read, the way ssh refuses such a
 //!   key, and [`read_owned`] (metadata) one other users can write.
-//! - every reader here opens with `O_NONBLOCK` and accepts only a regular file, so a FIFO planted
-//!   in a file's place cannot hang the Collector before these checks run.
+//! - every reader opens with `O_NONBLOCK` and accepts only a regular file, so a FIFO planted in a
+//!   file's place cannot hang the Collector before these checks run.
 
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
-/// Atomically replace `path` (inside `dir`) with `contents`, readable only by the current user.
-pub fn write(dir: &Path, path: &Path, contents: &[u8]) -> Result<()> {
-    ensure_private_dir(dir)?;
-    let tmp = temp_path(path)?;
-    let mut file = create_exclusive(&tmp).with_context(|| format!("create {}", tmp.display()))?;
+/// Atomically replace `path` with `contents`, readable only by the current user. The private
+/// directory holding it is created first when missing.
+pub fn write(path: &Path, contents: &[u8]) -> Result<()> {
+    let (dir_path, name) = split(path)?;
+    let dir = open_dir(dir_path, true)?;
+    let tmp = temp_name(name)?;
+    let mut file = sys::create_exclusive(&dir, &tmp)
+        .with_context(|| format!("create {}", dir_path.join(&tmp).display()))?;
     let written = file
         .write_all(contents)
         .and_then(|()| file.sync_all())
-        .with_context(|| format!("write {}", tmp.display()))
+        .with_context(|| format!("write {}", path.display()))
         .and_then(|()| {
-            fs::rename(&tmp, path).with_context(|| format!("move into {}", path.display()))
+            sys::rename(&dir, &tmp, name).with_context(|| format!("move into {}", path.display()))
         });
     if written.is_err() {
-        let _ = fs::remove_file(&tmp);
+        let _ = sys::remove(&dir, &tmp);
     }
     written
 }
@@ -68,6 +76,12 @@ pub fn read_owned(path: &Path) -> Result<Option<Vec<u8>>> {
     Ok(Some(contents))
 }
 
+/// Create `dir` (and missing ancestors) as `0700`, or make an existing one private, and refuse it
+/// while other users can write to it or it holds their entries.
+pub fn ensure_private_dir(dir: &Path) -> Result<()> {
+    open_dir(dir, true).map(drop)
+}
+
 /// What a reader refuses besides symlinks and other owners.
 #[derive(Clone, Copy)]
 enum Guard {
@@ -77,18 +91,26 @@ enum Guard {
     Trusted,
 }
 
+fn open_dir(dir: &Path, create: bool) -> Result<sys::Dir> {
+    sys::open_private_dir(dir, create)?.with_context(|| format!("create {}", dir.display()))
+}
+
 fn open_checked(path: &Path, guard: Guard) -> Result<Option<fs::File>> {
-    let file = match open_no_follow(path) {
+    let (dir_path, name) = split(path)?;
+    let Some(dir) = sys::open_private_dir(dir_path, false)? else {
+        return Ok(None);
+    };
+    let file = match sys::open_no_follow(&dir, name) {
         Ok(file) => file,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(err) if is_symlink_refusal(&err) => bail!(
+        Err(err) if sys::is_symlink_refusal(&err) => bail!(
             "{} is a symlink, so it cannot be trusted; delete it and run the command again",
             path.display()
         ),
         Err(err) => return Err(err).with_context(|| format!("open {}", path.display())),
     };
     ensure_regular(&file, path)?;
-    ensure_owned(&file, path, guard)?;
+    sys::ensure_owned(&file, path, guard)?;
     Ok(Some(file))
 }
 
@@ -106,148 +128,203 @@ pub(crate) fn ensure_regular(file: &fs::File, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn temp_path(path: &Path) -> Result<PathBuf> {
+fn split(path: &Path) -> Result<(&Path, &OsStr)> {
+    let name = path
+        .file_name()
+        .with_context(|| format!("{} does not name a file", path.display()))?;
+    let dir = match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    };
+    Ok((dir, name))
+}
+
+fn temp_name(name: &OsStr) -> Result<OsString> {
     let mut nonce = [0u8; 8];
     getrandom::fill(&mut nonce).map_err(|err| anyhow::anyhow!("OS RNG: {err}"))?;
     let nonce: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
-    let name = path
-        .file_name()
-        .context("private file path has no file name")?
-        .to_string_lossy();
-    Ok(path.with_file_name(format!(".{name}.{nonce}.tmp")))
+    Ok(format!(".{}.{nonce}.tmp", name.to_string_lossy()).into())
 }
 
-/// Create `dir` (and missing ancestors) as `0700`, or make an existing one private, and refuse it
-/// while it holds another user's entries.
 #[cfg(unix)]
-pub fn ensure_private_dir(dir: &Path) -> Result<()> {
-    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir)
-        .with_context(|| format!("create {}", dir.display()))?;
-    let meta = fs::metadata(dir).with_context(|| format!("stat {}", dir.display()))?;
-    let uid = rustix::process::geteuid().as_raw();
-    if meta.uid() != uid {
-        bail!(
-            "{} belongs to another user; choose a state directory you own",
-            dir.display()
-        );
-    }
-    if meta.mode() & 0o077 != 0 {
-        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
-            .with_context(|| format!("restrict {} to its owner", dir.display()))?;
-    }
-    // Nobody else can add entries now, so this cannot race. It runs every time rather than only
-    // when the mode changed: a refused attempt has already tightened the directory, and a retry
-    // must refuse the planted entry again.
-    if let Some(planted) = foreign_entry(dir, uid)? {
-        bail!(
-            "{} belongs to another user, so it was planted while other users could write to {}; \
-             delete it and run the command again",
-            planted.display(),
-            dir.display()
-        );
-    }
-    Ok(())
-}
-
-/// The first entry of `dir` not owned by `uid`. `DirEntry::metadata` does not follow symlinks, so a
-/// planted link counts as its creator's.
-#[cfg(unix)]
-fn foreign_entry(dir: &Path, uid: u32) -> Result<Option<PathBuf>> {
+mod sys {
+    use std::ffi::{OsStr, OsString};
+    use std::fs;
+    use std::io;
+    use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::MetadataExt;
-    let entries = fs::read_dir(dir).with_context(|| format!("list {}", dir.display()))?;
-    for entry in entries {
-        let entry = entry.with_context(|| format!("list {}", dir.display()))?;
-        let meta = entry
+    use std::path::Path;
+
+    use anyhow::{bail, Context, Result};
+    use rustix::fd::OwnedFd;
+    use rustix::fs::{AtFlags, Mode, OFlags};
+
+    use super::Guard;
+    use crate::trusted_path::{self, Last};
+
+    pub type Dir = OwnedFd;
+
+    /// `dir` as a handle every later step goes through, or `None` when it does not exist and
+    /// `create` is false.
+    pub fn open_private_dir(dir: &Path, create: bool) -> Result<Option<OwnedFd>> {
+        let Some(fd) = trusted_path::open(dir, Last::Dir { create })? else {
+            return Ok(None);
+        };
+        let stat = rustix::fs::fstat(&fd).with_context(|| format!("stat {}", dir.display()))?;
+        let uid = rustix::process::geteuid().as_raw();
+        if stat.st_uid != uid {
+            bail!(
+                "{} belongs to another user; choose a state directory you own",
+                dir.display()
+            );
+        }
+        #[allow(clippy::useless_conversion, reason = "st_mode is u16 on macOS")]
+        let mode = u32::from(stat.st_mode) & 0o777;
+        if mode & 0o022 != 0 {
+            bail!(
+                "{} is writable by other users (mode {mode:o}), so the files in it cannot be \
+                 trusted; check that everything in it is yours and as you left it, then run \
+                 `chmod 700` on it",
+                dir.display()
+            );
+        }
+        if mode & 0o077 != 0 {
+            rustix::fs::fchmod(&fd, Mode::from_raw_mode(0o700))
+                .with_context(|| format!("restrict {} to its owner", dir.display()))?;
+        }
+        if let Some(entry) = foreign_entry(&fd, uid)? {
+            bail!(
+                "{} belongs to another user, so it may have been planted while others could \
+                 write to {}; delete it and run the command again",
+                dir.join(entry).display(),
+                dir.display()
+            );
+        }
+        Ok(Some(fd))
+    }
+
+    /// The first entry of `dir` not owned by `uid`, judged by the entry itself, so a link counts as
+    /// its creator's whatever it points at.
+    pub(super) fn foreign_entry(dir: &OwnedFd, uid: u32) -> Result<Option<OsString>> {
+        for entry in rustix::fs::Dir::read_from(dir).context("list the state directory")? {
+            let entry = entry.context("list the state directory")?;
+            let name = OsStr::from_bytes(entry.file_name().to_bytes());
+            if name == "." || name == ".." {
+                continue;
+            }
+            let stat = rustix::fs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW)
+                .with_context(|| format!("stat {}", name.display()))?;
+            if stat.st_uid != uid {
+                return Ok(Some(name.to_os_string()));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn create_exclusive(dir: &OwnedFd, name: &OsStr) -> io::Result<fs::File> {
+        let flags =
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        let fd = rustix::fs::openat(dir, name, flags, Mode::from_raw_mode(0o600))?;
+        Ok(fs::File::from(fd))
+    }
+
+    pub fn rename(dir: &OwnedFd, from: &OsStr, to: &OsStr) -> io::Result<()> {
+        Ok(rustix::fs::renameat(dir, from, dir, to)?)
+    }
+
+    pub fn remove(dir: &OwnedFd, name: &OsStr) -> io::Result<()> {
+        Ok(rustix::fs::unlinkat(dir, name, AtFlags::empty())?)
+    }
+
+    /// Non-blocking, so a FIFO opens at once and fails [`super::ensure_regular`]. Reads of a
+    /// regular file ignore the flag.
+    pub fn open_no_follow(dir: &OwnedFd, name: &OsStr) -> io::Result<fs::File> {
+        let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
+        let fd = rustix::fs::openat(dir, name, flags, Mode::empty())?;
+        Ok(fs::File::from(fd))
+    }
+
+    /// `O_NOFOLLOW` fails with `ELOOP` when the last component is a symlink.
+    pub fn is_symlink_refusal(err: &io::Error) -> bool {
+        err.raw_os_error() == Some(rustix::io::Errno::LOOP.raw_os_error())
+    }
+
+    pub fn ensure_owned(file: &fs::File, path: &Path, guard: Guard) -> Result<()> {
+        let meta = file
             .metadata()
-            .with_context(|| format!("stat {}", entry.path().display()))?;
-        if meta.uid() != uid {
-            return Ok(Some(entry.path()));
+            .with_context(|| format!("stat {}", path.display()))?;
+        let mode = meta.mode() & 0o777;
+        if meta.uid() != rustix::process::geteuid().as_raw() {
+            bail!(
+                "{} belongs to another user, so it cannot be trusted; delete it and run the \
+                 command again",
+                path.display()
+            );
+        }
+        match guard {
+            Guard::Secret if mode & 0o077 != 0 => bail!(
+                "{} is readable by other users (mode {mode:o}); run `chmod 600` on it or log in \
+                 again",
+                path.display()
+            ),
+            Guard::Trusted if mode & 0o022 != 0 => bail!(
+                "{} is writable by other users (mode {mode:o}), so it cannot be trusted; delete it \
+                 and run the command again",
+                path.display()
+            ),
+            _ => Ok(()),
         }
     }
-    Ok(None)
 }
 
-#[cfg(unix)]
-fn create_exclusive(path: &Path) -> io::Result<fs::File> {
-    use rustix::fs::{Mode, OFlags};
-    let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-    let fd = rustix::fs::open(path, flags, Mode::from_raw_mode(0o600))?;
-    Ok(fs::File::from(fd))
-}
+#[cfg(not(unix))]
+mod sys {
+    use std::ffi::OsStr;
+    use std::fs;
+    use std::io;
+    use std::path::{Path, PathBuf};
 
-/// Non-blocking, so a FIFO opens at once and fails [`ensure_regular`]. Reads of a regular file
-/// ignore the flag.
-#[cfg(unix)]
-fn open_no_follow(path: &Path) -> io::Result<fs::File> {
-    use rustix::fs::{Mode, OFlags};
-    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
-    let fd = rustix::fs::open(path, flags, Mode::empty())?;
-    Ok(fs::File::from(fd))
-}
+    use anyhow::{Context, Result};
 
-/// `O_NOFOLLOW` fails with `ELOOP` when the last component is a symlink.
-#[cfg(unix)]
-fn is_symlink_refusal(err: &io::Error) -> bool {
-    err.raw_os_error() == Some(rustix::io::Errno::LOOP.raw_os_error())
-}
+    use super::Guard;
 
-#[cfg(unix)]
-fn ensure_owned(file: &fs::File, path: &Path, guard: Guard) -> Result<()> {
-    use std::os::unix::fs::MetadataExt;
-    let meta = file
-        .metadata()
-        .with_context(|| format!("stat {}", path.display()))?;
-    let mode = meta.mode() & 0o777;
-    if meta.uid() != rustix::process::geteuid().as_raw() {
-        bail!(
-            "{} belongs to another user, so it cannot be trusted; delete it and run the command again",
-            path.display()
-        );
+    pub type Dir = PathBuf;
+
+    pub fn open_private_dir(dir: &Path, create: bool) -> Result<Option<PathBuf>> {
+        if create {
+            fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+        } else if !dir.is_dir() {
+            return Ok(None);
+        }
+        Ok(Some(dir.to_path_buf()))
     }
-    match guard {
-        Guard::Secret if mode & 0o077 != 0 => bail!(
-            "{} is readable by other users (mode {mode:o}); run `chmod 600` on it or log in again",
-            path.display()
-        ),
-        Guard::Trusted if mode & 0o022 != 0 => bail!(
-            "{} is writable by other users (mode {mode:o}), so it cannot be trusted; delete it and \
-             run the command again",
-            path.display()
-        ),
-        _ => Ok(()),
+
+    pub fn create_exclusive(dir: &Path, name: &OsStr) -> io::Result<fs::File> {
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(dir.join(name))
     }
-}
 
-#[cfg(not(unix))]
-pub fn ensure_private_dir(dir: &Path) -> Result<()> {
-    fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))
-}
+    pub fn rename(dir: &Path, from: &OsStr, to: &OsStr) -> io::Result<()> {
+        fs::rename(dir.join(from), dir.join(to))
+    }
 
-#[cfg(not(unix))]
-fn create_exclusive(path: &Path) -> io::Result<fs::File> {
-    fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-}
+    pub fn remove(dir: &Path, name: &OsStr) -> io::Result<()> {
+        fs::remove_file(dir.join(name))
+    }
 
-#[cfg(not(unix))]
-fn open_no_follow(path: &Path) -> io::Result<fs::File> {
-    fs::File::open(path)
-}
+    pub fn open_no_follow(dir: &Path, name: &OsStr) -> io::Result<fs::File> {
+        fs::File::open(dir.join(name))
+    }
 
-#[cfg(not(unix))]
-fn is_symlink_refusal(_err: &io::Error) -> bool {
-    false
-}
+    pub fn is_symlink_refusal(_err: &io::Error) -> bool {
+        false
+    }
 
-#[cfg(not(unix))]
-fn ensure_owned(_file: &fs::File, _path: &Path, _guard: Guard) -> Result<()> {
-    Ok(())
+    pub fn ensure_owned(_file: &fs::File, _path: &Path, _guard: Guard) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -259,16 +336,21 @@ mod tests {
         fs::metadata(path).unwrap().permissions().mode() & 0o777
     }
 
+    /// Explicit mode: the umask decides what a plain `create_dir` leaves.
+    fn mkdir(path: &Path, mode: u32) {
+        fs::create_dir(path).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+    }
+
     #[test]
-    fn writes_are_owner_only_and_tighten_the_directory() {
-        let root = tempfile::tempdir().unwrap();
+    fn writes_are_owner_only_and_hide_a_readable_directory() {
+        let root = crate::test_support::private_tempdir();
         let dir = root.path().join("state");
-        fs::create_dir(&dir).unwrap();
-        fs::set_permissions(&dir, fs::Permissions::from_mode(0o775)).unwrap();
+        mkdir(&dir, 0o755);
         let path = dir.join("value");
 
-        write(&dir, &path, b"one").unwrap();
-        write(&dir, &path, b"two").unwrap();
+        write(&path, b"one").unwrap();
+        write(&path, b"two").unwrap();
         assert_eq!(read(&path).unwrap().as_deref(), Some("two"));
         assert_eq!(mode(&path), 0o600);
         assert_eq!(mode(&dir), 0o700);
@@ -276,8 +358,47 @@ mod tests {
     }
 
     #[test]
+    fn a_directory_others_can_write_to_is_refused_not_tightened() {
+        let root = crate::test_support::private_tempdir();
+        let dir = root.path().join("state");
+        mkdir(&dir, 0o775);
+        fs::write(dir.join("value"), "swapped?").unwrap();
+        fs::set_permissions(dir.join("value"), fs::Permissions::from_mode(0o600)).unwrap();
+
+        for err in [
+            write(&dir.join("value"), b"new").unwrap_err(),
+            read(&dir.join("value")).unwrap_err(),
+            ensure_private_dir(&dir).unwrap_err(),
+        ] {
+            assert!(err.to_string().contains("chmod 700"), "{err}");
+        }
+        assert_eq!(
+            mode(&dir),
+            0o775,
+            "only its owner can tell what is safe to keep"
+        );
+        assert_eq!(fs::read_to_string(dir.join("value")).unwrap(), "swapped?");
+    }
+
+    #[test]
+    fn a_state_dir_linked_from_a_directory_others_can_write_to_is_left_alone() {
+        let root = crate::test_support::private_tempdir();
+        let shared = root.path().join("shared");
+        let victim = root.path().join("team-data");
+        mkdir(&shared, 0o777);
+        mkdir(&victim, 0o750);
+        symlink(&victim, shared.join("trace-flow")).unwrap();
+
+        let err = ensure_private_dir(&shared.join("trace-flow"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("writable by other users"), "{err}");
+        assert_eq!(mode(&victim), 0o750, "the link target is never touched");
+    }
+
+    #[test]
     fn a_new_directory_is_private_from_the_start() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::private_tempdir();
         let dir = root.path().join("a/b");
         ensure_private_dir(&dir).unwrap();
         assert_eq!(mode(&dir), 0o700);
@@ -285,9 +406,9 @@ mod tests {
     }
 
     #[test]
-    fn entries_another_user_owns_are_found_whatever_the_directory_mode() {
+    fn entries_another_user_owns_are_found_whatever_they_point_at() {
         use std::os::unix::fs::MetadataExt;
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::private_tempdir();
         let dir = root.path().join("state");
         ensure_private_dir(&dir).unwrap();
         // The target is root's; the link is this user's, and only the link counts.
@@ -296,24 +417,25 @@ mod tests {
 
         let uid = fs::metadata(&dir).unwrap().uid();
         assert_ne!(uid, 0, "run these tests as a regular user");
-        assert_eq!(foreign_entry(&dir, uid).unwrap(), None);
+        let fd = sys::open_private_dir(&dir, false).unwrap().unwrap();
+        assert_eq!(sys::foreign_entry(&fd, uid).unwrap(), None);
         assert_eq!(
-            foreign_entry(&dir, uid + 1).unwrap(),
-            Some(dir.join("cursors-org.sqlite3"))
+            sys::foreign_entry(&fd, uid + 1).unwrap(),
+            Some("cursors-org.sqlite3".into())
         );
     }
 
     #[test]
     fn a_planted_symlink_at_the_target_is_replaced_not_followed() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::private_tempdir();
         let dir = root.path().join("state");
         let victim = root.path().join("victim");
         fs::write(&victim, "untouched").unwrap();
-        fs::create_dir(&dir).unwrap();
+        mkdir(&dir, 0o700);
         let path = dir.join("value");
         symlink(&victim, &path).unwrap();
 
-        write(&dir, &path, b"secret").unwrap();
+        write(&path, b"secret").unwrap();
         assert_eq!(fs::read_to_string(&victim).unwrap(), "untouched");
         assert!(!fs::symlink_metadata(&path).unwrap().is_symlink());
         assert_eq!(mode(&path), 0o600);
@@ -321,7 +443,7 @@ mod tests {
 
     #[test]
     fn secret_reads_refuse_symlinks_and_files_others_can_read() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::private_tempdir();
         let target = root.path().join("target");
         fs::write(&target, "secret").unwrap();
         fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
@@ -335,11 +457,12 @@ mod tests {
         assert!(err.contains("readable by other users"), "{err}");
 
         assert_eq!(read(&root.path().join("missing")).unwrap(), None);
+        assert_eq!(read(&root.path().join("missing/value")).unwrap(), None);
     }
 
     #[test]
     fn a_planted_fifo_is_refused_without_blocking() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::private_tempdir();
         let fifo = root.path().join("connection.json");
         let made = std::process::Command::new("mkfifo")
             .arg(&fifo)
@@ -355,7 +478,7 @@ mod tests {
 
     #[test]
     fn owned_reads_allow_readers_but_refuse_symlinks_and_files_others_can_write() {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::private_tempdir();
         let target = root.path().join("target");
         fs::write(&target, "{}").unwrap();
         fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();

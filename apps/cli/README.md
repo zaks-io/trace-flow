@@ -142,13 +142,19 @@ users can read. Set `credential_store = "keyring"` before `login` to use the Sec
 `login` records the store it used, and later commands read the credential from there. macOS and
 Windows default to the OS keychain.
 
-The state directory is `0700`, and the CLI refuses to use it while it holds a file another user
-owns. Like ssh's `StrictModes`, it reads a config only through a path that only you or root can
-change: every directory on the way must belong to you or root and be writable by no one else
-(sticky directories such as `/tmp` are fine for entries you own), symlinks are followed only from
-such directories, and the file must belong to you or root and be writable by no one else. Run
-`chmod go-w` on whatever it names. An invalid config is reported by line and column, never quoted. It also refuses a connection or state file that is a symlink or that other users can change,
-because the connection decides where the credential is sent.
+Like ssh's `StrictModes`, the CLI reaches its config and its state directory only through paths
+that only you or root can change: every directory on the way must belong to you or root and be
+writable by no one else (sticky directories such as `/tmp` are fine for entries you or root own),
+and symlinks are followed only from such directories. The config must belong to you or root and be
+writable by no one else. An invalid config is reported by line and column, never quoted.
+
+The state directory must belong to you and is kept `0700`. The CLI makes one that others can only
+read private, but refuses one they can write to, or one holding a file another user owns, because
+such files may have been planted or swapped. It also refuses a connection or state file that is a
+symlink or that other users can change, because the connection decides where the credential is
+sent. When the CLI names a directory others can write to, check that what it holds is yours and as
+you left it, then run the `chmod` it suggests. A umask such as `002` leaves new directories
+group-writable, so the first run may name one of yours.
 
 `login --no-browser` prints a sign-in address to open in a browser on any device. After sign-in that
 browser fails to load a `127.0.0.1` page; copy its full address and paste it at the hidden prompt.

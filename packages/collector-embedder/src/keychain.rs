@@ -95,7 +95,7 @@ impl CredentialStore {
                 "write Collector Credential to OS keychain (headless hosts need the file store)",
             ),
             Self::File(dir) => {
-                private_file::write(dir, &credential_file(dir, org_id), credential.as_bytes())
+                private_file::write(&credential_file(dir, org_id), credential.as_bytes())
             }
         }
     }
@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn file_store_round_trips_per_org_and_deletes_idempotently() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_support::private_tempdir();
         let store = file_store(dir.path());
         assert_eq!(stored(dir.path(), "org_a"), None);
 
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn stored_credentials_are_owner_only() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_support::private_tempdir();
         file_store(dir.path()).store("org_a", "tfc_a").unwrap();
         let mode = fs::metadata(credential_file(dir.path(), "org_a"))
             .unwrap()
@@ -206,7 +206,7 @@ mod tests {
 
     #[test]
     fn an_empty_credential_file_is_an_error() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_support::private_tempdir();
         file_store(dir.path()).store("org_a", "\n").unwrap();
         assert!(read_owner_only(&credential_file(dir.path(), "org_a")).is_err());
     }
