@@ -13,8 +13,10 @@ Restart=on-failure
 RestartSec=30s
 # 78 (EX_CONFIG) means the config or login needs a person; restarting would only repeat the error.
 RestartPreventExitStatus=78
-StateDirectory=trace-flow
-StateDirectoryMode=0700
+# `login` creates /var/lib/trace-flow private, and the Collector refuses it on every start if other
+# users could have written to it. `StateDirectory=` would instead chmod, and chown when the owner
+# differs, an existing directory before the Collector could check it.
+ReadWritePaths=/var/lib/trace-flow
 
 # Claude writes transcripts 0600, so reading other users' agent homes needs CAP_DAC_READ_SEARCH.
 # Root keeps only that capability: it can read any file but cannot override write permissions,

@@ -212,8 +212,12 @@ mod sys {
             if name == "." || name == ".." {
                 continue;
             }
-            let stat = rustix::fs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW)
-                .with_context(|| format!("stat {}", name.display()))?;
+            let stat = match rustix::fs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW) {
+                Ok(stat) => stat,
+                // Renamed or removed since the listing, such as another writer's temp file.
+                Err(rustix::io::Errno::NOENT) => continue,
+                Err(err) => return Err(err).with_context(|| format!("stat {}", name.display())),
+            };
             if stat.st_uid != uid {
                 return Ok(Some(name.to_os_string()));
             }
@@ -423,6 +427,28 @@ mod tests {
             sys::foreign_entry(&fd, uid + 1).unwrap(),
             Some("cursors-org.sqlite3".into())
         );
+    }
+
+    #[test]
+    fn concurrent_writers_never_trip_over_each_others_temp_files() {
+        let root = crate::test_support::private_tempdir();
+        let dir = root.path().join("state");
+        ensure_private_dir(&dir).unwrap();
+        let writers: Vec<_> = ["service-state.json", "connection.json"]
+            .into_iter()
+            .map(|name| {
+                let path = dir.join(name);
+                std::thread::spawn(move || {
+                    for i in 0..300 {
+                        write(&path, format!("{i}").as_bytes()).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().expect("every write succeeds");
+        }
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 2, "no temp files left");
     }
 
     #[test]

@@ -24,6 +24,8 @@ const SYSTEM_UNIT: &str = include_str!("../systemd/system.service");
 
 pub fn install(layout: &Layout, assume_yes: bool) -> Result<()> {
     let config = layout.config()?;
+    // The host-wide unit only allows writes to a state directory that already exists.
+    layout.paths.ensure()?;
     let Some(conn) = layout.paths.load_connection()? else {
         bail!(
             "not logged in; run `trace-flow{} login` first",
