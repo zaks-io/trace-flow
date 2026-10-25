@@ -9,18 +9,21 @@
 //! that embedder logic, shared so the CLI (`apps/cli`) and the desktop app (`apps/desktop`) run one
 //! code path with no drift:
 //!
-//! - [`keychain`] — the Collector Credential in the OS keychain, keyed by Organization id.
+//! - [`keychain`] — the Collector Credential store (OS keychain or owner-only file), keyed by
+//!   Organization id.
 //! - [`connection`] — the non-secret connection state + state-dir layout (shared by CLI and desktop,
 //!   so a login from either is interchangeable).
 //! - [`sources`] — where each agent Source writes its transcripts and which are ingestable today.
 //! - [`login`] — the browser device flow that mints a Collector Credential over a loopback redirect.
 //! - [`sync`] — the one-pass-per-source drive over `collector-sync` that POSTs and advances cursors
 //!   only on a `2xx`.
+//! - [`cycle`] — the policy the desktop engine and `trace-flow sync --watch` share between passes.
 //! - [`defaults`] — the production ingest + Convex-site URLs, resolved as env override →
 //!   baked default so a normal user never has to know or set a URL.
 
 pub mod backoff;
 pub mod connection;
+pub mod cycle;
 pub mod defaults;
 mod fact_sources;
 pub mod keychain;

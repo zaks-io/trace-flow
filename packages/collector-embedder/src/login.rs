@@ -6,8 +6,13 @@
 //! The CLI binds a one-shot HTTP listener on a random `127.0.0.1` port, opens the browser to the
 //! Convex `/collector/authorize` route with that loopback as the `redirect_uri`, and blocks until the
 //! `/collector/callback` redirect lands the minted secret + org metadata back on the listener. The
-//! secret then goes straight into the OS keychain ([`crate::keychain`]); only the non-secret
+//! secret then goes straight into the credential store ([`crate::keychain`]); only the non-secret
 //! connection metadata is written to disk ([`crate::connection::Connection`]).
+//!
+//! On a headless host the browser runs on another machine, so its redirect to `127.0.0.1` cannot
+//! reach this process. [`Callback::Pasted`] covers that case: the user copies the address the
+//! browser failed to load and pastes it into a hidden terminal prompt, and it passes the same
+//! `state` nonce check as a loopback request.
 //!
 //! The secret travels exactly once, over a loopback redirect the Convex side restricts to
 //! `127.0.0.1`. It is never logged, never put on a process arg, never persisted in plaintext.
@@ -18,7 +23,7 @@ use anyhow::{anyhow, Context, Result};
 use tiny_http::{Header, Response, Server};
 
 use crate::connection::{Connection, Paths};
-use crate::keychain;
+use crate::keychain::CredentialStore;
 
 /// The minted material the callback hands back over the loopback redirect.
 struct LoginResult {
@@ -29,41 +34,66 @@ struct LoginResult {
     convex_url: String,
 }
 
+/// How the browser's final redirect reaches this process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Callback {
+    /// Open the local browser; its redirect lands on a loopback listener.
+    Loopback,
+    /// The browser runs on another machine; the user pastes the address it was redirected to.
+    Pasted,
+}
+
 /// How long to wait for the user to finish the browser login before giving up.
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Run the full login flow against `convex_site_url` (the Convex *site* origin, e.g.
-/// `https://<deployment>.convex.site`). Stores the credential and connection on success and returns
-/// the bound [`Connection`] for the caller to report.
-pub fn run(convex_site_url: &str, ingest_url: &str) -> Result<Connection> {
-    let server = Server::http("127.0.0.1:0").map_err(|e| anyhow!("bind loopback listener: {e}"))?;
-    let port = server
-        .server_addr()
-        .to_ip()
-        .context("listener has no IP address")?
-        .port();
-    let redirect_uri = format!("http://127.0.0.1:{port}/callback");
-
+/// `https://<deployment>.convex.site`). Stores the credential in `credentials` and the connection
+/// under `paths` on success, and returns the bound [`Connection`] for the caller to report.
+pub fn run(
+    convex_site_url: &str,
+    ingest_url: &str,
+    paths: &Paths,
+    credentials: &CredentialStore,
+    callback: Callback,
+) -> Result<Connection> {
     // One-time state nonce: anyone on the box can hit our loopback listener, so the callback is only
     // trusted if it carries the exact nonce we just generated and sent through the signed OAuth state.
     let state = random_state();
-    let authorize_url = format!(
-        "{}/collector/authorize?redirect_uri={}&state={}",
-        convex_site_url.trim_end_matches('/'),
-        urlencode(&redirect_uri),
-        urlencode(&state),
-    );
+    let result = match callback {
+        Callback::Loopback => {
+            let server =
+                Server::http("127.0.0.1:0").map_err(|e| anyhow!("bind loopback listener: {e}"))?;
+            let port = server
+                .server_addr()
+                .to_ip()
+                .context("listener has no IP address")?
+                .port();
+            let authorize_url = authorize_url(convex_site_url, port, &state);
+            println!("Opening your browser to sign in...");
+            println!("If it doesn't open, visit:\n  {authorize_url}\n");
+            // A failed auto-open is not fatal — the URL is printed above for manual use.
+            let _ = webbrowser::open(&authorize_url);
+            wait_for_callback(&server, &state)?
+        }
+        Callback::Pasted => {
+            let port = free_loopback_port()?;
+            let authorize_url = authorize_url(convex_site_url, port, &state);
+            println!(
+                "Open this address in a browser on any device and sign in:\n  {authorize_url}\n"
+            );
+            println!(
+                "The browser then fails to load a 127.0.0.1 page. Copy that page's full address"
+            );
+            println!(
+                "from the address bar and paste it below. It contains your Collector Credential,"
+            );
+            println!("so input is hidden; paste it only into this terminal.\n");
+            read_pasted_callback(port, &state)?
+        }
+    };
 
-    println!("Opening your browser to sign in...");
-    println!("If it doesn't open, visit:\n  {authorize_url}\n");
-    // A failed auto-open is not fatal — the URL is printed above for manual use.
-    let _ = webbrowser::open(&authorize_url);
-
-    let result = wait_for_callback(&server, &state)?;
-
-    let paths = Paths::resolve()?;
     paths.ensure()?;
-    keychain::store(&result.org_id, &result.secret)?;
+    credentials.store(&result.org_id, &result.secret)?;
     let conn = Connection {
         org_id: result.org_id,
         collector_id: result.collector_id,
@@ -73,6 +103,54 @@ pub fn run(convex_site_url: &str, ingest_url: &str) -> Result<Connection> {
     };
     paths.save_connection(&conn)?;
     Ok(conn)
+}
+
+fn authorize_url(convex_site_url: &str, port: u16, state: &str) -> String {
+    let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+    format!(
+        "{}/collector/authorize?redirect_uri={}&state={}",
+        convex_site_url.trim_end_matches('/'),
+        urlencode(&redirect_uri),
+        urlencode(state),
+    )
+}
+
+/// A currently free loopback port for the pasted flow's `redirect_uri`. Nothing listens on it, so a
+/// browser on this machine also lands on an unreachable page whose address the user can paste.
+fn free_loopback_port() -> Result<u16> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").context("pick a loopback port")?;
+    Ok(listener.local_addr().context("loopback port")?.port())
+}
+
+/// Prompt (input hidden) until the user pastes this login's callback address. Addresses for another
+/// port or nonce are rejected with a hint and the prompt repeats; an error redirect ends the login.
+fn read_pasted_callback(port: u16, expected_state: &str) -> Result<LoginResult> {
+    loop {
+        let pasted = rpassword::prompt_password("Paste the address: ")
+            .context("read the pasted address (run this in an interactive terminal)")?;
+        match parse_pasted_callback(&pasted, port, expected_state) {
+            Ok(CallbackOutcome::Result(result)) => return result.map_err(|e| anyhow!(e)),
+            Ok(CallbackOutcome::Ignore) | Err(_) => println!(
+                "That is not this sign-in's address. Copy the full address from the browser's \
+                 address bar; it starts with http://127.0.0.1:{port}/callback"
+            ),
+        }
+    }
+}
+
+/// Classify a pasted address. It must be the loopback callback on this login's port; the rest of the
+/// check is the same as for a request arriving on the listener.
+fn parse_pasted_callback(pasted: &str, port: u16, expected_state: &str) -> Result<CallbackOutcome> {
+    let url = url::Url::parse(pasted.trim()).context("parse pasted address")?;
+    let loopback = matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"));
+    if url.scheme() != "http" || !loopback || url.port() != Some(port) {
+        return Ok(CallbackOutcome::Ignore);
+    }
+    let path_and_query = match url.query() {
+        Some(query) => format!("{}?{query}", url.path()),
+        None => url.path().to_string(),
+    };
+    parse_callback(&path_and_query, expected_state)
 }
 
 /// A 128-bit random state nonce, hex-encoded. Single-use per login; matched against the `state` the
@@ -303,6 +381,36 @@ mod tests {
         // A stray probe to e.g. `/` on our loopback port must not be treated as the callback.
         let outcome = parse_callback("/favicon.ico?state=nonce1", "nonce1").unwrap();
         assert!(matches!(outcome, CallbackOutcome::Ignore));
+    }
+
+    #[test]
+    fn pasted_address_for_this_login_yields_the_minted_fields() {
+        let inner = result_of(
+            parse_pasted_callback(
+                "  http://127.0.0.1:5000/callback?state=nonce1&secret=tfc_abc&org_id=org_1&collector_id=cli-x&convex_url=https://d.convex.site\n",
+                5000,
+                "nonce1",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(inner.secret, "tfc_abc");
+        assert_eq!(inner.org_id, "org_1");
+    }
+
+    #[test]
+    fn pasted_address_for_another_port_host_or_nonce_is_ignored() {
+        let query = "state=nonce1&secret=tfc_abc&org_id=o&collector_id=c&convex_url=https://x";
+        for address in [
+            format!("http://127.0.0.1:5001/callback?{query}"),
+            format!("http://evil.example:5000/callback?{query}"),
+            format!("https://127.0.0.1:5000/callback?{query}"),
+            "http://127.0.0.1:5000/callback?state=other&secret=tfc_abc".to_string(),
+        ] {
+            let outcome = parse_pasted_callback(&address, 5000, "nonce1").unwrap();
+            assert!(matches!(outcome, CallbackOutcome::Ignore), "{address}");
+        }
+        assert!(parse_pasted_callback("not a url", 5000, "nonce1").is_err());
     }
 
     #[test]

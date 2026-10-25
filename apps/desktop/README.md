@@ -107,4 +107,5 @@ These remaining TRA-115 acceptance criteria are tracked as separate PRs:
   change Agent Session identity (ownership is pinned to `userId` in `agentSessionOwners`,
   independent of `collectorId`).
 - **Linux desktop target** and **Cursor on Windows/Linux** remain out of scope for the current
-  macOS/Windows distribution. Cursor fact ingestion is implemented on macOS.
+  macOS/Windows distribution. Linux hosts run the CLI as a systemd service instead; see
+  [`apps/cli/README.md`](../cli/README.md#run-as-a-linux-service). Cursor fact ingestion is implemented on macOS.

@@ -1,7 +1,8 @@
 # Trace Flow Collector CLI (`trace-flow`)
 
 The command-line collector reads local coding-agent stores, converts them into redacted typed facts,
-and syncs those facts to Agent Ingest with a Collector Credential stored in the OS keychain.
+and syncs those facts to Agent Ingest with a Collector Credential. It runs once per command or as a
+long-lived Linux systemd service, per user or for the whole host.
 
 Supported sources:
 
@@ -25,20 +26,30 @@ cargo run -p trace-flow-cli -- sources list
 ## Commands
 
 ```text
-trace-flow login
-trace-flow sources list
-trace-flow sync [--since 24h|7d|30d|1y]
-trace-flow status
-trace-flow disconnect
+trace-flow [--system] [--config <path>] login [--no-browser]
+trace-flow [--system] [--config <path>] sources list
+trace-flow [--system] [--config <path>] sync [--since 24h|7d|30d|1y] [--replay]
+trace-flow [--system] [--config <path>] sync --watch
+trace-flow [--system] [--config <path>] service install [--yes]
+trace-flow [--system] [--config <path>] service uninstall
+trace-flow [--system] [--config <path>] status
+trace-flow [--system] [--config <path>] disconnect
 ```
 
-- `login` opens the browser device flow and stores the resulting Collector Credential in the OS
-  keychain.
-- `sources list` reports supported stores and counts without printing absolute home paths.
+- `login` opens the browser sign-in and stores the resulting Collector Credential in the credential
+  store. `--no-browser` signs in from a browser on another machine (see below).
+- `sources list` reports supported stores, or the configured inputs, and their counts without
+  printing absolute home paths.
 - `sync` parses, redacts, and uploads facts. Its default `24h` incremental window resumes from the
-  last complete sync watermark so time spent offline is not silently skipped.
-- `status` prints connection and source state without secrets.
-- `disconnect` revokes local material and removes the org-scoped cursor state.
+  last complete sync watermark so time spent offline is not silently skipped. `--watch` keeps
+  syncing every few minutes until stopped; it is what the service runs.
+- `service install` shows the agent homes the service will read, asks, then writes the config (only
+  if none exists) and the systemd unit and starts it. `service uninstall` stops and removes the unit.
+- `status` prints connection, source, and service state without secrets.
+- `disconnect` removes the local credential, cursors, and service state.
+
+`--system` selects the host-wide layout described below. Without it, commands use the per-user
+layout.
 
 Production URLs are embedded as defaults:
 
@@ -51,14 +62,87 @@ Agent Conversation Analytics is still private-alpha software. A working binary a
 defaults do not establish that the complete normal-user production flow has passed every gate in the
 [roadmap](../../docs/guides/agent-conversation-analytics/ROADMAP.md).
 
+## Run as a Linux service
+
+Two layouts, chosen per host:
+
+|                      | Per-user (default)                          | Host-wide (`--system`, as root)              |
+| -------------------- | ------------------------------------------- | -------------------------------------------- |
+| Reads                | this user's agent homes                     | the homes listed in the config, for any user |
+| Config               | `~/.config/trace-flow/collector.toml`       | `/etc/trace-flow/collector.toml`             |
+| State and credential | `~/.config/trace-flow/`                     | `/var/lib/trace-flow/`                       |
+| Unit                 | `~/.config/systemd/user/trace-flow.service` | `/etc/systemd/system/trace-flow.service`     |
+| Logs                 | `journalctl --user -u trace-flow`           | `journalctl -u trace-flow`                   |
+
+Per-user:
+
+```sh
+trace-flow login --no-browser   # or plain `login` when a browser runs on this machine
+trace-flow service install
+```
+
+On a host without a desktop session, enable lingering once so the service keeps running while you
+are logged out: `loginctl enable-linger "$USER"` (some hosts require an administrator for this).
+
+Host-wide:
+
+```sh
+sudo trace-flow --system login --no-browser
+sudo trace-flow --system service install
+```
+
+Claude writes transcripts `0600`, so the host-wide unit runs as root but keeps only
+`CAP_DAC_READ_SEARCH` under systemd sandboxing: it can read the configured homes, but the filesystem is
+read-only outside `/var/lib/trace-flow`, a syscall filter applies, and it cannot regain privileges. It
+marks repositories safe for its read-only git calls, since they belong to other users. The units
+live in [`systemd/`](./systemd).
+
+### Configuration
+
+`service install` writes a starting config when none exists: the homes your shell resolves today
+(per-user) or `/home/*/.claude` and `/home/*/.codex` (host-wide). Edit it and restart the service:
+
+```toml
+interval_minutes = 5        # optional, default 5
+first_backfill = "7d"       # optional: 24h, 7d, 30d, or 1y for the first pass
+# credential_store = "file" # optional: "file" (Linux default) or "keyring"
+
+[[inputs]]
+name = "claude"             # shown in status and logs instead of the path
+source = "claude"           # claude or codex
+path = "~/.claude"          # the agent home, what CLAUDE_CONFIG_DIR would name
+
+[[inputs]]
+name = "agents-codex"
+source = "codex"
+path = "/srv/agents/*/.codex" # globs are expanded again every cycle
+```
+
+Without a config, per-user commands read `~/.claude`, `~/.codex`, `CLAUDE_CONFIG_DIR`, and
+`CODEX_HOME`. Host-wide mode requires a config. An unknown key or invalid value exits with status 78
+(`EX_CONFIG`), and the units do not restart on it; fix the config and restart. A missing login exits
+the same way.
+
+### Credential storage and headless sign-in
+
+On Linux the Collector Credential is an owner-only (`0600`) file in the state directory, because
+headless hosts and services have no Secret Service keyring. The CLI refuses a credential file other
+users can read. Set `credential_store = "keyring"` to use the Secret Service instead. macOS and
+Windows default to the OS keychain.
+
+`login --no-browser` prints a sign-in address to open in a browser on any device. After sign-in that
+browser fails to load a `127.0.0.1` page; copy its full address and paste it at the hidden prompt.
+The address contains the credential, so run `login` yourself in a terminal, not through an agent.
+
 ## Environment overrides
 
-| Variable                      | Default                                  | Purpose                                           |
-| ----------------------------- | ---------------------------------------- | ------------------------------------------------- |
-| `TRACE_FLOW_CONVEX_SITE_URL`  | `https://laudable-bison-427.convex.site` | Convex site origin for the browser device flow    |
-| `TRACE_FLOW_INGEST_URL`       | `https://collector.trace-flow.dev`       | Agent Ingest origin used by `sync`                |
-| `TRACE_FLOW_COLLECTOR_SECRET` | OS keychain                              | Headless or CI credential override                |
-| `TRACE_FLOW_STATE_DIR`        | OS application config directory          | Connection state and per-org sync cursor location |
+| Variable                      | Default                                  | Purpose                                          |
+| ----------------------------- | ---------------------------------------- | ------------------------------------------------ |
+| `TRACE_FLOW_CONVEX_SITE_URL`  | `https://laudable-bison-427.convex.site` | Convex site origin for the browser device flow   |
+| `TRACE_FLOW_INGEST_URL`       | `https://collector.trace-flow.dev`       | Agent Ingest origin used by `sync`               |
+| `TRACE_FLOW_COLLECTOR_SECRET` | Credential store                         | CI credential override                           |
+| `TRACE_FLOW_STATE_DIR`        | OS application config directory          | Per-user state location (not used by `--system`) |
+| `TRACE_FLOW_CONFIG`           | Layout's `collector.toml`                | Same as `--config`                               |
 
 For dev, override both endpoint variables with the deployed `-dev` Agent Ingest origin and the
 Convex dev **site** origin. A bare collector launch targets production. Use `127.0.0.1:8787` only

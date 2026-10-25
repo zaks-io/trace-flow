@@ -14,6 +14,8 @@ What exists today:
 - Rust parser/sync libraries for Claude Code, Codex CLI, and macOS Cursor
 - user-facing `trace-flow` CLI code path for login, source listing, sync, status, and disconnect
 - macOS/Windows Tauri desktop Collector code path using the shared collector embedder
+- Linux `trace-flow` systemd service, per-user or host-wide, with `collector.toml` inputs and an
+  owner-only credential file; verified locally against a fake ingest, not yet against production
 - published macOS arm64 and Windows x64 installers with signed updater artifacts and a manifest-last
   channel
 - required Rust workspace CI and a release-gated CLI build

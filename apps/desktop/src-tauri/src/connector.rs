@@ -13,7 +13,9 @@
 use std::sync::Arc;
 
 use collector_embedder::connection::Paths;
-use collector_embedder::{defaults, keychain, login};
+use collector_embedder::defaults;
+use collector_embedder::keychain::CredentialStore;
+use collector_embedder::login::{self, Callback};
 use tokio::sync::Mutex;
 
 use crate::engine;
@@ -72,17 +74,28 @@ impl Connector {
 
         let convex_site_url = defaults::convex_site_url();
         let ingest_url = defaults::ingest_url();
-        let old_org_id = Paths::resolve()
+        let paths = Paths::resolve().map_err(|err| format!("{err:#}"))?;
+        let credentials = CredentialStore::platform_default(&paths);
+        let old_org_id = paths
+            .load_connection()
             .ok()
-            .and_then(|paths| paths.load_connection().ok().flatten())
+            .flatten()
             .map(|conn| conn.org_id);
-        let conn =
-            tauri::async_runtime::spawn_blocking(move || login::run(&convex_site_url, &ingest_url))
-                .await
-                .map_err(|err| format!("login task panicked: {err}"))?
-                .map_err(|err| format!("{err:#}"))?;
+        let login_credentials = credentials.clone();
+        let conn = tauri::async_runtime::spawn_blocking(move || {
+            login::run(
+                &convex_site_url,
+                &ingest_url,
+                &paths,
+                &login_credentials,
+                Callback::Loopback,
+            )
+        })
+        .await
+        .map_err(|err| format!("login task panicked: {err}"))?
+        .map_err(|err| format!("{err:#}"))?;
         if let Some(old_org_id) = old_org_id.filter(|old| old != &conn.org_id) {
-            if let Err(err) = keychain::delete(&old_org_id) {
+            if let Err(err) = credentials.delete(&old_org_id) {
                 tracing::warn!(error = %err, org_id = %old_org_id, "failed to remove old Collector Credential");
             }
         }

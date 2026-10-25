@@ -15,6 +15,23 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-10-25 TRA-428 tra-428-linux-collector-service
+
+**Status:** in review
+**Changed:** The `trace-flow` CLI runs as a Linux systemd service, per-user (`systemctl --user`) or
+host-wide (`--system`, root with only `CAP_DAC_READ_SEARCH`). `collector.toml` lists inputs with
+globs re-expanded every cycle. `sync --watch` shares Desktop's cycle policy through the new
+`collector-embedder::cycle` module. Linux defaults to an owner-only credential file. `login
+--no-browser` accepts the pasted callback address. `service install|uninstall` shows inputs before
+egress and manages the unit. ADR 0015 gains a Linux Service amendment; ADR 0012 points to it.
+**Verified:** `cargo fmt`, `cargo clippy --workspace --all-targets -D warnings`, and `cargo test
+--workspace` pass. In a sandbox, the user unit ran against a local fake ingest: first-run backfill,
+glob pickup without restart, catch-up after a stop, clean SIGTERM, exit 78 without restart on a bad
+config, and no credential in the unit, its environment, or the journal. A sync under the host-wide
+unit's syscall filter resolved git remotes. Both units pass `systemd-analyze verify`.
+**Next / blockers:** Real dev sign-in with `login --no-browser` needs a person at a browser.
+Host-wide mode needs a root host test (kuiper host-change request).
+
 ## 2026-10-08 TRA-391 tra-391-retire-legacy-agent-ingestion
 
 **Status:** in review (PR #600)

@@ -3,8 +3,8 @@
 
 //! The CLI's on-disk, **non-secret** state.
 //!
-//! Two split concerns: the Collector Credential *secret* lives in the OS keychain (see [`crate::keychain`])
-//! and never touches disk; everything else — which Organization is connected, the ingest URL, the
+//! Two split concerns: the Collector Credential *secret* lives in its own store (see [`crate::keychain`]),
+//! never in this file; everything else — which Organization is connected, the ingest URL, the
 //! Collector id, and the last-sync bookkeeping — lives in a plain JSON file under the platform config
 //! dir, alongside the SQLite cursor store. None of it is sensitive: an org id is not a credential, and
 //! the cursor DB holds local paths that never leave the machine.
@@ -72,9 +72,13 @@ impl Paths {
         Ok(Self::at(base.join("trace-flow")))
     }
 
-    /// Root the layout at an explicit dir (used by tests and by `resolve`).
+    /// Root the layout at an explicit dir (tests, `resolve`, and host-wide services).
     pub fn at(root: PathBuf) -> Self {
         Self { root }
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
     /// The connection-state JSON file.
@@ -149,7 +153,7 @@ fn remove_if_present(path: &Path) -> Result<()> {
 }
 
 /// Keep an org id safe as a filename component: only `[A-Za-z0-9_-]`, everything else to `_`.
-fn sanitize(s: &str) -> String {
+pub(crate) fn sanitize(s: &str) -> String {
     s.chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' || c == '_' {

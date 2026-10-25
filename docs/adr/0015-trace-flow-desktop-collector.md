@@ -6,6 +6,8 @@ Captured: 2026-05-24
 
 Production-readiness amendment: 2026-05-28
 
+Linux service amendment: 2026-10-25 (see [Linux Service](#linux-service))
+
 Trace Flow Desktop is still the intended product surface, but it is no longer allowed to block the
 first production proof of ingestion. A minimal `trace-flow` CLI may ship first to prove the real
 Collector Credential -> cloud ingest -> queue -> consumer -> Tinybird -> dashboard path. The CLI is a
@@ -33,7 +35,7 @@ Login alone does not start syncing. First-run setup configures parsed fact sync 
 
 Sources differ in what they yield, which sets implementation expectations. Claude and Codex carry full token, model, and cache economics. Cursor's real store is `state.vscdb` (a VS Code-style SQLite key-value DB, table `cursorDiskKV`, in globalStorage and per-workspace storage), not the `~/.cursor/projects` JSONL or `~/.cursor/acp-sessions` protobuf stores; it carries session-grain model (`composerData:` rows, Cursor-specific labels needing normalization) and sparse message-grain token counts (`bubbleId:` rows, nonzero on ~1% of bubbles), with cache coverage marked missing. So the full cost, token, and cache product is Claude plus Codex; Cursor adds model attribution and partial tokens. The Collector snapshots Cursor's DB before reading and uses `GLOB` prefix scans, never `LIKE`. See [Agent Conversation Analytics](./0012-agent-conversation-analytics.md) Data quality verification.
 
-Default Source paths are platform-specific. On macOS, defaults are `~/.claude/projects`, `~/.codex/sessions`, and `~/Library/Application Support/Cursor/User/{globalStorage,workspaceStorage}`. On Windows, defaults are `%USERPROFILE%\.claude\projects`, `%USERPROFILE%\.codex\sessions`, and `%APPDATA%\Cursor\User\{globalStorage,workspaceStorage}`. Linux defaults are deferred with Linux packaging. Users can add custom Source paths when defaults are wrong; absolute Source paths stay local-only.
+Default Source paths are platform-specific. On macOS, defaults are `~/.claude/projects`, `~/.codex/sessions`, and `~/Library/Application Support/Cursor/User/{globalStorage,workspaceStorage}`. On Windows, defaults are `%USERPROFILE%\.claude\projects`, `%USERPROFILE%\.codex\sessions`, and `%APPDATA%\Cursor\User\{globalStorage,workspaceStorage}`. On Linux, the CLI service defaults are `~/.claude/projects` and `~/.codex/sessions`, and a `collector.toml` can replace them (see [Linux Service](#linux-service)). Users can add custom Source paths when defaults are wrong; absolute Source paths stay local-only.
 
 Parsed fact sync is the normal analytics path for every Organization. Lossless transcript upload has no separate toggle or 90-day mode: it occurs only after Pro Archive Activation and per-Collector Enrollment.
 
@@ -62,6 +64,18 @@ Trace Flow Desktop runs one sync job at a time. History import pauses watcher di
 The app is quiet by default. Desktop notifications are reserved for action-required failures such as expired auth, sustained inaccessible Source paths, Conversation Archive capacity or spool exhaustion for an enrolled Collector, repeated sync failure, or update-required states.
 
 Source settings are cursor-scoped. Disabling a Source stops watching and syncing it but keeps its local cursor/cache. Re-enabling the same Source path resumes from the existing cursor. Changing a Source path creates a new local cursor namespace for that path and follows the normal incremental/default import rules; it does not reuse the old path's cursor. If a path change broadens scan scope, the settings UI asks for confirmation before applying it.
+
+## Linux Service
+
+Linux hosts run the Collector through the `trace-flow` CLI as a systemd service instead of a Desktop build. Coding agents there are usually headless, often with one Unix user per project.
+
+- **Two layouts.** Per-user mode is a `systemctl --user` unit that reads the user's own agent homes, configured by `~/.config/trace-flow/collector.toml`. Host-wide mode (`--system`) is one root-owned unit per host, configured by `/etc/trace-flow/collector.toml` with state in `/var/lib/trace-flow`, that reads many users' homes with one Collector Credential. Claude writes transcripts `0600`, so the host-wide unit keeps only `CAP_DAC_READ_SEARCH` under systemd sandboxing: it can read any file, but the filesystem is read-only outside its state directory, a syscall filter applies, and it cannot regain privileges. Host-wide mode deliberately crosses Unix-user isolation, so enabling it is an operator decision.
+- **Inputs.** `collector.toml` lists inputs with a `name`, a `source` (`claude` or `codex`), and a `path` that is absolute or starts with `~/`. Paths may be globs, expanded again on every cycle, so homes created later sync without a restart. Status and logs show input names, not paths. Unknown keys and invalid values exit with `EX_CONFIG` (78), and the units do not restart on that status.
+- **Consent.** `trace-flow service install` is the service's **Start syncing**. It shows each input with its matched homes and transcript counts and asks before it writes the config and unit and starts the service.
+- **Sync loop.** `trace-flow sync --watch` shares Desktop's cycle policy through `collector-embedder::cycle`: the 7-day first-run backfill until a pass reaches ingest, then incremental passes that resume from the last complete sync, honouring ingest backoff.
+- **Credential.** Linux defaults to an owner-only (`0600`) credential file in the state directory, because headless sessions have no Secret Service. The file store refuses a file other users can read. The store is selected explicitly (`credential_store` in the config) with no fallback between stores; macOS and Windows keep the OS keychain. Any process running as the same Unix user can read the file, as with an unlocked keyring. Host-wide mode keeps it in root-owned `/var/lib/trace-flow`, out of reach of agents running as project users.
+- **Login.** `trace-flow login --no-browser` signs in from a browser on another machine. The user pastes the address that browser failed to load into a hidden prompt, and the CLI applies the same loopback-port and `state` nonce checks as the listener. As in the loopback flow, the credential appears in that browser's address bar and history; a device-code grant would remove that exposure and remains a follow-up.
+- **Out of scope** for the Linux service: Conversation Archive capture, Cursor, self-update, and tray UI.
 
 ## Local State And Secrets
 

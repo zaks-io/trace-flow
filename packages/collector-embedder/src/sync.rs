@@ -104,7 +104,7 @@ impl SourceReport {
 }
 
 /// The inputs a sync run needs that don't come from saved state: where the ingest worker is and the
-/// raw Collector Credential. Both are runtime-resolved (env / keychain), never persisted here.
+/// raw Collector Credential. Both are runtime-resolved (env / credential store), never persisted here.
 pub struct RunConfig<'a> {
     pub ingest_url: String,
     pub credential: String,
@@ -121,7 +121,8 @@ pub struct RunConfig<'a> {
     /// A short embedder tag (e.g. `"cli"`, `"desktop"`) that prefixes the per-POST batch id, so a
     /// batch id reads as `cli-<n>` / `desktop-<n>` for audit. Not security-relevant.
     pub batch_id_prefix: &'a str,
-    /// Test seam for the state directory. Production embedders leave this `None` and use [`Paths`].
+    /// The state directory. `None` resolves the default through [`Paths::resolve`]; host-wide
+    /// services and tests pass their own.
     pub state_dir: Option<&'a Path>,
 }
 

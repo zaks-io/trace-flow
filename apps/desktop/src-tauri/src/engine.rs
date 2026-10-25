@@ -19,22 +19,17 @@
 //! syncing when it quit (or was restarted by login autostart) comes back syncing and runs a cycle at
 //! once. Before this, every relaunch silently reset to paused and weeks of transcripts went unsynced.
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use collector_embedder::connection::{Connection, Paths};
-use collector_embedder::keychain;
+use collector_embedder::cycle::{self, CycleOutcome};
+use collector_embedder::keychain::CredentialStore;
 use collector_embedder::sources::SourceHomes;
 use collector_embedder::sync::{self, Window};
 use tokio::sync::mpsc;
 
 use crate::settings::{Settings, SettingsFile};
 use crate::state::{AppStateBus, ConnectionState, SourceCounts, SyncStatus};
-
-/// How often the engine runs an incremental cycle while resumed.
-const TICK: Duration = Duration::from_secs(5 * 60);
-
-/// The default backfill window the first "Start syncing" click triggers.
-const FIRST_BACKFILL: &str = "7d";
 
 /// Commands the UI (tray menu or window) sends the engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,7 +84,7 @@ async fn run_loop(
         settings.source_homes.merge(&SourceHomes::resolve(&home));
         persist(&settings_file, &settings);
     }
-    let mut ticker = tokio::time::interval(TICK);
+    let mut ticker = tokio::time::interval(cycle::DEFAULT_INTERVAL);
     // The first tick fires immediately; skip it so a paused engine does nothing on startup. A
     // resumed engine runs its own catch-up cycle below instead of waiting a full tick.
     ticker.tick().await;
@@ -151,11 +146,8 @@ async fn run_loop(
     }
 }
 
-/// One authorized pass. Until the one-time history backfill has actually reached ingest, every pass
-/// (a click, a tick, a relaunch catch-up) uses the wider `FIRST_BACKFILL` window, so a first backfill
-/// that failed (network down, then a relaunch) is retried rather than quietly replaced by an
-/// incremental pass that would leave the older sessions unsynced. Returns when periodic passes may
-/// resume if the ingest Worker shed load.
+/// One authorized pass, in the window [`cycle::authorized_window`] picks. Returns when periodic
+/// passes may resume if the ingest Worker shed load.
 async fn run_authorized_cycle(bus: &AppStateBus, settings: &mut Settings) -> Option<Instant> {
     let window = window_for_authorized_cycle(settings);
     let outcome = run_cycle(bus, window, settings.source_homes.clone()).await?;
@@ -169,34 +161,23 @@ async fn run_authorized_cycle(bus: &AppStateBus, settings: &mut Settings) -> Opt
 }
 
 fn window_for_authorized_cycle(settings: &Settings) -> Window {
-    if settings.backfilled {
-        Window::Incremental
-    } else {
-        sync::window_from_since(FIRST_BACKFILL).unwrap_or(Window::Incremental)
-    }
+    let first_backfill =
+        sync::window_from_since(cycle::DEFAULT_FIRST_BACKFILL).unwrap_or(Window::Incremental);
+    cycle::authorized_window(settings.backfilled, first_backfill)
 }
 
-fn fact_cycle_reached_ingest(outcome: &CycleOutcome) -> bool {
-    outcome.setup_error.is_none() && outcome.first_error.is_none()
-}
-
-fn apply_authorized_cycle(settings: &mut Settings, outcome: &CycleOutcome) -> Window {
-    let window = window_for_authorized_cycle(settings);
-    if fact_cycle_reached_ingest(outcome) {
+fn apply_authorized_cycle(settings: &mut Settings, outcome: &CycleOutcome) {
+    if outcome.reached_ingest() {
         settings.backfilled = true;
     }
-    window
 }
 
 fn sync_status_from_outcome(outcome: &CycleOutcome) -> SyncStatus {
-    match (&outcome.setup_error, &outcome.first_error) {
-        (Some(err), _) => SyncStatus::Error {
-            message: err.clone(),
+    match outcome.error() {
+        Some(err) => SyncStatus::Error {
+            message: err.to_string(),
         },
-        (None, Some(err)) if outcome.advanced == 0 => SyncStatus::Error {
-            message: err.clone(),
-        },
-        _ => SyncStatus::Idle,
+        None => SyncStatus::Idle,
     }
 }
 
@@ -219,18 +200,6 @@ fn persist(file: &SettingsFile, settings: &Settings) {
     if let Err(err) = file.save(settings) {
         tracing::error!(error = %err, "failed to save settings");
     }
-}
-
-/// The Send-safe outcome of a cycle, lifted out of the (non-Send) sync work so the command loop's
-/// future stays `Send`.
-struct CycleOutcome {
-    advanced: u32,
-    failed: u32,
-    first_error: Option<String>,
-    /// A setup failure (bad client config, broken cursor DB) — distinct from per-session ingest errors.
-    setup_error: Option<String>,
-    /// How long to wait before the next periodic pass when the ingest Worker shed load.
-    backoff: Option<Duration>,
 }
 
 /// Run one sync pass over all sources, mirroring the result into the state bus. A failed cycle records
@@ -281,7 +250,14 @@ async fn run_cycle(
         }
     };
 
-    let credential = match keychain::load(&conn.org_id) {
+    let credentials = match Paths::resolve() {
+        Ok(paths) => CredentialStore::platform_default(&paths),
+        Err(err) => {
+            tracing::error!(error = %err, "sync skipped: state dir unresolved");
+            return None;
+        }
+    };
+    let credential = match credentials.load(&conn.org_id) {
         Ok(Some(secret)) => secret,
         Ok(None) => {
             tracing::warn!("sync skipped: no Collector Credential in keychain");
@@ -380,15 +356,7 @@ fn run_cycle_blocking(
         .build()
     {
         Ok(runtime) => runtime,
-        Err(err) => {
-            return CycleOutcome {
-                advanced: 0,
-                failed: 0,
-                first_error: None,
-                setup_error: Some(format!("build runtime: {err}")),
-                backoff: None,
-            };
-        }
+        Err(err) => return CycleOutcome::setup_failure(format!("build runtime: {err}")),
     };
 
     let result = runtime.block_on(sync::run_detailed(sync::RunConfig {
@@ -404,59 +372,40 @@ fn run_cycle_blocking(
         state_dir: None,
     }));
 
-    match result {
-        Ok(outcome) => {
-            let mut advanced = 0u32;
-            let mut failed = 0u32;
-            let mut first_error = None;
-            for (source, report) in &outcome.reports {
-                advanced += report.advanced;
-                failed += report.failed;
-                if first_error.is_none() {
-                    first_error = report.first_error.clone();
-                }
-                // Each quarantine is reported once; later passes skip the unit silently.
-                for vendor_session_id in &report.quarantined {
-                    tracing::warn!(
-                        source = ?source,
-                        vendor_session_id = %vendor_session_id,
-                        "session quarantined: ingest rejected it; retried when it changes"
-                    );
-                }
-                // The tray's recent-errors list shows only the message, so the counts and codes are
-                // in it as well as in the structured fields.
-                if let Some(cause) = &report.invalid_envelope {
-                    tracing::warn!(
-                        source = ?source,
-                        reason = cause.reason.as_deref().unwrap_or(""),
-                        category = cause.category.as_deref().unwrap_or(""),
-                        "{source:?}: ingest rejected an envelope: {cause}"
-                    );
-                }
-                if report.skipped_lines > 0 {
-                    tracing::warn!(
-                        source = ?source,
-                        skipped_lines = report.skipped_lines,
-                        "{source:?}: skipped {} malformed transcript line(s)",
-                        report.skipped_lines
-                    );
-                }
-            }
-            CycleOutcome {
-                advanced,
-                failed,
-                first_error,
-                setup_error: None,
-                backoff: outcome.backoff(),
-            }
+    if let Ok(outcome) = &result {
+        log_report_details(&outcome.reports);
+    }
+    CycleOutcome::from_run(&result)
+}
+
+fn log_report_details(reports: &[(collector_contracts::AgentSource, sync::SourceReport)]) {
+    for (source, report) in reports {
+        // Each quarantine is reported once; later passes skip the unit silently.
+        for vendor_session_id in &report.quarantined {
+            tracing::warn!(
+                source = ?source,
+                vendor_session_id = %vendor_session_id,
+                "session quarantined: ingest rejected it; retried when it changes"
+            );
         }
-        Err(err) => CycleOutcome {
-            advanced: 0,
-            failed: 0,
-            first_error: None,
-            setup_error: Some(err.to_string()),
-            backoff: None,
-        },
+        // The tray's recent-errors list shows only the message, so the counts and codes are in it as
+        // well as in the structured fields.
+        if let Some(cause) = &report.invalid_envelope {
+            tracing::warn!(
+                source = ?source,
+                reason = cause.reason.as_deref().unwrap_or(""),
+                category = cause.category.as_deref().unwrap_or(""),
+                "{source:?}: ingest rejected an envelope: {cause}"
+            );
+        }
+        if report.skipped_lines > 0 {
+            tracing::warn!(
+                source = ?source,
+                skipped_lines = report.skipped_lines,
+                "{source:?}: skipped {} malformed transcript line(s)",
+                report.skipped_lines
+            );
+        }
     }
 }
 
