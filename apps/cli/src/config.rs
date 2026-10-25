@@ -110,10 +110,14 @@ impl Config {
         Ok(config)
     }
 
-    /// Read `path`, or `None` when it does not exist. The per-user config shares the state dir, so
-    /// it is read without blocking and must be a regular file (see [`private_file::read_regular`]).
+    /// Read `path`, or `None` when it does not exist. The config decides which homes are uploaded,
+    /// so like ssh it must belong to the current user or root and no one else may be able to
+    /// change it; it may be a symlink to such a file (see [`private_file::read_config`]).
     pub fn load(path: &Path) -> anyhow::Result<Option<Self>> {
-        let Some(text) = private_file::read_regular(path)? else {
+        // A config it may not trust or read needs a person, like one that does not parse.
+        let text =
+            private_file::read_config(path).map_err(|err| ConfigError(format!("{err:#}")))?;
+        let Some(text) = text else {
             return Ok(None);
         };
         Self::parse(&text)

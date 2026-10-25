@@ -23,8 +23,6 @@ const USER_UNIT: &str = include_str!("../systemd/user.service");
 const SYSTEM_UNIT: &str = include_str!("../systemd/system.service");
 
 pub fn install(layout: &Layout, assume_yes: bool) -> Result<()> {
-    // Makes the per-user config's directory private before reading it, so the config created below
-    // is never written into an open directory.
     let config = layout.config()?;
     let Some(conn) = layout.paths.load_connection()? else {
         bail!(
@@ -183,8 +181,8 @@ fn systemctl(scope: Scope, args: &[&str]) -> Result<()> {
 }
 
 /// Create `path`, which must not exist yet. `O_EXCL` also refuses a symlink planted there, so the
-/// config is never written through one. Missing directories are created private, so the config
-/// never sits in a directory other users can write to; existing ones are left as they are.
+/// config is never written through one. The file is `0644` at most, because `Config::load` refuses
+/// a config other users can change, and missing directories are created private.
 fn create_file(path: &Path, contents: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         let mut dirs = std::fs::DirBuilder::new();
@@ -194,11 +192,11 @@ fn create_file(path: &Path, contents: &str) -> Result<()> {
         dirs.create(parent)
             .with_context(|| format!("create {}", parent.display()))?;
     }
-    let mut file = match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-    {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o644);
+    let mut file = match options.open(path) {
         Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => bail!(
             "{} already exists, perhaps as a dangling symlink; inspect it and run install again",
