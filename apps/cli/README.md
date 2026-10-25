@@ -158,7 +158,9 @@ group-writable, so the first run may name one of yours.
 
 `login --no-browser` prints a sign-in address to open in a browser on any device. After sign-in that
 browser fails to load a `127.0.0.1` page; copy its full address and paste it at the hidden prompt.
-The address contains the credential, so run `login` yourself in a terminal, not through an agent.
+The address holds only a one-time code: the CLI redeems it with a PKCE verifier that never leaves
+the CLI, and the credential arrives in that response, so a program that catches the redirect on the
+browser's machine gets nothing it can use. The prompt needs an interactive terminal.
 
 ## Environment overrides
 

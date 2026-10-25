@@ -445,6 +445,30 @@ export type DataModel = {
     searchIndexes: {};
     vectorIndexes: {};
   };
+  collectorLoginCodes: {
+    document: {
+      codeChallenge: string;
+      codeHash: string;
+      expiresAt: number;
+      userId: Id<"users">;
+      _id: Id<"collectorLoginCodes">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "codeChallenge"
+      | "codeHash"
+      | "expiresAt"
+      | "userId";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_code_hash: ["codeHash", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
   costAlertChannels: {
     document: {
       config:

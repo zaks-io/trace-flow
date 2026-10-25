@@ -157,7 +157,7 @@ async fn run() -> Result<()> {
     // Each command loads only what it needs, so a missing or broken config never blocks
     // `service uninstall`, `status`, or `disconnect`. The credential store comes from the connection.
     match cli.command {
-        Command::Login { no_browser } => cmd_login(&layout, no_browser),
+        Command::Login { no_browser } => cmd_login(&layout, no_browser).await,
         Command::Sources { action } => match action {
             SourcesAction::List => cmd_sources_list(&layout),
         },
@@ -173,7 +173,7 @@ async fn run() -> Result<()> {
     }
 }
 
-fn cmd_login(layout: &Layout, no_browser: bool) -> Result<()> {
+async fn cmd_login(layout: &Layout, no_browser: bool) -> Result<()> {
     let credentials = layout.login_credentials(layout.config()?.as_ref());
     let callback = if no_browser {
         Callback::Pasted
@@ -186,7 +186,8 @@ fn cmd_login(layout: &Layout, no_browser: bool) -> Result<()> {
         &layout.paths,
         &credentials,
         callback,
-    )?;
+    )
+    .await?;
     println!("\nConnected to organization {}.", conn.org_id);
     println!(
         "Credential stored in the {}. Next: `trace-flow{} service install` to keep syncing, or \

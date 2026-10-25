@@ -81,17 +81,14 @@ impl Connector {
             .ok()
             .flatten()
             .map(|conn| (conn.credentials(&paths), conn.org_id));
-        let conn = tauri::async_runtime::spawn_blocking(move || {
-            login::run(
-                &convex_site_url,
-                &ingest_url,
-                &paths,
-                &login_credentials,
-                Callback::Loopback,
-            )
-        })
+        let conn = login::run(
+            &convex_site_url,
+            &ingest_url,
+            &paths,
+            &login_credentials,
+            Callback::Loopback,
+        )
         .await
-        .map_err(|err| format!("login task panicked: {err}"))?
         .map_err(|err| format!("{err:#}"))?;
         if let Some((old_credentials, old_org_id)) =
             old.filter(|(_, old_org_id)| old_org_id != &conn.org_id)

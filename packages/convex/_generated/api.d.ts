@@ -2130,6 +2130,18 @@ export declare const internal: {
     >;
   };
   collectorLogin: {
+    cleanupLoginCode: FunctionReference<
+      "mutation",
+      "internal",
+      { id: Id<"collectorLoginCodes"> },
+      null
+    >;
+    createLoginCode: FunctionReference<
+      "mutation",
+      "internal",
+      { codeChallenge: string; userId: Id<"users"> },
+      string
+    >;
     mintForUser: FunctionReference<
       "mutation",
       "internal",
@@ -2144,6 +2156,12 @@ export declare const internal: {
         orgId: Id<"organizations">;
         secret: string;
       }
+    >;
+    redeemLoginCode: FunctionReference<
+      "mutation",
+      "internal",
+      { code: string; codeVerifier: string; collectorId: string },
+      { orgId: Id<"organizations">; secret: string } | { error: string }
     >;
   };
   costAlerts: {

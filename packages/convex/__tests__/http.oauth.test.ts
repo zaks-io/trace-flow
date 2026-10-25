@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { createApp, type HttpDeps } from '../http';
 import { acceptedConsent, createMockCtx, createMockDeps, type MockCtx } from './httpTest.setup';
 
+const COLLECTOR_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
 describe('convex/http.ts OAuth routes', () => {
   let ctx: MockCtx;
   let deps: HttpDeps;
@@ -510,6 +512,60 @@ describe('convex/http.ts OAuth routes', () => {
     });
   });
 
+  describe('GET /collector/authorize', () => {
+    const authorize = (query: string) =>
+      createApp(deps).request(
+        `http://localhost/collector/authorize?redirect_uri=${encodeURIComponent(
+          'http://127.0.0.1:49152/callback',
+        )}&state=collector-nonce${query}`,
+        {},
+        ctx,
+      );
+
+    beforeEach(() => {
+      (deps.oauth.signState as Mock).mockResolvedValue('signed-state');
+      (deps.oauth.buildAuth0AuthorizeUrl as Mock).mockReturnValue(
+        'https://auth0.example/authorize',
+      );
+    });
+
+    it('signs the PKCE challenge into the state', async () => {
+      const res = await authorize(
+        `&code_challenge=${COLLECTOR_CHALLENGE}&code_challenge_method=S256`,
+      );
+
+      expect(res.status).toBe(302);
+      expect(deps.oauth.signState).toHaveBeenCalledWith({
+        clientState: 'collector:collector-nonce',
+        redirectUri: 'http://127.0.0.1:49152/callback',
+        codeChallenge: COLLECTOR_CHALLENGE,
+        codeChallengeMethod: 'S256',
+      });
+    });
+
+    it('refuses a challenge that is not S256', async () => {
+      for (const query of [
+        `&code_challenge=${COLLECTOR_CHALLENGE}`,
+        `&code_challenge=${COLLECTOR_CHALLENGE}&code_challenge_method=plain`,
+        '&code_challenge=short&code_challenge_method=S256',
+      ]) {
+        const res = await authorize(query);
+        expect(res.status).toBe(400);
+      }
+      expect(deps.oauth.signState).not.toHaveBeenCalled();
+    });
+
+    it('keeps the older flow for Collectors that send no challenge', async () => {
+      const res = await authorize('');
+
+      expect(res.status).toBe(302);
+      expect(deps.oauth.signState).toHaveBeenCalledWith({
+        clientState: 'collector:collector-nonce',
+        redirectUri: 'http://127.0.0.1:49152/callback',
+      });
+    });
+  });
+
   describe('GET /mcp/callback', () => {
     it('mints Collector Credentials without expiry', async () => {
       const app = createApp(deps);
@@ -544,6 +600,45 @@ describe('convex/http.ts OAuth routes', () => {
         expect.anything(),
         expect.not.objectContaining({ expiresAt: expect.anything() }),
       );
+    });
+
+    it('gives a PKCE Collector login only a one-time code, never the credential', async () => {
+      const app = createApp(deps);
+      (deps.oauth.verifyState as Mock).mockResolvedValue({
+        clientState: 'collector:collector-nonce',
+        redirectUri: 'http://127.0.0.1:49152/callback',
+        codeChallenge: COLLECTOR_CHALLENGE,
+        codeChallengeMethod: 'S256',
+      });
+      (deps.oauth.exchangeAuth0Code as Mock).mockResolvedValue({
+        access_token: 'auth0-access-token',
+      });
+      (deps.oauth.getAuth0UserInfo as Mock).mockResolvedValue({
+        sub: 'auth0|123',
+        email: 'test@example.com',
+        email_verified: true,
+      });
+      ctx.runMutation.mockResolvedValueOnce('user-id-123').mockResolvedValueOnce('one-time-code');
+
+      const res = await app.request(
+        'http://localhost/mcp/callback?code=auth0-code&state=state-token',
+        {},
+        ctx,
+      );
+
+      expect(res.status).toBe(302);
+      const location = new URL(res.headers.get('Location')!);
+      expect(location.origin).toBe('http://127.0.0.1:49152');
+      expect(location.searchParams.get('code')).toBe('one-time-code');
+      expect(location.searchParams.get('state')).toBe('collector-nonce');
+      for (const leaked of ['secret', 'org_id', 'collector_id']) {
+        expect(location.searchParams.get(leaked)).toBeNull();
+      }
+      expect(ctx.runMutation).toHaveBeenCalledTimes(2);
+      expect(ctx.runMutation).toHaveBeenNthCalledWith(2, expect.anything(), {
+        userId: 'user-id-123',
+        codeChallenge: COLLECTOR_CHALLENGE,
+      });
     });
 
     it('successfully exchanges code and redirects with auth code', async () => {

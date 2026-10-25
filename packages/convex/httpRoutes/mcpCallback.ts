@@ -94,10 +94,10 @@ export function registerMcpCallbackRoutes(
       }
 
       // Collector CLI device flow reuses this registered callback (Auth0 only allows /mcp/callback),
-      // tagged by a `collector:` state prefix from /collector/authorize. Mint a Collector Credential
-      // and hand the one-time secret back to the CLI's loopback listener instead of running the MCP
-      // auth-code path. The redirect target is re-validated as loopback so the secret can only reach
-      // 127.0.0.1.
+      // tagged by a `collector:` state prefix from /collector/authorize. The redirect target is
+      // re-validated as loopback, but nothing reserves that port on the browser's machine, where
+      // another process may be listening. So a PKCE login gets only a one-time code, redeemed at
+      // /collector/token with the verifier the CLI holds.
       if (isCollectorLogin) {
         if (!isLoopbackRedirect(statePayload.redirectUri)) {
           logger.warn('convex.collector_login_bad_redirect');
@@ -105,24 +105,32 @@ export function registerMcpCallbackRoutes(
           return c.json({ error: 'Invalid redirect target' }, 400);
         }
 
-        const collectorId = `cli-${crypto.randomUUID()}`;
-        const minted = await ctx.runMutation(internal.collectorLogin.mintForUser, {
-          userId,
-          collectorId,
-          name: 'Trace Flow CLI',
-          platform: 'cli',
-        });
-
         const redirectUrl = new URL(statePayload.redirectUri);
-        redirectUrl.searchParams.set('secret', minted.secret);
-        redirectUrl.searchParams.set('org_id', minted.orgId);
-        redirectUrl.searchParams.set('collector_id', collectorId);
-        redirectUrl.searchParams.set('convex_url', url.origin);
+        if (statePayload.codeChallenge && statePayload.codeChallengeMethod === 'S256') {
+          const code = await ctx.runMutation(internal.collectorLogin.createLoginCode, {
+            userId,
+            codeChallenge: statePayload.codeChallenge,
+          });
+          redirectUrl.searchParams.set('code', code);
+          logger.info('convex.collector_login_code_issued');
+        } else {
+          // Clients from before PKCE get the credential in the redirect.
+          const collectorId = `cli-${crypto.randomUUID()}`;
+          const minted = await ctx.runMutation(internal.collectorLogin.mintForUser, {
+            userId,
+            collectorId,
+            name: 'Trace Flow CLI',
+            platform: 'cli',
+          });
+          redirectUrl.searchParams.set('secret', minted.secret);
+          redirectUrl.searchParams.set('org_id', minted.orgId);
+          redirectUrl.searchParams.set('collector_id', collectorId);
+          redirectUrl.searchParams.set('convex_url', url.origin);
+          logger.info('convex.collector_login_minted', { org_id: minted.orgId });
+        }
         // Echo the CLI's one-time state nonce (the part after the `collector:` tag) back to the
         // loopback so the CLI can reject any local request that isn't the callback it initiated.
         redirectUrl.searchParams.set('state', statePayload.clientState.slice('collector:'.length));
-
-        logger.info('convex.collector_login_minted', { org_id: minted.orgId });
         await logger.flush();
         return new Response(null, {
           status: 302,

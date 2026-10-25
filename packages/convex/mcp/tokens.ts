@@ -16,6 +16,7 @@ import {
   type AccessTokenPayload,
 } from '@trace-flow/mcp-core';
 import { getSigningKey } from './keys';
+import { s256Challenge } from '../httpRoutes/mcpPkce';
 
 const ACCESS_TOKEN_TTL_SECONDS = MCP_ACCESS_TOKEN_TTL_SECONDS;
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -325,16 +326,7 @@ export const exchangeAuthCode = internalMutation({
       return { error: 'invalid_grant', error_description: 'PKCE challenge missing' };
     }
 
-    const encoder = new TextEncoder();
-    const data = encoder.encode(args.codeVerifier);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashArray = new Uint8Array(hashBuffer);
-    const base64Hash = btoa(String.fromCharCode(...hashArray))
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/, '');
-
-    if (base64Hash !== authCode.codeChallenge) {
+    if ((await s256Challenge(args.codeVerifier)) !== authCode.codeChallenge) {
       return { error: 'invalid_grant', error_description: 'Code verifier mismatch' };
     }
 

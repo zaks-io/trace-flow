@@ -660,6 +660,7 @@ name = "collector-embedder"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "collector-api-client",
  "collector-contracts",
  "collector-parser",
@@ -669,6 +670,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.2",
  "keyring",
+ "reqwest 0.12.28",
  "rpassword",
  "rustix",
  "serde",
