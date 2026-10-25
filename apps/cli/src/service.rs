@@ -106,13 +106,44 @@ pub fn uninstall(layout: &Layout) -> Result<()> {
 }
 
 fn render_unit(layout: &Layout) -> Result<String> {
-    let binary = std::env::current_exe().context("locate the trace-flow binary")?;
-    let binary = binary.canonicalize().unwrap_or(binary);
+    let binary = std::env::current_exe()
+        .and_then(|path| path.canonicalize())
+        .context("locate the trace-flow binary")?;
     let template = match layout.scope {
         Scope::User => USER_UNIT,
-        Scope::System => SYSTEM_UNIT,
+        Scope::System => {
+            ensure_root_controlled(&binary)?;
+            SYSTEM_UNIT
+        }
     };
     Ok(render_unit_with(template, &binary, &layout.global_args()))
+}
+
+/// The host-wide unit runs this binary as root with read access to every file, so nobody but root
+/// may be able to replace it: neither the file nor any directory above it may belong to another
+/// user or be group- or world-writable. A binary in a user's build or Cargo directory fails this.
+#[cfg(unix)]
+fn ensure_root_controlled(binary: &Path) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    for path in binary.ancestors() {
+        let meta = std::fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
+        if meta.uid() != 0 || meta.mode() & 0o022 != 0 {
+            bail!(
+                "the host-wide service runs {} as root, but {} can be changed by a non-root user; \
+                 install a root-owned copy first (for example `sudo install -m 0755 {} \
+                 /usr/local/bin/trace-flow`) and run `service install` from that copy",
+                binary.display(),
+                path.display(),
+                binary.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn ensure_root_controlled(_binary: &Path) -> Result<()> {
+    bail!("the host-wide service needs systemd on Linux")
 }
 
 fn render_unit_with(template: &str, binary: &Path, global_args: &[String]) -> String {
@@ -178,6 +209,16 @@ mod tests {
             "\"/opt/trace flow/bin\""
         );
         assert_eq!(systemd_quote("100%\"\\"), "\"100%%\\\"\\\\\"");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn host_wide_refuses_a_binary_a_non_root_user_can_replace() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = dir.path().join("trace-flow");
+        std::fs::write(&binary, b"").unwrap();
+        let err = ensure_root_controlled(&binary).unwrap_err().to_string();
+        assert!(err.contains("non-root user"), "{err}");
     }
 
     #[test]

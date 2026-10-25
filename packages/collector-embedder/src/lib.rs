@@ -28,5 +28,6 @@ pub mod defaults;
 mod fact_sources;
 pub mod keychain;
 pub mod login;
+mod private_file;
 pub mod sources;
 pub mod sync;

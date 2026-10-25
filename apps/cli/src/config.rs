@@ -182,13 +182,15 @@ impl Config {
             .expect("first_backfill is checked when the config is parsed")
     }
 
-    /// Every input's current homes, merged into the shape the sync loop reads.
-    pub fn source_homes(&self, home: &Path) -> SourceHomes {
+    /// Every input's current homes, merged into the shape the sync loop reads. Fails when a glob
+    /// cannot list a directory it must search: syncing without those homes would let the pass
+    /// complete and advance the watermark past transcripts it never saw.
+    pub fn source_homes(&self, home: &Path) -> anyhow::Result<SourceHomes> {
         let mut merged = SourceHomes::default();
         for input in &self.inputs {
-            merged.merge(&input.source_homes(home));
+            merged.merge(&input.source_homes(input.homes(home)?));
         }
-        merged
+        Ok(merged)
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
@@ -235,25 +237,35 @@ impl Config {
 impl Input {
     /// The agent homes this input names right now. A literal path is kept even before it exists, so
     /// it starts syncing as soon as the agent creates it; a glob lists only the directories it
-    /// currently matches.
-    pub fn homes(&self, home: &Path) -> Vec<PathBuf> {
+    /// currently matches, and fails if it cannot list a directory it has to search.
+    pub fn homes(&self, home: &Path) -> anyhow::Result<Vec<PathBuf>> {
         let path = match self.path.strip_prefix("~/") {
             Some(rest) => home.join(rest),
             None => PathBuf::from(&self.path),
         };
         let pattern = path.to_string_lossy();
         if !pattern.contains(['*', '?', '[']) {
-            return vec![path];
+            return Ok(vec![path]);
         }
-        let mut matches: Vec<PathBuf> = glob::glob(&pattern)
-            .map(|paths| paths.flatten().filter(|path| path.is_dir()).collect())
-            .unwrap_or_default();
+        let mut matches = Vec::new();
+        for entry in glob::glob(&pattern)? {
+            let path = entry.map_err(|err| {
+                anyhow::anyhow!(
+                    "input {:?}: cannot search {}: {}",
+                    self.name,
+                    err.path().display(),
+                    err.error()
+                )
+            })?;
+            if path.is_dir() {
+                matches.push(path);
+            }
+        }
         matches.sort();
-        matches
+        Ok(matches)
     }
 
-    pub fn source_homes(&self, home: &Path) -> SourceHomes {
-        let homes = self.homes(home);
+    pub fn source_homes(&self, homes: Vec<PathBuf>) -> SourceHomes {
         let mut source_homes = SourceHomes::default();
         match self.source {
             InputSource::Claude => source_homes.claude_config_dirs = homes,
@@ -325,12 +337,32 @@ mod tests {
             path: format!("{}/*/.claude", root.path().display()),
         };
         assert_eq!(
-            input.homes(Path::new("/unused")),
+            input.homes(Path::new("/unused")).unwrap(),
             vec![root.path().join("alice/.claude")]
         );
 
         std::fs::create_dir_all(root.path().join("bob/.claude")).unwrap();
-        assert_eq!(input.homes(Path::new("/unused")).len(), 2);
+        assert_eq!(input.homes(Path::new("/unused")).unwrap().len(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_glob_that_cannot_search_a_directory_is_an_error_not_zero_homes() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let locked = root.path().join("locked");
+        std::fs::create_dir_all(locked.join("alice/.claude")).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let config = Config::parse(&format!(
+            "[[inputs]]\nname = \"users\"\nsource = \"claude\"\npath = \"{}/*/.claude\"\n",
+            locked.display()
+        ))
+        .unwrap();
+
+        let result = config.source_homes(Path::new("/unused"));
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("cannot search"), "{err}");
     }
 
     #[test]
@@ -340,7 +372,7 @@ mod tests {
             source: InputSource::Codex,
             path: "~/agents/codex".to_string(),
         };
-        let homes = input.source_homes(Path::new("/home/u"));
+        let homes = input.source_homes(input.homes(Path::new("/home/u")).unwrap());
         assert_eq!(
             homes.codex_homes,
             vec![PathBuf::from("/home/u/agents/codex")]
@@ -360,7 +392,7 @@ mod tests {
         assert_eq!(names, ["claude", "claude-2", "codex"]);
         assert_eq!(config.inputs[0].path, "~/.claude");
         assert_eq!(config.inputs[1].path, "/srv/claude");
-        assert_eq!(config.source_homes(home), homes);
+        assert_eq!(config.source_homes(home).unwrap(), homes);
 
         let rendered = config.render().unwrap();
         assert!(rendered.starts_with("# Trace Flow Collector configuration"));

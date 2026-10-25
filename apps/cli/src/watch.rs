@@ -10,12 +10,15 @@
 //! a newly created agent home takes effect without a restart.
 //!
 //! Installing the service is the explicit "start syncing" step (see `service install`); this loop
-//! assumes that consent. A missing login is a [`ConfigError`]: the service exits with `EX_CONFIG`
-//! instead of retrying something only a person can fix.
+//! assumes that consent and reads only the inputs in the config that step wrote, never the default
+//! homes. A missing config or login is a [`ConfigError`]: the service exits with `EX_CONFIG` instead
+//! of retrying something only a person can fix. A glob that cannot be searched fails just that cycle,
+//! before any upload, so the watermark never moves past homes the pass could not see.
 //!
 //! The loop's own state (the backfill marker and the last cycle's outcome, for `status`) lives in
-//! `service-state.json` beside the cursor store. Stopping mid-cycle is safe because cursors only
-//! advance after ingest acknowledges a batch.
+//! `service-state.json` beside the cursor stores. It belongs to one Organization: logging in to
+//! another starts a fresh state, so the new Organization gets its own first-run backfill. Stopping
+//! mid-cycle is safe because cursors only advance after ingest acknowledges a batch.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -35,6 +38,8 @@ const STATE_FILE: &str = "service-state.json";
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ServiceState {
+    /// The Organization the rest of this state describes.
+    pub org_id: Option<String>,
     /// Whether a pass has reached ingest, which retires the first-run backfill window.
     pub backfilled: bool,
     pub last_cycle: Option<CycleRecord>,
@@ -47,6 +52,20 @@ pub struct CycleRecord {
     pub failed: u32,
     /// The pass's error class, when it is in an error state. Never a secret.
     pub error: Option<String>,
+}
+
+impl ServiceState {
+    /// This state if it describes `org_id`; otherwise a fresh one for it.
+    pub fn for_org(self, org_id: &str) -> Self {
+        if self.org_id.as_deref() == Some(org_id) {
+            self
+        } else {
+            Self {
+                org_id: Some(org_id.to_string()),
+                ..Self::default()
+            }
+        }
+    }
 }
 
 pub fn state_file(paths_root: &Path) -> PathBuf {
@@ -79,11 +98,16 @@ pub async fn run(
     config: Option<&Config>,
     credentials: &CredentialStore,
 ) -> Result<()> {
-    let interval = config.map_or(cycle::DEFAULT_INTERVAL, Config::interval);
-    let first_backfill = match config {
-        Some(config) => config.first_backfill(),
-        None => sync::window_from_since(cycle::DEFAULT_FIRST_BACKFILL)?,
+    let Some(config) = config else {
+        return Err(ConfigError(format!(
+            "`sync --watch` reads its inputs from {}, which does not exist; run `trace-flow{} service install` to create it",
+            layout.config_file.display(),
+            layout.scope.flag()
+        ))
+        .into());
     };
+    let interval = config.interval();
+    let first_backfill = config.first_backfill();
     layout.paths.ensure()?;
     let state_path = state_file(layout.paths.root());
     let mut state = load_state(&state_path)?;
@@ -96,8 +120,7 @@ pub async fn run(
         interval.as_secs() / 60
     );
     loop {
-        let window = cycle::authorized_window(state.backfilled, first_backfill);
-        let pass = run_pass(layout, config, credentials, window);
+        let pass = run_pass(layout, config, credentials, &mut state, first_backfill);
         let result = tokio::select! {
             result = pass => result?,
             signal = &mut shutdown => {
@@ -151,9 +174,10 @@ pub async fn run(
 /// pass itself, recorded and retried next cycle.
 async fn run_pass(
     layout: &Layout,
-    config: Option<&Config>,
+    config: &Config,
     credentials: &CredentialStore,
-    window: Window,
+    state: &mut ServiceState,
+    first_backfill: Window,
 ) -> Result<Result<sync::SyncRunOutcome>> {
     let relogin = format!(
         "then run `{}`",
@@ -177,7 +201,12 @@ async fn run_pass(
     let ingest_url = conn
         .sync_ingest_url()
         .map_err(|err| ConfigError(format!("{err:#}")))?;
-    let source_homes = layout.source_homes(config)?;
+    *state = std::mem::take(state).for_org(&conn.org_id);
+    let window = cycle::authorized_window(state.backfilled, first_backfill);
+    let source_homes = match config.source_homes(&layout.home) {
+        Ok(source_homes) => source_homes,
+        Err(err) => return Ok(Err(err)),
+    };
 
     Ok(sync::run_detailed(sync::RunConfig {
         ingest_url,
@@ -229,6 +258,7 @@ mod tests {
         assert_eq!(load_state(&path).unwrap(), ServiceState::default());
 
         let state = ServiceState {
+            org_id: Some("org_a".to_string()),
             backfilled: true,
             last_cycle: Some(CycleRecord {
                 finished_at_ms: 1,
@@ -239,6 +269,19 @@ mod tests {
         };
         save_state(&path, &state).unwrap();
         assert_eq!(load_state(&path).unwrap(), state);
+    }
+
+    #[test]
+    fn another_organization_starts_with_its_own_backfill() {
+        let state = ServiceState {
+            org_id: Some("org_a".to_string()),
+            backfilled: true,
+            last_cycle: None,
+        };
+        assert!(state.clone().for_org("org_a").backfilled);
+        let other = state.for_org("org_b");
+        assert!(!other.backfilled);
+        assert_eq!(other.org_id.as_deref(), Some("org_b"));
     }
 
     #[test]

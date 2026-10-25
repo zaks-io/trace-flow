@@ -43,8 +43,9 @@ SystemCallErrorNumber=EPERM
 UMask=0077
 
 # Repo attribution runs read-only git commands in each session's working directory. Git refuses
-# repositories owned by another user unless they are marked safe.
-Environment=GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=*
+# repositories owned by another user unless they are marked safe. Those repositories' own config is
+# untrusted, so the fsmonitor hook stays off even if a repository sets it.
+Environment=GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=* GIT_CONFIG_KEY_1=core.fsmonitor GIT_CONFIG_VALUE_1=false
 
 [Install]
 WantedBy=multi-user.target

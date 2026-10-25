@@ -34,6 +34,10 @@ tiny_http = "0.12"
 url = "2"
 webbrowser = "1"
 
+# Safe `O_EXCL | O_NOFOLLOW` opens and the effective uid for the owner-only credential file.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs", "process"] }
+
 [dev-dependencies]
 flate2 = "1"
 tempfile = "3"

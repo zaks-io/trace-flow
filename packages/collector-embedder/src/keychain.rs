@@ -19,13 +19,14 @@
 //! `collector-sync`'s `headless_e2e` reads). An env override is read but never persisted.
 
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::connection::{sanitize, Paths};
+use crate::private_file;
 
 /// The keychain service name. One service, one entry per org (the account).
 const SERVICE: &str = "trace-flow-collector";
@@ -92,7 +93,7 @@ impl CredentialStore {
             Self::Keyring => keyring_entry(org_id)?.set_password(credential).context(
                 "write Collector Credential to OS keychain (headless hosts need the file store)",
             ),
-            Self::File(dir) => write_owner_only(dir, &credential_file(dir, org_id), credential),
+            Self::File(dir) => private_file::write(dir, &credential_file(dir, org_id), credential),
         }
     }
 
@@ -148,62 +149,15 @@ fn credential_file(dir: &Path, org_id: &str) -> PathBuf {
     dir.join(format!("credential-{}", sanitize(org_id)))
 }
 
-/// Write via a sibling temp file created `0600` and renamed into place, so the secret is never
-/// readable by other users, even briefly, and a crash never leaves a truncated credential.
-fn write_owner_only(dir: &Path, path: &Path, credential: &str) -> Result<()> {
-    fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
-    let tmp = path.with_extension("tmp");
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let mut file = options
-        .open(&tmp)
-        .with_context(|| format!("create {}", tmp.display()))?;
-    file.write_all(credential.as_bytes())
-        .and_then(|()| file.sync_all())
-        .with_context(|| format!("write {}", tmp.display()))?;
-    fs::rename(&tmp, path).with_context(|| format!("move credential into {}", path.display()))
-}
-
 fn read_owner_only(path: &Path) -> Result<Option<String>> {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
+    let Some(contents) = private_file::read(path)? else {
+        return Ok(None);
     };
-    ensure_owner_only(path)?;
-    let credential = String::from_utf8(bytes)
-        .with_context(|| format!("{} is not valid UTF-8", path.display()))?;
-    let credential = credential.trim();
+    let credential = contents.trim();
     if credential.is_empty() {
         anyhow::bail!("{} is empty; run `trace-flow login` again", path.display());
     }
     Ok(Some(credential.to_string()))
-}
-
-/// Refuse a credential file other users can read, the way ssh refuses a world-readable key. A
-/// hand-copied or restored file with loose permissions has already leaked to every local account.
-#[cfg(unix)]
-fn ensure_owner_only(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mode = fs::metadata(path)
-        .with_context(|| format!("stat {}", path.display()))?
-        .permissions()
-        .mode();
-    if mode & 0o077 != 0 {
-        anyhow::bail!(
-            "{} is readable by other users (mode {:o}); run `chmod 600` on it or log in again",
-            path.display(),
-            mode & 0o777
-        );
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn ensure_owner_only(_path: &Path) -> Result<()> {
-    Ok(())
 }
 
 #[cfg(test)]
@@ -236,19 +190,15 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn credential_file_is_owner_only_and_loose_permissions_are_refused() {
+    fn stored_credentials_are_owner_only() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         file_store(dir.path()).store("org_a", "tfc_a").unwrap();
-        let path = credential_file(dir.path(), "org_a");
-        assert_eq!(
-            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
-        let err = read_owner_only(&path).unwrap_err().to_string();
-        assert!(err.contains("readable by other users"), "{err}");
+        let mode = fs::metadata(credential_file(dir.path(), "org_a"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]

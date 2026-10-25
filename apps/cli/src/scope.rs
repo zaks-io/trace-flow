@@ -90,8 +90,17 @@ impl Layout {
         })
     }
 
-    pub fn load_config(&self) -> Result<Option<Config>> {
-        Config::load(&self.config_file)
+    /// The config, or `None` when the scope's default file does not exist. A `--config` path must
+    /// exist unless the command is about to create it: falling back to the default homes would
+    /// upload sources the named config was written to exclude.
+    pub fn load_config(&self, may_create: bool) -> Result<Option<Config>> {
+        let config = Config::load(&self.config_file)?;
+        if config.is_none() && self.config_overridden && !may_create {
+            return Err(
+                ConfigError(format!("{} does not exist", self.config_file.display())).into(),
+            );
+        }
+        Ok(config)
     }
 
     pub fn credentials(&self, config: Option<&Config>) -> CredentialStore {
@@ -105,7 +114,7 @@ impl Layout {
     /// resolves; host-wide has no sensible default, so it needs a config naming the homes.
     pub fn source_homes(&self, config: Option<&Config>) -> Result<SourceHomes> {
         match (config, self.scope) {
-            (Some(config), _) => Ok(config.source_homes(&self.home)),
+            (Some(config), _) => config.source_homes(&self.home),
             (None, Scope::User) => Ok(SourceHomes::resolve(&self.home)),
             (None, Scope::System) => Err(ConfigError(format!(
                 "host-wide mode reads only the inputs in {}; run `trace-flow --system service install` to create it",

@@ -84,38 +84,31 @@ pub fn source_detail_lines(r: &SourceReport) -> Vec<String> {
     lines
 }
 
-/// What one configured input currently resolves to.
-pub struct InputCount {
-    pub homes: usize,
-    pub files: usize,
-}
-
-pub fn count_input(input: &Input, home: &Path) -> InputCount {
-    let source_homes = input.source_homes(home);
-    let homes = input.homes(home).len();
-    let files = source_homes
-        .roots(input.source.agent_source())
-        .iter()
-        .map(|root| collector_sync::walk_transcripts(root).files.len())
-        .sum();
-    InputCount { homes, files }
-}
-
-/// One row per configured input: name, source, matched homes, transcript files.
+/// One row per configured input: name, source, matched homes, transcript files. An input whose
+/// glob cannot be searched shows the error instead of counts.
 pub fn print_inputs(inputs: &[Input], home: &Path, show_paths: bool) {
     for input in inputs {
-        let count = count_input(input, home);
         let path = if show_paths {
             format!("  {}", input.path)
         } else {
             String::new()
         };
+        let counts = match input.homes(home) {
+            Ok(homes) => {
+                let files: usize = input
+                    .source_homes(homes.clone())
+                    .roots(input.source.agent_source())
+                    .iter()
+                    .map(|root| collector_sync::walk_transcripts(root).files.len())
+                    .sum();
+                format!("{:>3} home(s) {files:>6} file(s)", homes.len())
+            }
+            Err(err) => format!("error: {err:#}"),
+        };
         println!(
-            "  {:<16} {:<7} {:>3} home(s) {:>6} file(s){path}",
+            "  {:<16} {:<7} {counts}{path}",
             input.name,
             input.source.label(),
-            count.homes,
-            count.files,
         );
     }
 }

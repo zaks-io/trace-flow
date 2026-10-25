@@ -153,7 +153,13 @@ async fn run() -> Result<()> {
         .map(|path| std::path::absolute(&path).context("resolve --config path"))
         .transpose()?;
     let layout = Layout::resolve(scope, config_override)?;
-    let config = layout.load_config()?;
+    let creates_config = matches!(
+        cli.command,
+        Command::Service {
+            action: ServiceAction::Install { .. }
+        }
+    );
+    let config = layout.load_config(creates_config)?;
     let credentials = layout.credentials(config.as_ref());
 
     match cli.command {
@@ -320,7 +326,7 @@ fn cmd_status(
             "not installed"
         }
     );
-    let state = watch::load_state(&watch::state_file(layout.paths.root()))?;
+    let state = watch::load_state(&watch::state_file(layout.paths.root()))?.for_org(&conn.org_id);
     if let Some(cycle) = &state.last_cycle {
         let age_min = (watch::now_ms() - cycle.finished_at_ms).max(0) / 60_000;
         let result = match &cycle.error {

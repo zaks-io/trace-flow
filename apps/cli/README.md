@@ -87,9 +87,13 @@ are logged out: `loginctl enable-linger "$USER"` (some hosts require an administ
 Host-wide:
 
 ```sh
+sudo install -m 0755 ./trace-flow /usr/local/bin/trace-flow
 sudo trace-flow --system login --no-browser
 sudo trace-flow --system service install
 ```
+
+The host-wide unit runs the binary as root, so `service install` refuses a binary that a non-root
+user could replace, such as one in a home or build directory.
 
 Claude writes transcripts `0600`, so the host-wide unit runs as root but keeps only
 `CAP_DAC_READ_SEARCH` under systemd sandboxing: it can read the configured homes, but the filesystem is
@@ -118,10 +122,12 @@ source = "codex"
 path = "/srv/agents/*/.codex" # globs are expanded again every cycle
 ```
 
-Without a config, per-user commands read `~/.claude`, `~/.codex`, `CLAUDE_CONFIG_DIR`, and
-`CODEX_HOME`. Host-wide mode requires a config. An unknown key or invalid value exits with status 78
-(`EX_CONFIG`), and the units do not restart on it; fix the config and restart. A missing login exits
-the same way.
+Without a config, one-shot per-user commands read `~/.claude`, `~/.codex`, `CLAUDE_CONFIG_DIR`, and
+`CODEX_HOME`. `sync --watch` and host-wide mode read only a config's inputs, and a `--config` file
+must exist. An unknown key, an invalid value, a missing config, or a missing login exits with status
+78 (`EX_CONFIG`), and the units do not restart on it; fix it and restart. A glob that cannot search
+a directory fails that cycle before anything uploads, so the sync watermark never moves past homes
+the pass could not see.
 
 ### Credential storage and headless sign-in
 

@@ -670,6 +670,7 @@ dependencies = [
  "getrandom 0.4.2",
  "keyring",
  "rpassword",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",
