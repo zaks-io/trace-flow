@@ -47,8 +47,9 @@ pub enum Callback {
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Run the full login flow against `convex_site_url` (the Convex *site* origin, e.g.
-/// `https://<deployment>.convex.site`). Stores the credential in `credentials` and the connection
-/// under `paths` on success, and returns the bound [`Connection`] for the caller to report.
+/// `https://<deployment>.convex.site`). Stores the credential in `credentials` and the connection,
+/// which records that store, under `paths` on success, and returns the bound [`Connection`] for the
+/// caller to report.
 pub fn run(
     convex_site_url: &str,
     ingest_url: &str,
@@ -100,6 +101,7 @@ pub fn run(
         convex_url: result.convex_url,
         ingest_url: ingest_url.to_string(),
         expires_at: result.expires_at,
+        credential_store: credentials.kind(),
     };
     paths.save_connection(&conn)?;
     Ok(conn)

@@ -5,9 +5,13 @@
 //!
 //! Two split concerns: the Collector Credential *secret* lives in its own store (see [`crate::keychain`]),
 //! never in this file; everything else — which Organization is connected, the ingest URL, the
-//! Collector id, and the last-sync bookkeeping — lives in a plain JSON file under the platform config
-//! dir, alongside the SQLite cursor store. None of it is sensitive: an org id is not a credential, and
-//! the cursor DB holds local paths that never leave the machine.
+//! Collector id, which store holds the credential, and the last-sync bookkeeping — lives in a JSON
+//! file under the platform config dir, alongside the SQLite cursor store. None of it is secret: an
+//! org id is not a credential, and the cursor DB holds local paths that never leave the machine.
+//!
+//! It still decides where the credential is sent, so the state dir is private and the connection
+//! file is written and read through [`crate::private_file`]: another local user cannot plant one
+//! that points the Collector at their own ingest URL.
 //!
 //! Modern connection state stores the ingest URL minted alongside the Convex credential. Legacy
 //! connection files can infer it only for known prod/dev Convex URLs; unknown legacy state must
@@ -19,6 +23,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::defaults;
+use crate::keychain::{CredentialStore, CredentialStoreKind};
+use crate::private_file;
 
 /// The directory env var (set in tests, or to relocate state). Falls back to the platform config dir.
 const STATE_DIR_ENV: &str = "TRACE_FLOW_STATE_DIR";
@@ -37,9 +43,23 @@ pub struct Connection {
     pub ingest_url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<i64>,
+    /// The store `login` put the credential in. Every later command reads it from there, so
+    /// changing the configured store never strands a login.
+    #[serde(default = "legacy_credential_store")]
+    pub credential_store: CredentialStoreKind,
+}
+
+/// Connections saved before the file store existed always kept the credential in the OS keychain.
+fn legacy_credential_store() -> CredentialStoreKind {
+    CredentialStoreKind::Keyring
 }
 
 impl Connection {
+    /// The store holding this connection's credential.
+    pub fn credentials(&self, paths: &Paths) -> CredentialStore {
+        CredentialStore::new(self.credential_store, paths)
+    }
+
     pub fn sync_ingest_url(&self) -> Result<String> {
         let explicit = self.ingest_url.trim();
         if !explicit.is_empty() {
@@ -100,33 +120,29 @@ impl Paths {
         self.root.join("scratch")
     }
 
-    /// Create the state dir (and the scratch subdir) if absent. Idempotent.
+    /// Create the state dir and its scratch subdir private (`0700`), or make existing ones private.
+    /// Idempotent. See [`crate::private_file`] for what an existing open dir must pass.
     pub fn ensure(&self) -> Result<()> {
-        std::fs::create_dir_all(&self.root)
-            .with_context(|| format!("create state dir {}", self.root.display()))?;
-        std::fs::create_dir_all(self.scratch_dir())
-            .with_context(|| format!("create scratch dir {}", self.scratch_dir().display()))
+        private_file::ensure_private_dir(&self.root)?;
+        private_file::ensure_private_dir(&self.scratch_dir())
     }
 
-    /// Read the saved connection, or `None` if the CLI is not logged in.
+    /// Read the saved connection, or `None` if the CLI is not logged in. Refuses a symlink or a
+    /// file another user owns or can change.
     pub fn load_connection(&self) -> Result<Option<Connection>> {
         let path = self.connection_file();
-        match std::fs::read(&path) {
-            Ok(bytes) => {
-                let conn = serde_json::from_slice(&bytes)
-                    .with_context(|| format!("parse {}", path.display()))?;
-                Ok(Some(conn))
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(err) => Err(err).with_context(|| format!("read {}", path.display())),
-        }
+        let Some(bytes) = private_file::read_owned(&path)? else {
+            return Ok(None);
+        };
+        let conn =
+            serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
+        Ok(Some(conn))
     }
 
-    /// Persist the connection state (overwrites). Caller must have created the dir.
+    /// Persist the connection state, atomically replacing (never following) whatever is there.
     pub fn save_connection(&self, conn: &Connection) -> Result<()> {
-        let path = self.connection_file();
         let json = serde_json::to_vec_pretty(conn).context("serialize connection")?;
-        std::fs::write(&path, json).with_context(|| format!("write {}", path.display()))
+        private_file::write(&self.root, &self.connection_file(), &json)
     }
 
     /// Remove the connection file and the org's cursor DB. Used by `disconnect`. Missing files are
@@ -177,6 +193,7 @@ mod tests {
             convex_url: "https://example.convex.cloud".to_string(),
             ingest_url: "https://collector.example.test".to_string(),
             expires_at: None,
+            credential_store: CredentialStoreKind::File,
         }
     }
 
@@ -201,6 +218,7 @@ mod tests {
         }"#;
         let connection: Connection = serde_json::from_str(value).unwrap();
         assert_eq!(connection.expires_at, Some(1));
+        assert_eq!(connection.credential_store, CredentialStoreKind::Keyring);
     }
 
     #[test]
@@ -245,6 +263,7 @@ mod tests {
             convex_url: defaults::DEV_CONVEX_SITE_URL.to_string(),
             ingest_url: String::new(),
             expires_at: None,
+            credential_store: CredentialStoreKind::Keyring,
         };
         assert_eq!(conn.sync_ingest_url().unwrap(), defaults::DEV_INGEST_URL);
     }
@@ -257,11 +276,52 @@ mod tests {
             convex_url: "https://custom.example.convex.site".to_string(),
             ingest_url: String::new(),
             expires_at: None,
+            credential_store: CredentialStoreKind::Keyring,
         };
 
         let err = conn.sync_ingest_url().unwrap_err().to_string();
         assert!(err.contains("missing an ingest URL"));
         assert!(err.contains("reconnect"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_connection_file_is_refused_on_read_and_replaced_on_write() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().join("state"));
+        std::fs::create_dir(paths.root()).unwrap();
+        std::fs::set_permissions(paths.root(), std::fs::Permissions::from_mode(0o775)).unwrap();
+        let elsewhere = dir.path().join("elsewhere.json");
+        let mut redirected = conn();
+        redirected.ingest_url = "https://attacker.example.test".to_string();
+        std::fs::write(&elsewhere, serde_json::to_vec(&redirected).unwrap()).unwrap();
+        symlink(&elsewhere, paths.connection_file()).unwrap();
+
+        assert!(
+            paths.load_connection().is_err(),
+            "a symlink is never followed"
+        );
+        paths.ensure().unwrap();
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(paths.root()), 0o700);
+        assert_eq!(mode(&paths.scratch_dir()), 0o700);
+
+        paths.save_connection(&conn()).unwrap();
+        assert_eq!(paths.load_connection().unwrap(), Some(conn()));
+        assert_eq!(
+            serde_json::from_slice::<Connection>(&std::fs::read(&elsewhere).unwrap()).unwrap(),
+            redirected,
+            "the link target is untouched"
+        );
+
+        std::fs::set_permissions(
+            paths.connection_file(),
+            std::fs::Permissions::from_mode(0o666),
+        )
+        .unwrap();
+        let err = paths.load_connection().unwrap_err().to_string();
+        assert!(err.contains("writable by other users"), "{err}");
     }
 
     #[test]

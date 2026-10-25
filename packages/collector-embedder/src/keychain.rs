@@ -13,7 +13,8 @@
 //! - [`CredentialStore::File`]: an owner-only (`0600`) file in the state directory. Headless Linux
 //!   hosts and systemd services usually have no Secret Service session, so this is the Linux default.
 //!
-//! The store is chosen explicitly; a failure in one never silently falls back to the other.
+//! The store is chosen explicitly at login and recorded in the connection file, which every later
+//! command reads it from; a failure in one never silently falls back to the other.
 //!
 //! `TRACE_FLOW_COLLECTOR_SECRET` overrides either store when set. That is the CI path (the same var
 //! `collector-sync`'s `headless_e2e` reads). An env override is read but never persisted.
@@ -93,7 +94,9 @@ impl CredentialStore {
             Self::Keyring => keyring_entry(org_id)?.set_password(credential).context(
                 "write Collector Credential to OS keychain (headless hosts need the file store)",
             ),
-            Self::File(dir) => private_file::write(dir, &credential_file(dir, org_id), credential),
+            Self::File(dir) => {
+                private_file::write(dir, &credential_file(dir, org_id), credential.as_bytes())
+            }
         }
     }
 

@@ -13,9 +13,9 @@
 //! [`ConfigError`], which exits with `EX_CONFIG` so systemd stops restarting the service.
 
 use std::collections::HashSet;
-use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use std::{fmt, fs, io};
 
 use collector_contracts::AgentSource;
 use collector_embedder::cycle;
@@ -229,6 +229,12 @@ impl Config {
             glob::Pattern::new(&input.path).map_err(|err| {
                 ConfigError(format!("input {:?}: invalid glob: {err}", input.name))
             })?;
+            if input.path.contains("**") {
+                return Err(ConfigError(format!(
+                    "input {:?}: ** is not supported; use * once per directory level",
+                    input.name
+                )));
+            }
         }
         Ok(())
     }
@@ -236,33 +242,68 @@ impl Config {
 
 impl Input {
     /// The agent homes this input names right now. A literal path is kept even before it exists, so
-    /// it starts syncing as soon as the agent creates it; a glob lists only the directories it
-    /// currently matches, and fails if it cannot list a directory it has to search.
+    /// it starts syncing as soon as the agent creates it; the transcript walk reports one that
+    /// exists but cannot be read as incomplete.
+    ///
+    /// A glob lists only the directories it currently matches. It expands one component at a time
+    /// so it can tell a path that is not there, which matches nothing, from one it may not read,
+    /// which is an error for every component including literal ones after a wildcard: skipping
+    /// `/home/alice/.claude` because `/home/alice` is unreadable would let the pass complete without
+    /// it. (The `glob` crate reports only directories it fails to list and treats the rest as
+    /// missing.)
     pub fn homes(&self, home: &Path) -> anyhow::Result<Vec<PathBuf>> {
         let path = match self.path.strip_prefix("~/") {
             Some(rest) => home.join(rest),
             None => PathBuf::from(&self.path),
         };
-        let pattern = path.to_string_lossy();
-        if !pattern.contains(['*', '?', '[']) {
+        if !is_glob(&path.to_string_lossy()) {
             return Ok(vec![path]);
         }
-        let mut matches = Vec::new();
-        for entry in glob::glob(&pattern)? {
-            let path = entry.map_err(|err| {
-                anyhow::anyhow!(
-                    "input {:?}: cannot search {}: {}",
-                    self.name,
-                    err.path().display(),
-                    err.error()
-                )
-            })?;
-            if path.is_dir() {
-                matches.push(path);
+        let mut candidates = vec![PathBuf::new()];
+        for component in path.components() {
+            let text = component.as_os_str().to_string_lossy();
+            if !is_glob(&text) {
+                for candidate in &mut candidates {
+                    candidate.push(component);
+                }
+                continue;
+            }
+            let pattern = glob::Pattern::new(&text)?;
+            let mut matched = Vec::new();
+            for dir in &candidates {
+                let entries = match fs::read_dir(dir) {
+                    Ok(entries) => entries,
+                    Err(err) if is_absent(&err) => continue,
+                    Err(err) => return Err(self.search_error(dir, err)),
+                };
+                for entry in entries {
+                    let entry = entry.map_err(|err| self.search_error(dir, err))?;
+                    if pattern.matches(&entry.file_name().to_string_lossy()) {
+                        matched.push(entry.path());
+                    }
+                }
+            }
+            candidates = matched;
+        }
+        let mut homes = Vec::new();
+        for candidate in candidates {
+            match fs::metadata(&candidate) {
+                Ok(meta) if meta.is_dir() => homes.push(candidate),
+                Ok(_) => {}
+                Err(err) if is_absent(&err) => {}
+                Err(err) => return Err(self.search_error(&candidate, err)),
             }
         }
-        matches.sort();
-        Ok(matches)
+        homes.sort();
+        Ok(homes)
+    }
+
+    fn search_error(&self, path: &Path, err: io::Error) -> anyhow::Error {
+        anyhow::anyhow!(
+            "input {:?}: cannot search {}: {err}",
+            self.name,
+            path.display()
+        )
     }
 
     pub fn source_homes(&self, homes: Vec<PathBuf>) -> SourceHomes {
@@ -273,6 +314,18 @@ impl Input {
         }
         source_homes
     }
+}
+
+fn is_glob(text: &str) -> bool {
+    text.contains(['*', '?', '['])
+}
+
+/// Nothing is there: the path, or a directory on the way to it, does not exist or is a file.
+fn is_absent(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+    )
 }
 
 fn collapse_home(home: &Path, dir: &Path) -> String {
@@ -363,6 +416,39 @@ mod tests {
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
         let err = result.unwrap_err().to_string();
         assert!(err.contains("cannot search"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_home_behind_a_glob_is_an_error_not_a_missing_one() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("alice/.claude")).unwrap();
+        std::fs::create_dir_all(root.path().join("bob")).unwrap();
+        let input = Input {
+            name: "users".to_string(),
+            source: InputSource::Claude,
+            path: format!("{}/*/.claude", root.path().display()),
+        };
+        assert_eq!(
+            input.homes(Path::new("/unused")).unwrap(),
+            vec![root.path().join("alice/.claude")],
+            "bob has no .claude yet"
+        );
+
+        let alice = root.path().join("alice");
+        std::fs::set_permissions(&alice, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let result = input.homes(Path::new("/unused"));
+        std::fs::set_permissions(&alice, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("cannot search"), "{err}");
+        assert!(err.contains("alice"), "{err}");
+    }
+
+    #[test]
+    fn recursive_globs_are_rejected() {
+        let recursive = MINIMAL.replace("~/.claude", "/srv/**/.claude");
+        assert!(Config::parse(&recursive).unwrap_err().0.contains("**"));
     }
 
     #[test]

@@ -75,13 +75,12 @@ impl Connector {
         let convex_site_url = defaults::convex_site_url();
         let ingest_url = defaults::ingest_url();
         let paths = Paths::resolve().map_err(|err| format!("{err:#}"))?;
-        let credentials = CredentialStore::platform_default(&paths);
-        let old_org_id = paths
+        let login_credentials = CredentialStore::platform_default(&paths);
+        let old = paths
             .load_connection()
             .ok()
             .flatten()
-            .map(|conn| conn.org_id);
-        let login_credentials = credentials.clone();
+            .map(|conn| (conn.credentials(&paths), conn.org_id));
         let conn = tauri::async_runtime::spawn_blocking(move || {
             login::run(
                 &convex_site_url,
@@ -94,8 +93,10 @@ impl Connector {
         .await
         .map_err(|err| format!("login task panicked: {err}"))?
         .map_err(|err| format!("{err:#}"))?;
-        if let Some(old_org_id) = old_org_id.filter(|old| old != &conn.org_id) {
-            if let Err(err) = credentials.delete(&old_org_id) {
+        if let Some((old_credentials, old_org_id)) =
+            old.filter(|(_, old_org_id)| old_org_id != &conn.org_id)
+        {
+            if let Err(err) = old_credentials.delete(&old_org_id) {
                 tracing::warn!(error = %err, org_id = %old_org_id, "failed to remove old Collector Credential");
             }
         }

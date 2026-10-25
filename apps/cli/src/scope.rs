@@ -90,12 +90,16 @@ impl Layout {
         })
     }
 
-    /// The config, or `None` when the scope's default file does not exist. A `--config` path must
-    /// exist unless the command is about to create it: falling back to the default homes would
-    /// upload sources the named config was written to exclude.
-    pub fn load_config(&self, may_create: bool) -> Result<Option<Config>> {
-        let config = Config::load(&self.config_file)?;
-        if config.is_none() && self.config_overridden && !may_create {
+    /// The config, or `None` when its file does not exist yet.
+    pub fn config(&self) -> Result<Option<Config>> {
+        Config::load(&self.config_file)
+    }
+
+    /// The config for a command that reads inputs. A `--config` path must exist: falling back to
+    /// the default homes would upload sources the named config was written to exclude.
+    pub fn input_config(&self) -> Result<Option<Config>> {
+        let config = self.config()?;
+        if config.is_none() && self.config_overridden {
             return Err(
                 ConfigError(format!("{} does not exist", self.config_file.display())).into(),
             );
@@ -103,7 +107,9 @@ impl Layout {
         Ok(config)
     }
 
-    pub fn credentials(&self, config: Option<&Config>) -> CredentialStore {
+    /// The store a new login writes the credential to. Later commands use the store the
+    /// connection recorded, so they never need the config to find the credential.
+    pub fn login_credentials(&self, config: Option<&Config>) -> CredentialStore {
         let kind = config
             .and_then(|config| config.credential_store)
             .unwrap_or_else(CredentialStoreKind::platform_default);

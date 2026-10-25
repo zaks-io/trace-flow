@@ -28,12 +28,11 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use collector_embedder::keychain::CredentialStore;
 use collector_embedder::login::{self, Callback};
 use collector_embedder::sources::{self, Support};
 use collector_embedder::{defaults, sync};
 
-use crate::config::{Config, ConfigError};
+use crate::config::ConfigError;
 use crate::scope::{Layout, Scope};
 
 const ENV_HELP: &str = "\
@@ -153,39 +152,28 @@ async fn run() -> Result<()> {
         .map(|path| std::path::absolute(&path).context("resolve --config path"))
         .transpose()?;
     let layout = Layout::resolve(scope, config_override)?;
-    let creates_config = matches!(
-        cli.command,
-        Command::Service {
-            action: ServiceAction::Install { .. }
-        }
-    );
-    let config = layout.load_config(creates_config)?;
-    let credentials = layout.credentials(config.as_ref());
 
+    // Each command loads only what it needs, so a missing or broken config never blocks
+    // `service uninstall`, `status`, or `disconnect`. The credential store comes from the connection.
     match cli.command {
-        Command::Login { no_browser } => cmd_login(&layout, &credentials, no_browser),
+        Command::Login { no_browser } => cmd_login(&layout, no_browser),
         Command::Sources { action } => match action {
-            SourcesAction::List => cmd_sources_list(&layout, config.as_ref()),
+            SourcesAction::List => cmd_sources_list(&layout),
         },
-        Command::Sync { watch: true, .. } => {
-            watch::run(&layout, config.as_ref(), &credentials).await
-        }
-        Command::Sync { since, replay, .. } => {
-            cmd_sync(&layout, config.as_ref(), &credentials, &since, replay).await
-        }
+        Command::Sync { watch: true, .. } => watch::run(&layout).await,
+        Command::Sync { since, replay, .. } => cmd_sync(&layout, &since, replay).await,
         Command::Service { action } => match action {
-            ServiceAction::Install { yes } => {
-                service::install(&layout, config.as_ref(), &credentials, yes)
-            }
+            ServiceAction::Install { yes } => service::install(&layout, yes),
             ServiceAction::Uninstall => service::uninstall(&layout),
         },
-        Command::Status => cmd_status(&layout, config.as_ref(), &credentials),
-        Command::Disconnect => cmd_disconnect(&layout, &credentials),
+        Command::Status => cmd_status(&layout),
+        Command::Disconnect => cmd_disconnect(&layout),
         Command::CursorDryrun => cursor_dryrun::run(&layout),
     }
 }
 
-fn cmd_login(layout: &Layout, credentials: &CredentialStore, no_browser: bool) -> Result<()> {
+fn cmd_login(layout: &Layout, no_browser: bool) -> Result<()> {
+    let credentials = layout.login_credentials(layout.config()?.as_ref());
     let callback = if no_browser {
         Callback::Pasted
     } else {
@@ -195,7 +183,7 @@ fn cmd_login(layout: &Layout, credentials: &CredentialStore, no_browser: bool) -
         &defaults::convex_site_url(),
         &defaults::ingest_url(),
         &layout.paths,
-        credentials,
+        &credentials,
         callback,
     )?;
     println!("\nConnected to organization {}.", conn.org_id);
@@ -209,8 +197,8 @@ fn cmd_login(layout: &Layout, credentials: &CredentialStore, no_browser: bool) -
     Ok(())
 }
 
-fn cmd_sources_list(layout: &Layout, config: Option<&Config>) -> Result<()> {
-    if let Some(config) = config {
+fn cmd_sources_list(layout: &Layout) -> Result<()> {
+    if let Some(config) = layout.input_config()? {
         println!("Inputs from {}:", layout.config_file.display());
         report::print_inputs(&config.inputs, &layout.home, false);
         return Ok(());
@@ -235,27 +223,25 @@ fn cmd_sources_list(layout: &Layout, config: Option<&Config>) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_sync(
-    layout: &Layout,
-    config: Option<&Config>,
-    credentials: &CredentialStore,
-    since: &str,
-    replay: bool,
-) -> Result<()> {
+async fn cmd_sync(layout: &Layout, since: &str, replay: bool) -> Result<()> {
     let window = sync::window_from_since(since)?;
+    let config = layout.input_config()?;
 
     let login_hint = format!("run `trace-flow{} login`", layout.scope.flag());
     let Some(conn) = layout.paths.load_connection()? else {
         anyhow::bail!("not logged in. {login_hint} first.");
     };
-    let credential = credentials.load(&conn.org_id)?.ok_or_else(|| {
-        anyhow::anyhow!(
-            "no Collector Credential found for org {}; {login_hint}",
-            conn.org_id
-        )
-    })?;
+    let credential = conn
+        .credentials(&layout.paths)
+        .load(&conn.org_id)?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no Collector Credential found for org {}; {login_hint}",
+                conn.org_id
+            )
+        })?;
     let ingest_url = conn.sync_ingest_url()?;
-    let source_homes = layout.source_homes(config)?;
+    let source_homes = layout.source_homes(config.as_ref())?;
     println!("Syncing (since {since}) to {ingest_url} ...");
 
     let reports = sync::run(sync::RunConfig {
@@ -287,11 +273,8 @@ fn ensure_sync_succeeded(total_failed: u32) -> Result<()> {
     Ok(())
 }
 
-fn cmd_status(
-    layout: &Layout,
-    config: Option<&Config>,
-    credentials: &CredentialStore,
-) -> Result<()> {
+/// Diagnostics: a config or input problem is printed in place rather than failing the command.
+fn cmd_status(layout: &Layout) -> Result<()> {
     let Some(conn) = layout.paths.load_connection()? else {
         println!(
             "Not connected. Run `trace-flow{} login` to get started.",
@@ -307,6 +290,7 @@ fn cmd_status(
         .sync_ingest_url()
         .unwrap_or_else(|_| "MISSING (log in again)".to_string());
     println!("Ingest:        {ingest_url}");
+    let credentials = conn.credentials(&layout.paths);
     let credential = if credentials.is_present(&conn.org_id) {
         "present"
     } else {
@@ -326,7 +310,7 @@ fn cmd_status(
             "not installed"
         }
     );
-    let state = watch::load_state(&watch::state_file(layout.paths.root()))?.for_org(&conn.org_id);
+    let state = watch::load_state(layout.paths.root())?.for_org(&conn.org_id);
     if let Some(cycle) = &state.last_cycle {
         let age_min = (watch::now_ms() - cycle.finished_at_ms).max(0) / 60_000;
         let result = match &cycle.error {
@@ -336,28 +320,32 @@ fn cmd_status(
         println!("Last cycle:    {age_min} min ago, {result}");
     }
 
-    match config {
-        Some(config) => {
-            println!("\nInputs:");
+    match layout.input_config() {
+        Ok(Some(config)) => {
+            println!("\nInputs from {}:", layout.config_file.display());
             report::print_inputs(&config.inputs, &layout.home, false);
         }
-        None => {
-            println!("\nSources (default homes; no collector.toml):");
-            for d in sources::detect_configured(&layout.source_homes(None)?, &layout.home) {
-                match d.support {
-                    Support::Ready => println!(
-                        "  {:<8} {} items",
-                        report::source_label(d.source),
-                        d.file_count
-                    ),
+        Ok(None) => match layout.source_homes(None) {
+            Ok(homes) => {
+                println!("\nSources (default homes; no collector.toml):");
+                for d in sources::detect_configured(&homes, &layout.home) {
+                    match d.support {
+                        Support::Ready => println!(
+                            "  {:<8} {} items",
+                            report::source_label(d.source),
+                            d.file_count
+                        ),
+                    }
                 }
             }
-        }
+            Err(err) => println!("\nInputs:        none; {err:#}"),
+        },
+        Err(err) => println!("\nConfig:        error: {err:#}"),
     }
     Ok(())
 }
 
-fn cmd_disconnect(layout: &Layout, credentials: &CredentialStore) -> Result<()> {
+fn cmd_disconnect(layout: &Layout) -> Result<()> {
     let Some(conn) = layout.paths.load_connection()? else {
         println!("Already disconnected.");
         return Ok(());
@@ -366,7 +354,7 @@ fn cmd_disconnect(layout: &Layout, credentials: &CredentialStore) -> Result<()> 
     // Best-effort server-side revoke is a follow-up (needs an authenticated revoke endpoint or the
     // credential id); for now we remove the local credential and state so the secret can no longer be
     // used from this machine.
-    credentials.delete(&conn.org_id)?;
+    conn.credentials(&layout.paths).delete(&conn.org_id)?;
     layout.paths.clear_connection(&conn.org_id)?;
     // The cursors are gone, so a later login must run the first-run backfill again.
     match std::fs::remove_file(watch::state_file(layout.paths.root())) {

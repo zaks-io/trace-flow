@@ -1,16 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
-// Trace Flow Collector embedder: files only the current user can read, for the file credential store.
+// Trace Flow Collector embedder: state files other local users can neither read nor steer.
 
-//! Owner-only files in a private directory.
+//! Files in the Collector's private state directory.
 //!
-//! The file credential store keeps a secret on disk, so other local users must never be able to
-//! read it or steer where it is written. On Unix:
-//! - the directory must belong to the current user; it is tightened to `0700`.
+//! The state directory holds the file credential store's secret and the connection metadata that
+//! decides where that secret is sent, so other local users must never be able to read the secret
+//! or plant a file that redirects it. On Unix:
+//! - the directory is created `0700` before anything is written in it and must belong to the
+//!   current user. One that an older version or a loose umask left open is tightened to `0700`; if
+//!   others could write to it, every entry must belong to the current user, because anything else
+//!   in it was planted.
 //! - writes go to a freshly and exclusively created `0600` temp file (`O_EXCL | O_NOFOLLOW`, random
 //!   name) that is renamed over the target, so a pre-created file or planted symlink is never
-//!   reused or followed, and a crash never leaves a truncated secret.
-//! - reads open with `O_NOFOLLOW` and check owner and mode on the opened handle, the way ssh refuses
-//!   a key other users can read. A hand-copied file with loose permissions has already leaked.
+//!   reused or followed, and a crash never leaves a truncated file.
+//! - reads open with `O_NOFOLLOW` and check the opened handle. Both readers refuse a file another
+//!   user owns; [`read`] (secrets) also refuses one other users can read, the way ssh refuses such a
+//!   key, and [`read_owned`] (metadata) one other users can write.
 
 use std::fs;
 use std::io::{self, Read, Write};
@@ -19,12 +24,12 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 
 /// Atomically replace `path` (inside `dir`) with `contents`, readable only by the current user.
-pub(crate) fn write(dir: &Path, path: &Path, contents: &str) -> Result<()> {
+pub fn write(dir: &Path, path: &Path, contents: &[u8]) -> Result<()> {
     ensure_private_dir(dir)?;
     let tmp = temp_path(path)?;
     let mut file = create_exclusive(&tmp).with_context(|| format!("create {}", tmp.display()))?;
     let written = file
-        .write_all(contents.as_bytes())
+        .write_all(contents)
         .and_then(|()| file.sync_all())
         .with_context(|| format!("write {}", tmp.display()))
         .and_then(|()| {
@@ -36,19 +41,51 @@ pub(crate) fn write(dir: &Path, path: &Path, contents: &str) -> Result<()> {
     written
 }
 
-/// Read `path`, or `None` when it does not exist. Fails when other users could read it, when it is
-/// a symlink, or when another user owns it.
-pub(crate) fn read(path: &Path) -> Result<Option<String>> {
-    let mut file = match open_no_follow(path) {
-        Ok(file) => file,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err).with_context(|| format!("open {}", path.display())),
+/// Read the secret at `path`, or `None` when it does not exist. Fails when it is a symlink, another
+/// user owns it, or other users can read it.
+pub fn read(path: &Path) -> Result<Option<String>> {
+    let Some(mut file) = open_checked(path, Guard::Secret)? else {
+        return Ok(None);
     };
-    ensure_owner_only(&file, path)?;
     let mut contents = String::new();
     file.read_to_string(&mut contents)
         .with_context(|| format!("read {}", path.display()))?;
     Ok(Some(contents))
+}
+
+/// Read non-secret state at `path`, or `None` when it does not exist. Other users may read it, but
+/// it fails when it is a symlink, another user owns it, or other users can write it.
+pub fn read_owned(path: &Path) -> Result<Option<Vec<u8>>> {
+    let Some(mut file) = open_checked(path, Guard::Trusted)? else {
+        return Ok(None);
+    };
+    let mut contents = Vec::new();
+    file.read_to_end(&mut contents)
+        .with_context(|| format!("read {}", path.display()))?;
+    Ok(Some(contents))
+}
+
+/// What a reader refuses besides symlinks and other owners.
+#[derive(Clone, Copy)]
+enum Guard {
+    /// Permission bits that let other users read the file.
+    Secret,
+    /// Permission bits that let other users change the file.
+    Trusted,
+}
+
+fn open_checked(path: &Path, guard: Guard) -> Result<Option<fs::File>> {
+    let file = match open_no_follow(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) if is_symlink_refusal(&err) => bail!(
+            "{} is a symlink, so it cannot be trusted; delete it and run the command again",
+            path.display()
+        ),
+        Err(err) => return Err(err).with_context(|| format!("open {}", path.display())),
+    };
+    ensure_owned(&file, path, guard)?;
+    Ok(Some(file))
 }
 
 fn temp_path(path: &Path) -> Result<PathBuf> {
@@ -62,8 +99,9 @@ fn temp_path(path: &Path) -> Result<PathBuf> {
     Ok(path.with_file_name(format!(".{name}.{nonce}.tmp")))
 }
 
+/// Create `dir` (and missing ancestors) as `0700`, or make an existing one private.
 #[cfg(unix)]
-fn ensure_private_dir(dir: &Path) -> Result<()> {
+pub(crate) fn ensure_private_dir(dir: &Path) -> Result<()> {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
     fs::DirBuilder::new()
         .recursive(true)
@@ -71,15 +109,40 @@ fn ensure_private_dir(dir: &Path) -> Result<()> {
         .create(dir)
         .with_context(|| format!("create {}", dir.display()))?;
     let meta = fs::metadata(dir).with_context(|| format!("stat {}", dir.display()))?;
-    if meta.uid() != rustix::process::geteuid().as_raw() {
+    let uid = rustix::process::geteuid().as_raw();
+    if meta.uid() != uid {
         bail!(
             "{} belongs to another user; choose a state directory you own",
             dir.display()
         );
     }
-    if meta.mode() & 0o077 != 0 {
-        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
-            .with_context(|| format!("restrict {} to its owner", dir.display()))?;
+    if meta.mode() & 0o077 == 0 {
+        return Ok(());
+    }
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+        .with_context(|| format!("restrict {} to its owner", dir.display()))?;
+    if meta.mode() & 0o022 == 0 {
+        return Ok(());
+    }
+    // Until the chmod above, other users could create entries here. Nobody else can now, so this
+    // check cannot race. `DirEntry::metadata` does not follow symlinks: a planted link is its
+    // creator's.
+    let entries = fs::read_dir(dir).with_context(|| format!("list {}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.with_context(|| format!("list {}", dir.display()))?;
+        let path = entry.path();
+        let owner = entry
+            .metadata()
+            .with_context(|| format!("stat {}", path.display()))?
+            .uid();
+        if owner != uid {
+            bail!(
+                "{} belongs to another user and appeared while other users could write to {}; \
+                 delete it and run the command again",
+                path.display(),
+                dir.display()
+            );
+        }
     }
     Ok(())
 }
@@ -100,27 +163,41 @@ fn open_no_follow(path: &Path) -> io::Result<fs::File> {
     Ok(fs::File::from(fd))
 }
 
+/// `O_NOFOLLOW` fails with `ELOOP` when the last component is a symlink.
 #[cfg(unix)]
-fn ensure_owner_only(file: &fs::File, path: &Path) -> Result<()> {
+fn is_symlink_refusal(err: &io::Error) -> bool {
+    err.raw_os_error() == Some(rustix::io::Errno::LOOP.raw_os_error())
+}
+
+#[cfg(unix)]
+fn ensure_owned(file: &fs::File, path: &Path, guard: Guard) -> Result<()> {
     use std::os::unix::fs::MetadataExt;
     let meta = file
         .metadata()
         .with_context(|| format!("stat {}", path.display()))?;
     if meta.uid() != rustix::process::geteuid().as_raw() {
-        bail!("{} belongs to another user; log in again", path.display());
-    }
-    if meta.mode() & 0o077 != 0 {
         bail!(
-            "{} is readable by other users (mode {:o}); run `chmod 600` on it or log in again",
-            path.display(),
-            meta.mode() & 0o777
+            "{} belongs to another user, so it cannot be trusted; delete it and run the command again",
+            path.display()
         );
     }
-    Ok(())
+    let mode = meta.mode() & 0o777;
+    match guard {
+        Guard::Secret if mode & 0o077 != 0 => bail!(
+            "{} is readable by other users (mode {mode:o}); run `chmod 600` on it or log in again",
+            path.display()
+        ),
+        Guard::Trusted if mode & 0o022 != 0 => bail!(
+            "{} is writable by other users (mode {mode:o}), so it cannot be trusted; delete it and \
+             run the command again",
+            path.display()
+        ),
+        _ => Ok(()),
+    }
 }
 
 #[cfg(not(unix))]
-fn ensure_private_dir(dir: &Path) -> Result<()> {
+pub(crate) fn ensure_private_dir(dir: &Path) -> Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))
 }
 
@@ -138,7 +215,12 @@ fn open_no_follow(path: &Path) -> io::Result<fs::File> {
 }
 
 #[cfg(not(unix))]
-fn ensure_owner_only(_file: &fs::File, _path: &Path) -> Result<()> {
+fn is_symlink_refusal(_err: &io::Error) -> bool {
+    false
+}
+
+#[cfg(not(unix))]
+fn ensure_owned(_file: &fs::File, _path: &Path, _guard: Guard) -> Result<()> {
     Ok(())
 }
 
@@ -159,12 +241,21 @@ mod tests {
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o775)).unwrap();
         let path = dir.join("value");
 
-        write(&dir, &path, "one").unwrap();
-        write(&dir, &path, "two").unwrap();
+        write(&dir, &path, b"one").unwrap();
+        write(&dir, &path, b"two").unwrap();
         assert_eq!(read(&path).unwrap().as_deref(), Some("two"));
         assert_eq!(mode(&path), 0o600);
         assert_eq!(mode(&dir), 0o700);
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 1, "no temp files left");
+    }
+
+    #[test]
+    fn a_new_directory_is_private_from_the_start() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("a/b");
+        ensure_private_dir(&dir).unwrap();
+        assert_eq!(mode(&dir), 0o700);
+        assert_eq!(mode(&root.path().join("a")), 0o700);
     }
 
     #[test]
@@ -177,26 +268,46 @@ mod tests {
         let path = dir.join("value");
         symlink(&victim, &path).unwrap();
 
-        write(&dir, &path, "secret").unwrap();
+        write(&dir, &path, b"secret").unwrap();
         assert_eq!(fs::read_to_string(&victim).unwrap(), "untouched");
         assert!(!fs::symlink_metadata(&path).unwrap().is_symlink());
         assert_eq!(mode(&path), 0o600);
     }
 
     #[test]
-    fn reads_refuse_symlinks_and_loose_permissions() {
+    fn secret_reads_refuse_symlinks_and_files_others_can_read() {
         let root = tempfile::tempdir().unwrap();
         let target = root.path().join("target");
         fs::write(&target, "secret").unwrap();
         fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
         let link = root.path().join("link");
         symlink(&target, &link).unwrap();
-        assert!(read(&link).is_err());
+        let err = read(&link).unwrap_err().to_string();
+        assert!(err.contains("is a symlink"), "{err}");
 
         fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();
         let err = read(&target).unwrap_err().to_string();
         assert!(err.contains("readable by other users"), "{err}");
 
         assert_eq!(read(&root.path().join("missing")).unwrap(), None);
+    }
+
+    #[test]
+    fn owned_reads_allow_readers_but_refuse_symlinks_and_files_others_can_write() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("target");
+        fs::write(&target, "{}").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(read_owned(&target).unwrap().as_deref(), Some(&b"{}"[..]));
+
+        let link = root.path().join("link");
+        symlink(&target, &link).unwrap();
+        assert!(read_owned(&link).is_err());
+
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o664)).unwrap();
+        let err = read_owned(&target).unwrap_err().to_string();
+        assert!(err.contains("writable by other users"), "{err}");
+
+        assert_eq!(read_owned(&root.path().join("missing")).unwrap(), None);
     }
 }

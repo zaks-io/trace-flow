@@ -16,16 +16,18 @@
 //! before any upload, so the watermark never moves past homes the pass could not see.
 //!
 //! The loop's own state (the backfill marker and the last cycle's outcome, for `status`) lives in
-//! `service-state.json` beside the cursor stores. It belongs to one Organization: logging in to
-//! another starts a fresh state, so the new Organization gets its own first-run backfill. Stopping
-//! mid-cycle is safe because cursors only advance after ingest acknowledges a batch.
+//! `service-state.json` beside the cursor stores, written and read through
+//! [`collector_embedder::private_file`] like the connection file. It belongs to one Organization:
+//! logging in to another starts a fresh state, so the new Organization gets its own first-run
+//! backfill. Stopping mid-cycle is safe because cursors only advance after ingest acknowledges a
+//! batch.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use collector_embedder::cycle::{self, CycleOutcome};
-use collector_embedder::keychain::CredentialStore;
+use collector_embedder::private_file;
 use collector_embedder::sync::{self, Window};
 use serde::{Deserialize, Serialize};
 
@@ -72,33 +74,27 @@ pub fn state_file(paths_root: &Path) -> PathBuf {
     paths_root.join(STATE_FILE)
 }
 
-/// A missing file means the service has not run yet. Anything unreadable is an error rather than
-/// a silent reset, which would re-run the first-run backfill.
-pub fn load_state(path: &Path) -> Result<ServiceState> {
-    match std::fs::read(path) {
-        Ok(bytes) => {
+/// The state in the state dir `paths_root`. A missing file means the service has not run yet.
+/// Anything unreadable is an error rather than a silent reset, which would re-run the first-run
+/// backfill.
+pub fn load_state(paths_root: &Path) -> Result<ServiceState> {
+    let path = state_file(paths_root);
+    match private_file::read_owned(&path)? {
+        Some(bytes) => {
             serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))
         }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(ServiceState::default()),
-        Err(err) => Err(err).with_context(|| format!("read {}", path.display())),
+        None => Ok(ServiceState::default()),
     }
 }
 
-/// Write via a sibling temp file and rename, so a crash never leaves a half-written state file.
-fn save_state(path: &Path, state: &ServiceState) -> Result<()> {
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(state)?)
-        .with_context(|| format!("write {}", tmp.display()))?;
-    std::fs::rename(&tmp, path).with_context(|| format!("replace {}", path.display()))
+fn save_state(paths_root: &Path, state: &ServiceState) -> Result<()> {
+    let json = serde_json::to_vec_pretty(state).context("serialize service state")?;
+    private_file::write(paths_root, &state_file(paths_root), &json)
 }
 
 /// Run sync cycles until SIGTERM or SIGINT.
-pub async fn run(
-    layout: &Layout,
-    config: Option<&Config>,
-    credentials: &CredentialStore,
-) -> Result<()> {
-    let Some(config) = config else {
+pub async fn run(layout: &Layout) -> Result<()> {
+    let Some(config) = layout.config()? else {
         return Err(ConfigError(format!(
             "`sync --watch` reads its inputs from {}, which does not exist; run `trace-flow{} service install` to create it",
             layout.config_file.display(),
@@ -109,8 +105,7 @@ pub async fn run(
     let interval = config.interval();
     let first_backfill = config.first_backfill();
     layout.paths.ensure()?;
-    let state_path = state_file(layout.paths.root());
-    let mut state = load_state(&state_path)?;
+    let mut state = load_state(layout.paths.root())?;
 
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
@@ -120,7 +115,7 @@ pub async fn run(
         interval.as_secs() / 60
     );
     loop {
-        let pass = run_pass(layout, config, credentials, &mut state, first_backfill);
+        let pass = run_pass(layout, &config, &mut state, first_backfill);
         let result = tokio::select! {
             result = pass => result?,
             signal = &mut shutdown => {
@@ -148,7 +143,7 @@ pub async fn run(
             failed,
             error,
         });
-        save_state(&state_path, &state)?;
+        save_state(layout.paths.root(), &state)?;
 
         let wait = match outcome.backoff {
             Some(backoff) => {
@@ -175,7 +170,6 @@ pub async fn run(
 async fn run_pass(
     layout: &Layout,
     config: &Config,
-    credentials: &CredentialStore,
     state: &mut ServiceState,
     first_backfill: Window,
 ) -> Result<Result<sync::SyncRunOutcome>> {
@@ -190,6 +184,7 @@ async fn run_pass(
         ))
         .into());
     };
+    let credentials = conn.credentials(&layout.paths);
     let credential = credentials.load(&conn.org_id)?.ok_or_else(|| {
         ConfigError(format!(
             "no Collector Credential in the {} for org {}; run `trace-flow{} login`, {relogin}",
@@ -254,8 +249,7 @@ mod tests {
     #[test]
     fn state_round_trips_and_a_missing_file_is_a_fresh_service() {
         let dir = tempfile::tempdir().unwrap();
-        let path = state_file(dir.path());
-        assert_eq!(load_state(&path).unwrap(), ServiceState::default());
+        assert_eq!(load_state(dir.path()).unwrap(), ServiceState::default());
 
         let state = ServiceState {
             org_id: Some("org_a".to_string()),
@@ -267,8 +261,8 @@ mod tests {
                 error: None,
             }),
         };
-        save_state(&path, &state).unwrap();
-        assert_eq!(load_state(&path).unwrap(), state);
+        save_state(dir.path(), &state).unwrap();
+        assert_eq!(load_state(dir.path()).unwrap(), state);
     }
 
     #[test]
@@ -287,8 +281,7 @@ mod tests {
     #[test]
     fn a_corrupt_state_file_is_an_error_not_a_fresh_backfill() {
         let dir = tempfile::tempdir().unwrap();
-        let path = state_file(dir.path());
-        std::fs::write(&path, b"{not json").unwrap();
-        assert!(load_state(&path).is_err());
+        std::fs::write(state_file(dir.path()), b"{not json").unwrap();
+        assert!(load_state(dir.path()).is_err());
     }
 }

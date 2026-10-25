@@ -13,6 +13,7 @@
 //!   Organization id.
 //! - [`connection`] — the non-secret connection state + state-dir layout (shared by CLI and desktop,
 //!   so a login from either is interchangeable).
+//! - [`private_file`] — files in the state dir that other local users can neither read nor steer.
 //! - [`sources`] — where each agent Source writes its transcripts and which are ingestable today.
 //! - [`login`] — the browser device flow that mints a Collector Credential over a loopback redirect.
 //! - [`sync`] — the one-pass-per-source drive over `collector-sync` that POSTs and advances cursors
@@ -28,6 +29,6 @@ pub mod defaults;
 mod fact_sources;
 pub mod keychain;
 pub mod login;
-mod private_file;
+pub mod private_file;
 pub mod sources;
 pub mod sync;

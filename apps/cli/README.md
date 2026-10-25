@@ -109,7 +109,7 @@ live in [`systemd/`](./systemd).
 ```toml
 interval_minutes = 5        # optional, default 5
 first_backfill = "7d"       # optional: 24h, 7d, 30d, or 1y for the first pass
-# credential_store = "file" # optional: "file" (Linux default) or "keyring"
+# credential_store = "file" # optional, read by login: "file" (Linux default) or "keyring"
 
 [[inputs]]
 name = "claude"             # shown in status and logs instead of the path
@@ -123,18 +123,27 @@ path = "/srv/agents/*/.codex" # globs are expanded again every cycle
 ```
 
 Without a config, one-shot per-user commands read `~/.claude`, `~/.codex`, `CLAUDE_CONFIG_DIR`, and
-`CODEX_HOME`. `sync --watch` and host-wide mode read only a config's inputs, and a `--config` file
-must exist. An unknown key, an invalid value, a missing config, or a missing login exits with status
-78 (`EX_CONFIG`), and the units do not restart on it; fix it and restart. A glob that cannot search
-a directory fails that cycle before anything uploads, so the sync watermark never moves past homes
-the pass could not see.
+`CODEX_HOME`. `sync --watch` and host-wide mode read only a config's inputs, and commands that read
+inputs need a `--config` file to exist. `status` shows a config problem instead of failing, and
+`service uninstall` and `disconnect` never read the config. An unknown key, an invalid value, a
+missing config, or a missing login exits with status 78 (`EX_CONFIG`), and the units do not restart
+on it; fix it and restart.
+
+`*`, `?`, and `[...]` match within one directory level; `**` is not supported. A glob skips paths
+that do not exist, but a directory it cannot read, including a home behind a wildcard that is not
+readable, fails that cycle before anything uploads, so the sync watermark never moves past homes the
+pass could not see.
 
 ### Credential storage and headless sign-in
 
 On Linux the Collector Credential is an owner-only (`0600`) file in the state directory, because
 headless hosts and services have no Secret Service keyring. The CLI refuses a credential file other
-users can read. Set `credential_store = "keyring"` to use the Secret Service instead. macOS and
+users can read. Set `credential_store = "keyring"` before `login` to use the Secret Service instead;
+`login` records the store it used, and later commands read the credential from there. macOS and
 Windows default to the OS keychain.
+
+The state directory is `0700`. The CLI refuses a connection or state file that is a symlink or that
+another user owns or can change, because the connection decides where the credential is sent.
 
 `login --no-browser` prints a sign-in address to open in a browser on any device. After sign-in that
 browser fails to load a `127.0.0.1` page; copy its full address and paste it at the hidden prompt.

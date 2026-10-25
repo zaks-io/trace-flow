@@ -23,7 +23,6 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use collector_embedder::connection::{Connection, Paths};
 use collector_embedder::cycle::{self, CycleOutcome};
-use collector_embedder::keychain::CredentialStore;
 use collector_embedder::sources::SourceHomes;
 use collector_embedder::sync::{self, Window};
 use tokio::sync::mpsc;
@@ -251,7 +250,7 @@ async fn run_cycle(
     };
 
     let credentials = match Paths::resolve() {
-        Ok(paths) => CredentialStore::platform_default(&paths),
+        Ok(paths) => conn.credentials(&paths),
         Err(err) => {
             tracing::error!(error = %err, "sync skipped: state dir unresolved");
             return None;

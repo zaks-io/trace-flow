@@ -14,7 +14,6 @@ use std::path::Path;
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
-use collector_embedder::keychain::CredentialStore;
 
 use crate::config::Config;
 use crate::report;
@@ -23,18 +22,15 @@ use crate::scope::{Layout, Scope, UNIT_NAME};
 const USER_UNIT: &str = include_str!("../systemd/user.service");
 const SYSTEM_UNIT: &str = include_str!("../systemd/system.service");
 
-pub fn install(
-    layout: &Layout,
-    config: Option<&Config>,
-    credentials: &CredentialStore,
-    assume_yes: bool,
-) -> Result<()> {
+pub fn install(layout: &Layout, assume_yes: bool) -> Result<()> {
+    let config = layout.config()?;
     let Some(conn) = layout.paths.load_connection()? else {
         bail!(
             "not logged in; run `trace-flow{} login` first",
             layout.scope.flag()
         );
     };
+    let credentials = conn.credentials(&layout.paths);
     if !credentials.is_present(&conn.org_id) {
         bail!(
             "no Collector Credential in the {}; run `trace-flow{} login` first",
@@ -43,7 +39,7 @@ pub fn install(
         );
     }
 
-    let new_config = match config {
+    let new_config = match &config {
         Some(_) => None,
         None => Some(match layout.scope {
             Scope::User => Config::for_user(&layout.home, &layout.source_homes(None)?),
@@ -51,6 +47,7 @@ pub fn install(
         }),
     };
     let effective = config
+        .as_ref()
         .or(new_config.as_ref())
         .expect("one of the two is set");
     let unit_file = layout.unit_file()?;
