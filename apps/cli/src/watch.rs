@@ -94,8 +94,6 @@ fn save_state(paths_root: &Path, state: &ServiceState) -> Result<()> {
 
 /// Run sync cycles until SIGTERM or SIGINT.
 pub async fn run(layout: &Layout) -> Result<()> {
-    // Before the config: the per-user one lives in the state dir, which must refuse planted entries
-    // first.
     layout.paths.ensure()?;
     let Some(config) = layout.config()? else {
         return Err(ConfigError(format!(

@@ -14,6 +14,7 @@ use std::process::Command;
 use anyhow::{Context, Result};
 use collector_embedder::connection::Paths;
 use collector_embedder::keychain::{CredentialStore, CredentialStoreKind};
+use collector_embedder::private_file;
 use collector_embedder::sources::SourceHomes;
 
 use crate::config::{Config, ConfigError};
@@ -91,7 +92,26 @@ impl Layout {
     }
 
     /// The config, or `None` when its file does not exist yet.
+    ///
+    /// The per-user default config lives in a directory the Collector owns, normally the state dir,
+    /// and so does any config placed in the state dir. That directory is made private and checked
+    /// for planted entries *before* the config is read: while it was open, another user could plant
+    /// a config, let it be opened, and remove it, and a later check would find nothing wrong.
     pub fn config(&self) -> Result<Option<Config>> {
+        let collector_owned = self.scope == Scope::User && !self.config_overridden;
+        if collector_owned || self.config_file.starts_with(self.paths.root()) {
+            let dir = self
+                .config_file
+                .parent()
+                .context("config path has no directory")?;
+            // No directory, no config: leave creating it to the commands that write one.
+            if dir
+                .try_exists()
+                .with_context(|| format!("check {}", dir.display()))?
+            {
+                private_file::ensure_private_dir(dir)?;
+            }
+        }
         Config::load(&self.config_file)
     }
 
@@ -152,5 +172,69 @@ impl Layout {
             args.push(self.config_file.display().to_string());
         }
         args
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn layout(root: &Path, config_file: PathBuf, config_overridden: bool) -> Layout {
+        Layout {
+            scope: Scope::User,
+            config_file,
+            config_overridden,
+            paths: Paths::at(root.join("state")),
+            home: root.to_path_buf(),
+        }
+    }
+
+    fn mode(path: &Path) -> u32 {
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    fn open_dir(path: &Path) {
+        std::fs::create_dir_all(path).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o775)).unwrap();
+    }
+
+    #[test]
+    fn the_config_directory_is_private_before_the_config_is_read() {
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join("state");
+        open_dir(&state);
+        // Unparseable, so the read fails: the directory must already be private by then.
+        std::fs::write(state.join("collector.toml"), "colour = \"blue\"").unwrap();
+        let layout = layout(root.path(), state.join("collector.toml"), false);
+
+        assert!(layout.input_config().is_err());
+        assert_eq!(mode(&state), 0o700);
+    }
+
+    #[test]
+    fn reading_a_missing_config_creates_no_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("config/trace-flow");
+        let layout = layout(root.path(), dir.join("collector.toml"), false);
+
+        assert_eq!(layout.config().unwrap(), None);
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn an_explicit_config_elsewhere_leaves_its_directory_alone() {
+        let root = tempfile::tempdir().unwrap();
+        let elsewhere = root.path().join("repo");
+        open_dir(&elsewhere);
+        std::fs::write(
+            elsewhere.join("collector.toml"),
+            "[[inputs]]\nname = \"c\"\nsource = \"claude\"\npath = \"~/.claude\"\n",
+        )
+        .unwrap();
+        let layout = layout(root.path(), elsewhere.join("collector.toml"), true);
+
+        assert!(layout.input_config().unwrap().is_some());
+        assert_eq!(mode(&elsewhere), 0o775);
     }
 }

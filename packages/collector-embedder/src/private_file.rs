@@ -133,9 +133,10 @@ fn temp_path(path: &Path) -> Result<PathBuf> {
     Ok(path.with_file_name(format!(".{name}.{nonce}.tmp")))
 }
 
-/// Create `dir` (and missing ancestors) as `0700`, or make an existing one private.
+/// Create `dir` (and missing ancestors) as `0700`, or make an existing one private, and refuse it
+/// while it holds another user's entries.
 #[cfg(unix)]
-pub(crate) fn ensure_private_dir(dir: &Path) -> Result<()> {
+pub fn ensure_private_dir(dir: &Path) -> Result<()> {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
     fs::DirBuilder::new()
         .recursive(true)
@@ -246,7 +247,7 @@ fn ensure_owned(file: &fs::File, path: &Path, guard: Guard) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-pub(crate) fn ensure_private_dir(dir: &Path) -> Result<()> {
+pub fn ensure_private_dir(dir: &Path) -> Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))
 }
 

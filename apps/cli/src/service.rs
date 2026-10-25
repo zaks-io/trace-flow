@@ -23,9 +23,8 @@ const USER_UNIT: &str = include_str!("../systemd/user.service");
 const SYSTEM_UNIT: &str = include_str!("../systemd/system.service");
 
 pub fn install(layout: &Layout, assume_yes: bool) -> Result<()> {
-    // The per-user config lives in the state dir, so make that private and refuse planted entries
-    // before reading or writing the config.
-    layout.paths.ensure()?;
+    // Makes the per-user config's directory private before reading it, so the config created below
+    // is never written into an open directory.
     let config = layout.config()?;
     let Some(conn) = layout.paths.load_connection()? else {
         bail!(
