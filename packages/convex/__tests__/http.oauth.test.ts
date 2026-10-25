@@ -565,6 +565,18 @@ describe('convex/http.ts OAuth routes', () => {
       expect(deps.oauth.signState).not.toHaveBeenCalled();
     });
 
+    it('asks for approval from Collectors that send no challenge too', async () => {
+      const res = await authorize('');
+
+      expect(await res.text()).toContain('Connect a Trace Flow Collector');
+      expect(deps.oauth.signCollectorConsent).toHaveBeenCalledWith({
+        consentNonce: expect.any(String),
+        clientState: 'collector-nonce',
+        redirectUri: LOOPBACK,
+      });
+      expect(deps.oauth.signState).not.toHaveBeenCalled();
+    });
+
     it('signs an approved request into the state, bound to the approving browser', async () => {
       approve();
 
