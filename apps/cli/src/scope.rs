@@ -8,7 +8,7 @@
 //! root-owned service per machine that reads many users' homes with a single Collector Credential,
 //! so its config lives in `/etc` and its state in `/var/lib`, outside any user's reach.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result};
@@ -67,52 +67,80 @@ pub struct Layout {
 }
 
 impl Layout {
+    /// Resolve the layout. The config and state paths are made absolute and lexically normalized
+    /// here, so [`Self::config`] can tell whether one lies inside the other however they were spelled.
     pub fn resolve(scope: Scope, config_override: Option<PathBuf>) -> Result<Self> {
         let home = dirs::home_dir().context("could not resolve home directory")?;
-        let (default_config, paths) = match scope {
+        let (default_config, state_dir) = match scope {
             Scope::User => {
                 let config_dir = dirs::config_dir().context("no OS config dir")?;
                 (
                     config_dir.join("trace-flow").join("collector.toml"),
-                    Paths::resolve()?,
+                    Paths::resolve()?.root().to_path_buf(),
                 )
             }
             Scope::System => (
                 PathBuf::from(SYSTEM_CONFIG_FILE),
-                Paths::at(PathBuf::from(SYSTEM_STATE_DIR)),
+                PathBuf::from(SYSTEM_STATE_DIR),
             ),
         };
         Ok(Self {
             scope,
             config_overridden: config_override.is_some(),
-            config_file: config_override.unwrap_or(default_config),
-            paths,
+            config_file: normalized(&config_override.unwrap_or(default_config))?,
+            paths: Paths::at(normalized(&state_dir)?),
             home,
         })
     }
 
     /// The config, or `None` when its file does not exist yet.
     ///
-    /// The per-user default config lives in a directory the Collector owns, normally the state dir,
-    /// and so does any config placed in the state dir. That directory is made private and checked
-    /// for planted entries *before* the config is read: while it was open, another user could plant
-    /// a config, let it be opened, and remove it, and a later check would find nothing wrong.
+    /// A config in a directory other users could once write to is only read after that directory
+    /// is private and checked for planted entries: another user could plant a config, let it be
+    /// opened, and remove it, and a check after the read would find nothing wrong.
+    /// - In the state dir, which [`Paths::ensure`] tightens, a config must sit directly in it, as
+    ///   the per-user default does: subdirectories are not checked.
+    /// - The per-user default config's own directory, when `TRACE_FLOW_STATE_DIR` moves the state
+    ///   elsewhere, belongs to the Collector too and gets the same treatment.
+    /// - Any other config, an explicit `--config` or the host-wide default in root-owned `/etc`, is
+    ///   its owner's to protect. It is read at its resolved location, so a symlink that leads back
+    ///   into the state dir is refused rather than followed.
     pub fn config(&self) -> Result<Option<Config>> {
-        let collector_owned = self.scope == Scope::User && !self.config_overridden;
-        if collector_owned || self.config_file.starts_with(self.paths.root()) {
-            let dir = self
-                .config_file
-                .parent()
-                .context("config path has no directory")?;
-            // No directory, no config: leave creating it to the commands that write one.
-            if dir
-                .try_exists()
-                .with_context(|| format!("check {}", dir.display()))?
-            {
-                private_file::ensure_private_dir(dir)?;
+        let file = &self.config_file;
+        let state = self.paths.root();
+        if file.starts_with(state) {
+            if file.parent() != Some(state) {
+                return Err(ConfigError(format!(
+                    "{} is in a subdirectory of the state directory {}; keep collector.toml \
+                     directly in it or outside it",
+                    file.display(),
+                    state.display()
+                ))
+                .into());
+            }
+            return load_from_private_dir(state, file);
+        }
+        if self.scope == Scope::User && !self.config_overridden {
+            let dir = file.parent().context("config path has no directory")?;
+            return load_from_private_dir(dir, file);
+        }
+        let resolved = match std::fs::canonicalize(file) {
+            Ok(resolved) => resolved,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err).with_context(|| format!("resolve {}", file.display())),
+        };
+        if let Ok(real_state) = std::fs::canonicalize(state) {
+            if resolved.starts_with(&real_state) {
+                return Err(ConfigError(format!(
+                    "{} leads into the state directory {}; keep the config outside it, or \
+                     directly in it under that path",
+                    file.display(),
+                    state.display()
+                ))
+                .into());
             }
         }
-        Config::load(&self.config_file)
+        Config::load(&resolved)
     }
 
     /// The config for a command that reads inputs. A `--config` path must exist: falling back to
@@ -175,6 +203,36 @@ impl Layout {
     }
 }
 
+/// Make `dir` private and refuse planted entries, then read `file` in it. No directory means no
+/// config, and read-only commands must not create one.
+fn load_from_private_dir(dir: &Path, file: &Path) -> Result<Option<Config>> {
+    if !dir
+        .try_exists()
+        .with_context(|| format!("check {}", dir.display()))?
+    {
+        return Ok(None);
+    }
+    private_file::ensure_private_dir(dir)?;
+    Config::load(file)
+}
+
+/// `path` made absolute against the working directory, with `.` and `..` removed lexically.
+fn normalized(path: &Path) -> Result<PathBuf> {
+    let absolute =
+        std::path::absolute(path).with_context(|| format!("resolve {}", path.display()))?;
+    let mut out = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -220,6 +278,45 @@ mod tests {
 
         assert_eq!(layout.config().unwrap(), None);
         assert!(!dir.exists());
+    }
+
+    #[test]
+    fn paths_are_compared_absolute_and_normalized() {
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(
+            normalized(Path::new("state/./x/../collector.toml")).unwrap(),
+            cwd.join("state/collector.toml")
+        );
+    }
+
+    #[test]
+    fn a_config_spelled_into_the_state_dir_is_read_only_after_it_is_private() {
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join("state");
+        open_dir(&state);
+        std::fs::write(state.join("collector.toml"), "colour = \"blue\"").unwrap();
+        let spelled = normalized(&root.path().join("other/../state/collector.toml")).unwrap();
+        let layout = layout(root.path(), spelled, true);
+
+        assert!(layout.input_config().is_err());
+        assert_eq!(mode(&state), 0o700);
+    }
+
+    #[test]
+    fn a_config_nested_in_the_state_dir_or_reached_through_a_symlink_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join("state");
+        std::fs::create_dir_all(state.join("nested")).unwrap();
+        std::fs::write(state.join("nested/collector.toml"), "").unwrap();
+        let nested = layout(root.path(), state.join("nested/collector.toml"), true);
+        let err = nested.config().unwrap_err().to_string();
+        assert!(err.contains("subdirectory of the state directory"), "{err}");
+
+        let link = root.path().join("dotfiles");
+        std::os::unix::fs::symlink(state.join("nested"), &link).unwrap();
+        let linked = layout(root.path(), link.join("collector.toml"), true);
+        let err = linked.config().unwrap_err().to_string();
+        assert!(err.contains("leads into the state directory"), "{err}");
     }
 
     #[test]

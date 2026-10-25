@@ -183,10 +183,16 @@ fn systemctl(scope: Scope, args: &[&str]) -> Result<()> {
 }
 
 /// Create `path`, which must not exist yet. `O_EXCL` also refuses a symlink planted there, so the
-/// config is never written through one.
+/// config is never written through one. Missing directories are created private, so the config
+/// never sits in a directory other users can write to; existing ones are left as they are.
 fn create_file(path: &Path, contents: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        let mut dirs = std::fs::DirBuilder::new();
+        dirs.recursive(true);
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut dirs, 0o700);
+        dirs.create(parent)
+            .with_context(|| format!("create {}", parent.display()))?;
     }
     let mut file = match std::fs::OpenOptions::new()
         .write(true)

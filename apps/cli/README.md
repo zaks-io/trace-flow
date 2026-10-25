@@ -143,7 +143,9 @@ users can read. Set `credential_store = "keyring"` before `login` to use the Sec
 Windows default to the OS keychain.
 
 The state directory and the per-user config directory are `0700`, and the CLI refuses to use either
-while it holds a file another user owns. It checks before reading the config, not after. It also refuses a connection or state file that is a symlink or that other users can change,
+while it holds a file another user owns. It checks before reading the config, not after. A
+`--config` inside the state directory must sit directly in it, and one whose real path leads there
+through a symlink is refused. It also refuses a connection or state file that is a symlink or that other users can change,
 because the connection decides where the credential is sent.
 
 `login --no-browser` prints a sign-in address to open in a browser on any device. After sign-in that

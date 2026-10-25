@@ -147,11 +147,7 @@ async fn run() -> Result<()> {
     } else {
         Scope::User
     };
-    let config_override = cli
-        .config
-        .map(|path| std::path::absolute(&path).context("resolve --config path"))
-        .transpose()?;
-    let layout = Layout::resolve(scope, config_override)?;
+    let layout = Layout::resolve(scope, cli.config)?;
 
     // Each command loads only what it needs, so a missing or broken config never blocks
     // `service uninstall`, `status`, or `disconnect`. The credential store comes from the connection.
