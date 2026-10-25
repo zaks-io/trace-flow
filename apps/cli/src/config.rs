@@ -20,6 +20,7 @@ use std::{fmt, fs, io};
 use collector_contracts::AgentSource;
 use collector_embedder::cycle;
 use collector_embedder::keychain::CredentialStoreKind;
+use collector_embedder::private_file;
 use collector_embedder::sources::SourceHomes;
 use collector_embedder::sync::{self, Window};
 use serde::{Deserialize, Serialize};
@@ -109,15 +110,15 @@ impl Config {
         Ok(config)
     }
 
-    /// Read `path`, or `None` when it does not exist.
+    /// Read `path`, or `None` when it does not exist. The per-user config shares the state dir, so
+    /// it is read without blocking and must be a regular file (see [`private_file::read_regular`]).
     pub fn load(path: &Path) -> anyhow::Result<Option<Self>> {
-        match std::fs::read_to_string(path) {
-            Ok(text) => Self::parse(&text)
-                .map(Some)
-                .map_err(|err| ConfigError(format!("{}: {err}", path.display())).into()),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(err) => Err(anyhow::Error::new(err).context(format!("read {}", path.display()))),
-        }
+        let Some(text) = private_file::read_regular(path)? else {
+            return Ok(None);
+        };
+        Self::parse(&text)
+            .map(Some)
+            .map_err(|err| ConfigError(format!("{}: {err}", path.display())).into())
     }
 
     pub fn render(&self) -> anyhow::Result<String> {

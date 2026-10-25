@@ -23,6 +23,9 @@ const USER_UNIT: &str = include_str!("../systemd/user.service");
 const SYSTEM_UNIT: &str = include_str!("../systemd/system.service");
 
 pub fn install(layout: &Layout, assume_yes: bool) -> Result<()> {
+    // The per-user config lives in the state dir, so make that private and refuse planted entries
+    // before reading or writing the config.
+    layout.paths.ensure()?;
     let config = layout.config()?;
     let Some(conn) = layout.paths.load_connection()? else {
         bail!(
@@ -69,7 +72,7 @@ pub fn install(layout: &Layout, assume_yes: bool) -> Result<()> {
     }
 
     if let Some(new_config) = &new_config {
-        write_file(&layout.config_file, &new_config.render()?)?;
+        create_file(&layout.config_file, &new_config.render()?)?;
     }
     write_file(&unit_file, &render_unit(layout)?)?;
     systemctl(layout.scope, &["daemon-reload"])?;
@@ -178,6 +181,28 @@ fn systemctl(scope: Scope, args: &[&str]) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Create `path`, which must not exist yet. `O_EXCL` also refuses a symlink planted there, so the
+/// config is never written through one.
+fn create_file(path: &Path, contents: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let mut file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => bail!(
+            "{} already exists, perhaps as a dangling symlink; inspect it and run install again",
+            path.display()
+        ),
+        Err(err) => return Err(err).with_context(|| format!("create {}", path.display())),
+    };
+    file.write_all(contents.as_bytes())
+        .with_context(|| format!("write {}", path.display()))
 }
 
 fn write_file(path: &Path, contents: &str) -> Result<()> {

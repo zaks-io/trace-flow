@@ -94,6 +94,9 @@ fn save_state(paths_root: &Path, state: &ServiceState) -> Result<()> {
 
 /// Run sync cycles until SIGTERM or SIGINT.
 pub async fn run(layout: &Layout) -> Result<()> {
+    // Before the config: the per-user one lives in the state dir, which must refuse planted entries
+    // first.
+    layout.paths.ensure()?;
     let Some(config) = layout.config()? else {
         return Err(ConfigError(format!(
             "`sync --watch` reads its inputs from {}, which does not exist; run `trace-flow{} service install` to create it",
@@ -104,7 +107,6 @@ pub async fn run(layout: &Layout) -> Result<()> {
     };
     let interval = config.interval();
     let first_backfill = config.first_backfill();
-    layout.paths.ensure()?;
     let mut state = load_state(layout.paths.root())?;
 
     let shutdown = shutdown_signal();

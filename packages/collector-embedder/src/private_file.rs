@@ -17,6 +17,9 @@
 //! - reads open with `O_NOFOLLOW` and check the opened handle. Both readers refuse a file another
 //!   user owns; [`read`] (secrets) also refuses one other users can read, the way ssh refuses such a
 //!   key, and [`read_owned`] (metadata) one other users can write.
+//! - every reader here, including [`read_regular`] for config files, opens with `O_NONBLOCK` and
+//!   accepts only a regular file, so a FIFO planted in a file's place cannot hang the Collector
+//!   before these checks run.
 
 use std::fs;
 use std::io::{self, Read, Write};
@@ -66,6 +69,21 @@ pub fn read_owned(path: &Path) -> Result<Option<Vec<u8>>> {
     Ok(Some(contents))
 }
 
+/// Read a config file at `path`, or `None` when it does not exist. It may be a symlink, as managed
+/// dotfiles often are, but must resolve to a regular file.
+pub fn read_regular(path: &Path) -> Result<Option<String>> {
+    let mut file = match open_regular(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err).with_context(|| format!("open {}", path.display())),
+    };
+    ensure_regular(&file, path)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
+        .with_context(|| format!("read {}", path.display()))?;
+    Ok(Some(contents))
+}
+
 /// What a reader refuses besides symlinks and other owners.
 #[derive(Clone, Copy)]
 enum Guard {
@@ -85,8 +103,23 @@ fn open_checked(path: &Path, guard: Guard) -> Result<Option<fs::File>> {
         ),
         Err(err) => return Err(err).with_context(|| format!("open {}", path.display())),
     };
+    ensure_regular(&file, path)?;
     ensure_owned(&file, path, guard)?;
     Ok(Some(file))
+}
+
+/// `O_NONBLOCK` let a FIFO or device open without waiting; reading one could still block.
+fn ensure_regular(file: &fs::File, path: &Path) -> Result<()> {
+    let meta = file
+        .metadata()
+        .with_context(|| format!("stat {}", path.display()))?;
+    if !meta.file_type().is_file() {
+        bail!(
+            "{} is not a regular file; delete it and run the command again",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 fn temp_path(path: &Path) -> Result<PathBuf> {
@@ -161,10 +194,20 @@ fn create_exclusive(path: &Path) -> io::Result<fs::File> {
     Ok(fs::File::from(fd))
 }
 
+/// Non-blocking, so a FIFO opens at once and fails [`ensure_regular`]. Reads of a regular file
+/// ignore the flag.
 #[cfg(unix)]
 fn open_no_follow(path: &Path) -> io::Result<fs::File> {
     use rustix::fs::{Mode, OFlags};
-    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
+    let fd = rustix::fs::open(path, flags, Mode::empty())?;
+    Ok(fs::File::from(fd))
+}
+
+#[cfg(unix)]
+fn open_regular(path: &Path) -> io::Result<fs::File> {
+    use rustix::fs::{Mode, OFlags};
+    let flags = OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC;
     let fd = rustix::fs::open(path, flags, Mode::empty())?;
     Ok(fs::File::from(fd))
 }
@@ -217,6 +260,11 @@ fn create_exclusive(path: &Path) -> io::Result<fs::File> {
 
 #[cfg(not(unix))]
 fn open_no_follow(path: &Path) -> io::Result<fs::File> {
+    fs::File::open(path)
+}
+
+#[cfg(not(unix))]
+fn open_regular(path: &Path) -> io::Result<fs::File> {
     fs::File::open(path)
 }
 
@@ -315,6 +363,40 @@ mod tests {
         assert!(err.contains("readable by other users"), "{err}");
 
         assert_eq!(read(&root.path().join("missing")).unwrap(), None);
+    }
+
+    #[test]
+    fn a_planted_fifo_is_refused_without_blocking() {
+        let root = tempfile::tempdir().unwrap();
+        let fifo = root.path().join("connection.json");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        fs::set_permissions(&fifo, fs::Permissions::from_mode(0o600)).unwrap();
+
+        for err in [
+            read(&fifo).unwrap_err(),
+            read_owned(&fifo).unwrap_err(),
+            read_regular(&fifo).unwrap_err(),
+        ] {
+            assert!(err.to_string().contains("not a regular file"), "{err}");
+        }
+    }
+
+    #[test]
+    fn config_reads_follow_symlinks_to_regular_files() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("collector.toml");
+        fs::write(&target, "interval_minutes = 5").unwrap();
+        let link = root.path().join("link.toml");
+        symlink(&target, &link).unwrap();
+        assert_eq!(
+            read_regular(&link).unwrap().as_deref(),
+            Some("interval_minutes = 5")
+        );
+        assert_eq!(read_regular(&root.path().join("missing")).unwrap(), None);
     }
 
     #[test]
