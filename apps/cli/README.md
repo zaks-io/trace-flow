@@ -156,11 +156,13 @@ sent. When the CLI names a directory others can write to, check that what it hol
 you left it, then run the `chmod` it suggests. A umask such as `002` leaves new directories
 group-writable, so the first run may name one of yours.
 
-`login --no-browser` prints a sign-in address to open in a browser on any device. After sign-in that
-browser fails to load a `127.0.0.1` page; copy its full address and paste it at the hidden prompt.
-The address holds only a one-time code: the CLI redeems it with a PKCE verifier that never leaves
-the CLI, and the credential arrives in that response, so a program that catches the redirect on the
-browser's machine gets nothing it can use. The prompt needs an interactive terminal.
+Every sign-in starts on a Trace Flow page that asks you to approve connecting a Collector; continue
+only if you just started one. Plain `login` opens a browser on this machine and never prints its
+sign-in address, because that address only works here. On a host without a browser, use
+`login --no-browser`: it prints an address to open in a browser on any device, and after sign-in
+that page shows a one-time code to paste at the prompt. The CLI redeems the code with a PKCE
+verifier that never leaves the CLI, and the credential arrives in that response, never in the
+browser. The prompt needs an interactive terminal.
 
 ## Environment overrides
 

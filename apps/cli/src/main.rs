@@ -70,7 +70,7 @@ struct Cli {
 enum Command {
     /// Sign in through the browser and mint a Collector Credential.
     Login {
-        /// Sign in from a browser on another machine, then paste the address it ends on here.
+        /// Sign in from a browser on any device, then enter the one-time code it shows here.
         #[arg(long)]
         no_browser: bool,
     },
@@ -176,7 +176,7 @@ async fn run() -> Result<()> {
 async fn cmd_login(layout: &Layout, no_browser: bool) -> Result<()> {
     let credentials = layout.login_credentials(layout.config()?.as_ref());
     let callback = if no_browser {
-        Callback::Pasted
+        Callback::OutOfBand
     } else {
         Callback::Loopback
     };

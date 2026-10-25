@@ -21,10 +21,12 @@ per working session or task hand-off. Copy the template.
 **Changed:** The `trace-flow` CLI runs as a Linux systemd service, per-user (`systemctl --user`) or
 host-wide (`--system`, root with only `CAP_DAC_READ_SEARCH`). `collector.toml` lists inputs with
 globs re-expanded every cycle. `sync --watch` shares Desktop's cycle policy through the new
-`collector-embedder::cycle` module. Linux defaults to an owner-only credential file. `login
---no-browser` accepts the pasted callback address, and sign-in now uses PKCE: the redirect carries a
-one-time code that the Collector redeems at the new Convex `POST /collector/token` route, so the
-credential never travels in a URL. `service install|uninstall` shows inputs before
+`collector-embedder::cycle` module. Linux defaults to an owner-only credential file. Sign-in
+now uses PKCE: the Collector gets a one-time code and redeems it at the new Convex
+`POST /collector/token` route, so the credential never travels in a URL. Every Collector sign-in,
+including from released Desktop builds, first shows a consent page bound to that browser by a nonce
+cookie. `login --no-browser` uses an out-of-band redirect: the sign-in ends on a page that shows the
+code to paste into the terminal, with no request to `127.0.0.1` on the browser's machine. `service install|uninstall` shows inputs before
 egress and manages the unit. The config and the state directory are reached only through paths
 other users cannot change, the state directory is private from creation and refused while others
 can write to it, and the connection file, which now records the credential store, refuses symlinks

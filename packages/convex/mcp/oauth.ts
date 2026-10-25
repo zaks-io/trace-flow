@@ -42,6 +42,15 @@ export interface ConsentPayload {
   responseType?: string;
 }
 
+/** What a user approved on the Collector consent page, bound to that page's browser by a nonce. */
+export interface CollectorConsentPayload {
+  tokenUse: 'collector_consent';
+  consentNonce: string;
+  clientState: string;
+  redirectUri: string;
+  codeChallenge?: string;
+}
+
 async function fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -159,6 +168,57 @@ export async function signConsent(payload: Omit<ConsentPayload, 'tokenUse'>): Pr
     .setExpirationTime('5m')
     .setIssuedAt()
     .sign(secretKey);
+}
+
+export async function signCollectorConsent(
+  payload: Omit<CollectorConsentPayload, 'tokenUse'>,
+): Promise<string> {
+  const secret = process.env.MCP_JWT_SECRET;
+
+  if (!secret) {
+    throw new Error('MCP_JWT_SECRET not configured');
+  }
+
+  return new SignJWT({ ...payload, tokenUse: 'collector_consent' })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setExpirationTime('5m')
+    .setIssuedAt()
+    .sign(new TextEncoder().encode(secret));
+}
+
+export async function verifyCollectorConsent(
+  token: string,
+): Promise<CollectorConsentPayload | null> {
+  const secret = process.env.MCP_JWT_SECRET;
+
+  if (!secret) {
+    throw new Error('MCP_JWT_SECRET not configured');
+  }
+
+  try {
+    const { payload } = await jwtVerify(token, new TextEncoder().encode(secret), {
+      algorithms: ['HS256'],
+    });
+    const value = payload as Partial<CollectorConsentPayload>;
+    if (
+      value.tokenUse !== 'collector_consent' ||
+      typeof value.consentNonce !== 'string' ||
+      typeof value.clientState !== 'string' ||
+      typeof value.redirectUri !== 'string' ||
+      (value.codeChallenge !== undefined && typeof value.codeChallenge !== 'string')
+    ) {
+      return null;
+    }
+    return {
+      tokenUse: value.tokenUse,
+      consentNonce: value.consentNonce,
+      clientState: value.clientState,
+      redirectUri: value.redirectUri,
+      ...(value.codeChallenge === undefined ? {} : { codeChallenge: value.codeChallenge }),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function verifyState(token: string): Promise<StatePayload | null> {

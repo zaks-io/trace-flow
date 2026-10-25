@@ -1,26 +1,5 @@
 import type * as oauthModule from '../mcp/oauth';
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (char) => {
-    switch (char) {
-      case '&':
-        return '&amp;';
-      case '<':
-        return '&lt;';
-      case '>':
-        return '&gt;';
-      case '"':
-        return '&quot;';
-      default:
-        return '&#39;';
-    }
-  });
-}
-
-function hiddenInput(name: string, value: string | undefined): string {
-  if (value === undefined) return '';
-  return `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`;
-}
+import { escapeHtml, hiddenInput, renderPage } from './htmlPage';
 
 export function renderMcpConsentPage(params: {
   issuer: string;
@@ -56,49 +35,9 @@ export function renderMcpConsentPage(params: {
     hiddenInput('consent_token', params.consentToken),
   ].join('\n');
 
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Authorize MCP Client</title>
-  <style>
-    :root { color-scheme: light dark; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: Canvas;
-      color: CanvasText;
-    }
-    main {
-      width: min(520px, calc(100vw - 32px));
-      border: 1px solid color-mix(in srgb, CanvasText 16%, transparent);
-      border-radius: 8px;
-      padding: 24px;
-    }
-    h1 { margin: 0 0 16px; font-size: 20px; line-height: 1.2; }
-    dl { display: grid; gap: 12px; margin: 0 0 24px; }
-    dt { font-size: 12px; font-weight: 700; text-transform: uppercase; color: color-mix(in srgb, CanvasText 62%, transparent); }
-    dd { margin: 4px 0 0; overflow-wrap: anywhere; }
-    .actions { display: flex; gap: 12px; align-items: center; }
-    button, a {
-      border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
-      border-radius: 6px;
-      padding: 9px 14px;
-      font: inherit;
-      color: CanvasText;
-      text-decoration: none;
-      background: Canvas;
-    }
-    button { background: CanvasText; color: Canvas; cursor: pointer; }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Authorize MCP Client</h1>
+  return renderPage(
+    'Authorize MCP Client',
+    `<h1>Authorize MCP Client</h1>
     <dl>
       <div>
         <dt>Client</dt>
@@ -123,10 +62,8 @@ export function renderMcpConsentPage(params: {
         <button type="submit">Continue</button>
       </form>
       <a href="${escapeHtml(redirectUrl.toString())}">Deny</a>
-    </div>
-  </main>
-</body>
-</html>`;
+    </div>`,
+  );
 }
 
 export function consentMatchesRequest(

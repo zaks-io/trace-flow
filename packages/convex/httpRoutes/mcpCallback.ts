@@ -2,10 +2,17 @@ import type { HonoWithConvex } from 'convex-helpers/server/hono';
 import { getCookie } from 'hono/cookie';
 import type { ActionCtx } from '../_generated/server';
 import { internal } from '../_generated/api';
+import { renderCollectorCodePage } from './collectorPages';
+import {
+  COLLECTOR_CONSENT_COOKIE,
+  MCP_CONSENT_COOKIE,
+  serializeCollectorConsentCookie,
+  serializeMcpConsentCookie,
+} from './consentCookies';
 import type { HttpDeps } from './deps';
-import { isLoopbackRedirect } from './redirectUris';
+import { staticPageHeaders } from './htmlPage';
+import { isLoopbackRedirect, OUT_OF_BAND_REDIRECT } from './redirectUris';
 import { getRequestLogger } from './shared';
-import { MCP_CONSENT_COOKIE, serializeMcpConsentCookie } from './mcpConsentCookie';
 
 export function registerMcpCallbackRoutes(
   app: HonoWithConvex<ActionCtx>,
@@ -38,12 +45,13 @@ export function registerMcpCallbackRoutes(
         return c.json({ error: 'Invalid or expired state' }, 400);
       }
 
+      // Only the browser that approved the consent page holds its nonce cookie, so a sign-in
+      // started anywhere else stops here, before the Auth0 code is spent.
       const isCollectorLogin = statePayload.clientState.startsWith('collector:');
-      if (
-        !isCollectorLogin &&
-        (!statePayload.consentNonce ||
-          getCookie(c, MCP_CONSENT_COOKIE) !== statePayload.consentNonce)
-      ) {
+      const consentCookie = isCollectorLogin ? COLLECTOR_CONSENT_COOKIE : MCP_CONSENT_COOKIE;
+      if (!statePayload.consentNonce || getCookie(c, consentCookie) !== statePayload.consentNonce) {
+        logger.warn('convex.oauth_callback_consent_mismatch', { collector: isCollectorLogin });
+        await logger.flush();
         return c.json({ error: 'Invalid or expired state' }, 400);
       }
 
@@ -93,26 +101,46 @@ export function registerMcpCallbackRoutes(
         throw error;
       }
 
-      // Collector CLI device flow reuses this registered callback (Auth0 only allows /mcp/callback),
+      // Collector CLI sign-in reuses this registered callback (Auth0 only allows /mcp/callback),
       // tagged by a `collector:` state prefix from /collector/authorize. The redirect target is
-      // re-validated as loopback, but nothing reserves that port on the browser's machine, where
-      // another process may be listening. So a PKCE login gets only a one-time code, redeemed at
-      // /collector/token with the verifier the CLI holds.
+      // re-validated, but nothing reserves a loopback port on the browser's machine, where another
+      // process may be listening. So a PKCE login gets only a one-time code, redeemed at
+      // /collector/token with the verifier the Collector holds. Out-of-band shows that code on a
+      // page for the user to paste, with no request to the browser's machine at all.
       if (isCollectorLogin) {
-        if (!isLoopbackRedirect(statePayload.redirectUri)) {
-          logger.warn('convex.collector_login_bad_redirect');
+        const codeChallenge =
+          statePayload.codeChallengeMethod === 'S256' ? statePayload.codeChallenge : undefined;
+        const outOfBand = statePayload.redirectUri === OUT_OF_BAND_REDIRECT;
+        if (
+          outOfBand ? codeChallenge === undefined : !isLoopbackRedirect(statePayload.redirectUri)
+        ) {
+          logger.warn('convex.collector_login_bad_redirect', { out_of_band: outOfBand });
           await logger.flush();
           return c.json({ error: 'Invalid redirect target' }, 400);
         }
+        const clearConsent = serializeCollectorConsentCookie('', 0);
 
-        const redirectUrl = new URL(statePayload.redirectUri);
-        if (statePayload.codeChallenge && statePayload.codeChallengeMethod === 'S256') {
+        if (outOfBand && codeChallenge !== undefined) {
           const code = await ctx.runMutation(internal.collectorLogin.createLoginCode, {
             userId,
-            codeChallenge: statePayload.codeChallenge,
+            codeChallenge,
+          });
+          logger.info('convex.collector_login_code_issued', { out_of_band: true });
+          await logger.flush();
+          return new Response(renderCollectorCodePage(code), {
+            status: 200,
+            headers: staticPageHeaders(clearConsent),
+          });
+        }
+
+        const redirectUrl = new URL(statePayload.redirectUri);
+        if (codeChallenge !== undefined) {
+          const code = await ctx.runMutation(internal.collectorLogin.createLoginCode, {
+            userId,
+            codeChallenge,
           });
           redirectUrl.searchParams.set('code', code);
-          logger.info('convex.collector_login_code_issued');
+          logger.info('convex.collector_login_code_issued', { out_of_band: false });
         } else {
           // Clients from before PKCE get the credential in the redirect.
           const collectorId = `cli-${crypto.randomUUID()}`;
@@ -134,7 +162,11 @@ export function registerMcpCallbackRoutes(
         await logger.flush();
         return new Response(null, {
           status: 302,
-          headers: { Location: redirectUrl.toString(), 'Cache-Control': 'no-store' },
+          headers: {
+            Location: redirectUrl.toString(),
+            'Cache-Control': 'no-store',
+            'Set-Cookie': clearConsent,
+          },
         });
       }
 

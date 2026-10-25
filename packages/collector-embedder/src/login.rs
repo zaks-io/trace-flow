@@ -3,18 +3,19 @@
 
 //! `trace-flow login`: the browser sign-in that mints a Collector Credential.
 //!
-//! The CLI opens the Convex `/collector/authorize` route with a `127.0.0.1` `redirect_uri`, a
-//! one-time `state` nonce, and a PKCE challenge (RFC 7636, S256). After sign-in the browser is
-//! redirected to that loopback address with a one-time code, and the CLI redeems the code at
-//! `/collector/token` with the verifier, which never leaves this process. The credential arrives
-//! only in that response body and goes straight into the credential store ([`crate::keychain`]);
-//! only the non-secret connection metadata is written to disk ([`crate::connection::Connection`]).
+//! The CLI opens the Convex `/collector/authorize` route with a PKCE challenge (RFC 7636, S256).
+//! The user approves the connection on a Trace Flow consent page, signs in, and receives a
+//! one-time code, which the CLI redeems at `/collector/token` with the verifier that never leaves
+//! this process. The credential arrives only in that response body and goes straight into the
+//! credential store ([`crate::keychain`]); only the non-secret connection metadata is written to
+//! disk ([`crate::connection::Connection`]).
 //!
-//! Nothing reserves the redirect's port on the browser's machine, so whatever answers there may be
-//! another process. It learns only the code, which is useless without the verifier. That is what
-//! makes [`Callback::Pasted`] safe: on a headless host the browser runs on another machine, its
-//! redirect fails to load, and the user pastes the address into a hidden terminal prompt, where it
-//! passes the same `state` check as a request on the loopback listener.
+//! [`Callback::Loopback`] opens a browser on this machine and receives the code on a `127.0.0.1`
+//! listener it already holds, with a one-time `state` nonce. It never prints that address: opened
+//! on another machine, the redirect would reach whatever listens on that port there.
+//! [`Callback::OutOfBand`] is for hosts without a browser. The sign-in ends on a Trace Flow page
+//! that shows the code, and the user types or pastes it into this terminal, so no request reaches
+//! the browser's machine at all.
 //!
 //! The credential is never logged, never put on a process arg, never persisted in plaintext.
 
@@ -45,14 +46,17 @@ struct Rejected {
     error_description: Option<String>,
 }
 
-/// How the browser's final redirect reaches this process.
+/// How the one-time sign-in code reaches this process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Callback {
     /// Open the local browser; its redirect lands on a loopback listener.
     Loopback,
-    /// The browser runs on another machine; the user pastes the address it was redirected to.
-    Pasted,
+    /// The browser runs on another device and shows the code for the user to paste here.
+    OutOfBand,
 }
+
+/// The redirect URN that asks the server to show the code on a page instead of redirecting.
+const OUT_OF_BAND_REDIRECT: &str = "urn:ietf:wg:oauth:2.0:oob";
 
 /// How long to wait for the user to finish the browser login before giving up.
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
@@ -83,31 +87,38 @@ pub async fn run(
                 .to_ip()
                 .context("listener has no IP address")?
                 .port();
-            let authorize_url = authorize_url(convex_site_url, port, &state, &pkce.challenge);
-            println!("Opening your browser to sign in...");
-            println!("If it doesn't open, visit:\n  {authorize_url}\n");
-            // A failed auto-open is not fatal — the URL is printed above for manual use.
-            let _ = webbrowser::open(&authorize_url);
+            let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+            let authorize_url =
+                authorize_url(convex_site_url, &redirect_uri, &state, &pkce.challenge);
+            webbrowser::open(&authorize_url).map_err(|err| {
+                anyhow!(
+                    "could not open a browser here ({err}); run `login --no-browser` to sign in \
+                     from another device"
+                )
+            })?;
+            println!("Approve the connection and sign in in the browser that just opened.");
+            println!("If none did, stop this and run `login --no-browser` instead.");
             tokio::task::spawn_blocking(move || wait_for_callback(&server, &state))
                 .await
                 .context("wait for the browser")??
         }
-        Callback::Pasted => {
-            let port = free_loopback_port()?;
-            let authorize_url = authorize_url(convex_site_url, port, &state, &pkce.challenge);
-            println!(
-                "Open this address in a browser on any device and sign in:\n  {authorize_url}\n"
+        Callback::OutOfBand => {
+            let authorize_url = authorize_url(
+                convex_site_url,
+                OUT_OF_BAND_REDIRECT,
+                &state,
+                &pkce.challenge,
             );
             println!(
-                "The browser then fails to load a 127.0.0.1 page. Copy that page's full address"
+                "Open this address in a browser on any device, approve the connection, and sign \
+                 in:\n  {authorize_url}\n"
             );
-            println!(
-                "from the address bar and paste it below. It holds a one-time code that only this"
-            );
-            println!("terminal can redeem. Input is hidden.\n");
-            tokio::task::spawn_blocking(move || read_pasted_callback(port, &state))
-                .await
-                .context("read the pasted address")??
+            println!("Trace Flow then shows a one-time code that only this terminal can redeem.\n");
+            tokio::task::spawn_blocking(|| {
+                read_code(&mut std::io::stdin().lock(), &mut std::io::stdout())
+            })
+            .await
+            .context("read the sign-in code")??
         }
     };
     let redeemed = redeem(convex_site_url, &code, &pkce.verifier).await?;
@@ -150,12 +161,16 @@ fn s256_challenge(verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
 
-fn authorize_url(convex_site_url: &str, port: u16, state: &str, challenge: &str) -> String {
-    let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+fn authorize_url(
+    convex_site_url: &str,
+    redirect_uri: &str,
+    state: &str,
+    challenge: &str,
+) -> String {
     format!(
         "{}/collector/authorize?redirect_uri={}&state={}&code_challenge={}&code_challenge_method=S256",
         convex_site_url.trim_end_matches('/'),
-        urlencode(&redirect_uri),
+        urlencode(redirect_uri),
         urlencode(state),
         urlencode(challenge),
     )
@@ -188,42 +203,40 @@ async fn redeem(convex_site_url: &str, code: &str, verifier: &str) -> Result<Red
         .context("read the minted Collector Credential")
 }
 
-/// A currently free loopback port for the pasted flow's `redirect_uri`. Nothing listens on it, so a
-/// browser on this machine also lands on an unreachable page whose address the user can paste.
-fn free_loopback_port() -> Result<u16> {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").context("pick a loopback port")?;
-    Ok(listener.local_addr().context("loopback port")?.port())
-}
-
-/// Prompt (input hidden) until the user pastes this login's callback address. Addresses for another
-/// port or nonce are rejected with a hint and the prompt repeats; an error redirect ends the login.
-fn read_pasted_callback(port: u16, expected_state: &str) -> Result<String> {
+/// Prompt until the user enters something shaped like a sign-in code. A pasted address or other
+/// text gets a hint and the prompt repeats, so a slip does not cost the sign-in.
+fn read_code(
+    input: &mut impl std::io::BufRead,
+    output: &mut impl std::io::Write,
+) -> Result<String> {
     loop {
-        let pasted = rpassword::prompt_password("Paste the address: ")
-            .context("read the pasted address (run this in an interactive terminal)")?;
-        match parse_pasted_callback(&pasted, port, expected_state) {
-            Ok(CallbackOutcome::Result(result)) => return result.map_err(|e| anyhow!(e)),
-            Ok(CallbackOutcome::Ignore) | Err(_) => println!(
-                "That is not this sign-in's address. Copy the full address from the browser's \
-                 address bar; it starts with http://127.0.0.1:{port}/callback"
-            ),
+        write!(output, "Sign-in code: ")?;
+        output.flush()?;
+        let mut line = String::new();
+        if input
+            .read_line(&mut line)
+            .context("read the sign-in code")?
+            == 0
+        {
+            bail!(
+                "no sign-in code was entered; run `login --no-browser` in an interactive terminal"
+            );
+        }
+        let code = line.trim();
+        if is_code_shaped(code) {
+            return Ok(code.to_string());
+        }
+        if !code.is_empty() {
+            writeln!(
+                output,
+                "That is not a sign-in code. Copy only the code the Trace Flow page shows."
+            )?;
         }
     }
 }
 
-/// Classify a pasted address. It must be the loopback callback on this login's port; the rest of the
-/// check is the same as for a request arriving on the listener.
-fn parse_pasted_callback(pasted: &str, port: u16, expected_state: &str) -> Result<CallbackOutcome> {
-    let url = url::Url::parse(pasted.trim()).context("parse pasted address")?;
-    let loopback = matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"));
-    if url.scheme() != "http" || !loopback || url.port() != Some(port) {
-        return Ok(CallbackOutcome::Ignore);
-    }
-    let path_and_query = match url.query() {
-        Some(query) => format!("{}?{query}", url.path()),
-        None => url.path().to_string(),
-    };
-    parse_callback(&path_and_query, expected_state)
+fn is_code_shaped(code: &str) -> bool {
+    (1..=128).contains(&code.len()) && code.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
 /// `bytes` from the OS CSPRNG, hex-encoded. The login's state nonce is 128 bits, single-use, and
@@ -392,8 +405,15 @@ mod tests {
     #[test]
     fn the_authorize_url_carries_the_challenge_but_never_the_verifier() {
         let pkce = Pkce::generate();
-        let url = authorize_url("https://d.convex.site/", 5000, "nonce1", &pkce.challenge);
-        assert!(url.starts_with("https://d.convex.site/collector/authorize?"));
+        let url = authorize_url(
+            "https://d.convex.site/",
+            OUT_OF_BAND_REDIRECT,
+            "nonce1",
+            &pkce.challenge,
+        );
+        assert!(url.starts_with(
+            "https://d.convex.site/collector/authorize?redirect_uri=urn%3Aietf%3Awg%3Aoauth%3A2.0%3Aoob&"
+        ));
         assert!(url.contains(&format!("code_challenge={}", pkce.challenge)));
         assert!(url.ends_with("&code_challenge_method=S256"));
         assert!(!url.contains(&pkce.verifier));
@@ -459,32 +479,22 @@ mod tests {
     }
 
     #[test]
-    fn pasted_address_for_this_login_yields_the_code() {
-        let code = result_of(
-            parse_pasted_callback(
-                "  http://127.0.0.1:5000/callback?state=nonce1&code=one-time\n",
-                5000,
-                "nonce1",
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(code, "one-time");
+    fn the_typed_code_is_read_after_any_slips() {
+        let mut input = std::io::Cursor::new(
+            "\nhttp://127.0.0.1:5000/callback?code=x\n  6f1c2a4e-9b1d-4c1e-8f00-0123456789ab \n",
+        );
+        let mut output = Vec::new();
+        let code = read_code(&mut input, &mut output).unwrap();
+        assert_eq!(code, "6f1c2a4e-9b1d-4c1e-8f00-0123456789ab");
+        let shown = String::from_utf8(output).unwrap();
+        assert_eq!(shown.matches("Sign-in code: ").count(), 3);
+        assert_eq!(shown.matches("That is not a sign-in code").count(), 1);
     }
 
     #[test]
-    fn pasted_address_for_another_port_host_or_nonce_is_ignored() {
-        let query = "state=nonce1&code=one-time";
-        for address in [
-            format!("http://127.0.0.1:5001/callback?{query}"),
-            format!("http://evil.example:5000/callback?{query}"),
-            format!("https://127.0.0.1:5000/callback?{query}"),
-            "http://127.0.0.1:5000/callback?state=other&code=one-time".to_string(),
-        ] {
-            let outcome = parse_pasted_callback(&address, 5000, "nonce1").unwrap();
-            assert!(matches!(outcome, CallbackOutcome::Ignore), "{address}");
-        }
-        assert!(parse_pasted_callback("not a url", 5000, "nonce1").is_err());
+    fn a_closed_input_ends_the_sign_in() {
+        let err = read_code(&mut std::io::Cursor::new(""), &mut Vec::new()).unwrap_err();
+        assert!(err.to_string().contains("interactive terminal"), "{err}");
     }
 
     #[test]

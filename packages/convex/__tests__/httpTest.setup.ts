@@ -22,6 +22,8 @@ export function createMockDeps(): HttpDeps {
       verifyState: vi.fn(),
       signConsent: vi.fn(),
       verifyConsent: vi.fn(),
+      signCollectorConsent: vi.fn(),
+      verifyCollectorConsent: vi.fn(),
       buildAuth0AuthorizeUrl: vi.fn(),
       exchangeAuth0Code: vi.fn(),
       getAuth0UserInfo: vi.fn(),

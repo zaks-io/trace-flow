@@ -6,6 +6,14 @@ const MCP_RESOURCE_HOSTS = new Set([
 ]);
 
 /**
+ * The out-of-band redirect URN installed apps used before loopback redirects. Instead of
+ * redirecting anywhere, the sign-in ends on a Trace Flow page that shows the one-time code to
+ * paste into the terminal. Headless Collectors use it so that no request to `127.0.0.1` happens on
+ * the browser's machine, where another program could be listening.
+ */
+export const OUT_OF_BAND_REDIRECT = 'urn:ietf:wg:oauth:2.0:oob';
+
+/**
  * Whether `redirectUri` is a loopback HTTP address (the CLI's local listener). The Collector login
  * flow delivers a freshly minted credential to this URL, so anything but `127.0.0.1` / `[::1]` /
  * `localhost` is rejected to prevent redirecting the secret to a third party.
