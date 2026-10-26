@@ -580,6 +580,7 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
 export async function runTraceBatcherHealthCheck(
   env: Env,
   cron: string,
+  ctx: ExecutionContext,
 ): Promise<{ checkedShards: number; unhealthyShards: number }> {
   const logger = createLogger({
     service: 'proxy-consumer',
@@ -663,7 +664,7 @@ export async function runTraceBatcherHealthCheck(
 
     return { checkedShards: snapshots.length, unhealthyShards };
   } finally {
-    await logger.flush();
+    ctx.waitUntil(logger.flush());
   }
 }
 
@@ -686,12 +687,8 @@ const handler = {
     await processQueueBatch({ ...batch, messages }, env);
   },
 
-  async scheduled(
-    controller: ScheduledController,
-    env: Env,
-    _ctx: ExecutionContext,
-  ): Promise<void> {
-    await runTraceBatcherHealthCheck(env, controller.cron);
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    await runTraceBatcherHealthCheck(env, controller.cron, ctx);
   },
 };
 
