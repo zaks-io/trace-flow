@@ -20,7 +20,8 @@ export default defineSchema({
     isAdmin: v.optional(v.boolean()),
   })
     .index('by_token_identifier', ['tokenIdentifier'])
-    .index('by_org_id', ['orgId']),
+    .index('by_org_id', ['orgId'])
+    .index('by_is_admin_enabled', ['isAdmin', 'enabled']),
 
   organizations: defineTable({
     name: v.string(),

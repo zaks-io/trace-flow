@@ -315,26 +315,29 @@ describe('pipes API Tinybird passthrough', () => {
     expect(upstreamFetch).not.toHaveBeenCalled();
   });
 
-  it('bypasses cache for live polling queries', async () => {
-    const cache = {
-      match: vi.fn(),
-      put: vi.fn(),
-    };
-    const upstreamFetch = stubAuthorizedFetch();
-    vi.stubGlobal('caches', { default: cache });
+  it.each(['traces_list.json?after_received_at=123', 'trace_detail.json?since_timestamp=123'])(
+    'bypasses cache for live polling query %s',
+    async (query) => {
+      const cache = {
+        match: vi.fn(),
+        put: vi.fn(),
+      };
+      const upstreamFetch = stubAuthorizedFetch();
+      vi.stubGlobal('caches', { default: cache });
 
-    const res = await pipesApp.fetch(
-      new Request('https://pipes.trace-flow.dev/v0/pipes/traces_list.json?after_received_at=123', {
-        headers: { Authorization: 'Bearer pipe-token' },
-      }),
-      env(),
-      executionCtx(),
-    );
+      const res = await pipesApp.fetch(
+        new Request(`https://pipes.trace-flow.dev/v0/pipes/${query}`, {
+          headers: { Authorization: 'Bearer pipe-token' },
+        }),
+        env(),
+        executionCtx(),
+      );
 
-    expect(res.status).toBe(200);
-    expect(res.headers.get('X-Cache')).toBe('BYPASS');
-    expect(cache.match).not.toHaveBeenCalled();
-    expect(cache.put).not.toHaveBeenCalled();
-    expect(upstreamFetch).toHaveBeenCalledTimes(2);
-  });
+      expect(res.status).toBe(200);
+      expect(res.headers.get('X-Cache')).toBe('BYPASS');
+      expect(cache.match).not.toHaveBeenCalled();
+      expect(cache.put).not.toHaveBeenCalled();
+      expect(upstreamFetch).toHaveBeenCalledTimes(2);
+    },
+  );
 });

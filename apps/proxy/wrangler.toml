@@ -51,13 +51,13 @@ dataset = "trace-flow-proxy-dev"
 # Per-org burst limit on LLM proxy + OTLP ingest
 [[ratelimits]]
 name = "ORG_LIMITER"
-namespace_id = "2001"
+namespace_id = "2018"
 simple = { limit = 300, period = 60 }
 
 # Per-IP defensive baseline (catches leaked keys and runaway scripts)
 [[ratelimits]]
 name = "IP_LIMITER"
-namespace_id = "2002"
+namespace_id = "2019"
 simple = { limit = 600, period = 60 }
 
 # Deploy var required: CONVEX_SITE_URL (https://{deployment}.convex.site)
@@ -197,12 +197,12 @@ dataset = "trace-flow-proxy-dev"
 
 [[env.preview.ratelimits]]
 name = "ORG_LIMITER"
-namespace_id = "2001"
+namespace_id = "2020"
 simple = { limit = 300, period = 60 }
 
 [[env.preview.ratelimits]]
 name = "IP_LIMITER"
-namespace_id = "2002"
+namespace_id = "2021"
 simple = { limit = 600, period = 60 }
 
 [[env.preview.durable_objects.bindings]]

@@ -47,7 +47,7 @@
     "producers": [{ "queue": "agent-ingest-dev", "binding": "AGENT_QUEUE" }],
   },
   // Per-org ingest burst limit (abuse guard, NOT a throughput throttle). namespace_id 2006 is
-  // AGENT_INGEST_LIMITER (2001-2005 taken; see the rate-limit budget registry). Keyed by orgId.
+  // AGENT_INGEST_LIMITER (see specs/architecture/workers.md#rate-limit-namespace-registry). Keyed by orgId.
   //
   // 600/60s, raised from 120: the client batches up to ~200 sessions per POST and the serverless
   // queue absorbs the downstream consumer work, so one POST does far more than before. 120/60s
@@ -64,7 +64,7 @@
   // Production agent pipeline. Prod-named worker reachable at collector.trace-flow.dev
   // (same trace-flow.dev zone as gateway/api). Binds the prod COLLECTOR_CREDS namespace and the
   // prod ingest queue; the rate limiter uses a fresh namespace_id 2007 (dev uses 2006 — never reuse
-  // a namespace_id, per the rate-limit budget registry). CONVEX_SITE_URL is injected by
+  // a namespace_id, see specs/architecture/workers.md#rate-limit-namespace-registry). CONVEX_SITE_URL is injected by
   // the production deploy workflow; secrets (AGENT_INGEST_SHARED_SECRET, SENTRY_DSN)
   // are set per-env via `wrangler secret put --env production`;
   // AGENT_INGEST_SHARED_SECRET must match the value set in the prod Convex environment.

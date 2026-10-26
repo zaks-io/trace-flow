@@ -160,6 +160,21 @@ describe('openrouter-pricing', () => {
       expect(cachedPricing.source).toBe('openrouter');
     });
 
+    it('returns fetched pricing and a sanitized warning when the KV write fails', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockKV.put.mockRejectedValueOnce(new Error('KV PUT 429: private-cache-key private-content'));
+
+      const result = await fetchOpenRouterPricing('openai/gpt-4', mockKV, 'private-cache-key');
+
+      expect(result).toMatchObject({
+        promptCostPerMillion: 30000000,
+        completionCostPerMillion: 60000000,
+        source: 'openrouter',
+      });
+      expect(warn.mock.calls).toEqual([['Failed to cache OpenRouter pricing']]);
+    });
+
     it('should return null on API error', async () => {
       vi.mocked(globalThis.fetch).mockResolvedValueOnce({
         ok: false,

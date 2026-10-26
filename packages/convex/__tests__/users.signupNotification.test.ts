@@ -56,6 +56,32 @@ describe('new sign-up admin notifications', () => {
     vi.unstubAllGlobals();
   });
 
+  it('looks up only enabled admins through the admin/enabled index', async () => {
+    const { t } = await setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert('users', {
+        tokenIdentifier: 'explicit-non-admin',
+        email: 'member2@example.com',
+        enabled: true,
+        isAdmin: false,
+      });
+      await ctx.db.insert('users', {
+        tokenIdentifier: 'duplicate-admin',
+        email: ' ADMIN@example.com ',
+        enabled: true,
+        isAdmin: true,
+      });
+      const query = ctx.db
+        .query('users')
+        .withIndex('by_is_admin_enabled', (q) => q.eq('isAdmin', true).eq('enabled', true));
+      expect((await query.collect()).map((user) => user.tokenIdentifier).sort()).toEqual([
+        'admin',
+        'duplicate-admin',
+      ]);
+    });
+    expect(await t.query(internal.auth.users.getAdminEmails, {})).toEqual(['admin@example.com']);
+  });
+
   it('emails enabled admins once when someone signs up on the web', async () => {
     const { t } = await setup();
     const newcomer = t.withIdentity({

@@ -67,6 +67,10 @@ describe('computeTTL', () => {
     expect(computeTTL('traces_list', params)).toBe(0);
   });
 
+  it('returns 0 for trace detail live polling', () => {
+    expect(computeTTL('trace_detail', new URLSearchParams({ since_timestamp: '12345' }))).toBe(0);
+  });
+
   it('should return 120 for filter_options pipe', () => {
     const params = new URLSearchParams();
     expect(computeTTL('filter_options', params)).toBe(120);

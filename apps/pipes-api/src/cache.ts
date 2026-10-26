@@ -26,8 +26,8 @@ export function buildCacheKey(
 }
 
 export function computeTTL(pipe: string, searchParams: URLSearchParams): number {
-  // Live polling queries — bypass cache
-  if (searchParams.has('after_received_at')) {
+  // Live polling must read newly received spans.
+  if (searchParams.has('after_received_at') || searchParams.has('since_timestamp')) {
     return 0;
   }
 

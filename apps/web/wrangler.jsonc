@@ -31,7 +31,7 @@
   "ratelimits": [
     {
       "name": "TOKEN_REFRESH_LIMITER",
-      "namespace_id": "2005",
+      "namespace_id": "2022",
       "simple": { "limit": 30, "period": 60 },
     },
   ],
@@ -52,7 +52,7 @@
       "ratelimits": [
         {
           "name": "TOKEN_REFRESH_LIMITER",
-          "namespace_id": "2005",
+          "namespace_id": "2022",
           "simple": { "limit": 30, "period": 60 },
         },
       ],
@@ -75,7 +75,7 @@
       "ratelimits": [
         {
           "name": "TOKEN_REFRESH_LIMITER",
-          "namespace_id": "2005",
+          "namespace_id": "2023",
           "simple": { "limit": 30, "period": 60 },
         },
       ],
