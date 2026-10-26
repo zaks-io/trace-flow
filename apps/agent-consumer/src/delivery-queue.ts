@@ -17,7 +17,8 @@ export async function processDeliveryReferences(
           if (!isAgentDeliveryReference(message.body))
             throw new Error('Invalid agent delivery reference');
           const result = await env.AGENT_DELIVERY.getByName(message.body.key).process(message.body);
-          if (result === 'retry') message.retry({ delaySeconds: 60 });
+          if (result === 'waiting') message.retry({ delaySeconds: 43_200 });
+          else if (result === 'retry') message.retry({ delaySeconds: 60 });
           else if (result === 'complete') message.ack();
           else throw new Error('Invalid agent delivery result');
         } catch (error) {

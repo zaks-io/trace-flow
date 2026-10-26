@@ -21,15 +21,23 @@ import {
 } from '@trace-flow/utils';
 import type { AgentConsumerEnv } from './context';
 import { CATEGORIES, factPartitionKey, type Category } from './facts';
-import { loadDeliveryRows, priceDelivery, storeDeliveryRows } from './delivery-rows';
+import {
+  loadDeliveryRows,
+  priceDelivery,
+  storeDeliveryRows,
+  type DeliveryRows,
+} from './delivery-rows';
 import { deliveryCategoryIsPresent, writeDeliveryCategory } from './delivery-write';
 import { deliveryPartitionLinks, prepareDeliveryPartitions } from './delivery-partitions';
+
+type DeliveryProcessResult = 'complete' | 'waiting' | 'retry';
 
 interface DeliveryState {
   reference: AgentDeliveryStagedReference;
   days: string[];
   revision?: number;
   rowsSha256?: string;
+  bodiesRemoved?: boolean;
   plannedDirtyDays?: string[];
   sentryTraceHeader?: string | null;
   categories: Partial<Record<Category, 'attempting' | 'done'>>;
@@ -93,7 +101,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
       };
       await this.ctx.storage.put('receipt', state);
     }
-    await this.ctx.storage.setAlarm(Date.now() + 60_000);
+    await this.ctx.storage.setAlarm(Math.min(Date.now() + 60_000, reference.expires_at));
     const coordinator = this.coordinator(reference.org_id);
     let result: Awaited<ReturnType<typeof coordinator.reserve>>;
     try {
@@ -125,7 +133,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     return result.deliverySequence;
   }
 
-  process(reference: AgentDeliveryReference): Promise<'complete' | 'retry'> {
+  process(reference: AgentDeliveryReference): Promise<DeliveryProcessResult> {
     return this.exclusive(async () => {
       try {
         return await this.processWithTrace(reference);
@@ -141,7 +149,9 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     });
   }
 
-  private async processWithTrace(reference: AgentDeliveryReference): Promise<'complete' | 'retry'> {
+  private async processWithTrace(
+    reference: AgentDeliveryReference,
+  ): Promise<DeliveryProcessResult> {
     if (validateAgentDeliveryReference(reference)) throw new Error('Invalid agent delivery');
     const state = await this.ctx.storage.get<DeliveryState>('receipt');
     if (
@@ -188,7 +198,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
       state.sentryTraceHeader = durableSentryTraceHeader(source.sentry_trace_context);
       await this.ctx.storage.put('receipt', state);
     }
-    const process = async (): Promise<'complete' | 'retry'> => {
+    const process = async (): Promise<DeliveryProcessResult> => {
       try {
         return await this.processInner(state, reference, source);
       } catch (error) {
@@ -226,7 +236,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     state: DeliveryState,
     reference: AgentDeliveryReference,
     source?: AgentIngestQueueMessage,
-  ): Promise<'complete' | 'retry'> {
+  ): Promise<DeliveryProcessResult> {
     const coordinator = this.coordinator(reference.org_id);
     const { reservation, writePermit } = await coordinator.beginWrite({
       deliveryId: reference.key,
@@ -239,24 +249,26 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     ) {
       throw new Error('Agent delivery reservation is missing or inconsistent');
     }
-    if (reservation && !writePermit) return 'retry';
+    if (reservation && !writePermit) return 'waiting';
     if (state.phase === 'committing') {
       await this.finishCommit(state, reference, coordinator, reservation !== null);
       return 'complete';
     }
     const rowsKey = this.rowsKey(reference.key);
+    let delivery: DeliveryRows;
     if (!state.rowsSha256) {
       const priced = await this.priceQueueDelivery(reference, source);
       await prepareDeliveryPartitions(this.env, priced);
       state.rowsSha256 = await storeDeliveryRows(this.env, rowsKey, priced);
       await this.ctx.storage.put('receipt', state);
-    }
-    const delivery = await loadDeliveryRows(this.env, rowsKey, {
-      orgId: reference.org_id,
-      revision: reference.delivery_revision,
-      expiresAt: reference.expires_at,
-      sha256: state.rowsSha256,
-    });
+      delivery = priced;
+    } else
+      delivery = await loadDeliveryRows(this.env, rowsKey, {
+        orgId: reference.org_id,
+        revision: reference.delivery_revision,
+        expiresAt: reference.expires_at,
+        sha256: state.rowsSha256,
+      });
     const dirtyDays = [
       ...new Set(
         CATEGORIES.flatMap((category) =>
@@ -321,11 +333,33 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
   private async runAlarm(): Promise<void> {
     const state = await this.ctx.storage.get<DeliveryState>('receipt');
     if (!state) return;
+    const now = Date.now();
+    // Explicitly rearm before fallible finalization, including after automatic alarm retries exhaust.
+    await this.ctx.storage.setAlarm(
+      now < state.reference.expires_at
+        ? Math.min(now + 60_000, state.reference.expires_at)
+        : now + 60_000,
+    );
     Sentry.getActiveSpan()?.addLinks(sentryTraceLinks([state.sentryTraceHeader]));
     if (state.phase === 'complete') {
       await this.removeBodies(state);
       if (Date.now() >= state.reference.expires_at) await this.clearReceipt();
       else await this.ctx.storage.setAlarm(state.reference.expires_at);
+      return;
+    }
+    if (Date.now() >= state.reference.expires_at && state.phase === 'committing') {
+      if (state.revision === undefined) throw new Error('Committing delivery has no revision');
+      const coordinator = this.coordinator(state.reference.org_id);
+      const reservation = await coordinator.getReservation({ deliveryId: state.reference.key });
+      // All category writes are already confirmed. Preserve the snapshot and next-delivery handoff
+      // even when the coordinator removed this reservation just before its reply was lost.
+      await this.finishCommit(
+        state,
+        { ...state.reference, delivery_revision: state.revision },
+        coordinator,
+        reservation !== null,
+      );
+      await this.clearReceipt();
       return;
     }
     if (Date.now() >= state.reference.expires_at) {
@@ -346,9 +380,13 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
       await this.clearReceipt();
       return;
     }
-    await this.ctx.storage.setAlarm(Math.min(Date.now() + 60_000, state.reference.expires_at));
     const revision = state.revision ?? (await this.registerInner(state.reference, state.days));
     if (revision === null) return;
+    if (state.phase !== 'committing') {
+      const next = await this.coordinator(state.reference.org_id).getNextDelivery();
+      if (!next) throw new Error('Registered delivery has no pending reservation');
+      if (next.deliveryId !== state.reference.key) return;
+    }
     await this.env.AGENT_QUEUE.send({ ...state.reference, delivery_revision: revision });
   }
 
@@ -385,7 +423,7 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
     state.phase = 'complete';
     await this.ctx.storage.put('receipt', state);
     await this.removeBodies(state);
-    await this.ctx.storage.setAlarm(reference.expires_at);
+    await this.ctx.storage.setAlarm(Math.max(Date.now() + 60_000, reference.expires_at));
   }
 
   private coordinator(orgId: string) {
@@ -418,15 +456,18 @@ class AgentDeliveryBase extends DurableObject<AgentConsumerEnv> {
   }
 
   private async removeBodies(state: DeliveryState): Promise<void> {
+    if (state.bodiesRemoved) return;
     await this.env.AGENT_DELIVERIES.delete([
       state.reference.key,
       this.rowsKey(state.reference.key),
     ]);
+    state.bodiesRemoved = true;
+    await this.ctx.storage.put('receipt', state);
   }
 
   private async clearReceipt(): Promise<void> {
-    await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
+    await this.ctx.storage.deleteAlarm();
   }
 }
 
