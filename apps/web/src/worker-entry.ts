@@ -9,6 +9,7 @@ import {
 export { DOQueueHandler, DOShardedTagCache, BucketCachePurge } from '../.open-next/worker.js';
 
 import openNextHandler from '../.open-next/worker.js';
+import { healthResponse } from './health';
 import { addHomepageDiscoveryLinks } from './homepage-discovery';
 import { negotiateMarkdown, type MarkdownConverter } from './markdown-negotiation';
 
@@ -23,7 +24,7 @@ interface Env {
   [key: string]: unknown;
 }
 
-export default Sentry.withSentry(
+const instrumentedHandler = Sentry.withSentry(
   (env: Env) => ({
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
@@ -66,3 +67,16 @@ export default Sentry.withSentry(
     },
   },
 );
+
+export default {
+  fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> | Response {
+    if (
+      (request.method === 'GET' || request.method === 'HEAD') &&
+      new URL(request.url).pathname === '/healthz'
+    ) {
+      return healthResponse(request);
+    }
+
+    return instrumentedHandler.fetch(request, env, ctx);
+  },
+};

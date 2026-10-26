@@ -1,5 +1,4 @@
 export const dynamic = 'force-dynamic';
 
-export function GET() {
-  return Response.json({ status: 'ok' }, { headers: { 'Cache-Control': 'no-store' } });
-}
+// Keep next dev on the same response implementation as the Worker fast path.
+export { healthResponse as GET, healthResponse as HEAD } from '../../health';
