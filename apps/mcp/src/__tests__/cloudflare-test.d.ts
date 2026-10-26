@@ -1,6 +1,11 @@
-declare module 'cloudflare:test' {
-  export const env: { MCP_LIMITER: RateLimit };
-  export const SELF: {
-    fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
-  };
+/// <reference types="@cloudflare/vitest-pool-workers/types" />
+
+export {};
+
+declare global {
+  namespace Cloudflare {
+    interface Env {
+      MCP_LIMITER: RateLimit;
+    }
+  }
 }
