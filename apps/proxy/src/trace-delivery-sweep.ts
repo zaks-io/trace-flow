@@ -29,7 +29,7 @@ class TraceDeliverySweepBase extends DurableObject<ProxyEnv> {
     const context = { cron, environment: this.env.TRACE_DELIVERY_NAMESPACE };
     if (this.running) {
       logger.info('proxy.delivery_sweep_skipped', { ...context, reason: 'already_running' });
-      await logger.flush();
+      this.ctx.waitUntil(logger.flush());
       return;
     }
     this.running = true;
@@ -67,11 +67,12 @@ class TraceDeliverySweepBase extends DurableObject<ProxyEnv> {
       logger.error('proxy.delivery_sweep_failed', error, { ...context, ...metrics });
       throw error;
     } finally {
-      try {
-        await logger.flush();
-      } finally {
-        this.running = false;
-      }
+      // Keep overlapping RPCs excluded until this run's log upload settles.
+      this.ctx.waitUntil(
+        logger.flush().finally(() => {
+          this.running = false;
+        }),
+      );
     }
   }
 }
