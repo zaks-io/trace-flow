@@ -1,6 +1,6 @@
 import { env as workerEnv } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { AgentConsumerEnv } from '../context';
 import { AGENT_SNAPSHOT_TARGETS } from '../snapshot-tinybird';
 import { finishSnapshotCopies } from './snapshot-coordinator-helpers';
@@ -25,6 +25,40 @@ async function startSnapshot(orgId: string, deliveryId = crypto.randomUUID()) {
 }
 
 describe('SnapshotCapacity', () => {
+  it('revalidates an existing slot without probing either resident for terminal cleanup', async () => {
+    const capacity = env.AGENT_SNAPSHOT_CAPACITY.getByName(crypto.randomUUID());
+    const first = await startSnapshot(crypto.randomUUID());
+    const second = await startSnapshot(crypto.randomUUID());
+    await capacity.acquire(first.key);
+    await capacity.acquire(second.key);
+    await runInDurableObject(capacity, async (instance) => {
+      const target = instance as unknown as { coordinator(orgId: string): object };
+      const original = target.coordinator.bind(instance);
+      const calls: string[] = [];
+      const spy = vi.spyOn(target, 'coordinator').mockImplementation((orgId) => {
+        return new Proxy(original(orgId), {
+          get(stub, method) {
+            const value = Reflect.get(stub, method);
+            if (typeof value !== 'function') return value;
+            return (...args: unknown[]) => {
+              calls.push(`${orgId}.${String(method)}`);
+              return Reflect.apply(value, stub, args);
+            };
+          },
+        });
+      });
+      try {
+        expect(await instance.acquire(first.key)).toBe(true);
+        console.info('capacity_reuse_probes', calls.length);
+        expect(calls).toEqual([`${first.key.orgId}.getStats`]);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+    await first.coordinator.beginErasure({});
+    expect(await capacity.acquire(first.key)).toBe(false);
+  });
+
   it('grants exactly two simultaneous acquisitions', async () => {
     const capacity = env.AGENT_SNAPSHOT_CAPACITY.getByName(crypto.randomUUID());
     const snapshots = await Promise.all(
