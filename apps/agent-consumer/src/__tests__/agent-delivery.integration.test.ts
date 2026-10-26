@@ -200,7 +200,7 @@ describe('bounded delivery durability', () => {
     mockTransport();
     const first = await staged();
     const second = await staged({ orgId: first.orgId });
-    await expect(second.host.process(second.reference)).resolves.toBe('retry');
+    await expect(second.host.process(second.reference)).resolves.toBe('waiting');
     expect(writes).toHaveLength(0);
     expect(await env.AGENT_DELIVERIES.head(second.reference.key)).not.toBeNull();
 
@@ -213,7 +213,7 @@ describe('bounded delivery durability', () => {
       retry: vi.fn(),
     };
     await processDeliveryReferences([message], env);
-    expect(message.retry).toHaveBeenCalledExactlyOnceWith({ delaySeconds: 60 });
+    expect(message.retry).toHaveBeenCalledExactlyOnceWith({ delaySeconds: 43_200 });
     expect(message.ack).not.toHaveBeenCalled();
 
     await expect(first.host.process(first.reference)).resolves.toBe('complete');
@@ -468,10 +468,12 @@ describe('bounded delivery durability', () => {
           AGENT_QUEUE: { send } as unknown as typeof env.AGENT_QUEUE,
         });
         await delivery.alarm();
-        expect(send).toHaveBeenCalledExactlyOnceWith({
-          ...reference,
-          delivery_revision: before.lastDeliverySequence + 1,
-        });
+        if (reason === 'capacity') expect(send).not.toHaveBeenCalled();
+        else
+          expect(send).toHaveBeenCalledExactlyOnceWith({
+            ...reference,
+            delivery_revision: before.lastDeliverySequence + 1,
+          });
         expect(await state.storage.get('receipt')).toMatchObject({
           revision: before.lastDeliverySequence + 1,
         });
