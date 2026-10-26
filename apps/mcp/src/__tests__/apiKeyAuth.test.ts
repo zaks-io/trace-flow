@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SELF, env } from 'cloudflare:test';
-import { authorizeMcpApiKey } from '../apiKeyAuth';
+import { authorizeMcpApiKey, MCP_AUTHORIZATION_TTL_MS } from '../apiKeyAuth';
 
-const KEY = '12345678-1234-4123-8123-123456789abc';
+let KEY: string;
 const CONFIG = { connectBaseUrl: 'https://connect.test', sharedSecret: 'test-backend-secret' };
 
 function rpc(method: string, params?: unknown, sessionId?: string, key = KEY) {
@@ -25,6 +25,9 @@ const INIT = {
 };
 
 describe('MCP API key authentication', () => {
+  beforeEach(() => {
+    KEY = crypto.randomUUID();
+  });
   afterEach(() => vi.restoreAllMocks());
 
   it('initializes and calls tools with a UUID bearer without OAuth discovery', async () => {
@@ -60,15 +63,10 @@ describe('MCP API key authentication', () => {
       total: 1,
       api_keys: [{ id: 'k1', name: 'App' }],
     });
-    expect(paths).toEqual([
-      '/mcp-backend/authorize-api-key',
-      '/mcp-backend/authorize-api-key',
-      '/mcp-backend/authorize-api-key',
-      '/mcp-backend/context',
-    ]);
+    expect(paths).toEqual(['/mcp-backend/authorize-api-key', '/mcp-backend/context']);
   });
 
-  it('requires current authorization even after a session has been initialized', async () => {
+  it('rechecks authorization after the TTL even for an initialized session', async () => {
     let revoked = false;
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
@@ -79,6 +77,7 @@ describe('MCP API key authentication', () => {
       );
     const initialized = await rpc('initialize', INIT);
     revoked = true;
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + MCP_AUTHORIZATION_TTL_MS);
     const res = await rpc('tools/list', undefined, initialized.headers.get('Mcp-Session-Id')!);
     expect(res.status).toBe(401);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
@@ -121,6 +120,7 @@ describe('MCP API key authentication', () => {
     );
     const initialized = await rpc('initialize', INIT);
     userId = 'u-2';
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + MCP_AUTHORIZATION_TTL_MS);
     expect(
       (await rpc('tools/list', undefined, initialized.headers.get('Mcp-Session-Id')!)).status,
     ).toBe(404);
@@ -141,7 +141,7 @@ describe('MCP API key authentication', () => {
       headers: { Authorization: `Bearer ${KEY}`, 'cf-connecting-ip': '203.0.113.71' },
     });
     expect(deleted.status).toBe(204);
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it('rate-limits DELETE before any API key lookup', async () => {
