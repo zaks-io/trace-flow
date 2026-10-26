@@ -519,7 +519,11 @@ describe('Queue Handler Integration', () => {
     expect(staleStats.queuedTraces).toBe(1);
     expect(staleStats.blockedRecoveryRecords).toBe(0);
 
-    await runTraceBatcherHealthCheck(env, createScheduledController().cron);
+    await runTraceBatcherHealthCheck(
+      env,
+      createScheduledController().cron,
+      createExecutionContext(),
+    );
 
     expect(analyticsSpy).toHaveBeenCalledTimes(23);
 
