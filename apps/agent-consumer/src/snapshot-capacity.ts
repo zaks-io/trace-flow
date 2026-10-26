@@ -3,6 +3,7 @@ import * as Sentry from '@sentry/cloudflare';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { DurableObject } from 'cloudflare:workers';
 import type { AgentConsumerEnv } from './context';
+import { traceSnapshotRpc } from './snapshot-tracing';
 
 interface SnapshotKey {
   orgId: string;
@@ -53,11 +54,16 @@ class SnapshotCapacityBase extends DurableObject<AgentConsumerEnv> {
     return this.ctx.blockConcurrencyWhile(async () => {
       // The coordinator owns snapshot lifetime. Check it before reserving a global slot.
       if (!(await this.isActive(key))) return false;
-      await this.reapTerminalSlots();
-      const slots = this.readSlots();
-      if (slots.some((slot) => slot.orgId === key.orgId && slot.generation === key.generation)) {
+      if (
+        this.readSlots().some(
+          (slot) => slot.orgId === key.orgId && slot.generation === key.generation,
+        )
+      ) {
+        Sentry.getActiveSpan()?.setAttribute('trace_flow.snapshot.capacity.reused', true);
         return true;
       }
+      await this.reapTerminalSlots();
+      const slots = this.readSlots();
       const freeSlot = Array.from({ length: MAX_SNAPSHOTS }, (_, index) => index + 1).find(
         (slot) => !slots.some((resident) => resident.slot === slot),
       );
@@ -98,7 +104,10 @@ class SnapshotCapacityBase extends DurableObject<AgentConsumerEnv> {
   }
 
   private coordinator(orgId: string) {
-    return this.env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${orgId}`);
+    return traceSnapshotRpc(
+      this.env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${orgId}`),
+      'AgentDeliveryCoordinator',
+    );
   }
 
   private async isActive(key: SnapshotKey): Promise<boolean> {
@@ -146,6 +155,7 @@ export const SnapshotCapacity = Sentry.instrumentDurableObjectWithSentry(
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
     ...sentryRequestPrivacy(),
     enableRpcTracePropagation: true,
+    rpcTracePropagationBindings: ['AGENT_DELIVERY_COORDINATOR'],
   }),
   SnapshotCapacityBase,
 );

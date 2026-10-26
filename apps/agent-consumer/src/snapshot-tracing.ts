@@ -7,6 +7,34 @@ import {
 
 const MAX_LINKS_PER_DAY = 32;
 
+export function traceSnapshotRpc<T extends object>(
+  stub: T,
+  service: 'AgentDeliveryCoordinator' | 'SnapshotCapacity',
+): T {
+  return new Proxy(stub, {
+    get(target, property) {
+      const method: unknown = Reflect.get(target, property);
+      if (typeof method !== 'function' || typeof property !== 'string') return method;
+      return (...args: unknown[]) =>
+        Sentry.startSpan(
+          {
+            name: `${service}.${property}`,
+            op: 'rpc.client',
+            attributes: {
+              'rpc.system': 'cloudflare-durable-objects',
+              'rpc.service': service,
+              'rpc.method': property,
+            },
+          },
+          () => {
+            const result: unknown = Reflect.apply(method, target, args);
+            return result;
+          },
+        );
+    },
+  });
+}
+
 export function recordSnapshotProducer(storage: DurableObjectStorage, dirtyDays: string[]): void {
   const header = durableSentryTraceHeader({
     'sentry-trace': internalTraceHeaders().get('sentry-trace') ?? undefined,

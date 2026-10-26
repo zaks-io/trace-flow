@@ -1,5 +1,5 @@
 import { captureSnapshotException, type SnapshotStage } from './snapshot-diagnostics';
-import { linkSnapshotProducers } from './snapshot-tracing';
+import { linkSnapshotProducers, traceSnapshotRpc } from './snapshot-tracing';
 import { SNAPSHOT_CAPACITY_NAME } from './snapshot-capacity';
 import type { AgentConsumerEnv } from './context';
 import type { AgentSnapshotProgress } from './agent-delivery-coordinator-contract';
@@ -51,7 +51,10 @@ export async function runAgentSnapshot(
   const hardDeadlineAt = startedAt + AGENT_SNAPSHOT_RUN_DEADLINE_MS;
   const workDeadlineAt = startedAt + AGENT_SNAPSHOT_WORK_DEADLINE_MS;
   const claimId = crypto.randomUUID();
-  const coordinator = env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${orgId}`);
+  const coordinator = traceSnapshotRpc(
+    env.AGENT_DELIVERY_COORDINATOR.getByName(`org:${orgId}`),
+    'AgentDeliveryCoordinator',
+  );
   const initial = await coordinator.getStats({});
   if (initial.erasureStarted) return { status: 'idle' };
   const schedule = await coordinator.getSnapshotSchedule({});
@@ -105,7 +108,10 @@ export async function runAgentSnapshot(
   if ('sentryTraceHeaders' in tracedProgress && Array.isArray(tracedProgress.sentryTraceHeaders)) {
     linkSnapshotProducers(tracedProgress.sentryTraceHeaders);
   }
-  const capacity = env.AGENT_SNAPSHOT_CAPACITY.getByName(SNAPSHOT_CAPACITY_NAME);
+  const capacity = traceSnapshotRpc(
+    env.AGENT_SNAPSHOT_CAPACITY.getByName(SNAPSHOT_CAPACITY_NAME),
+    'SnapshotCapacity',
+  );
   const slot = { orgId, generation: plan.generation };
   let stage: SnapshotStage = 'acquire-capacity';
   let copyTarget: (typeof AGENT_SNAPSHOT_TARGETS)[number] | undefined;
