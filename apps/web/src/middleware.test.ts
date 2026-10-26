@@ -127,6 +127,38 @@ describe('protected app middleware', () => {
   });
 });
 
+describe('homepage middleware', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedAuth0.middleware.mockResolvedValue(NextResponse.next());
+  });
+
+  it('serves the static homepage when signed out', async () => {
+    mockedAuth0.getSession.mockResolvedValue(null);
+    const response = await middleware(request('/'));
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-security-policy')).toBe("default-src 'self'");
+    expect(mockedAuth0.getAccessToken).not.toHaveBeenCalled();
+  });
+
+  it('redirects signed-in users and preserves refreshed session cookies', async () => {
+    const authResponse = NextResponse.next();
+    authResponse.cookies.set('session', 'rotated', { httpOnly: true, secure: true });
+    mockedAuth0.middleware.mockResolvedValue(authResponse);
+    mockedAuth0.getSession.mockResolvedValue({ user: { sub: 'local-test' } } as never);
+    const response = await middleware(request('/?source=docs'));
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe('https://trace-flow.dev/app');
+    expect(response.cookies.get('session')?.value).toBe('rotated');
+    expect(response.headers.get('content-security-policy')).toBe("default-src 'self'");
+  });
+
+  it('treats an unverifiable homepage session as signed out', async () => {
+    mockedAuth0.getSession.mockRejectedValue(new Error('invalid session'));
+    expect((await middleware(request('/'))).status).toBe(200);
+  });
+});
+
 // The bypass hands back a response the route handler marks publicly cacheable, so
 // anything that reaches auth0 here can leak a rotated session cookie into a shared
 // cache. Exact-match paths only: a prefix match would exempt everything beneath it.

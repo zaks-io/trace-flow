@@ -63,6 +63,16 @@ export async function middleware(request: NextRequest) {
   try {
     const response = await auth0.middleware(request);
 
+    if (pathname === '/') {
+      const session = await auth0.getSession(request).catch(() => null);
+      if (session) {
+        const redirect = NextResponse.redirect(new URL('/app', request.url));
+        for (const cookie of response.cookies.getAll()) redirect.cookies.set(cookie);
+        applyResponseSecurityHeaders(redirect, csp);
+        return redirect;
+      }
+    }
+
     if (pathname === '/auth/logout') clearBrowserStorage(response);
 
     // Proactively refresh for protected routes to persist rotated refresh tokens.

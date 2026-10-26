@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build && bun run scripts/generate-public-csp.ts",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy:dev": "opennextjs-cloudflare build && opennextjs-cloudflare deploy --env development",
     "deploy:prod": "opennextjs-cloudflare build && opennextjs-cloudflare deploy --env production",
@@ -15,6 +15,7 @@
     "type-check": "tsc --noEmit",
     "lint": "eslint",
     "test": "vitest run",
+    "test:worker": "bun run scripts/verify-worker.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },

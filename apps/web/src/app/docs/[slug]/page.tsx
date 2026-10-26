@@ -2,16 +2,15 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { FileCode2 } from 'lucide-react';
 import { MarkdownDoc } from '@/components/docs/MarkdownDoc';
-import { getDocBySlug, getDocMarkdownPath, readDocMarkdown } from '@/lib/docs';
+import { getDocBySlug, getDocMarkdownPath, getDocs, readDocMarkdown } from '@/lib/docs';
 
 type DocPageProps = {
   params: Promise<{ slug: string }>;
 };
 
-// SSG'd HTML for dynamic segments needs an OpenNext incremental cache
-// backend, which this project doesn't have configured. Force runtime
-// rendering instead — the content is bundled in JS so render is ~ms.
-export const dynamic = 'force-dynamic';
+export function generateStaticParams() {
+  return getDocs().map(({ slug }) => ({ slug }));
+}
 
 export async function generateMetadata({ params }: DocPageProps) {
   const { slug } = await params;
