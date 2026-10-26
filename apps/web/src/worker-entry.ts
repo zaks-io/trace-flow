@@ -9,9 +9,11 @@ import {
 export { DOQueueHandler, DOShardedTagCache, BucketCachePurge } from '../.open-next/worker.js';
 
 import openNextHandler from '../.open-next/worker.js';
+import staticPageScripts from '../.next/public-csp.json';
 import { healthResponse } from './health';
 import { addHomepageDiscoveryLinks } from './homepage-discovery';
 import { negotiateMarkdown, type MarkdownConverter } from './markdown-negotiation';
+import { protectStaticPage } from './public-csp';
 
 interface Env {
   AI: MarkdownConverter;
@@ -48,7 +50,11 @@ const instrumentedHandler = Sentry.withSentry(
       });
       const start = Date.now();
       try {
-        const htmlResponse = await openNextHandler.fetch(request, env, ctx);
+        const htmlResponse = protectStaticPage(
+          request,
+          await openNextHandler.fetch(request, env, ctx),
+          staticPageScripts,
+        );
         const negotiatedResponse = await negotiateMarkdown(request, htmlResponse, env.AI);
         const response = addHomepageDiscoveryLinks(request, negotiatedResponse);
         logger.info('web.request_complete', {

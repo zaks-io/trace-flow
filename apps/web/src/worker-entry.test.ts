@@ -25,6 +25,7 @@ vi.mock('@trace-flow/logging', () => ({
   axiomConfigFromEnv: vi.fn(),
   createWorkerLogger: mocks.createLogger,
 }));
+vi.mock('../.next/public-csp.json', () => ({ default: {} }));
 
 import { GET, HEAD } from './app/healthz/route';
 
