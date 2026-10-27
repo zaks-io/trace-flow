@@ -31,17 +31,17 @@ select **Start syncing**.
 The collector parses transcripts locally and uploads redacted typed facts. The normal analytics path
 does not upload raw transcripts.
 
-## Use the CLI from source
+## Install the CLI
 
-The CLI does not currently have a published release asset. Install it from a checkout with Rust. On
-Linux the build also needs `pkg-config` and the D-Bus headers (`sudo apt install pkg-config
-libdbus-1-dev` on Debian and Ubuntu):
+The `trace-flow` CLI runs on macOS (Apple silicon or Intel) and on Linux (x86_64 or ARM64) with
+glibc 2.39 or newer, such as Ubuntu 24.04 or Debian 13 and later. Install it with:
 
 ```sh
-cargo install --path apps/cli --locked
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/zaks-io/trace-flow/releases/download/trace-flow-cli-v0.1.2/trace-flow-cli-installer.sh | sh
 ```
 
-This puts `trace-flow` in `~/.cargo/bin`. Its commands:
+The installer puts `trace-flow` in `~/.cargo/bin` and adds that directory to your `PATH` for new
+shells. Its commands:
 
 ```text
 trace-flow [--system] [--config <path>] login [--no-browser]
@@ -64,8 +64,8 @@ downtime. Failed sessions keep their prior cursor and retry on the next cycle.
 ## Run the collector as a Linux service
 
 On Linux the CLI can run as a systemd service that syncs every five minutes. The service runs the
-binary that installed it, so install the binary first, as above, rather than running it with
-`cargo run`.
+binary that installed it; after you update the CLI, run `trace-flow service install` again to
+restart the service on the new version.
 
 For your own agent homes:
 
