@@ -206,8 +206,8 @@ The same Cargo checks are required by `.github/workflows/ci.yml` and the product
 ## Release workflow
 
 `.github/workflows/cli-release.yml` builds versioned release artifacts from a matching
-`trace-flow-cli-v*` tag. The repository currently has the `trace-flow-cli-v0.1.1` tag but no published
-GitHub Release asset, which is why public docs must not advertise `/install.sh` as an available
+`trace-flow-cli-v*` tag. No CLI release is currently published (`trace-flow-cli-v0.1.1` was published
+once and withdrawn), which is why public docs must not advertise `/install.sh` as an available
 installer.
 
 When publishing a new release, push the version tag first and dispatch the workflow from that tag:
