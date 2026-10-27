@@ -248,12 +248,15 @@ mod tests {
 
     /// The state dir must be private, and a plain temp dir takes its mode from the umask.
     fn private_tempdir() -> tempfile::TempDir {
-        let mut builder = tempfile::Builder::new();
         #[cfg(unix)]
-        {
+        let builder = {
             use std::os::unix::fs::PermissionsExt;
+            let mut builder = tempfile::Builder::new();
             builder.permissions(std::fs::Permissions::from_mode(0o700));
-        }
+            builder
+        };
+        #[cfg(not(unix))]
+        let builder = tempfile::Builder::new();
         builder.tempdir().unwrap()
     }
 
