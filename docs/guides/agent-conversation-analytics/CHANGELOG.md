@@ -36,8 +36,10 @@ Linux Service amendment; ADR 0012 points to it.
 --workspace` pass. In a sandbox, the user unit ran against a local fake ingest: first-run backfill,
 glob pickup without restart, catch-up after a stop, clean SIGTERM, exit 78 without restart on a bad
 config, and no credential in the unit, its environment, or the journal. A sync under the host-wide
-unit's syscall filter resolved git remotes. Both units pass `systemd-analyze verify`.
-**Next / blockers:** Real dev sign-in with `login --no-browser` needs a person at a browser.
+unit's syscall filter resolved git remotes. Both units pass `systemd-analyze verify`. On the
+self-contained local stack, `login` and `login --no-browser` ran through Chromium against local
+Convex and the mock issuer, and the minted credential uploaded a session that Agent Ingest accepted.
+**Next / blockers:** Real dev sign-in with Auth0 needs a person at a browser.
 Host-wide mode needs a root host test (kuiper host-change request).
 
 ## 2026-10-08 TRA-391 tra-391-retire-legacy-agent-ingestion
