@@ -146,26 +146,32 @@ fn ensure_root_controlled(_binary: &Path) -> Result<()> {
 }
 
 fn render_unit_with(template: &str, binary: &Path, global_args: &[String]) -> String {
-    let mut args = vec![binary.display().to_string()];
-    args.extend_from_slice(global_args);
-    args.extend(["sync".to_string(), "--watch".to_string()]);
-    let exec_start = args
+    let args = global_args
         .iter()
-        .map(|arg| systemd_quote(arg))
+        .map(String::as_str)
+        .chain(["sync", "--watch"])
+        .map(systemd_quote_argument);
+    let exec_start = std::iter::once(systemd_quote_executable(&binary.display().to_string()))
+        .chain(args)
         .collect::<Vec<_>>()
         .join(" ");
     template.replace("@EXEC_START@", &exec_start)
 }
 
-/// Quote one `ExecStart=` argument. systemd expands `%` specifiers and `$` variables even inside
-/// quotes.
-fn systemd_quote(arg: &str) -> String {
-    let escaped = arg
+/// Quote the `ExecStart=` executable. systemd resolves `%` specifiers in it even inside quotes,
+/// but never expands `$` variables there, so a `$` stays as written.
+fn systemd_quote_executable(path: &str) -> String {
+    let escaped = path
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
-        .replace('%', "%%")
-        .replace('$', "$$");
+        .replace('%', "%%");
     format!("\"{escaped}\"")
+}
+
+/// Quote one `ExecStart=` argument after the executable, where systemd also expands `$`
+/// variables.
+fn systemd_quote_argument(arg: &str) -> String {
+    systemd_quote_executable(&arg.replace('$', "$$"))
 }
 
 fn systemctl(scope: Scope, args: &[&str]) -> Result<()> {
@@ -234,13 +240,26 @@ mod tests {
     #[test]
     fn exec_start_arguments_are_quoted_for_systemd() {
         assert_eq!(
-            systemd_quote("/opt/trace flow/bin"),
+            systemd_quote_argument("/opt/trace flow/bin"),
             "\"/opt/trace flow/bin\""
         );
-        assert_eq!(systemd_quote("100%\"\\"), "\"100%%\\\"\\\\\"");
+        assert_eq!(systemd_quote_argument("100%\"\\"), "\"100%%\\\"\\\\\"");
         assert_eq!(
-            systemd_quote("/home/a$b/${HOME}"),
+            systemd_quote_argument("/home/a$b/${HOME}"),
             "\"/home/a$$b/$${HOME}\""
+        );
+    }
+
+    #[test]
+    fn a_dollar_in_the_executable_path_stays_literal() {
+        let unit = render_unit_with(
+            "ExecStart=@EXEC_START@",
+            Path::new("/opt/a$b%c/trace-flow"),
+            &["--config".to_string(), "/etc/a$b.toml".to_string()],
+        );
+        assert_eq!(
+            unit,
+            "ExecStart=\"/opt/a$b%%c/trace-flow\" \"--config\" \"/etc/a$$b.toml\" \"sync\" \"--watch\""
         );
     }
 

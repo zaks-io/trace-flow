@@ -237,18 +237,15 @@ async fn cmd_sync(layout: &Layout, since: &str, replay: bool) -> Result<()> {
     let config = layout.input_config()?;
 
     let login_hint = format!("run `trace-flow{} login`", layout.scope.flag());
-    let Some(conn) = layout.paths.load_connection()? else {
+    let Some((conn, credential)) = layout.paths.load_connected()? else {
         anyhow::bail!("not logged in. {login_hint} first.");
     };
-    let credential = conn
-        .credentials(&layout.paths)
-        .load(&conn.org_id)?
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "no Collector Credential found for org {}; {login_hint}",
-                conn.org_id
-            )
-        })?;
+    let credential = credential.ok_or_else(|| {
+        anyhow::anyhow!(
+            "no Collector Credential found for org {}; {login_hint}",
+            conn.org_id
+        )
+    })?;
     let ingest_url = conn.sync_ingest_url()?;
     let source_homes = layout.source_homes(config.as_ref())?;
     println!("Syncing (since {since}) to {ingest_url} ...");

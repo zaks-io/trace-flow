@@ -140,6 +140,30 @@ impl Paths {
         Ok(Some(conn))
     }
 
+    /// The saved connection and its credential, which is `None` when its store holds none.
+    pub fn load_connected(&self) -> Result<Option<(Connection, Option<String>)>> {
+        match self.load_connection()? {
+            Some(conn) => self.credential_for(conn).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// A login to another organization or store saves its connection before it removes the old
+    /// credential, so a credential missing for a connection read earlier is looked up again under
+    /// the connection that replaced it.
+    fn credential_for(&self, mut conn: Connection) -> Result<(Connection, Option<String>)> {
+        loop {
+            let credential = conn.credentials(self).load(&conn.org_id)?;
+            if credential.is_some() {
+                return Ok((conn, credential));
+            }
+            match self.load_connection()? {
+                Some(current) if current != conn => conn = current,
+                _ => return Ok((conn, None)),
+            }
+        }
+    }
+
     /// Persist the connection state, atomically replacing (never following) whatever is there.
     pub fn save_connection(&self, conn: &Connection) -> Result<()> {
         let json = serde_json::to_vec_pretty(conn).context("serialize connection")?;
@@ -205,6 +229,30 @@ mod tests {
         assert_eq!(paths.load_connection().unwrap(), None);
         paths.save_connection(&conn()).unwrap();
         assert_eq!(paths.load_connection().unwrap(), Some(conn()));
+    }
+
+    #[test]
+    fn a_credential_removed_by_a_newer_login_is_read_from_the_connection_that_replaced_it() {
+        let dir = crate::test_support::private_tempdir();
+        let paths = Paths::at(dir.path().join("state"));
+        paths.ensure().unwrap();
+        let stale = conn();
+        let current = Connection {
+            org_id: "org_456".to_string(),
+            ..conn()
+        };
+        current
+            .credentials(&paths)
+            .store(&current.org_id, "tfc_new")
+            .unwrap();
+        paths.save_connection(&current).unwrap();
+
+        let (conn, credential) = paths.credential_for(stale).unwrap();
+        assert_eq!(conn, current);
+        assert_eq!(credential.as_deref(), Some("tfc_new"));
+
+        current.credentials(&paths).delete(&current.org_id).unwrap();
+        assert_eq!(paths.load_connected().unwrap(), Some((current, None)));
     }
 
     #[test]

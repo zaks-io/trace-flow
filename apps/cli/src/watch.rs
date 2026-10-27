@@ -177,18 +177,17 @@ async fn run_pass(
         "then run `{}`",
         layout.scope.hint("systemctl", "restart trace-flow.service")
     );
-    let Some(conn) = layout.paths.load_connection()? else {
+    let Some((conn, credential)) = layout.paths.load_connected()? else {
         return Err(ConfigError(format!(
             "not logged in; run `trace-flow{} login`, {relogin}",
             layout.scope.flag()
         ))
         .into());
     };
-    let credentials = conn.credentials(&layout.paths);
-    let credential = credentials.load(&conn.org_id)?.ok_or_else(|| {
+    let credential = credential.ok_or_else(|| {
         ConfigError(format!(
             "no Collector Credential in the {} for org {}; run `trace-flow{} login`, {relogin}",
-            credentials.kind().label(),
+            conn.credential_store.label(),
             conn.org_id,
             layout.scope.flag()
         ))
