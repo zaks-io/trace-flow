@@ -110,6 +110,38 @@ describe('Collector sign-in codes', () => {
     expect((await res.json()).error_description).toBe('Sign-in code is invalid or expired');
   });
 
+  it('tells a user without an organization to create or join one, and keeps the code', async () => {
+    const t = initConvexTest();
+    const userId = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        tokenIdentifier: 'https://auth.example/|auth0|no-org',
+        email: 'no-org@example.com',
+        enabled: true,
+      }),
+    );
+    const code = await issueCode(t, userId);
+
+    const res = await redeem(t, code, VERIFIER);
+    expect(res.status).toBe(403);
+    expect((await res.json()).error_description).toBe(
+      'Create or join a Trace Flow organization on the web first',
+    );
+    expect(await t.run((ctx) => ctx.db.query('collectorLoginCodes').collect())).toHaveLength(1);
+  });
+
+  it('answers 429 once the hourly mint limit is spent', async () => {
+    const t = initConvexTest();
+    const userId = await seedMember(t);
+    for (let i = 0; i < 10; i++) {
+      expect((await redeem(t, await issueCode(t, userId), VERIFIER)).status).toBe(200);
+    }
+
+    const res = await redeem(t, await issueCode(t, userId), VERIFIER);
+    expect(res.status).toBe(429);
+    expect(Number(res.headers.get('Retry-After'))).toBeGreaterThan(0);
+    expect((await res.json()).error).toBe('temporarily_unavailable');
+  });
+
   it('rejects malformed token requests before touching codes', async () => {
     const t = initConvexTest();
 

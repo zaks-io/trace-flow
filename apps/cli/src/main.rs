@@ -28,7 +28,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use collector_embedder::login::{self, Callback};
+use collector_embedder::login::{self, Callback, PreviousCredential};
 use collector_embedder::sources::{self, Support};
 use collector_embedder::{defaults, sync};
 
@@ -175,6 +175,7 @@ async fn run() -> Result<()> {
 
 async fn cmd_login(layout: &Layout, no_browser: bool) -> Result<()> {
     let credentials = layout.login_credentials(layout.config()?.as_ref());
+    let previous = PreviousCredential::read(&layout.paths);
     let callback = if no_browser {
         Callback::OutOfBand
     } else {
@@ -188,6 +189,12 @@ async fn cmd_login(layout: &Layout, no_browser: bool) -> Result<()> {
         callback,
     )
     .await?;
+    // The login already succeeded, so a credential left behind is reported, not fatal.
+    if let Some(previous) = previous {
+        if let Err(err) = previous.forget_unless_replaced_by(&conn) {
+            eprintln!("warning: {err:#}");
+        }
+    }
     println!("\nConnected to organization {}.", conn.org_id);
     println!(
         "Credential stored in the {}. Next: `trace-flow{} service install` to keep syncing, or \

@@ -157,12 +157,14 @@ fn render_unit_with(template: &str, binary: &Path, global_args: &[String]) -> St
     template.replace("@EXEC_START@", &exec_start)
 }
 
-/// Quote one `ExecStart=` argument. systemd expands `%` specifiers even inside quotes.
+/// Quote one `ExecStart=` argument. systemd expands `%` specifiers and `$` variables even inside
+/// quotes.
 fn systemd_quote(arg: &str) -> String {
     let escaped = arg
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
-        .replace('%', "%%");
+        .replace('%', "%%")
+        .replace('$', "$$");
     format!("\"{escaped}\"")
 }
 
@@ -236,6 +238,10 @@ mod tests {
             "\"/opt/trace flow/bin\""
         );
         assert_eq!(systemd_quote("100%\"\\"), "\"100%%\\\"\\\\\"");
+        assert_eq!(
+            systemd_quote("/home/a$b/${HOME}"),
+            "\"/home/a$$b/$${HOME}\""
+        );
     }
 
     #[cfg(unix)]

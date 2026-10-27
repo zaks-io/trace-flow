@@ -1,3 +1,4 @@
+import { isRateLimitError } from '@convex-dev/rate-limiter';
 import type { HonoWithConvex } from 'convex-helpers/server/hono';
 import { BodySizeLimitError } from '@trace-flow/utils';
 import type { ActionCtx } from '../_generated/server';
@@ -17,7 +18,11 @@ export function registerCollectorTokenRoutes(app: HonoWithConvex<ActionCtx>): vo
     c.header('Pragma', 'no-cache');
     const ctx = c.env;
     const logger = getRequestLogger(c.req.raw, { operation: 'collector_token' });
-    const reject = async (status: 400 | 403 | 413 | 415, error: string, description: string) => {
+    const reject = async (
+      status: 400 | 403 | 413 | 415 | 429,
+      error: string,
+      description: string,
+    ) => {
       logger.warn('convex.collector_token_rejected', { status, reason: description });
       await logger.flush();
       return c.json({ error, error_description: description }, status);
@@ -52,8 +57,25 @@ export function registerCollectorTokenRoutes(app: HonoWithConvex<ActionCtx>): vo
           collectorId,
         });
       } catch (error) {
-        if (String(error).includes('User account is not enabled')) {
+        // Minting failed, so the mutation rolled back and the code stays redeemable.
+        const message = String(error);
+        if (message.includes('User account is not enabled')) {
           return await reject(403, 'access_denied', 'User account is not enabled');
+        }
+        if (message.includes('Active organization membership required')) {
+          return await reject(
+            403,
+            'access_denied',
+            'Create or join a Trace Flow organization on the web first',
+          );
+        }
+        if (isRateLimitError(error)) {
+          c.header('Retry-After', String(Math.max(1, Math.ceil(error.data.retryAfter / 1000))));
+          return await reject(
+            429,
+            'temporarily_unavailable',
+            'Too many Collector sign-ins in the last hour; wait before trying again',
+          );
         }
         throw error;
       }

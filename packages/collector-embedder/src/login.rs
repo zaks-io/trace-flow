@@ -137,6 +137,37 @@ pub async fn run(
     Ok(conn)
 }
 
+/// The credential the current connection uses. A login to another organization, or into another
+/// store, leaves it behind as a live secret, so read it before logging in and forget it after.
+pub struct PreviousCredential {
+    credentials: CredentialStore,
+    org_id: String,
+}
+
+impl PreviousCredential {
+    /// `None` when there is no readable connection, since nothing then names a credential to remove.
+    pub fn read(paths: &Paths) -> Option<Self> {
+        let conn = paths.load_connection().ok().flatten()?;
+        Some(Self {
+            credentials: conn.credentials(paths),
+            org_id: conn.org_id,
+        })
+    }
+
+    /// Delete this credential unless `conn` stored its own over the same entry.
+    pub fn forget_unless_replaced_by(self, conn: &Connection) -> Result<()> {
+        if self.org_id == conn.org_id && self.credentials.kind() == conn.credential_store {
+            return Ok(());
+        }
+        self.credentials.delete(&self.org_id).with_context(|| {
+            format!(
+                "remove the credential for the previous organization {}",
+                self.org_id
+            )
+        })
+    }
+}
+
 /// RFC 7636 S256: a 256-bit random verifier and the challenge the server checks it against.
 struct Pkce {
     verifier: String,
@@ -378,6 +409,7 @@ fn urlencode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keychain::CredentialStoreKind;
 
     /// Unwrap a `CallbackOutcome::Result`, panicking on `Ignore` (used by tests that expect a match).
     fn result_of(outcome: CallbackOutcome) -> std::result::Result<String, String> {
@@ -385,6 +417,44 @@ mod tests {
             CallbackOutcome::Result(r) => r,
             CallbackOutcome::Ignore => panic!("expected a callback result, got Ignore"),
         }
+    }
+
+    fn connected(paths: &Paths, org_id: &str) -> Connection {
+        let conn = Connection {
+            org_id: org_id.to_string(),
+            collector_id: "cli-test".to_string(),
+            convex_url: "https://d.convex.site".to_string(),
+            ingest_url: String::new(),
+            expires_at: None,
+            credential_store: CredentialStoreKind::File,
+        };
+        conn.credentials(paths)
+            .store(org_id, &format!("tfc_{org_id}"))
+            .unwrap();
+        paths.save_connection(&conn).unwrap();
+        conn
+    }
+
+    #[test]
+    fn a_login_to_another_organization_forgets_the_old_credential() {
+        let dir = crate::test_support::private_tempdir();
+        let paths = Paths::at(dir.path().join("state"));
+        let store = CredentialStore::new(CredentialStoreKind::File, &paths);
+
+        connected(&paths, "org_a");
+        let previous = PreviousCredential::read(&paths).unwrap();
+        let same = connected(&paths, "org_a");
+        previous.forget_unless_replaced_by(&same).unwrap();
+        assert!(
+            store.load("org_a").unwrap().is_some(),
+            "a re-login keeps its own credential"
+        );
+
+        let previous = PreviousCredential::read(&paths).unwrap();
+        let other = connected(&paths, "org_b");
+        previous.forget_unless_replaced_by(&other).unwrap();
+        assert!(store.load("org_a").unwrap().is_none());
+        assert!(store.load("org_b").unwrap().is_some());
     }
 
     #[test]

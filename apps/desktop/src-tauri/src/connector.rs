@@ -15,7 +15,7 @@ use std::sync::Arc;
 use collector_embedder::connection::Paths;
 use collector_embedder::defaults;
 use collector_embedder::keychain::CredentialStore;
-use collector_embedder::login::{self, Callback};
+use collector_embedder::login::{self, Callback, PreviousCredential};
 use tokio::sync::Mutex;
 
 use crate::engine;
@@ -76,11 +76,7 @@ impl Connector {
         let ingest_url = defaults::ingest_url();
         let paths = Paths::resolve().map_err(|err| format!("{err:#}"))?;
         let login_credentials = CredentialStore::platform_default(&paths);
-        let old = paths
-            .load_connection()
-            .ok()
-            .flatten()
-            .map(|conn| (conn.credentials(&paths), conn.org_id));
+        let previous = PreviousCredential::read(&paths);
         let conn = login::run(
             &convex_site_url,
             &ingest_url,
@@ -90,11 +86,9 @@ impl Connector {
         )
         .await
         .map_err(|err| format!("{err:#}"))?;
-        if let Some((old_credentials, old_org_id)) =
-            old.filter(|(_, old_org_id)| old_org_id != &conn.org_id)
-        {
-            if let Err(err) = old_credentials.delete(&old_org_id) {
-                tracing::warn!(error = %err, org_id = %old_org_id, "failed to remove old Collector Credential");
+        if let Some(previous) = previous {
+            if let Err(err) = previous.forget_unless_replaced_by(&conn) {
+                tracing::warn!(error = %format!("{err:#}"), "failed to remove old Collector Credential");
             }
         }
         engine::refresh_connection(bus);

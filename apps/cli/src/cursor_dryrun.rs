@@ -8,8 +8,9 @@ use collector_embedder::sources;
 use crate::scope::Layout;
 
 /// Read the local Cursor `state.vscdb` read-only and print aggregate counts only. A verification aid for
-/// the Cursor reader: it never uploads, and prints no transcript text, file paths, model names, or ids —
-/// only totals and a token-coverage histogram, so it is safe to run and paste.
+/// the Cursor reader: it never uploads, and its report holds no transcript text, file paths, model
+/// names, or ids, only totals and a token-coverage histogram, so it is safe to paste. Errors still name
+/// the local path that failed, so the user can fix it.
 pub fn run(layout: &Layout) -> Result<()> {
     use collector_contracts::enums::TokenCoverage;
     use collector_parser::assemble::session_facts;

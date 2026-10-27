@@ -45,7 +45,9 @@ pub fn write(path: &Path, contents: &[u8]) -> Result<()> {
         .with_context(|| format!("write {}", path.display()))
         .and_then(|()| {
             sys::rename(&dir, &tmp, name).with_context(|| format!("move into {}", path.display()))
-        });
+        })
+        // The rename survives a crash only once the directory entry itself is on disk.
+        .and_then(|()| sys::sync(&dir).with_context(|| format!("sync {}", dir_path.display())));
     if written.is_err() {
         let _ = sys::remove(&dir, &tmp);
     }
@@ -240,6 +242,10 @@ mod sys {
         Ok(rustix::fs::unlinkat(dir, name, AtFlags::empty())?)
     }
 
+    pub fn sync(dir: &OwnedFd) -> io::Result<()> {
+        Ok(rustix::fs::fsync(dir)?)
+    }
+
     /// Non-blocking, so a FIFO opens at once and fails [`super::ensure_regular`]. Reads of a
     /// regular file ignore the flag.
     pub fn open_no_follow(dir: &OwnedFd, name: &OsStr) -> io::Result<fs::File> {
@@ -316,6 +322,11 @@ mod sys {
 
     pub fn remove(dir: &Path, name: &OsStr) -> io::Result<()> {
         fs::remove_file(dir.join(name))
+    }
+
+    /// Windows has no directory handle to sync; the rename is already durable when it returns.
+    pub fn sync(_dir: &Path) -> io::Result<()> {
+        Ok(())
     }
 
     pub fn open_no_follow(dir: &Path, name: &OsStr) -> io::Result<fs::File> {
