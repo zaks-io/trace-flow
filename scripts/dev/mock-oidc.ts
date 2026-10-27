@@ -190,6 +190,9 @@ async function tokenResponse(
   const accessToken = await signJwt({
     iss: issuer,
     sub: user.sub,
+    // Carried so /userinfo can answer like Auth0, which Convex's MCP and Collector sign-in read.
+    email: user.email,
+    name: user.name,
     aud: audience ?? clientId,
     azp: clientId,
     iat: now,
@@ -221,7 +224,11 @@ async function userinfo(request: Request): Promise<Response> {
   const bearer = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? '';
   const claims = await verifyJwt(bearer);
   if (!claims) return new Response('Unauthorized', { status: 401 });
-  return Response.json({ sub: claims.sub });
+  return Response.json({
+    sub: claims.sub,
+    ...(typeof claims.email === 'string' ? { email: claims.email, email_verified: true } : {}),
+    ...(typeof claims.name === 'string' ? { name: claims.name } : {}),
+  });
 }
 
 function logout(url: URL): Response {

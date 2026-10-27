@@ -660,6 +660,7 @@ name = "collector-embedder"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "collector-api-client",
  "collector-contracts",
  "collector-parser",
@@ -669,6 +670,8 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.2",
  "keyring",
+ "reqwest 0.12.28",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",
@@ -5117,7 +5120,7 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
 name = "trace-flow-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -5126,7 +5129,12 @@ dependencies = [
  "collector-parser",
  "collector-sync",
  "dirs 5.0.1",
+ "glob",
+ "serde",
+ "serde_json",
+ "tempfile",
  "tokio",
+ "toml 1.1.2+spec-1.1.0",
 ]
 
 [[package]]

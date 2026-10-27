@@ -424,6 +424,16 @@ export default defineSchema({
     .index('by_user_id', ['userId'])
     .index('by_hashed_secret', ['hashedSecret']),
 
+  // One-time codes from a Collector sign-in. The Collector redeems one with its PKCE verifier for a
+  // newly minted Collector Credential, so the credential never travels in a redirect URL. Only a
+  // hash of each code is stored; codes expire after ten minutes.
+  collectorLoginCodes: defineTable({
+    codeHash: v.string(),
+    userId: v.id('users'),
+    codeChallenge: v.string(),
+    expiresAt: v.number(),
+  }).index('by_code_hash', ['codeHash']),
+
   // First-writer ownership claim for an Agent Session. The first accepted upload
   // of `OrgId + session_pk` claims it for that `UserId`; a later upload of the
   // same transcript under a different user is a permanent `session_owner_conflict`,

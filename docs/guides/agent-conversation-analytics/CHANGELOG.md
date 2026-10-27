@@ -15,6 +15,36 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-10-25 TRA-428 tra-428-linux-collector-service
+
+**Status:** in review
+**Changed:** The `trace-flow` CLI runs as a Linux systemd service, per-user (`systemctl --user`) or
+host-wide (`--system`, root with only `CAP_DAC_READ_SEARCH`). `collector.toml` lists inputs with
+globs re-expanded every cycle. `sync --watch` shares Desktop's cycle policy through the new
+`collector-embedder::cycle` module. Linux defaults to an owner-only credential file. Sign-in
+now uses PKCE: the Collector gets a one-time code and redeems it at the new Convex
+`POST /collector/token` route, so the credential never travels in a URL. Every Collector sign-in,
+including from released Desktop builds, first shows a consent page bound to that browser by a nonce
+cookie. `login --no-browser` uses an out-of-band redirect: the sign-in ends on a page that shows the
+code to paste into the terminal, with no request to `127.0.0.1` on the browser's machine. `service install|uninstall` shows inputs before
+egress and manages the unit. The config and the state directory are reached only through paths
+other users cannot change, the state directory is private from creation and refused while others
+can write to it, and the connection file, which now records the credential store, refuses symlinks
+and other users' files. A login to another organization deletes the previous local credential, and a
+service cycle that races that re-login reads the new connection instead of stopping.
+`/collector/token` answers 403 for a user without an organization and 429 with `Retry-After` when
+sign-ins are rate limited. ADR 0015 gains a Linux Service amendment; ADR 0012 points to it. The
+public collector docs cover the Linux service.
+**Verified:** `cargo fmt`, `cargo clippy --workspace --all-targets -D warnings`, and `cargo test
+--workspace` pass. In a sandbox, the user unit ran against a local fake ingest: first-run backfill,
+glob pickup without restart, catch-up after a stop, clean SIGTERM, exit 78 without restart on a bad
+config, and no credential in the unit, its environment, or the journal. A sync under the host-wide
+unit's syscall filter resolved git remotes. Both units pass `systemd-analyze verify`. On the
+self-contained local stack, `login` and `login --no-browser` ran through Chromium against local
+Convex and the mock issuer, and the minted credential uploaded a session that Agent Ingest accepted.
+**Next / blockers:** Real dev sign-in with Auth0 needs a person at a browser.
+Host-wide mode needs a root host test (kuiper host-change request).
+
 ## 2026-10-08 TRA-391 tra-391-retire-legacy-agent-ingestion
 
 **Status:** in review (PR #600)

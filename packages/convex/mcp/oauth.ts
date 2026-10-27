@@ -42,6 +42,15 @@ export interface ConsentPayload {
   responseType?: string;
 }
 
+/** What a user approved on the Collector consent page, bound to that page's browser by a nonce. */
+export interface CollectorConsentPayload {
+  tokenUse: 'collector_consent';
+  consentNonce: string;
+  clientState: string;
+  redirectUri: string;
+  codeChallenge?: string;
+}
+
 async function fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -54,35 +63,47 @@ async function fetchWithTimeout(url: string, options: RequestInit): Promise<Resp
 }
 
 interface Auth0ClientConfig {
-  domain: string;
+  issuer: string;
   clientId: string;
   clientSecret: string;
 }
 
-function getAuth0ClientConfig(): Auth0ClientConfig {
+/**
+ * The Auth0 issuer URL, ending in `/`. Deployments set `AUTH0_DOMAIN` to the tenant's host; the
+ * local stack sets its mock issuer's full URL, which Convex auth also accepts.
+ */
+export function auth0Issuer(): string {
   const domain = process.env.AUTH0_DOMAIN;
+  if (!domain) {
+    throw new Error('AUTH0_DOMAIN not configured');
+  }
+  const issuer = /^https?:\/\//.test(domain) ? domain : `https://${domain}`;
+  return issuer.endsWith('/') ? issuer : `${issuer}/`;
+}
+
+function getAuth0ClientConfig(): Auth0ClientConfig {
   const clientId = process.env.AUTH0_CLIENT_ID;
   const clientSecret = process.env.AUTH0_CLIENT_SECRET;
 
-  if (!domain || !clientId || !clientSecret) {
+  if (!clientId || !clientSecret) {
     throw new Error('Auth0 configuration missing');
   }
 
-  return { domain, clientId, clientSecret };
+  return { issuer: auth0Issuer(), clientId, clientSecret };
 }
 
 async function requestAuth0Token(
   params: Record<string, string>,
   failureLabel: string,
 ): Promise<Auth0TokenResponse> {
-  const { domain, clientId, clientSecret } = getAuth0ClientConfig();
+  const { issuer, clientId, clientSecret } = getAuth0ClientConfig();
   const body = new URLSearchParams({
     client_id: clientId,
     client_secret: clientSecret,
     ...params,
   });
 
-  const response = await fetchWithTimeout(`https://${domain}/oauth/token`, {
+  const response = await fetchWithTimeout(`${issuer}oauth/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
@@ -110,15 +131,7 @@ export async function exchangeAuth0Code(
 }
 
 export async function getAuth0UserInfo(accessToken: string): Promise<Auth0UserInfo> {
-  const domain = process.env.AUTH0_DOMAIN;
-
-  if (!domain) {
-    throw new Error('AUTH0_DOMAIN not configured');
-  }
-
-  const userInfoUrl = `https://${domain}/userinfo`;
-
-  const response = await fetchWithTimeout(userInfoUrl, {
+  const response = await fetchWithTimeout(`${auth0Issuer()}userinfo`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
@@ -159,6 +172,57 @@ export async function signConsent(payload: Omit<ConsentPayload, 'tokenUse'>): Pr
     .setExpirationTime('5m')
     .setIssuedAt()
     .sign(secretKey);
+}
+
+export async function signCollectorConsent(
+  payload: Omit<CollectorConsentPayload, 'tokenUse'>,
+): Promise<string> {
+  const secret = process.env.MCP_JWT_SECRET;
+
+  if (!secret) {
+    throw new Error('MCP_JWT_SECRET not configured');
+  }
+
+  return new SignJWT({ ...payload, tokenUse: 'collector_consent' })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setExpirationTime('5m')
+    .setIssuedAt()
+    .sign(new TextEncoder().encode(secret));
+}
+
+export async function verifyCollectorConsent(
+  token: string,
+): Promise<CollectorConsentPayload | null> {
+  const secret = process.env.MCP_JWT_SECRET;
+
+  if (!secret) {
+    throw new Error('MCP_JWT_SECRET not configured');
+  }
+
+  try {
+    const { payload } = await jwtVerify(token, new TextEncoder().encode(secret), {
+      algorithms: ['HS256'],
+    });
+    const value = payload as Partial<CollectorConsentPayload>;
+    if (
+      value.tokenUse !== 'collector_consent' ||
+      typeof value.consentNonce !== 'string' ||
+      typeof value.clientState !== 'string' ||
+      typeof value.redirectUri !== 'string' ||
+      (value.codeChallenge !== undefined && typeof value.codeChallenge !== 'string')
+    ) {
+      return null;
+    }
+    return {
+      tokenUse: value.tokenUse,
+      consentNonce: value.consentNonce,
+      clientState: value.clientState,
+      redirectUri: value.redirectUri,
+      ...(value.codeChallenge === undefined ? {} : { codeChallenge: value.codeChallenge }),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function verifyState(token: string): Promise<StatePayload | null> {
@@ -250,10 +314,10 @@ export async function verifyConsent(token: string): Promise<ConsentPayload | nul
 }
 
 export function buildAuth0AuthorizeUrl(state: string, redirectUri: string): string {
-  const domain = process.env.AUTH0_DOMAIN;
+  const issuer = auth0Issuer();
   const clientId = process.env.AUTH0_CLIENT_ID;
 
-  if (!domain || !clientId) {
+  if (!clientId) {
     throw new Error('Auth0 configuration missing');
   }
 
@@ -265,5 +329,5 @@ export function buildAuth0AuthorizeUrl(state: string, redirectUri: string): stri
     state,
   });
 
-  return `https://${domain}/authorize?${params.toString()}`;
+  return `${issuer}authorize?${params.toString()}`;
 }

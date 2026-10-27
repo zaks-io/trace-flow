@@ -1,0 +1,17 @@
+# Installed by `trace-flow service install`. Run that again instead of editing this file; it
+# overwrites the unit.
+[Unit]
+Description=Trace Flow Collector
+Documentation=https://github.com/zaks-io/trace-flow/blob/main/apps/cli/README.md
+
+[Service]
+Type=exec
+ExecStart=@EXEC_START@
+Restart=on-failure
+RestartSec=30s
+# 78 (EX_CONFIG) means the config or login needs a person; restarting would only repeat the error.
+RestartPreventExitStatus=78
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

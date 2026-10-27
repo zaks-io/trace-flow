@@ -104,7 +104,7 @@ impl SourceReport {
 }
 
 /// The inputs a sync run needs that don't come from saved state: where the ingest worker is and the
-/// raw Collector Credential. Both are runtime-resolved (env / keychain), never persisted here.
+/// raw Collector Credential. Both are runtime-resolved (env / credential store), never persisted here.
 pub struct RunConfig<'a> {
     pub ingest_url: String,
     pub credential: String,
@@ -121,7 +121,8 @@ pub struct RunConfig<'a> {
     /// A short embedder tag (e.g. `"cli"`, `"desktop"`) that prefixes the per-POST batch id, so a
     /// batch id reads as `cli-<n>` / `desktop-<n>` for audit. Not security-relevant.
     pub batch_id_prefix: &'a str,
-    /// Test seam for the state directory. Production embedders leave this `None` and use [`Paths`].
+    /// The state directory. `None` resolves the default through [`Paths::resolve`]; host-wide
+    /// services and tests pass their own.
     pub state_dir: Option<&'a Path>,
 }
 
@@ -582,8 +583,8 @@ mod tests {
 
     #[tokio::test]
     async fn archived_codex_transcripts_are_ingested_by_the_normal_fact_cycle() {
-        let home = tempfile::TempDir::new().unwrap();
-        let state = tempfile::TempDir::new().unwrap();
+        let home = crate::test_support::private_tempdir();
+        let state = crate::test_support::private_tempdir();
         let archived = home.path().join(".codex").join("archived_sessions");
         std::fs::create_dir_all(&archived).unwrap();
         let transcript = archived.join("codex-session-001.jsonl");
@@ -627,8 +628,8 @@ mod tests {
 
     #[tokio::test]
     async fn cycle_fatal_ingest_error_stops_before_later_sources() {
-        let home = tempfile::TempDir::new().unwrap();
-        let state = tempfile::TempDir::new().unwrap();
+        let home = crate::test_support::private_tempdir();
+        let state = crate::test_support::private_tempdir();
         write_home_transcripts(home.path());
         let hits = Arc::new(Mutex::new(0u32));
         let ingest_url = spawn_http({
@@ -657,8 +658,8 @@ mod tests {
 
     #[tokio::test]
     async fn fact_failure_does_not_advance_the_complete_sync_watermark() {
-        let home = tempfile::TempDir::new().unwrap();
-        let state = tempfile::TempDir::new().unwrap();
+        let home = crate::test_support::private_tempdir();
+        let state = crate::test_support::private_tempdir();
         write_home_transcripts(home.path());
         let ingest_url =
             spawn_http(|_raw| raw_response(500, "Error", r#"{"error":"ingest_failed"}"#)).await;
@@ -681,8 +682,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_poisoned_session_is_quarantined_and_the_pass_still_completes() {
-        let home = tempfile::TempDir::new().unwrap();
-        let state = tempfile::TempDir::new().unwrap();
+        let home = crate::test_support::private_tempdir();
+        let state = crate::test_support::private_tempdir();
         write_home_transcripts(home.path());
         let poisoned = CLAUDE
             .iter()
@@ -737,8 +738,8 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_transcript_lines_are_counted_without_failing_the_pass() {
-        let home = tempfile::TempDir::new().unwrap();
-        let state = tempfile::TempDir::new().unwrap();
+        let home = crate::test_support::private_tempdir();
+        let state = crate::test_support::private_tempdir();
         let claude_dir = home.path().join(".claude").join("projects").join("p1");
         std::fs::create_dir_all(&claude_dir).unwrap();
         let mut body = b"not json\n".to_vec();
@@ -766,8 +767,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_named_400_reports_its_reason_and_category_with_the_quarantine() {
-        let home = tempfile::TempDir::new().unwrap();
-        let state = tempfile::TempDir::new().unwrap();
+        let home = crate::test_support::private_tempdir();
+        let state = crate::test_support::private_tempdir();
         let claude_dir = home.path().join(".claude").join("projects").join("p1");
         std::fs::create_dir_all(&claude_dir).unwrap();
         std::fs::write(claude_dir.join("claude-session-001.jsonl"), CLAUDE).unwrap();
@@ -802,8 +803,8 @@ mod tests {
 
     #[tokio::test]
     async fn an_unnamed_400_is_quarantined_when_a_later_batch_of_the_pass_is_accepted() {
-        let home = tempfile::TempDir::new().unwrap();
-        let state = tempfile::TempDir::new().unwrap();
+        let home = crate::test_support::private_tempdir();
+        let state = crate::test_support::private_tempdir();
         let now: i64 = 1_779_840_000_000;
         let claude_dir = home.path().join(".claude").join("projects").join("p1");
         std::fs::create_dir_all(&claude_dir).unwrap();
@@ -850,8 +851,8 @@ mod tests {
 
     #[tokio::test]
     async fn an_unnamed_400_stays_failed_when_nothing_in_the_pass_is_accepted() {
-        let home = tempfile::TempDir::new().unwrap();
-        let state = tempfile::TempDir::new().unwrap();
+        let home = crate::test_support::private_tempdir();
+        let state = crate::test_support::private_tempdir();
         let claude_dir = home.path().join(".claude").join("projects").join("p1");
         std::fs::create_dir_all(&claude_dir).unwrap();
         std::fs::write(claude_dir.join("claude-session-001.jsonl"), CLAUDE).unwrap();
@@ -881,8 +882,8 @@ mod tests {
 
     #[tokio::test]
     async fn enqueue_failed_stops_the_pass_and_asks_for_a_backoff() {
-        let home = tempfile::TempDir::new().unwrap();
-        let state = tempfile::TempDir::new().unwrap();
+        let home = crate::test_support::private_tempdir();
+        let state = crate::test_support::private_tempdir();
         write_home_transcripts(home.path());
         let hits = Arc::new(Mutex::new(0u32));
         // Above the client's in-request admission bound, so the wait falls to the pass back-off.
@@ -920,8 +921,8 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         use std::time::{Duration, UNIX_EPOCH};
 
-        let home = tempfile::TempDir::new().unwrap();
-        let state = tempfile::TempDir::new().unwrap();
+        let home = crate::test_support::private_tempdir();
+        let state = crate::test_support::private_tempdir();
         let claude_dir = home.path().join(".claude/projects/p1");
         std::fs::create_dir_all(&claude_dir).unwrap();
         std::fs::write(claude_dir.join("visible.jsonl"), CLAUDE).unwrap();
@@ -1032,8 +1033,8 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         use std::time::{Duration, UNIX_EPOCH};
 
-        let home = tempfile::TempDir::new().unwrap();
-        let state = tempfile::TempDir::new().unwrap();
+        let home = crate::test_support::private_tempdir();
+        let state = crate::test_support::private_tempdir();
         let claude_dir = home.path().join(".claude/projects/p1");
         std::fs::create_dir_all(&claude_dir).unwrap();
         std::fs::write(claude_dir.join("visible.jsonl"), CLAUDE).unwrap();
@@ -1131,8 +1132,8 @@ mod tests {
 
     #[tokio::test]
     async fn parser_migration_reparses_known_old_transcripts_without_importing_unknown_ones() {
-        let home = tempfile::TempDir::new().unwrap();
-        let state = tempfile::TempDir::new().unwrap();
+        let home = crate::test_support::private_tempdir();
+        let state = crate::test_support::private_tempdir();
         let claude_dir = home.path().join(".claude/projects/p1");
         std::fs::create_dir_all(&claude_dir).unwrap();
         std::fs::write(claude_dir.join("known.jsonl"), CLAUDE).unwrap();
@@ -1196,8 +1197,8 @@ mod tests {
 
     #[tokio::test]
     async fn failed_parser_migration_keeps_the_old_version_for_retry() {
-        let home = tempfile::TempDir::new().unwrap();
-        let state = tempfile::TempDir::new().unwrap();
+        let home = crate::test_support::private_tempdir();
+        let state = crate::test_support::private_tempdir();
         let claude_dir = home.path().join(".claude/projects/p1");
         std::fs::create_dir_all(&claude_dir).unwrap();
         std::fs::write(claude_dir.join("known.jsonl"), CLAUDE).unwrap();
@@ -1246,8 +1247,8 @@ mod tests {
 
     #[tokio::test]
     async fn replay_resends_accepted_facts_without_deleting_cursor_state() {
-        let home = tempfile::TempDir::new().unwrap();
-        let state = tempfile::TempDir::new().unwrap();
+        let home = crate::test_support::private_tempdir();
+        let state = crate::test_support::private_tempdir();
         let claude_dir = home.path().join(".claude/projects/p1");
         std::fs::create_dir_all(&claude_dir).unwrap();
         std::fs::write(claude_dir.join("session.jsonl"), CLAUDE).unwrap();

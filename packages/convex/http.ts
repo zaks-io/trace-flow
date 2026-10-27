@@ -8,6 +8,7 @@ import * as tokensModule from './mcp/tokens';
 import type { HttpDeps } from './httpRoutes/deps';
 import { registerAgentIngestRoutes } from './httpRoutes/agentIngest';
 import { registerCollectorAuthorizeRoutes } from './httpRoutes/collectorAuthorize';
+import { registerCollectorTokenRoutes } from './httpRoutes/collectorToken';
 import { registerMcpAuthorizeRoutes } from './httpRoutes/mcpAuthorize';
 import { registerMcpBackendRoutes } from './httpRoutes/mcpBackend';
 import { registerMcpCallbackRoutes } from './httpRoutes/mcpCallback';
@@ -46,6 +47,7 @@ export function createApp(
   registerAgentIngestRoutes(app);
   registerMcpBackendRoutes(app);
   registerCollectorAuthorizeRoutes(app, deps);
+  registerCollectorTokenRoutes(app);
   registerWorkerAuthorizationRoutes(app);
 
   return app;

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { createApp, type HttpDeps } from '../http';
 import { acceptedConsent, createMockCtx, createMockDeps, type MockCtx } from './httpTest.setup';
 
+const COLLECTOR_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
 describe('convex/http.ts OAuth routes', () => {
   let ctx: MockCtx;
   let deps: HttpDeps;
@@ -510,12 +512,152 @@ describe('convex/http.ts OAuth routes', () => {
     });
   });
 
+  describe('GET /collector/authorize', () => {
+    const LOOPBACK = 'http://127.0.0.1:49152/callback';
+    const OOB = 'urn:ietf:wg:oauth:2.0:oob';
+    const PKCE = `&code_challenge=${COLLECTOR_CHALLENGE}&code_challenge_method=S256`;
+    const APPROVED = { headers: { Cookie: '__Host-trace-flow-collector-consent=browser-nonce' } };
+    const authorize = (query: string, init: RequestInit = {}, redirectUri = LOOPBACK) =>
+      createApp(deps).request(
+        `http://localhost/collector/authorize?redirect_uri=${encodeURIComponent(
+          redirectUri,
+        )}&state=collector-nonce${query}`,
+        init,
+        ctx,
+      );
+    const approve = (consent: Record<string, unknown> = {}) =>
+      (deps.oauth.verifyCollectorConsent as Mock).mockResolvedValue({
+        tokenUse: 'collector_consent',
+        consentNonce: 'browser-nonce',
+        clientState: 'collector-nonce',
+        redirectUri: LOOPBACK,
+        codeChallenge: COLLECTOR_CHALLENGE,
+        ...consent,
+      });
+
+    beforeEach(() => {
+      (deps.oauth.signCollectorConsent as Mock).mockResolvedValue('consent-token');
+      (deps.oauth.signState as Mock).mockResolvedValue('signed-state');
+      (deps.oauth.buildAuth0AuthorizeUrl as Mock).mockReturnValue(
+        'https://auth0.example/authorize',
+      );
+    });
+
+    it('asks this browser to approve a new connection before signing in', async () => {
+      const res = await authorize(PKCE);
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Location')).toBeNull();
+      const cookie = res.headers.get('Set-Cookie');
+      expect(cookie).toContain('__Host-trace-flow-collector-consent=');
+      expect(cookie).toContain('HttpOnly');
+      expect(res.headers.get('Content-Security-Policy')).toContain("form-action 'self'");
+      const html = await res.text();
+      expect(html).toContain('Connect a Trace Flow Collector');
+      expect(html).toContain('name="consent_token" value="consent-token"');
+      expect(html).toContain('error=access_denied');
+      expect(deps.oauth.signCollectorConsent).toHaveBeenCalledWith({
+        consentNonce: expect.any(String),
+        clientState: 'collector-nonce',
+        redirectUri: LOOPBACK,
+        codeChallenge: COLLECTOR_CHALLENGE,
+      });
+      expect(deps.oauth.signState).not.toHaveBeenCalled();
+    });
+
+    it('asks for approval from Collectors that send no challenge too', async () => {
+      const res = await authorize('');
+
+      expect(await res.text()).toContain('Connect a Trace Flow Collector');
+      expect(deps.oauth.signCollectorConsent).toHaveBeenCalledWith({
+        consentNonce: expect.any(String),
+        clientState: 'collector-nonce',
+        redirectUri: LOOPBACK,
+      });
+      expect(deps.oauth.signState).not.toHaveBeenCalled();
+    });
+
+    it('signs an approved request into the state, bound to the approving browser', async () => {
+      approve();
+
+      const res = await authorize(`${PKCE}&consent_token=consent-token`, APPROVED);
+
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain('https://auth0.example/authorize');
+      expect(deps.oauth.signState).toHaveBeenCalledWith({
+        consentNonce: 'browser-nonce',
+        clientState: 'collector:collector-nonce',
+        redirectUri: LOOPBACK,
+        codeChallenge: COLLECTOR_CHALLENGE,
+        codeChallengeMethod: 'S256',
+      });
+    });
+
+    it('asks again when the approval is for another browser or request', async () => {
+      const cases: [Record<string, unknown>, RequestInit][] = [
+        [{}, {}],
+        [{ consentNonce: 'other-nonce' }, APPROVED],
+        [{ clientState: 'other-state' }, APPROVED],
+        [{ redirectUri: 'http://127.0.0.1:50000/callback' }, APPROVED],
+        [{ codeChallenge: undefined }, APPROVED],
+      ];
+      for (const [consent, init] of cases) {
+        approve(consent);
+        const res = await authorize(`${PKCE}&consent_token=consent-token`, init);
+        expect(await res.text()).toContain('Connect a Trace Flow Collector');
+      }
+      expect(deps.oauth.signState).not.toHaveBeenCalled();
+    });
+
+    it('refuses a challenge that is not S256', async () => {
+      for (const query of [
+        `&code_challenge=${COLLECTOR_CHALLENGE}`,
+        `&code_challenge=${COLLECTOR_CHALLENGE}&code_challenge_method=plain`,
+        '&code_challenge=short&code_challenge_method=S256',
+      ]) {
+        const res = await authorize(query);
+        expect(res.status).toBe(400);
+      }
+      expect(deps.oauth.signCollectorConsent).not.toHaveBeenCalled();
+    });
+
+    it('sends results only to a loopback address or the out-of-band page', async () => {
+      expect((await authorize(PKCE, {}, 'https://evil.example/callback')).status).toBe(400);
+      expect((await authorize('', {}, OOB)).status).toBe(400);
+      expect(deps.oauth.signCollectorConsent).not.toHaveBeenCalled();
+
+      const res = await authorize(PKCE, {}, OOB);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain('shows a code to paste into that terminal');
+      expect(html).not.toContain('error=access_denied');
+    });
+
+    it('keeps the older flow, after approval, for Collectors that send no challenge', async () => {
+      approve({ codeChallenge: undefined });
+
+      const res = await authorize('&consent_token=consent-token', APPROVED);
+
+      expect(res.status).toBe(200);
+      expect(deps.oauth.signState).toHaveBeenCalledWith({
+        consentNonce: 'browser-nonce',
+        clientState: 'collector:collector-nonce',
+        redirectUri: LOOPBACK,
+      });
+    });
+  });
+
   describe('GET /mcp/callback', () => {
-    it('mints Collector Credentials without expiry', async () => {
-      const app = createApp(deps);
+    const PKCE_STATE = { codeChallenge: COLLECTOR_CHALLENGE, codeChallengeMethod: 'S256' };
+    const collectorCallback = (
+      state: Record<string, unknown>,
+      cookie = '__Host-trace-flow-collector-consent=browser-nonce',
+    ) => {
       (deps.oauth.verifyState as Mock).mockResolvedValue({
+        consentNonce: 'browser-nonce',
         clientState: 'collector:collector-nonce',
         redirectUri: 'http://127.0.0.1:49152/callback',
+        ...state,
       });
       (deps.oauth.exchangeAuth0Code as Mock).mockResolvedValue({
         access_token: 'auth0-access-token',
@@ -525,25 +667,85 @@ describe('convex/http.ts OAuth routes', () => {
         email: 'test@example.com',
         email_verified: true,
       });
+      return createApp(deps).request(
+        'http://localhost/mcp/callback?code=auth0-code&state=state-token',
+        { headers: { Cookie: cookie } },
+        ctx,
+      );
+    };
+
+    it('mints Collector Credentials without expiry', async () => {
       ctx.runMutation
         .mockResolvedValueOnce('user-id-123')
         .mockResolvedValueOnce({ secret: 'one-time-secret', orgId: 'org-id-123' });
 
-      const res = await app.request(
-        'http://localhost/mcp/callback?code=auth0-code&state=state-token',
-        {},
-        ctx,
-      );
+      const res = await collectorCallback({});
 
       expect(res.status).toBe(302);
       const location = new URL(res.headers.get('Location')!);
       expect(location.searchParams.get('expires_at')).toBeNull();
       expect(location.searchParams.get('state')).toBe('collector-nonce');
+      expect(res.headers.get('Set-Cookie')).toContain('Max-Age=0');
       expect(ctx.runMutation).toHaveBeenNthCalledWith(
         2,
         expect.anything(),
         expect.not.objectContaining({ expiresAt: expect.anything() }),
       );
+    });
+
+    it('gives a PKCE Collector login only a one-time code, never the credential', async () => {
+      ctx.runMutation.mockResolvedValueOnce('user-id-123').mockResolvedValueOnce('one-time-code');
+
+      const res = await collectorCallback(PKCE_STATE);
+
+      expect(res.status).toBe(302);
+      const location = new URL(res.headers.get('Location')!);
+      expect(location.origin).toBe('http://127.0.0.1:49152');
+      expect(location.searchParams.get('code')).toBe('one-time-code');
+      expect(location.searchParams.get('state')).toBe('collector-nonce');
+      for (const leaked of ['secret', 'org_id', 'collector_id']) {
+        expect(location.searchParams.get(leaked)).toBeNull();
+      }
+      expect(ctx.runMutation).toHaveBeenCalledTimes(2);
+      expect(ctx.runMutation).toHaveBeenNthCalledWith(2, expect.anything(), {
+        userId: 'user-id-123',
+        codeChallenge: COLLECTOR_CHALLENGE,
+      });
+    });
+
+    it('shows an out-of-band one-time code on a page instead of redirecting', async () => {
+      ctx.runMutation.mockResolvedValueOnce('user-id-123').mockResolvedValueOnce('one-time-code');
+
+      const res = await collectorCallback({
+        ...PKCE_STATE,
+        redirectUri: 'urn:ietf:wg:oauth:2.0:oob',
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Location')).toBeNull();
+      expect(res.headers.get('Cache-Control')).toContain('no-store');
+      expect(res.headers.get('Content-Security-Policy')).toContain("form-action 'none'");
+      expect(res.headers.get('Set-Cookie')).toContain('Max-Age=0');
+      expect(await res.text()).toContain('one-time-code');
+    });
+
+    it('refuses a Collector sign-in this browser did not approve', async () => {
+      for (const cookie of ['', '__Host-trace-flow-mcp-consent=browser-nonce']) {
+        expect((await collectorCallback(PKCE_STATE, cookie)).status).toBe(400);
+      }
+      expect((await collectorCallback({ ...PKCE_STATE, consentNonce: undefined })).status).toBe(
+        400,
+      );
+      expect(deps.oauth.exchangeAuth0Code).not.toHaveBeenCalled();
+    });
+
+    it('refuses an out-of-band Collector sign-in without PKCE', async () => {
+      ctx.runMutation.mockResolvedValueOnce('user-id-123');
+
+      const res = await collectorCallback({ redirectUri: 'urn:ietf:wg:oauth:2.0:oob' });
+
+      expect(res.status).toBe(400);
+      expect(ctx.runMutation).toHaveBeenCalledTimes(1);
     });
 
     it('successfully exchanges code and redirects with auth code', async () => {

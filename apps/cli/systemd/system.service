@@ -1,0 +1,53 @@
+# Installed by `trace-flow --system service install`. Run that again instead of editing this file;
+# it overwrites the unit.
+[Unit]
+Description=Trace Flow Collector (host-wide)
+Documentation=https://github.com/zaks-io/trace-flow/blob/main/apps/cli/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+ExecStart=@EXEC_START@
+Restart=on-failure
+RestartSec=30s
+# 78 (EX_CONFIG) means the config or login needs a person; restarting would only repeat the error.
+RestartPreventExitStatus=78
+# `login` creates /var/lib/trace-flow private, and the Collector refuses it on every start if other
+# users could have written to it. `StateDirectory=` would instead chmod, and chown when the owner
+# differs, an existing directory before the Collector could check it.
+ReadWritePaths=/var/lib/trace-flow
+
+# Claude writes transcripts 0600, so reading other users' agent homes needs CAP_DAC_READ_SEARCH.
+# Root keeps only that capability: it can read any file but cannot override write permissions,
+# change ownership, or regain privileges, and it can write only to the state dir and a private /tmp.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077
+
+# Repo attribution runs read-only git commands in each session's working directory. Git refuses
+# repositories owned by another user unless they are marked safe. Those repositories' own config is
+# untrusted, so the fsmonitor hook stays off even if a repository sets it.
+Environment=GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=* GIT_CONFIG_KEY_1=core.fsmonitor GIT_CONFIG_VALUE_1=false
+
+[Install]
+WantedBy=multi-user.target

@@ -41,10 +41,13 @@ function createMockCtx(): MockCtx {
 function createMockDeps(): HttpDeps {
   return {
     oauth: {
+      auth0Issuer: vi.fn(() => 'https://test.auth0.com/'),
       signState: vi.fn(),
       verifyState: vi.fn(),
       signConsent: vi.fn(),
       verifyConsent: vi.fn(),
+      signCollectorConsent: vi.fn(),
+      verifyCollectorConsent: vi.fn(),
       buildAuth0AuthorizeUrl: vi.fn(),
       exchangeAuth0Code: vi.fn(),
       getAuth0UserInfo: vi.fn(),

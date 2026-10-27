@@ -12,10 +12,14 @@ collector-sync = { path = "../collector-sync" }
 collector-api-client = { path = "../collector-api-client" }
 
 anyhow = "1"
+# Base64url for the login's PKCE verifier and challenge (RFC 7636).
+base64 = "0.22"
 dirs = "5"
 # CSPRNG for the one-time login state nonce that ties the loopback callback to the request this
 # embedder initiated (rejects stray/malicious local requests racing the listener).
 getrandom = "0.4"
+# Redeems the login's one-time code for the credential. Same features as collector-api-client.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots", "system-proxy"] }
 # keyring has NO default features: with none enabled it silently falls back to a per-process
 # in-memory mock store, so `set` succeeds and the next process's `get` returns NoEntry. Enable the
 # real OS-native backend per platform (macOS/Windows native; Linux Secret Service over sync DBus).
@@ -31,6 +35,10 @@ tokio-util = { version = "0.7", features = ["rt"] }
 tiny_http = "0.12"
 url = "2"
 webbrowser = "1"
+
+# Safe `O_EXCL | O_NOFOLLOW` opens and the effective uid for the owner-only credential file.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs", "process"] }
 
 [dev-dependencies]
 flate2 = "1"

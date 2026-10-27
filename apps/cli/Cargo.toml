@@ -1,6 +1,6 @@
 [package]
 name = "trace-flow-cli"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "Apache-2.0"
 description = "Trace Flow Collector CLI: login, sources, sync, status, disconnect"
@@ -28,4 +28,13 @@ collector-sync = { path = "../../packages/collector-sync" }
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 dirs = "5"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# Expands `collector.toml` input globs such as `/home/*/.claude` on every service cycle.
+glob = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
+# `collector.toml`. TOML rather than YAML because serde_yaml is archived and unmaintained.
+toml = "1"
+
+[dev-dependencies]
+tempfile = "3"

@@ -4,40 +4,48 @@
 
 //! `trace-flow` — the Collector CLI.
 //!
-//! Five commands: `login` (browser device flow → Collector Credential in the OS keychain),
-//! `sources list` (which agent transcript Sources are present), `sync` / its `--since` history
-//! window (parse + redact + upload local transcripts to the ingest Worker), `status` (connection +
-//! source counts, no secrets), and `disconnect` (revoke local material). Parsing and redaction are
-//! always local; only redacted facts leave the machine, authenticated by the Collector Credential.
+//! `login` (browser sign-in → Collector Credential in the credential store), `sources list` (which
+//! agent transcript Sources are present), `sync` (parse + redact + upload once, or `--watch` to keep
+//! syncing as a service), `service install|uninstall` (run `sync --watch` under systemd), `status`
+//! (connection, sources, and service state, no secrets), and `disconnect` (remove local material).
+//! Parsing and redaction are always local; only redacted facts leave the machine.
 //!
-//! All of that logic lives in [`collector_embedder`]; this binary is only argument parsing and the
-//! `println!` reporting. Endpoints resolve through [`collector_embedder::defaults`] — production by
-//! default, overridable per environment:
+//! `--system` switches every command to the host-wide layout (see [`scope`]); `--config` points at a
+//! `collector.toml` other than the scope's default (see [`config`]). Endpoints resolve through
+//! [`collector_embedder::defaults`]: production by default, overridable per environment:
 //! - `TRACE_FLOW_CONVEX_SITE_URL` — the Convex *site* origin `login` drives the device flow against.
-//! - `TRACE_FLOW_INGEST_URL` — the ingest Worker base URL `sync` POSTs to.
-//! - `TRACE_FLOW_COLLECTOR_SECRET` — optional headless/CI override for the keychain credential.
-//!
-//! With none set, the binary targets production out of the box; an env var points it at deployed dev or
-//! a local Worker instead.
+//! - `TRACE_FLOW_INGEST_URL` — the ingest Worker base URL a new login binds to.
+//! - `TRACE_FLOW_COLLECTOR_SECRET` — optional CI override for the stored credential.
+
+mod config;
+mod cursor_dryrun;
+mod report;
+mod scope;
+mod service;
+mod watch;
+
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use collector_contracts::AgentSource;
+use collector_embedder::login::{self, Callback, PreviousCredential};
+use collector_embedder::sources::{self, Support};
+use collector_embedder::{defaults, sync};
 
-use collector_embedder::connection::Paths;
-use collector_embedder::sources::Support;
-use collector_embedder::{defaults, keychain, login, sources, sync};
-
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::config::ConfigError;
+use crate::scope::{Layout, Scope};
 
 const ENV_HELP: &str = "\
 Environment (optional — production URLs are the default):\n  \
 TRACE_FLOW_CONVEX_SITE_URL  Convex site origin for login (default: production deployment)\n  \
-TRACE_FLOW_INGEST_URL       Ingest Worker base URL for sync (default: https://collector.trace-flow.dev)\n  \
-TRACE_FLOW_COLLECTOR_SECRET Headless/CI credential override (normally stored in OS keychain)\n\
+TRACE_FLOW_INGEST_URL       Ingest Worker base URL a new login binds to (default: https://collector.trace-flow.dev)\n  \
+TRACE_FLOW_COLLECTOR_SECRET CI credential override (normally kept in the credential store)\n\
 \n\
 Local/dev: set TRACE_FLOW_CONVEX_SITE_URL and TRACE_FLOW_INGEST_URL to your dev endpoints.\n\
 See apps/cli/README.md for details.";
+
+/// `EX_CONFIG`: the unit files tell systemd not to restart on it.
+const EXIT_CONFIG: i32 = 78;
 
 #[derive(Parser)]
 #[command(
@@ -47,6 +55,13 @@ See apps/cli/README.md for details.";
     after_help = ENV_HELP
 )]
 struct Cli {
+    /// Use the host-wide layout: /etc/trace-flow/collector.toml, state in /var/lib/trace-flow, and
+    /// a system service that reads every configured user's agent homes. Run as root.
+    #[arg(long, global = true)]
+    system: bool,
+    /// Read this collector.toml instead of the default for the chosen layout.
+    #[arg(long, global = true, env = "TRACE_FLOW_CONFIG")]
+    config: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -54,7 +69,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Sign in through the browser and mint a Collector Credential.
-    Login,
+    Login {
+        /// Sign in from a browser on any device, then enter the one-time code it shows here.
+        #[arg(long)]
+        no_browser: bool,
+    },
     /// Inspect detected agent transcript sources.
     Sources {
         #[command(subcommand)]
@@ -64,15 +83,23 @@ enum Command {
     Sync {
         /// How far back to scan: 24h (default incremental; resumes from the last complete sync),
         /// 7d, 30d, or 1y (history import).
-        #[arg(long, default_value = "24h")]
+        #[arg(long, default_value = "24h", conflicts_with = "watch")]
         since: String,
         /// Resend facts from every supported source in this window, preserving local cursor evidence.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "watch")]
         replay: bool,
+        /// Keep syncing every few minutes until stopped. This is what the service runs.
+        #[arg(long)]
+        watch: bool,
     },
-    /// Show connection state and per-source counts. Prints no secrets.
+    /// Run `sync --watch` as a systemd service.
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
+    /// Show connection, source, and service state. Prints no secrets.
     Status,
-    /// Revoke the local Collector Credential and remove local state.
+    /// Remove the local Collector Credential and sync state.
     Disconnect,
     /// Read the local Cursor `state.vscdb` read-only and print aggregate counts only (no upload, no
     /// transcript text, paths, model names, or ids). A local verification aid for the Cursor reader.
@@ -86,15 +113,16 @@ enum SourcesAction {
     List,
 }
 
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
-
-fn home_dir() -> Result<std::path::PathBuf> {
-    dirs::home_dir().context("could not resolve home directory")
+#[derive(Subcommand)]
+enum ServiceAction {
+    /// Show the agent homes the service will read, confirm, then install and start it.
+    Install {
+        /// Skip the confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Stop and remove the service, keeping its config, state, and login.
+    Uninstall,
 }
 
 #[tokio::main]
@@ -103,45 +131,99 @@ async fn main() {
         // One clean error line plus the cause chain; no panics, no secrets (errors never carry the
         // credential — see CollectorApiClientConfig's manual Debug).
         eprintln!("error: {err:#}");
-        std::process::exit(1);
+        let code = if err.downcast_ref::<ConfigError>().is_some() {
+            EXIT_CONFIG
+        } else {
+            1
+        };
+        std::process::exit(code);
     }
 }
 
 async fn run() -> Result<()> {
     let cli = Cli::parse();
+    let scope = if cli.system {
+        Scope::System
+    } else {
+        Scope::User
+    };
+    // Absolute, so the unit file names the same config whatever directory systemd starts in.
+    let config_override = cli
+        .config
+        .map(|path| std::path::absolute(&path).context("resolve --config path"))
+        .transpose()?;
+    let layout = Layout::resolve(scope, config_override)?;
+
+    // Each command loads only what it needs, so a missing or broken config never blocks
+    // `service uninstall`, `status`, or `disconnect`. The credential store comes from the connection.
     match cli.command {
-        Command::Login => cmd_login(),
+        Command::Login { no_browser } => cmd_login(&layout, no_browser).await,
         Command::Sources { action } => match action {
-            SourcesAction::List => cmd_sources_list(),
+            SourcesAction::List => cmd_sources_list(&layout),
         },
-        Command::Sync { since, replay } => cmd_sync(&since, replay).await,
-        Command::Status => cmd_status(),
-        Command::Disconnect => cmd_disconnect().await,
-        Command::CursorDryrun => cmd_cursor_dryrun(),
+        Command::Sync { watch: true, .. } => watch::run(&layout).await,
+        Command::Sync { since, replay, .. } => cmd_sync(&layout, &since, replay).await,
+        Command::Service { action } => match action {
+            ServiceAction::Install { yes } => service::install(&layout, yes),
+            ServiceAction::Uninstall => service::uninstall(&layout),
+        },
+        Command::Status => cmd_status(&layout),
+        Command::Disconnect => cmd_disconnect(&layout),
+        Command::CursorDryrun => cursor_dryrun::run(&layout),
     }
 }
 
-fn cmd_login() -> Result<()> {
-    let conn = login::run(&defaults::convex_site_url(), &defaults::ingest_url())?;
+async fn cmd_login(layout: &Layout, no_browser: bool) -> Result<()> {
+    let credentials = layout.login_credentials(layout.config()?.as_ref());
+    let previous = PreviousCredential::read(&layout.paths);
+    let callback = if no_browser {
+        Callback::OutOfBand
+    } else {
+        Callback::Loopback
+    };
+    let conn = login::run(
+        &defaults::convex_site_url(),
+        &defaults::ingest_url(),
+        &layout.paths,
+        &credentials,
+        callback,
+    )
+    .await?;
+    // The login already succeeded, so a credential left behind is reported, not fatal.
+    if let Some(previous) = previous {
+        if let Err(err) = previous.forget_unless_replaced_by(&conn) {
+            eprintln!("warning: {err:#}");
+        }
+    }
     println!("\nConnected to organization {}.", conn.org_id);
-    println!("Credential stored in the OS keychain. Next: `trace-flow sync --since 7d`.");
+    println!(
+        "Credential stored in the {}. Next: `trace-flow{} service install` to keep syncing, or \
+         `trace-flow{} sync --since 7d` once.",
+        credentials.kind().label(),
+        layout.scope.flag(),
+        layout.scope.flag()
+    );
     Ok(())
 }
 
-fn cmd_sources_list() -> Result<()> {
-    let home = home_dir()?;
-    let detected = sources::detect(&home);
+fn cmd_sources_list(layout: &Layout) -> Result<()> {
+    if let Some(config) = layout.input_config()? {
+        println!("Inputs from {}:", layout.config_file.display());
+        report::print_inputs(&config.inputs, &layout.home, false);
+        return Ok(());
+    }
+    let homes = layout.source_homes(None)?;
     println!(
         "{:<10} {:<14} {:<26} FILES",
         "SOURCE", "SUPPORT", "LOCATION"
     );
-    for d in &detected {
+    for d in sources::detect_configured(&homes, &layout.home) {
         let support = match d.support {
             Support::Ready => "ready",
         };
         println!(
             "{:<10} {:<14} {:<26} {}",
-            source_label(d.source),
+            report::source_label(d.source),
             support,
             d.display_root(),
             d.file_count,
@@ -150,105 +232,44 @@ fn cmd_sources_list() -> Result<()> {
     Ok(())
 }
 
-async fn cmd_sync(since: &str, replay: bool) -> Result<()> {
+async fn cmd_sync(layout: &Layout, since: &str, replay: bool) -> Result<()> {
     let window = sync::window_from_since(since)?;
+    let config = layout.input_config()?;
 
-    let paths = Paths::resolve()?;
-    let Some(conn) = paths.load_connection()? else {
-        anyhow::bail!("not logged in. Run `trace-flow login` first.");
+    let login_hint = format!("run `trace-flow{} login`", layout.scope.flag());
+    let Some((conn, credential)) = layout.paths.load_connected()? else {
+        anyhow::bail!("not logged in. {login_hint} first.");
     };
-
-    let credential = keychain::load(&conn.org_id)?.ok_or_else(|| {
+    let credential = credential.ok_or_else(|| {
         anyhow::anyhow!(
-            "no Collector Credential found for org {}; run `trace-flow login`",
+            "no Collector Credential found for org {}; {login_hint}",
             conn.org_id
         )
     })?;
-
     let ingest_url = conn.sync_ingest_url()?;
-
-    let home = home_dir()?;
-    let source_homes = sources::SourceHomes::resolve(&home);
+    let source_homes = layout.source_homes(config.as_ref())?;
     println!("Syncing (since {since}) to {ingest_url} ...");
 
     let reports = sync::run(sync::RunConfig {
         ingest_url,
         credential,
         org_id: &conn.org_id,
-        home: &home,
+        home: &layout.home,
         source_homes: Some(&source_homes),
         window,
         replay,
-        now_ms: now_ms(),
+        now_ms: watch::now_ms(),
         batch_id_prefix: "cli",
-        state_dir: None,
+        state_dir: Some(layout.paths.root()),
     })
     .await?;
 
-    let mut total_advanced = 0u32;
-    let mut total_failed = 0u32;
-    for (source, r) in &reports {
-        total_advanced += r.advanced;
-        total_failed += r.failed;
-        let note = if r.aborted_early {
-            "  (stopped early)"
-        } else {
-            ""
-        };
-        println!(
-            "  {:<8} scanned {:>4}  selected {:>4}  uploaded {:>4}  failed {:>3}{}",
-            source_label(*source),
-            r.source_files_scanned,
-            r.selected,
-            r.advanced,
-            r.failed,
-            note,
-        );
-        for line in source_detail_lines(r) {
-            println!("           {line}");
-        }
-    }
+    let (total_advanced, total_failed) = report::print_reports(&reports);
     println!("\nUploaded {total_advanced} session(s); {total_failed} failed.");
     if total_failed > 0 {
         println!("Failed sessions kept their cursor and will retry on the next sync.");
     }
     ensure_sync_succeeded(total_failed)
-}
-
-/// The indented notes under a Source's summary row. Counts, error classes, reason codes and the
-/// quarantined session ids the report already carries; never paths or transcript content.
-fn source_detail_lines(r: &sync::SourceReport) -> Vec<String> {
-    let mut lines = Vec::new();
-    if let Some(err) = &r.first_error {
-        lines.push(format!("reason: {err}"));
-    }
-    if let Some(cause) = &r.invalid_envelope {
-        lines.push(format!("ingest rejected an envelope: {cause}"));
-    }
-    for vendor_session_id in &r.quarantined {
-        lines.push(format!(
-            "quarantined session {vendor_session_id}: rejected by ingest; retried when it changes"
-        ));
-    }
-    if r.skipped_quarantined > 0 {
-        lines.push(format!(
-            "skipped {} quarantined session(s)",
-            r.skipped_quarantined
-        ));
-    }
-    if r.skipped_lines > 0 {
-        lines.push(format!(
-            "skipped {} malformed transcript line(s)",
-            r.skipped_lines
-        ));
-    }
-    if r.throttled {
-        let wait = r
-            .retry_after
-            .map_or_else(|| "a minute".to_string(), |d| format!("{}s", d.as_secs()));
-        lines.push(format!("ingest is busy; try again in {wait}"));
-    }
-    lines
 }
 
 fn ensure_sync_succeeded(total_failed: u32) -> Result<()> {
@@ -258,44 +279,80 @@ fn ensure_sync_succeeded(total_failed: u32) -> Result<()> {
     Ok(())
 }
 
-fn cmd_status() -> Result<()> {
-    let paths = Paths::resolve()?;
-    let Some(conn) = paths.load_connection()? else {
-        println!("Not connected. Run `trace-flow login` to get started.");
+/// Diagnostics: a config or input problem is printed in place rather than failing the command.
+fn cmd_status(layout: &Layout) -> Result<()> {
+    let Some(conn) = layout.paths.load_connection()? else {
+        println!(
+            "Not connected. Run `trace-flow{} login` to get started.",
+            layout.scope.flag()
+        );
         return Ok(());
     };
-
-    let has_credential = keychain::is_present(&conn.org_id);
 
     println!("Organization:  {}", conn.org_id);
     println!("Collector:     {}", conn.collector_id);
     println!("Convex:        {}", conn.convex_url);
     let ingest_url = conn
         .sync_ingest_url()
-        .unwrap_or_else(|_| "MISSING (run `trace-flow login`)".to_string());
+        .unwrap_or_else(|_| "MISSING (log in again)".to_string());
     println!("Ingest:        {ingest_url}");
+    let credentials = conn.credentials(&layout.paths);
+    let credential = if credentials.is_present(&conn.org_id) {
+        "present"
+    } else {
+        "MISSING (log in again)"
+    };
     println!(
-        "Credential:    {}",
-        if has_credential {
-            "present"
-        } else {
-            "MISSING (run `trace-flow login`)"
-        }
+        "Credential:    {credential} ({})",
+        credentials.kind().label()
     );
 
-    let home = home_dir()?;
-    println!("\nSources:");
-    for d in sources::detect(&home) {
-        match d.support {
-            Support::Ready => println!("  {:<8} {} items", source_label(d.source), d.file_count),
+    let installed = layout.unit_file()?.exists();
+    println!(
+        "Service:       {}",
+        if installed {
+            "installed"
+        } else {
+            "not installed"
         }
+    );
+    let state = watch::load_state(layout.paths.root())?.for_org(&conn.org_id);
+    if let Some(cycle) = &state.last_cycle {
+        let age_min = (watch::now_ms() - cycle.finished_at_ms).max(0) / 60_000;
+        let result = match &cycle.error {
+            Some(err) => format!("failed: {err}"),
+            None => format!("uploaded {}, failed {}", cycle.uploaded, cycle.failed),
+        };
+        println!("Last cycle:    {age_min} min ago, {result}");
+    }
+
+    match layout.input_config() {
+        Ok(Some(config)) => {
+            println!("\nInputs from {}:", layout.config_file.display());
+            report::print_inputs(&config.inputs, &layout.home, false);
+        }
+        Ok(None) => match layout.source_homes(None) {
+            Ok(homes) => {
+                println!("\nSources (default homes; no collector.toml):");
+                for d in sources::detect_configured(&homes, &layout.home) {
+                    match d.support {
+                        Support::Ready => println!(
+                            "  {:<8} {} items",
+                            report::source_label(d.source),
+                            d.file_count
+                        ),
+                    }
+                }
+            }
+            Err(err) => println!("\nInputs:        none; {err:#}"),
+        },
+        Err(err) => println!("\nConfig:        error: {err:#}"),
     }
     Ok(())
 }
 
-async fn cmd_disconnect() -> Result<()> {
-    let paths = Paths::resolve()?;
-    let Some(conn) = paths.load_connection()? else {
+fn cmd_disconnect(layout: &Layout) -> Result<()> {
+    let Some(conn) = layout.paths.load_connection()? else {
         println!("Already disconnected.");
         return Ok(());
     };
@@ -303,114 +360,30 @@ async fn cmd_disconnect() -> Result<()> {
     // Best-effort server-side revoke is a follow-up (needs an authenticated revoke endpoint or the
     // credential id); for now we remove the local credential and state so the secret can no longer be
     // used from this machine.
-    keychain::delete(&conn.org_id)?;
-    paths.clear_connection(&conn.org_id)?;
+    conn.credentials(&layout.paths).delete(&conn.org_id)?;
+    layout.paths.clear_connection(&conn.org_id)?;
+    // The cursors are gone, so a later login must run the first-run backfill again.
+    match std::fs::remove_file(watch::state_file(layout.paths.root())) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err).context("remove service state"),
+    }
     println!(
         "Disconnected. Local credential and cursors removed for org {}.",
         conn.org_id
     );
-    Ok(())
-}
-
-fn source_label(source: AgentSource) -> &'static str {
-    match source {
-        AgentSource::Claude => "claude",
-        AgentSource::Codex => "codex",
-        AgentSource::Cursor => "cursor",
+    if layout.unit_file()?.exists() {
+        println!(
+            "The service is still installed; `trace-flow{} service uninstall` removes it.",
+            layout.scope.flag()
+        );
     }
-}
-
-/// Read the local Cursor `state.vscdb` read-only and print aggregate counts only. A verification aid for
-/// the Cursor reader: it never uploads, and prints no transcript text, file paths, model names, or ids —
-/// only totals and a token-coverage histogram, so it is safe to run and paste.
-fn cmd_cursor_dryrun() -> Result<()> {
-    use collector_contracts::enums::TokenCoverage;
-    use collector_parser::assemble::session_facts;
-    use collector_sync::{assemble_cursor_units, CursorStore, ImportWindow};
-
-    let home = home_dir()?;
-    let Some(db) = sources::cursor_db_path(&home).filter(|p| p.exists()) else {
-        println!("No Cursor state.vscdb found (Cursor not installed, or unsupported platform).");
-        return Ok(());
-    };
-
-    let paths = Paths::resolve()?;
-    paths.ensure()?;
-    // An ephemeral in-memory store means every composer reads as "changed", so the dry-run sees the
-    // whole DB without touching or advancing the real per-org cursor state.
-    let store = CursorStore::open_in_memory("dryrun").context("open scratch cursor store")?;
-    // Admit every composer regardless of age: cutoff 0 via a first-incremental window at +24h.
-    let window = ImportWindow::first_incremental(24 * 60 * 60 * 1000);
-
-    let units = assemble_cursor_units(&db, &paths.scratch_dir(), &store, window, false)
-        .context("assemble cursor units")?;
-
-    let (mut messages, mut tools, mut files, mut prs) = (0usize, 0usize, 0usize, 0usize);
-    let (mut partial, mut missing, mut full) = (0usize, 0usize, 0usize);
-    for unit in &units {
-        let facts = session_facts(AgentSource::Cursor, &unit.records, &unit.ctx);
-        messages += facts.messages.len();
-        tools += facts.tool_events.len();
-        files += facts.file_events.len();
-        prs += facts.pull_request_links.len();
-        for m in &facts.messages {
-            match m.token_coverage {
-                TokenCoverage::Partial => partial += 1,
-                TokenCoverage::Missing => missing += 1,
-                TokenCoverage::Full => full += 1,
-            }
-        }
-    }
-
-    let pct = |n: usize| {
-        if messages == 0 {
-            0.0
-        } else {
-            100.0 * n as f64 / messages as f64
-        }
-    };
-    println!("Cursor state.vscdb dry-run (read-only, counts only):");
-    println!("  composers (sessions): {}", units.len());
-    println!("  messages:             {messages}");
-    println!("  tool events:          {tools}");
-    println!("  file events:          {files}");
-    println!("  pr links:             {prs}");
-    println!("  token coverage:");
-    println!("    partial: {partial:>7}  ({:.1}%)", pct(partial));
-    println!("    missing: {missing:>7}  ({:.1}%)", pct(missing));
-    println!(
-        "    full:    {full:>7}  ({:.1}%)   (expected 0 — Cursor never reports full coverage)",
-        pct(full)
-    );
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_sync_succeeded, source_detail_lines};
-    use collector_embedder::sync::{InvalidEnvelopeCause, SourceReport};
-
-    #[test]
-    fn source_details_show_skipped_lines_and_the_rejection_cause() {
-        let report = SourceReport {
-            quarantined: vec!["sess-1".to_string()],
-            skipped_lines: 3,
-            invalid_envelope: Some(InvalidEnvelopeCause {
-                reason: Some("fact_identity_conflict".to_string()),
-                category: Some("messages".to_string()),
-            }),
-            ..SourceReport::default()
-        };
-        assert_eq!(
-            source_detail_lines(&report),
-            [
-                "ingest rejected an envelope: reason=fact_identity_conflict category=messages",
-                "quarantined session sess-1: rejected by ingest; retried when it changes",
-                "skipped 3 malformed transcript line(s)",
-            ]
-        );
-        assert!(source_detail_lines(&SourceReport::default()).is_empty());
-    }
+    use super::ensure_sync_succeeded;
 
     #[test]
     fn failed_sessions_make_sync_return_an_error() {

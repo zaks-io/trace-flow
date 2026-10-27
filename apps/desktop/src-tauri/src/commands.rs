@@ -6,7 +6,6 @@
 //! no transcript text, no absolute home path).
 
 use collector_embedder::connection::Paths;
-use collector_embedder::keychain;
 use collector_embedder::sources::{self, Support};
 use serde::Serialize;
 use tauri::State;
@@ -81,15 +80,16 @@ pub fn detect_sources(
 #[tauri::command]
 pub fn connection_status(bus: State<'_, AppStateBus>) -> StatusDto {
     let snapshot = bus.snapshot();
-    let conn = Paths::resolve()
-        .ok()
+    let paths = Paths::resolve().ok();
+    let conn = paths
+        .as_ref()
         .and_then(|p| p.load_connection().ok().flatten());
-    let (connected, org_id, credential_present) = match conn {
-        Some(c) => {
-            let present = keychain::is_present(&c.org_id);
+    let (connected, org_id, credential_present) = match (conn, paths) {
+        (Some(c), Some(paths)) => {
+            let present = c.credentials(&paths).is_present(&c.org_id);
             (true, Some(c.org_id), present)
         }
-        None => (false, None, false),
+        _ => (false, None, false),
     };
     StatusDto {
         connected,
@@ -159,7 +159,9 @@ pub fn disconnect(
 ) -> Result<(), String> {
     let paths = Paths::resolve().map_err(|e| format!("{e:#}"))?;
     if let Some(conn) = paths.load_connection().map_err(|e| format!("{e:#}"))? {
-        keychain::delete(&conn.org_id).map_err(|e| format!("{e:#}"))?;
+        conn.credentials(&paths)
+            .delete(&conn.org_id)
+            .map_err(|e| format!("{e:#}"))?;
         paths
             .clear_connection_only()
             .map_err(|e| format!("{e:#}"))?;

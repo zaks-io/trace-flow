@@ -1,96 +1,291 @@
 // SPDX-License-Identifier: Apache-2.0
 // Trace Flow Collector CLI: browser device-flow login.
 
-//! `trace-flow login` — the browser device flow that mints a Collector Credential.
+//! `trace-flow login`: the browser sign-in that mints a Collector Credential.
 //!
-//! The CLI binds a one-shot HTTP listener on a random `127.0.0.1` port, opens the browser to the
-//! Convex `/collector/authorize` route with that loopback as the `redirect_uri`, and blocks until the
-//! `/collector/callback` redirect lands the minted secret + org metadata back on the listener. The
-//! secret then goes straight into the OS keychain ([`crate::keychain`]); only the non-secret
-//! connection metadata is written to disk ([`crate::connection::Connection`]).
+//! The CLI opens the Convex `/collector/authorize` route with a PKCE challenge (RFC 7636, S256).
+//! The user approves the connection on a Trace Flow consent page, signs in, and receives a
+//! one-time code, which the CLI redeems at `/collector/token` with the verifier that never leaves
+//! this process. The credential arrives only in that response body and goes straight into the
+//! credential store ([`crate::keychain`]); only the non-secret connection metadata is written to
+//! disk ([`crate::connection::Connection`]).
 //!
-//! The secret travels exactly once, over a loopback redirect the Convex side restricts to
-//! `127.0.0.1`. It is never logged, never put on a process arg, never persisted in plaintext.
+//! [`Callback::Loopback`] opens a browser on this machine and receives the code on a `127.0.0.1`
+//! listener it already holds, with a one-time `state` nonce. It never prints that address: opened
+//! on another machine, the redirect would reach whatever listens on that port there.
+//! [`Callback::OutOfBand`] is for hosts without a browser. The sign-in ends on a Trace Flow page
+//! that shows the code, and the user types or pastes it into this terminal, so no request reaches
+//! the browser's machine at all.
+//!
+//! The credential is never logged, never put on a process arg, never persisted in plaintext.
 
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use tiny_http::{Header, Response, Server};
 
 use crate::connection::{Connection, Paths};
-use crate::keychain;
+use crate::keychain::CredentialStore;
 
-/// The minted material the callback hands back over the loopback redirect.
-struct LoginResult {
+/// What redeeming the sign-in code returns.
+#[derive(Deserialize)]
+struct Redeemed {
     secret: String,
     org_id: String,
     collector_id: String,
-    expires_at: Option<i64>,
     convex_url: String,
 }
 
+#[derive(Deserialize)]
+struct Rejected {
+    error: String,
+    error_description: Option<String>,
+}
+
+/// How the one-time sign-in code reaches this process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Callback {
+    /// Open the local browser; its redirect lands on a loopback listener.
+    Loopback,
+    /// The browser runs on another device and shows the code for the user to paste here.
+    OutOfBand,
+}
+
+/// The redirect URN that asks the server to show the code on a page instead of redirecting.
+const OUT_OF_BAND_REDIRECT: &str = "urn:ietf:wg:oauth:2.0:oob";
+
 /// How long to wait for the user to finish the browser login before giving up.
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
+/// How long redeeming the sign-in code may take.
+const REDEEM_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Run the full login flow against `convex_site_url` (the Convex *site* origin, e.g.
-/// `https://<deployment>.convex.site`). Stores the credential and connection on success and returns
-/// the bound [`Connection`] for the caller to report.
-pub fn run(convex_site_url: &str, ingest_url: &str) -> Result<Connection> {
-    let server = Server::http("127.0.0.1:0").map_err(|e| anyhow!("bind loopback listener: {e}"))?;
-    let port = server
-        .server_addr()
-        .to_ip()
-        .context("listener has no IP address")?
-        .port();
-    let redirect_uri = format!("http://127.0.0.1:{port}/callback");
-
+/// `https://<deployment>.convex.site`). Stores the credential in `credentials` and the connection,
+/// which records that store, under `paths` on success, and returns the bound [`Connection`] for the
+/// caller to report.
+pub async fn run(
+    convex_site_url: &str,
+    ingest_url: &str,
+    paths: &Paths,
+    credentials: &CredentialStore,
+    callback: Callback,
+) -> Result<Connection> {
     // One-time state nonce: anyone on the box can hit our loopback listener, so the callback is only
     // trusted if it carries the exact nonce we just generated and sent through the signed OAuth state.
-    let state = random_state();
-    let authorize_url = format!(
-        "{}/collector/authorize?redirect_uri={}&state={}",
-        convex_site_url.trim_end_matches('/'),
-        urlencode(&redirect_uri),
-        urlencode(&state),
-    );
+    let state = random_hex(16);
+    let pkce = Pkce::generate();
+    let code = match callback {
+        Callback::Loopback => {
+            let server =
+                Server::http("127.0.0.1:0").map_err(|e| anyhow!("bind loopback listener: {e}"))?;
+            let port = server
+                .server_addr()
+                .to_ip()
+                .context("listener has no IP address")?
+                .port();
+            let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+            let authorize_url =
+                authorize_url(convex_site_url, &redirect_uri, &state, &pkce.challenge);
+            webbrowser::open(&authorize_url).map_err(|err| {
+                anyhow!(
+                    "could not open a browser here ({err}); run `login --no-browser` to sign in \
+                     from another device"
+                )
+            })?;
+            println!("Approve the connection and sign in in the browser that just opened.");
+            println!("If none did, stop this and run `login --no-browser` instead.");
+            tokio::task::spawn_blocking(move || wait_for_callback(&server, &state))
+                .await
+                .context("wait for the browser")??
+        }
+        Callback::OutOfBand => {
+            let authorize_url = authorize_url(
+                convex_site_url,
+                OUT_OF_BAND_REDIRECT,
+                &state,
+                &pkce.challenge,
+            );
+            println!(
+                "Open this address in a browser on any device, approve the connection, and sign \
+                 in:\n  {authorize_url}\n"
+            );
+            println!("Trace Flow then shows a one-time code that only this terminal can redeem.\n");
+            tokio::task::spawn_blocking(|| {
+                read_code(&mut std::io::stdin().lock(), &mut std::io::stdout())
+            })
+            .await
+            .context("read the sign-in code")??
+        }
+    };
+    let redeemed = redeem(convex_site_url, &code, &pkce.verifier).await?;
 
-    println!("Opening your browser to sign in...");
-    println!("If it doesn't open, visit:\n  {authorize_url}\n");
-    // A failed auto-open is not fatal — the URL is printed above for manual use.
-    let _ = webbrowser::open(&authorize_url);
-
-    let result = wait_for_callback(&server, &state)?;
-
-    let paths = Paths::resolve()?;
     paths.ensure()?;
-    keychain::store(&result.org_id, &result.secret)?;
+    credentials.store(&redeemed.org_id, &redeemed.secret)?;
     let conn = Connection {
-        org_id: result.org_id,
-        collector_id: result.collector_id,
-        convex_url: result.convex_url,
+        org_id: redeemed.org_id,
+        collector_id: redeemed.collector_id,
+        convex_url: redeemed.convex_url,
         ingest_url: ingest_url.to_string(),
-        expires_at: result.expires_at,
+        expires_at: None,
+        credential_store: credentials.kind(),
     };
     paths.save_connection(&conn)?;
     Ok(conn)
 }
 
-/// A 128-bit random state nonce, hex-encoded. Single-use per login; matched against the `state` the
-/// callback echoes back so an unrelated local request can't satisfy the listener.
-fn random_state() -> String {
-    let mut bytes = [0u8; 16];
-    // getrandom reads the OS CSPRNG; a failure here is unrecoverable for a security token, so panic
-    // rather than fall back to a weak source.
-    getrandom::fill(&mut bytes).expect("OS RNG for login state nonce");
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+/// The credential the current connection uses. A login to another organization, or into another
+/// store, leaves it behind as a live secret, so read it before logging in and forget it after.
+pub struct PreviousCredential {
+    credentials: CredentialStore,
+    org_id: String,
 }
 
-/// Block on the listener until the callback redirect for *this* login arrives, parse the minted
-/// material out of its query string, and serve the browser a short success page. Requests that are not
-/// the `/callback` with the matching `state` nonce (a stray browser hit, a probe, a racing local
-/// process) are answered 404 and ignored; the loop keeps waiting until a valid one lands or the overall
-/// `LOGIN_TIMEOUT` elapses.
-fn wait_for_callback(server: &Server, expected_state: &str) -> Result<LoginResult> {
+impl PreviousCredential {
+    /// `None` when there is no readable connection, since nothing then names a credential to remove.
+    pub fn read(paths: &Paths) -> Option<Self> {
+        let conn = paths.load_connection().ok().flatten()?;
+        Some(Self {
+            credentials: conn.credentials(paths),
+            org_id: conn.org_id,
+        })
+    }
+
+    /// Delete this credential unless `conn` stored its own over the same entry.
+    pub fn forget_unless_replaced_by(self, conn: &Connection) -> Result<()> {
+        if self.org_id == conn.org_id && self.credentials.kind() == conn.credential_store {
+            return Ok(());
+        }
+        self.credentials.delete(&self.org_id).with_context(|| {
+            format!(
+                "remove the credential for the previous organization {}",
+                self.org_id
+            )
+        })
+    }
+}
+
+/// RFC 7636 S256: a 256-bit random verifier and the challenge the server checks it against.
+struct Pkce {
+    verifier: String,
+    challenge: String,
+}
+
+impl Pkce {
+    fn generate() -> Self {
+        let mut bytes = [0u8; 32];
+        // A failure here is unrecoverable for a security token, so panic rather than fall back.
+        getrandom::fill(&mut bytes).expect("OS RNG for the PKCE verifier");
+        let verifier = URL_SAFE_NO_PAD.encode(bytes);
+        let challenge = s256_challenge(&verifier);
+        Self {
+            verifier,
+            challenge,
+        }
+    }
+}
+
+fn s256_challenge(verifier: &str) -> String {
+    URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
+}
+
+fn authorize_url(
+    convex_site_url: &str,
+    redirect_uri: &str,
+    state: &str,
+    challenge: &str,
+) -> String {
+    format!(
+        "{}/collector/authorize?redirect_uri={}&state={}&code_challenge={}&code_challenge_method=S256",
+        convex_site_url.trim_end_matches('/'),
+        urlencode(redirect_uri),
+        urlencode(state),
+        urlencode(challenge),
+    )
+}
+
+/// Exchange the one-time code and the verifier for the newly minted credential.
+async fn redeem(convex_site_url: &str, code: &str, verifier: &str) -> Result<Redeemed> {
+    let url = format!("{}/collector/token", convex_site_url.trim_end_matches('/'));
+    let response = reqwest::Client::builder()
+        .timeout(REDEEM_TIMEOUT)
+        .build()
+        .context("build the HTTP client")?
+        .post(&url)
+        .form(&[("code", code), ("code_verifier", verifier)])
+        .send()
+        .await
+        .with_context(|| format!("redeem the sign-in code at {url}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let reason = match response.json::<Rejected>().await {
+            Ok(rejected) => rejected.error_description.unwrap_or(rejected.error),
+            Err(_) => status.to_string(),
+        };
+        bail!("sign-in failed: {reason}; run `login` again");
+    }
+    // The body holds the credential, so a decode error must not quote it; reqwest's does not.
+    response
+        .json()
+        .await
+        .context("read the minted Collector Credential")
+}
+
+/// Prompt until the user enters something shaped like a sign-in code. A pasted address or other
+/// text gets a hint and the prompt repeats, so a slip does not cost the sign-in.
+fn read_code(
+    input: &mut impl std::io::BufRead,
+    output: &mut impl std::io::Write,
+) -> Result<String> {
+    loop {
+        write!(output, "Sign-in code: ")?;
+        output.flush()?;
+        let mut line = String::new();
+        if input
+            .read_line(&mut line)
+            .context("read the sign-in code")?
+            == 0
+        {
+            bail!(
+                "no sign-in code was entered; run `login --no-browser` in an interactive terminal"
+            );
+        }
+        let code = line.trim();
+        if is_code_shaped(code) {
+            return Ok(code.to_string());
+        }
+        if !code.is_empty() {
+            writeln!(
+                output,
+                "That is not a sign-in code. Copy only the code the Trace Flow page shows."
+            )?;
+        }
+    }
+}
+
+fn is_code_shaped(code: &str) -> bool {
+    (1..=128).contains(&code.len()) && code.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+/// `bytes` from the OS CSPRNG, hex-encoded. The login's state nonce is 128 bits, single-use, and
+/// matched against the `state` the callback echoes back so an unrelated local request can't
+/// satisfy the listener.
+fn random_hex(bytes: usize) -> String {
+    let mut buf = vec![0u8; bytes];
+    // A failure here is unrecoverable for a security token, so panic rather than fall back.
+    getrandom::fill(&mut buf).expect("OS RNG for login state nonce");
+    buf.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Block on the listener until the callback redirect for *this* login arrives, take the one-time
+/// code out of its query string, and serve the browser a short page. Requests that are not the
+/// `/callback` with the matching `state` nonce (a stray browser hit, a probe, a racing local
+/// process) are answered 404 and ignored; the loop keeps waiting until a valid one lands or the
+/// overall `LOGIN_TIMEOUT` elapses.
+fn wait_for_callback(server: &Server, expected_state: &str) -> Result<String> {
     let deadline = std::time::Instant::now() + LOGIN_TIMEOUT;
 
     loop {
@@ -102,7 +297,7 @@ fn wait_for_callback(server: &Server, expected_state: &str) -> Result<LoginResul
             .context("wait for browser callback")?
             .ok_or_else(|| anyhow!("login timed out after {}s", LOGIN_TIMEOUT.as_secs()))?;
 
-        // The path arrives as e.g. `/callback?secret=...&state=...`; parse against a dummy base.
+        // The path arrives as e.g. `/callback?code=...&state=...`; parse against a dummy base.
         let parsed = parse_callback(request.url(), expected_state)?;
 
         match parsed {
@@ -115,7 +310,7 @@ fn wait_for_callback(server: &Server, expected_state: &str) -> Result<LoginResul
             CallbackOutcome::Result(result) => {
                 let ok = result.is_ok();
                 let body = if ok {
-                    "<h2>Trace Flow connected.</h2><p>You can close this tab and return to Trace Flow.</p>"
+                    "<h2>Signed in.</h2><p>You can close this tab and return to Trace Flow.</p>"
                 } else {
                     "<h2>Login failed.</h2><p>Return to Trace Flow for details.</p>"
                 };
@@ -134,10 +329,10 @@ fn wait_for_callback(server: &Server, expected_state: &str) -> Result<LoginResul
 }
 
 /// What a received loopback request is: either not our callback (ignore and keep waiting) or the
-/// callback for this login carrying its result (a `LoginResult` or an error-redirect message).
+/// callback for this login carrying its result (the one-time code or an error message).
 enum CallbackOutcome {
     Ignore,
-    Result(std::result::Result<LoginResult, String>),
+    Result(std::result::Result<String, String>),
 }
 
 /// Classify a loopback request by its raw URL. A request is only the login callback if its path is
@@ -165,34 +360,21 @@ fn parse_callback(raw_url: &str, expected_state: &str) -> Result<CallbackOutcome
             "login rejected: {err}"
         ))));
     }
-
-    let get = |k: &str| params.get(k).cloned();
-    let (Some(secret), Some(org_id), Some(collector_id), Some(convex_url)) = (
-        get("secret"),
-        get("org_id"),
-        get("collector_id"),
-        get("convex_url"),
-    ) else {
+    // A server from before PKCE puts the credential itself in the address, where another process
+    // on the browser's machine could have caught it. Refuse it rather than store it.
+    if params.contains_key("secret") {
         return Ok(CallbackOutcome::Result(Err(
-            "callback missing required fields".to_string(),
+            "the server sent a credential in the address instead of a one-time code; it is older \
+             than this Collector, so the sign-in stopped"
+                .to_string(),
         )));
-    };
-
-    let expires_at = get("expires_at")
-        .map(|value| {
-            value
-                .parse()
-                .map_err(|_| anyhow!("callback expires_at not an integer"))
-        })
-        .transpose()?;
-
-    Ok(CallbackOutcome::Result(Ok(LoginResult {
-        secret,
-        org_id,
-        collector_id,
-        expires_at,
-        convex_url,
-    })))
+    }
+    match params.get("code") {
+        Some(code) if !code.is_empty() => Ok(CallbackOutcome::Result(Ok(code.clone()))),
+        _ => Ok(CallbackOutcome::Result(Err(
+            "callback is missing the sign-in code".to_string(),
+        ))),
+    }
 }
 
 /// Minimal length-checked byte equality for the state nonce. Avoids a new crate dep; the nonce isn't
@@ -227,43 +409,106 @@ fn urlencode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keychain::CredentialStoreKind;
 
     /// Unwrap a `CallbackOutcome::Result`, panicking on `Ignore` (used by tests that expect a match).
-    fn result_of(outcome: CallbackOutcome) -> std::result::Result<LoginResult, String> {
+    fn result_of(outcome: CallbackOutcome) -> std::result::Result<String, String> {
         match outcome {
             CallbackOutcome::Result(r) => r,
             CallbackOutcome::Ignore => panic!("expected a callback result, got Ignore"),
         }
     }
 
-    #[test]
-    fn parse_callback_extracts_minted_fields() {
-        let inner = result_of(
-            parse_callback(
-                "/callback?state=nonce1&secret=tfc_abc&org_id=org_1&collector_id=cli-x&expires_at=123&convex_url=https://d.convex.site",
-                "nonce1",
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(inner.secret, "tfc_abc");
-        assert_eq!(inner.org_id, "org_1");
-        assert_eq!(inner.collector_id, "cli-x");
-        assert_eq!(inner.expires_at, Some(123));
-        assert_eq!(inner.convex_url, "https://d.convex.site");
+    fn connected(paths: &Paths, org_id: &str) -> Connection {
+        let conn = Connection {
+            org_id: org_id.to_string(),
+            collector_id: "cli-test".to_string(),
+            convex_url: "https://d.convex.site".to_string(),
+            ingest_url: String::new(),
+            expires_at: None,
+            credential_store: CredentialStoreKind::File,
+        };
+        conn.credentials(paths)
+            .store(org_id, &format!("tfc_{org_id}"))
+            .unwrap();
+        paths.save_connection(&conn).unwrap();
+        conn
     }
 
     #[test]
-    fn parse_callback_accepts_a_credential_without_expiry() {
-        let inner = result_of(
+    fn a_login_to_another_organization_forgets_the_old_credential() {
+        let dir = crate::test_support::private_tempdir();
+        let paths = Paths::at(dir.path().join("state"));
+        let store = CredentialStore::new(CredentialStoreKind::File, &paths);
+
+        connected(&paths, "org_a");
+        let previous = PreviousCredential::read(&paths).unwrap();
+        let same = connected(&paths, "org_a");
+        previous.forget_unless_replaced_by(&same).unwrap();
+        assert!(
+            store.load("org_a").unwrap().is_some(),
+            "a re-login keeps its own credential"
+        );
+
+        let previous = PreviousCredential::read(&paths).unwrap();
+        let other = connected(&paths, "org_b");
+        previous.forget_unless_replaced_by(&other).unwrap();
+        assert!(store.load("org_a").unwrap().is_none());
+        assert!(store.load("org_b").unwrap().is_some());
+    }
+
+    #[test]
+    fn the_challenge_matches_the_rfc_7636_example() {
+        assert_eq!(
+            s256_challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+        );
+        let pkce = Pkce::generate();
+        assert_eq!(
+            pkce.verifier.len(),
+            43,
+            "the shortest verifier RFC 7636 allows"
+        );
+        assert_eq!(pkce.challenge, s256_challenge(&pkce.verifier));
+    }
+
+    #[test]
+    fn the_authorize_url_carries_the_challenge_but_never_the_verifier() {
+        let pkce = Pkce::generate();
+        let url = authorize_url(
+            "https://d.convex.site/",
+            OUT_OF_BAND_REDIRECT,
+            "nonce1",
+            &pkce.challenge,
+        );
+        assert!(url.starts_with(
+            "https://d.convex.site/collector/authorize?redirect_uri=urn%3Aietf%3Awg%3Aoauth%3A2.0%3Aoob&"
+        ));
+        assert!(url.contains(&format!("code_challenge={}", pkce.challenge)));
+        assert!(url.ends_with("&code_challenge_method=S256"));
+        assert!(!url.contains(&pkce.verifier));
+    }
+
+    #[test]
+    fn parse_callback_extracts_the_one_time_code() {
+        let code =
+            result_of(parse_callback("/callback?state=nonce1&code=one-time", "nonce1").unwrap())
+                .unwrap();
+        assert_eq!(code, "one-time");
+    }
+
+    #[test]
+    fn a_credential_in_the_address_is_refused_not_stored() {
+        let result = result_of(
             parse_callback(
                 "/callback?state=nonce1&secret=tfc_abc&org_id=org_1&collector_id=cli-x&convex_url=https://d.convex.site",
                 "nonce1",
             )
             .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(inner.expires_at, None);
+        );
+        let err = result.unwrap_err();
+        assert!(err.contains("older than this Collector"), "{err}");
+        assert!(!err.contains("tfc_abc"));
     }
 
     #[test]
@@ -275,26 +520,24 @@ mod tests {
     }
 
     #[test]
-    fn parse_callback_rejects_missing_fields() {
-        let result =
-            result_of(parse_callback("/callback?state=nonce1&secret=only", "nonce1").unwrap());
-        assert!(result.is_err());
+    fn parse_callback_rejects_a_missing_code() {
+        for query in ["state=nonce1", "state=nonce1&code="] {
+            let result =
+                result_of(parse_callback(&format!("/callback?{query}"), "nonce1").unwrap());
+            assert!(result.is_err(), "{query}");
+        }
     }
 
     #[test]
     fn parse_callback_ignores_a_mismatched_state_nonce() {
         // A request that doesn't carry our exact nonce is not our callback — ignore it, don't fail.
-        let outcome = parse_callback(
-            "/callback?state=attacker&secret=tfc_evil&org_id=o&collector_id=c&expires_at=1&convex_url=https://x",
-            "nonce1",
-        )
-        .unwrap();
+        let outcome = parse_callback("/callback?state=attacker&code=evil", "nonce1").unwrap();
         assert!(matches!(outcome, CallbackOutcome::Ignore));
     }
 
     #[test]
     fn parse_callback_ignores_a_missing_state_nonce() {
-        let outcome = parse_callback("/callback?secret=tfc_x&org_id=o", "nonce1").unwrap();
+        let outcome = parse_callback("/callback?code=one-time", "nonce1").unwrap();
         assert!(matches!(outcome, CallbackOutcome::Ignore));
     }
 
@@ -303,6 +546,25 @@ mod tests {
         // A stray probe to e.g. `/` on our loopback port must not be treated as the callback.
         let outcome = parse_callback("/favicon.ico?state=nonce1", "nonce1").unwrap();
         assert!(matches!(outcome, CallbackOutcome::Ignore));
+    }
+
+    #[test]
+    fn the_typed_code_is_read_after_any_slips() {
+        let mut input = std::io::Cursor::new(
+            "\nhttp://127.0.0.1:5000/callback?code=x\n  6f1c2a4e-9b1d-4c1e-8f00-0123456789ab \n",
+        );
+        let mut output = Vec::new();
+        let code = read_code(&mut input, &mut output).unwrap();
+        assert_eq!(code, "6f1c2a4e-9b1d-4c1e-8f00-0123456789ab");
+        let shown = String::from_utf8(output).unwrap();
+        assert_eq!(shown.matches("Sign-in code: ").count(), 3);
+        assert_eq!(shown.matches("That is not a sign-in code").count(), 1);
+    }
+
+    #[test]
+    fn a_closed_input_ends_the_sign_in() {
+        let err = read_code(&mut std::io::Cursor::new(""), &mut Vec::new()).unwrap_err();
+        assert!(err.to_string().contains("interactive terminal"), "{err}");
     }
 
     #[test]

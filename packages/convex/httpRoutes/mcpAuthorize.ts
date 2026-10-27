@@ -3,8 +3,9 @@ import type { ActionCtx } from '../_generated/server';
 import { getCookie } from 'hono/cookie';
 import { internal } from '../_generated/api';
 import type { HttpDeps } from './deps';
+import { formPageHeaders, redirectPage } from './htmlPage';
 import { consentMatchesRequest, renderMcpConsentPage } from './mcpConsentPage';
-import { MCP_CONSENT_COOKIE, serializeMcpConsentCookie } from './mcpConsentCookie';
+import { MCP_CONSENT_COOKIE, serializeMcpConsentCookie } from './consentCookies';
 import { isAllowedMcpOAuthHost } from './mcpOAuthHost';
 import { isValidS256Challenge } from './mcpPkce';
 import { canonicalizeMcpResource } from './redirectUris';
@@ -123,19 +124,7 @@ export function registerMcpAuthorizeRoutes(
           codeChallengeMethod,
           consentToken: nextConsentToken,
         }),
-        {
-          status: 200,
-          headers: {
-            'Content-Type': 'text/html; charset=utf-8',
-            'Cache-Control': 'no-store, no-cache, must-revalidate',
-            'Content-Security-Policy':
-              "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
-            'Referrer-Policy': 'no-referrer',
-            'X-Content-Type-Options': 'nosniff',
-            'X-Frame-Options': 'DENY',
-            'Set-Cookie': serializeMcpConsentCookie(nextConsentNonce),
-          },
-        },
+        { status: 200, headers: formPageHeaders(serializeMcpConsentCookie(nextConsentNonce)) },
       );
     }
 
@@ -153,34 +142,6 @@ export function registerMcpAuthorizeRoutes(
 
     const auth0Url = oauth.buildAuth0AuthorizeUrl(state, callbackUrl);
 
-    // This branch is reached by the consent form's GET submission. Chrome checks the consent
-    // page's `form-action 'self'` CSP against every redirect hop of that submission, so a 302
-    // here (self -> Auth0, and on silent SSO all the way to the client's localhost callback)
-    // gets blocked. A 200 HTML redirect ends the form-submission chain before the
-    // cross-origin navigation.
-    const redirectHtml = `<!DOCTYPE html>
-<html>
-<head>
-  <meta http-equiv="refresh" content="0;url=${auth0Url}">
-  <title>Redirecting...</title>
-</head>
-<body>
-  <p>Redirecting to authentication... <a href="${auth0Url}">Click here if not redirected</a></p>
-  <script>window.location.replace("${auth0Url}");</script>
-</body>
-</html>`;
-
-    return new Response(redirectHtml, {
-      status: 200,
-      headers: {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Cache-Control': 'no-store, no-cache, must-revalidate',
-        'Content-Security-Policy':
-          "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
-        'Referrer-Policy': 'no-referrer',
-        'X-Content-Type-Options': 'nosniff',
-        'X-Frame-Options': 'DENY',
-      },
-    });
+    return redirectPage(auth0Url);
   });
 }
