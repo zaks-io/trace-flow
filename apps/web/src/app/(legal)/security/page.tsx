@@ -126,8 +126,9 @@ export default function SecurityPage() {
             analytics path uploads typed facts and redacted excerpts, not raw transcripts.
           </p>
           <p>
-            Collector Credentials are separate from gateway API keys. The normal desktop and CLI
-            paths store them in the operating system keychain. Agent Ingest authenticates the
+            Collector Credentials are separate from gateway API keys. The desktop app and the CLI on
+            macOS and Windows store them in the operating system keychain; the Linux CLI keeps them
+            in an owner-only file in its private state directory. Agent Ingest authenticates the
             credential, enforces organization ownership, and re-redacts free-text excerpts before
             queueing facts.
           </p>

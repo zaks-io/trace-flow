@@ -20,7 +20,7 @@ ReadWritePaths=/var/lib/trace-flow
 
 # Claude writes transcripts 0600, so reading other users' agent homes needs CAP_DAC_READ_SEARCH.
 # Root keeps only that capability: it can read any file but cannot override write permissions,
-# change ownership, or regain privileges, and the filesystem is read-only outside the state dir.
+# change ownership, or regain privileges, and it can write only to the state dir and a private /tmp.
 CapabilityBoundingSet=CAP_DAC_READ_SEARCH
 NoNewPrivileges=yes
 ProtectSystem=strict

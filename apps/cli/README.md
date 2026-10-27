@@ -18,6 +18,9 @@ The tagged CLI installer referenced by the old `/install.sh` route is not curren
 the CLI from this repository, or use the signed desktop app described in
 [`apps/desktop/README.md`](../desktop/README.md).
 
+On Linux the build needs `pkg-config` and the D-Bus headers for the optional Secret Service store
+(`sudo apt install pkg-config libdbus-1-dev` on Debian and Ubuntu).
+
 ```sh
 cargo install --path apps/cli --locked   # installs `trace-flow` into ~/.cargo/bin
 trace-flow sources list
@@ -42,8 +45,8 @@ trace-flow [--system] [--config <path>] disconnect
 
 - `login` opens the browser sign-in and stores the resulting Collector Credential in the credential
   store. `--no-browser` signs in from a browser on another machine (see below). The account needs an
-  organization first; create or join one in the web app. Logging in to another organization removes
-  the previous one's credential, and a running service switches to the new login on its next cycle.
+  organization first; create or join one in the web app. Logging in to another organization deletes
+  the previous one's local credential, warning if it cannot (the server does not revoke it), and a running service switches to the new login on its next cycle.
 - `sources list` reports supported stores, or the configured inputs, and their counts without
   printing absolute home paths.
 - `sync` parses, redacts, and uploads facts. Its default `24h` incremental window resumes from the
@@ -102,8 +105,8 @@ The host-wide unit runs the binary as root, so `service install` refuses a binar
 user could replace, such as one in a home or build directory.
 
 Claude writes transcripts `0600`, so the host-wide unit runs as root but keeps only
-`CAP_DAC_READ_SEARCH` under systemd sandboxing: it can read the configured homes, but the filesystem is
-read-only outside `/var/lib/trace-flow`, a syscall filter applies, and it cannot regain privileges. It
+`CAP_DAC_READ_SEARCH` under systemd sandboxing: it can read the configured homes, but it can write only to
+`/var/lib/trace-flow` and a private `/tmp`, a syscall filter applies, and it cannot regain privileges. It
 marks repositories safe for its read-only git calls, since they belong to other users. The units
 live in [`systemd/`](./systemd).
 

@@ -33,7 +33,9 @@ does not upload raw transcripts.
 
 ## Use the CLI from source
 
-The CLI does not currently have a published release asset. Install it from a checkout with Rust:
+The CLI does not currently have a published release asset. Install it from a checkout with Rust. On
+Linux the build also needs `pkg-config` and the D-Bus headers (`sudo apt install pkg-config
+libdbus-1-dev` on Debian and Ubuntu):
 
 ```sh
 cargo install --path apps/cli --locked
@@ -84,8 +86,8 @@ sudo trace-flow --system login --no-browser
 sudo trace-flow --system service install
 ```
 
-The host-wide service runs as root but keeps only the permission to read files, and everything outside
-`/var/lib/trace-flow` is read-only to it. Logs are in `journalctl -u trace-flow`.
+The host-wide service runs as root but keeps only the permission to read files, and it can write only
+to `/var/lib/trace-flow` and a private `/tmp`. Logs are in `journalctl -u trace-flow`.
 
 The service reads its inputs from `~/.config/trace-flow/collector.toml`, or
 `/etc/trace-flow/collector.toml` host-wide. `service install` writes a starting config when none
@@ -110,7 +112,8 @@ service state.
   owner-only file in its private state directory, or in the Secret Service keyring if you set
   `credential_store = "keyring"` before `login`. Headless development and CI may supply the
   documented environment override.
-- Logging in to another organization removes the previous organization's credential.
+- Logging in to another organization deletes the previous organization's credential from this
+  machine, or warns if it cannot. That credential is not revoked on the server.
 - Transcript parsing, excerpt redaction, and source discovery happen locally.
 - Agent Ingest re-redacts free-text excerpts before enqueueing facts.
 - The desktop app remembers the user's sync or pause choice across relaunches.
