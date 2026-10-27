@@ -30,8 +30,11 @@ code to paste into the terminal, with no request to `127.0.0.1` on the browser's
 egress and manages the unit. The config and the state directory are reached only through paths
 other users cannot change, the state directory is private from creation and refused while others
 can write to it, and the connection file, which now records the credential store, refuses symlinks
-and other users' files. ADR 0015 gains a
-Linux Service amendment; ADR 0012 points to it.
+and other users' files. A login to another organization removes the previous credential, and a
+service cycle that races that re-login reads the new connection instead of stopping.
+`/collector/token` answers 403 for a user without an organization and 429 with `Retry-After` when
+sign-ins are rate limited. ADR 0015 gains a Linux Service amendment; ADR 0012 points to it. The
+public collector docs cover the Linux service.
 **Verified:** `cargo fmt`, `cargo clippy --workspace --all-targets -D warnings`, and `cargo test
 --workspace` pass. In a sandbox, the user unit ran against a local fake ingest: first-run backfill,
 glob pickup without restart, catch-up after a stop, clean SIGTERM, exit 78 without restart on a bad

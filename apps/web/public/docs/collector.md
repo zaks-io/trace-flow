@@ -22,43 +22,95 @@ select **Start syncing**.
 
 ## Supported sources
 
-| Source      | Store                                                         | Support                     |
-| ----------- | ------------------------------------------------------------- | --------------------------- |
-| Claude Code | `~/.claude/projects`                                          | macOS and Windows collector |
-| Codex CLI   | `~/.codex/sessions`                                           | macOS and Windows collector |
-| Cursor      | macOS global `state.vscdb`, read through a temporary snapshot | macOS                       |
+| Source      | Store                                                         | Support                                        |
+| ----------- | ------------------------------------------------------------- | ---------------------------------------------- |
+| Claude Code | `~/.claude/projects`                                          | macOS and Windows desktop, macOS and Linux CLI |
+| Codex CLI   | `~/.codex/sessions`                                           | macOS and Windows desktop, macOS and Linux CLI |
+| Cursor      | macOS global `state.vscdb`, read through a temporary snapshot | macOS                                          |
 
 The collector parses transcripts locally and uploads redacted typed facts. The normal analytics path
 does not upload raw transcripts.
 
 ## Use the CLI from source
 
-The CLI does not currently have a published release asset. Developers can run it from a checkout:
+The CLI does not currently have a published release asset. Install it from a checkout with Rust:
 
 ```sh
-cargo run -p trace-flow-cli -- login
-cargo run -p trace-flow-cli -- sources list
-cargo run -p trace-flow-cli -- sync --since 7d
+cargo install --path apps/cli --locked
 ```
 
-The installed binary exposes the same commands without `cargo run -p trace-flow-cli --`:
+This puts `trace-flow` in `~/.cargo/bin`. Its commands:
 
 ```text
-trace-flow login
-trace-flow sources list
-trace-flow sync [--since 24h|7d|30d|1y]
-trace-flow status
-trace-flow disconnect
+trace-flow [--system] [--config <path>] login [--no-browser]
+trace-flow [--system] [--config <path>] sources list
+trace-flow [--system] [--config <path>] sync [--since 24h|7d|30d|1y]
+trace-flow [--system] [--config <path>] sync --watch
+trace-flow [--system] [--config <path>] service install|uninstall
+trace-flow [--system] [--config <path>] status
+trace-flow [--system] [--config <path>] disconnect
 ```
+
+Sign in to the web app and create or join an organization before `login`. Every sign-in starts on a
+Trace Flow page that asks you to approve connecting a Collector; continue only if you just started
+one. On a machine without a browser, `login --no-browser` prints an address to open on any device,
+and the page you reach after sign-in shows a one-time code to paste back into the terminal.
 
 `sync` defaults to a 24-hour incremental scan and resumes from the last complete sync watermark after
 downtime. Failed sessions keep their prior cursor and retry on the next cycle.
 
+## Run the collector as a Linux service
+
+On Linux the CLI can run as a systemd service that syncs every five minutes. The service runs the
+binary that installed it, so install the binary first, as above, rather than running it with
+`cargo run`.
+
+For your own agent homes:
+
+```sh
+trace-flow login --no-browser   # or plain `login` when a browser runs on this machine
+trace-flow service install
+```
+
+`service install` lists the agent homes it will read and asks before it starts syncing. On a host
+without a desktop session, run `loginctl enable-linger "$USER"` once so the service keeps running
+after you log out. Logs are in `journalctl --user -u trace-flow`.
+
+For several users' homes on one host, run it host-wide as root from a root-owned binary:
+
+```sh
+sudo install -m 0755 ~/.cargo/bin/trace-flow /usr/local/bin/trace-flow
+sudo trace-flow --system login --no-browser
+sudo trace-flow --system service install
+```
+
+The host-wide service runs as root but keeps only the permission to read files, and everything outside
+`/var/lib/trace-flow` is read-only to it. Logs are in `journalctl -u trace-flow`.
+
+The service reads its inputs from `~/.config/trace-flow/collector.toml`, or
+`/etc/trace-flow/collector.toml` host-wide. `service install` writes a starting config when none
+exists. Edit it to add homes or globs, then restart the service:
+
+```toml
+[[inputs]]
+name = "agents-codex"         # shown in status and logs instead of the path
+source = "codex"              # claude or codex
+path = "/srv/agents/*/.codex" # globs are expanded again every cycle
+```
+
+A config error or a missing login stops the service until you fix it and restart it. Logging in again
+while it runs takes effect on its next cycle. `trace-flow status` shows the connection, sources, and
+service state.
+
 ## Privacy and credentials
 
 - Collector Credentials are separate from Trace Flow gateway API keys.
-- The normal CLI and desktop paths keep credentials in the OS keychain, not command arguments or
-  config files. Headless development and CI may supply the documented environment override.
+- Credentials never appear in command arguments, config files, or the service unit. The desktop app and
+  the CLI on macOS and Windows keep them in the OS keychain. On Linux the CLI keeps them in an
+  owner-only file in its private state directory, or in the Secret Service keyring if you set
+  `credential_store = "keyring"` before `login`. Headless development and CI may supply the
+  documented environment override.
+- Logging in to another organization removes the previous organization's credential.
 - Transcript parsing, excerpt redaction, and source discovery happen locally.
 - Agent Ingest re-redacts free-text excerpts before enqueueing facts.
 - The desktop app remembers the user's sync or pause choice across relaunches.

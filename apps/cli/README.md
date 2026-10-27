@@ -19,9 +19,13 @@ the CLI from this repository, or use the signed desktop app described in
 [`apps/desktop/README.md`](../desktop/README.md).
 
 ```sh
-cargo build -p trace-flow-cli --locked
-cargo run -p trace-flow-cli -- sources list
+cargo install --path apps/cli --locked   # installs `trace-flow` into ~/.cargo/bin
+trace-flow sources list
 ```
+
+The service runs the binary that installed it, so install one at a stable path rather than running
+the service from `cargo run`. After upgrading the binary, run `service install` again to restart the
+service on it.
 
 ## Commands
 
@@ -37,7 +41,9 @@ trace-flow [--system] [--config <path>] disconnect
 ```
 
 - `login` opens the browser sign-in and stores the resulting Collector Credential in the credential
-  store. `--no-browser` signs in from a browser on another machine (see below).
+  store. `--no-browser` signs in from a browser on another machine (see below). The account needs an
+  organization first; create or join one in the web app. Logging in to another organization removes
+  the previous one's credential, and a running service switches to the new login on its next cycle.
 - `sources list` reports supported stores, or the configured inputs, and their counts without
   printing absolute home paths.
 - `sync` parses, redacts, and uploads facts. Its default `24h` incremental window resumes from the
@@ -87,7 +93,7 @@ are logged out: `loginctl enable-linger "$USER"` (some hosts require an administ
 Host-wide:
 
 ```sh
-sudo install -m 0755 ./trace-flow /usr/local/bin/trace-flow
+sudo install -m 0755 ~/.cargo/bin/trace-flow /usr/local/bin/trace-flow
 sudo trace-flow --system login --no-browser
 sudo trace-flow --system service install
 ```
@@ -166,13 +172,13 @@ browser. The prompt needs an interactive terminal.
 
 ## Environment overrides
 
-| Variable                      | Default                                  | Purpose                                          |
-| ----------------------------- | ---------------------------------------- | ------------------------------------------------ |
-| `TRACE_FLOW_CONVEX_SITE_URL`  | `https://laudable-bison-427.convex.site` | Convex site origin for the browser device flow   |
-| `TRACE_FLOW_INGEST_URL`       | `https://collector.trace-flow.dev`       | Agent Ingest origin used by `sync`               |
-| `TRACE_FLOW_COLLECTOR_SECRET` | Credential store                         | CI credential override                           |
-| `TRACE_FLOW_STATE_DIR`        | OS application config directory          | Per-user state location (not used by `--system`) |
-| `TRACE_FLOW_CONFIG`           | Layout's `collector.toml`                | Same as `--config`                               |
+| Variable                      | Default                                  | Purpose                                            |
+| ----------------------------- | ---------------------------------------- | -------------------------------------------------- |
+| `TRACE_FLOW_CONVEX_SITE_URL`  | `https://laudable-bison-427.convex.site` | Convex site origin for the browser device flow     |
+| `TRACE_FLOW_INGEST_URL`       | `https://collector.trace-flow.dev`       | Agent Ingest origin a new `login` saves for `sync` |
+| `TRACE_FLOW_COLLECTOR_SECRET` | Credential store                         | CI credential override                             |
+| `TRACE_FLOW_STATE_DIR`        | OS application config directory          | Per-user state location (not used by `--system`)   |
+| `TRACE_FLOW_CONFIG`           | Layout's `collector.toml`                | Same as `--config`                                 |
 
 For dev, override both endpoint variables with the deployed `-dev` Agent Ingest origin and the
 Convex dev **site** origin. A bare collector launch targets production. Use `127.0.0.1:8787` only

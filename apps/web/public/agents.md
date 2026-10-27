@@ -248,11 +248,12 @@ await generateText({
 ## Coding-agent collector
 
 The collector is a separate local application. It parses supported stores locally, redacts excerpts,
-and uploads typed facts with an OS-keychain-backed Collector Credential. It does not send raw
-transcripts through the normal analytics path.
+and uploads typed facts with a Collector Credential kept in the OS keychain, or on Linux in an
+owner-only file. It does not send raw transcripts through the normal analytics path.
 
-Current sources are Claude Code, Codex CLI, and Cursor on macOS. Signed desktop downloads and the CLI
-source workflow are documented at <https://trace-flow.dev/docs/collector.md>.
+Current sources are Claude Code, Codex CLI, and Cursor on macOS. Signed desktop downloads, the CLI
+source workflow, and the Linux systemd service are documented at
+<https://trace-flow.dev/docs/collector.md>.
 
 ## Privacy mode: skip body storage
 

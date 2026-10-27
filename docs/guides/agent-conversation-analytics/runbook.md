@@ -300,7 +300,8 @@ Obtain the two real inputs from the authenticated control plane (not from KV or 
 # 1. Mint a Collector Credential as a normal user via the production CLI device flow.
 #    The CLI defaults to production URLs — no env vars required:
 trace-flow login
-#    The CLI stores the secret in the OS keychain. For the headless smoke, export it (or read it back):
+#    The CLI stores the secret in its credential store (the OS keychain, or an owner-only file on
+#    Linux). For the headless smoke, export it (or read it back):
 export TRACE_FLOW_SMOKE_COLLECTOR_SECRET=<the minted secret>
 
 # 2. Mint an agent-scoped Tinybird JWT for the smoke org the same way the app does
@@ -314,11 +315,12 @@ scripts/agent-ingest-smoke.sh
 ```
 
 **Advanced / dev only:** override CLI endpoints when pointing at a local worker or the dev environment (see
-`apps/cli/README.md`):
+`apps/cli/README.md`). `login` saves the ingest URL with the connection, so set both on `login`:
 
 ```sh
-TRACE_FLOW_CONVEX_SITE_URL=https://<deployment>.convex.site trace-flow login
-TRACE_FLOW_INGEST_URL=http://127.0.0.1:8787 trace-flow sync --since 24h
+TRACE_FLOW_CONVEX_SITE_URL=https://<deployment>.convex.site \
+TRACE_FLOW_INGEST_URL=http://127.0.0.1:8787 trace-flow login
+trace-flow sync --since 24h
 ```
 
 ## Teardown
