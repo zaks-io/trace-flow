@@ -72,7 +72,7 @@ CONVEX_PORT="${TRACE_FLOW_LOCAL_STACK_CONVEX_PORT:-3210}"
 CONVEX_SITE_PORT="${TRACE_FLOW_LOCAL_STACK_CONVEX_SITE_PORT:-3211}"
 OIDC_PORT="${TRACE_FLOW_LOCAL_STACK_OIDC_PORT:-3230}"
 
-CONVEX_IMAGE="${TRACE_FLOW_LOCAL_STACK_CONVEX_IMAGE:-ghcr.io/get-convex/convex-backend:latest}"
+CONVEX_IMAGE="${TRACE_FLOW_LOCAL_STACK_CONVEX_IMAGE:-ghcr.io/convex/convex-backend:latest}"
 CONVEX_CONTAINER="trace-flow-local-convex-$STACK_RUNTIME_ID"
 CONVEX_VOLUME="$CONVEX_CONTAINER"
 DOCKER_NETWORK="trace-flow-local-$STACK_RUNTIME_ID"
@@ -319,7 +319,11 @@ CONVEX_SELF_HOSTED_ADMIN_KEY=$admin_key
 EOF
   chmod 600 "$STACK_CONVEX_CLI_DIR/.env.local"
 
+  # Convex tracing refuses to run without a DSN; this one is a closed port inside the container, so
+  # spans are dropped and nothing leaves the stack.
   cat >"$STACK_DIR/convex.env" <<EOF
+SENTRY_DSN=http://local@127.0.0.1:9/1
+SENTRY_ENVIRONMENT=local-stack
 AUTH0_DOMAIN=$OIDC_ISSUER
 AUTH0_CLIENT_ID=$OIDC_CLIENT_ID
 AUTH0_CLIENT_SECRET=$OIDC_CLIENT_SECRET

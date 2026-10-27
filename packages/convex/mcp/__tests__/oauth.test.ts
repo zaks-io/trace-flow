@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+  auth0Issuer,
   exchangeAuth0Code,
   getAuth0UserInfo,
   signConsent,
@@ -53,7 +54,7 @@ describe('exchangeAuth0Code', () => {
     vi.stubEnv('AUTH0_DOMAIN', '');
 
     await expect(exchangeAuth0Code('code', 'https://example.com/callback')).rejects.toThrow(
-      'Auth0 configuration missing',
+      'AUTH0_DOMAIN not configured',
     );
   });
 
@@ -336,8 +337,18 @@ describe('buildAuth0AuthorizeUrl', () => {
     vi.stubEnv('AUTH0_DOMAIN', '');
 
     expect(() => buildAuth0AuthorizeUrl('state', 'https://example.com/callback')).toThrow(
-      'Auth0 configuration missing',
+      'AUTH0_DOMAIN not configured',
     );
+  });
+
+  it('builds on a full issuer URL, such as the local stack mock issuer', () => {
+    vi.stubEnv('AUTH0_DOMAIN', 'http://127.0.0.1:3230/');
+    const url = new URL(
+      buildAuth0AuthorizeUrl('state-token', 'http://127.0.0.1:3211/mcp/callback'),
+    );
+
+    expect(url.origin + url.pathname).toBe('http://127.0.0.1:3230/authorize');
+    expect(url.searchParams.get('state')).toBe('state-token');
   });
 
   it('throws when AUTH0_CLIENT_ID missing', () => {
@@ -346,5 +357,23 @@ describe('buildAuth0AuthorizeUrl', () => {
     expect(() => buildAuth0AuthorizeUrl('state', 'https://example.com/callback')).toThrow(
       'Auth0 configuration missing',
     );
+  });
+});
+
+describe('auth0Issuer', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('turns a tenant host into its issuer URL', () => {
+    vi.stubEnv('AUTH0_DOMAIN', 'tenant.us.auth0.com');
+    expect(auth0Issuer()).toBe('https://tenant.us.auth0.com/');
+  });
+
+  it('keeps a full issuer URL with one trailing slash', () => {
+    for (const domain of ['http://sbx.example.ts.net:3230/', 'http://sbx.example.ts.net:3230']) {
+      vi.stubEnv('AUTH0_DOMAIN', domain);
+      expect(auth0Issuer()).toBe('http://sbx.example.ts.net:3230/');
+    }
   });
 });

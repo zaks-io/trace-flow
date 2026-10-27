@@ -82,8 +82,7 @@ export function registerMcpCallbackRoutes(
         return c.json({ error: 'A verified email address is required' }, 403);
       }
 
-      const domain = process.env.AUTH0_DOMAIN;
-      const tokenIdentifier = `https://${domain}/|${userInfo.sub}`;
+      const tokenIdentifier = `${oauth.auth0Issuer()}|${userInfo.sub}`;
 
       // Find or create user
       let userId;
