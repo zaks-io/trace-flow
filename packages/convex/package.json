@@ -14,7 +14,7 @@
     "@convex-dev/rate-limiter": "^0.3.2",
     "@openrouter/ai-sdk-provider": "^2.10.0",
     "@react-email/components": "^1.0.12",
-    "@splitch/convex": "^0.2.0",
+    "@splitch/convex": "^0.2.1",
     "@trace-flow/emails": "workspace:*",
     "@trace-flow/logging": "workspace:*",
     "@trace-flow/mcp-core": "workspace:*",
