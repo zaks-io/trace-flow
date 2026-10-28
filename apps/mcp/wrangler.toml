@@ -30,7 +30,7 @@ AXIOM_DATASET = "cloudflare"
 # Per-IP rate limit on the MCP endpoint (the public, user-facing surface)
 [[ratelimits]]
 name = "MCP_LIMITER"
-namespace_id = "2007"
+namespace_id = "2024"
 simple = { limit = 120, period = 60 }
 
 # Dynamic client registration creates permanent rows. Ten registrations per

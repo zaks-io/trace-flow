@@ -40,6 +40,25 @@ function signupEmails() {
   return send.mock.calls.filter(([message]) => message.subject.startsWith(SIGNUP_SUBJECT));
 }
 
+type Syscall = (op: string, jsonArgs: string) => string;
+
+// convex-test applies `.filter` inside its fake database without counting the
+// documents it skips, so a read budget cannot catch a full scan. Record the
+// query plans functions send to the runtime instead.
+function recordQuerySources() {
+  const convex = (globalThis as unknown as { Convex: { syscall: unknown } }).Convex;
+  const readSyscall = Object.getOwnPropertyDescriptor(convex, 'syscall')!.get!.bind(convex);
+  const sources: unknown[] = [];
+  const spy = vi.spyOn(convex, 'syscall', 'get').mockImplementation(() => {
+    const syscall = readSyscall() as Syscall;
+    return (op: string, jsonArgs: string) => {
+      if (op === '1.0/queryStream') sources.push(JSON.parse(jsonArgs).query.source);
+      return syscall(op, jsonArgs);
+    };
+  });
+  return { sources, restore: () => spy.mockRestore() };
+}
+
 describe('new sign-up admin notifications', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -54,6 +73,34 @@ describe('new sign-up admin notifications', () => {
     vi.useRealTimers();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+  });
+
+  it('looks up only enabled admins without scanning every user', async () => {
+    const { t } = await setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert('users', {
+        tokenIdentifier: 'explicit-non-admin',
+        email: 'member2@example.com',
+        enabled: true,
+        isAdmin: false,
+      });
+      await ctx.db.insert('users', {
+        tokenIdentifier: 'duplicate-admin',
+        email: ' ADMIN@example.com ',
+        enabled: true,
+        isAdmin: true,
+      });
+    });
+
+    const queries = recordQuerySources();
+    try {
+      expect(await t.query(internal.auth.users.getAdminEmails, {})).toEqual(['admin@example.com']);
+    } finally {
+      queries.restore();
+    }
+    expect(queries.sources).toEqual([
+      expect.objectContaining({ type: 'IndexRange', indexName: 'users.by_is_admin_enabled' }),
+    ]);
   });
 
   it('emails enabled admins once when someone signs up on the web', async () => {

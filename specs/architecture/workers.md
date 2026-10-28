@@ -476,3 +476,43 @@ Each worker connects to environment-specific resources via its Wrangler config:
 | Web            | -                       | -                      | -                       |
 
 Production uses production resource names. Preview support is worker-specific and follows each `wrangler` config and GitHub Actions workflow.
+
+## Rate-limit namespace registry
+
+Cloudflare shares counters for a namespace ID across Workers at each location. Each environment
+uses separate IDs. Top-level bindings are development defaults; Web repeats its development
+binding in its explicit development environment. Production IDs and limits must stay unchanged.
+Workers without rate-limit bindings have no entries here.
+
+| Worker       | Environment             | Binding                  | ID   |
+| ------------ | ----------------------- | ------------------------ | ---- |
+| agent-ingest | development (top-level) | AGENT_INGEST_LIMITER     | 2006 |
+| agent-ingest | preview                 | AGENT_INGEST_LIMITER     | 2010 |
+| agent-ingest | production              | AGENT_INGEST_LIMITER     | 2007 |
+| api          | development (top-level) | BODIES_LIMITER           | 2003 |
+| api          | preview                 | BODIES_LIMITER           | 2012 |
+| api          | production              | BODIES_LIMITER           | 2011 |
+| mcp          | development (top-level) | MCP_LIMITER              | 2024 |
+| mcp          | development (top-level) | MCP_REGISTRATION_LIMITER | 2015 |
+| mcp          | preview                 | MCP_LIMITER              | 2008 |
+| mcp          | preview                 | MCP_REGISTRATION_LIMITER | 2016 |
+| mcp          | production              | MCP_LIMITER              | 2009 |
+| mcp          | production              | MCP_REGISTRATION_LIMITER | 2017 |
+| pipes-api    | development (top-level) | PIPES_LIMITER            | 2004 |
+| pipes-api    | preview                 | PIPES_LIMITER            | 2014 |
+| pipes-api    | production              | PIPES_LIMITER            | 2013 |
+| proxy        | development (top-level) | IP_LIMITER               | 2019 |
+| proxy        | development (top-level) | ORG_LIMITER              | 2018 |
+| proxy        | preview                 | IP_LIMITER               | 2021 |
+| proxy        | preview                 | ORG_LIMITER              | 2020 |
+| proxy        | production              | IP_LIMITER               | 2002 |
+| proxy        | production              | ORG_LIMITER              | 2001 |
+| web          | development (top-level) | TOKEN_REFRESH_LIMITER    | 2022 |
+| web          | development             | TOKEN_REFRESH_LIMITER    | 2022 |
+| web          | preview                 | TOKEN_REFRESH_LIMITER    | 2023 |
+| web          | production              | TOKEN_REFRESH_LIMITER    | 2005 |
+
+The config-backed check runs in CI and locally through `bun run ci:check`. It compares every
+rate-limit binding with this table, rejects IDs shared across environments, and compares
+production IDs and limits with `origin/main`. Run it directly with
+`bun test scripts/ci/rate-limit-namespaces.test.mjs --max-concurrency=2`.

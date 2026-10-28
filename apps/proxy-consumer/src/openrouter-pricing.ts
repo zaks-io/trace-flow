@@ -51,9 +51,13 @@ export async function fetchOpenRouterPricing(
     const pricing = convertOpenRouterModelPricing(orModel);
 
     const key = cacheKey ?? `pricing:openrouter:${model}`;
-    await kv.put(key, JSON.stringify(pricing), {
-      expirationTtl: OPENROUTER_PRICING_TTL_SECONDS,
-    });
+    try {
+      await kv.put(key, JSON.stringify(pricing), {
+        expirationTtl: OPENROUTER_PRICING_TTL_SECONDS,
+      });
+    } catch {
+      console.warn('Failed to cache OpenRouter pricing');
+    }
 
     return pricing;
   } catch (error) {

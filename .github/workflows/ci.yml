@@ -161,6 +161,8 @@ jobs:
             ${{ runner.os }}-turbo-
       - name: Format check
         run: bun prettier --check "**/*.{ts,tsx,js,jsx,json,css,md}"
+      - name: Check rate-limit namespace registry
+        run: bun test scripts/ci/rate-limit-namespaces.test.mjs --max-concurrency=2
       - name: Check unused code
         run: bun run knip
       - name: Select package check scope

@@ -15,5 +15,6 @@ export AUTH0_CLIENT_SECRET="${AUTH0_CLIENT_SECRET:-test}"
 export BODY_ACCESS_JWT_SECRET="${BODY_ACCESS_JWT_SECRET:-test-body-access-secret-at-least-32-characters-long}"
 node --test scripts/ci/body-retention.test.mjs scripts/ingest-recovery/worker.test.mjs
 python3 scripts/ci/ubuntu_https_sources_test.py
+bun test scripts/ci/rate-limit-namespaces.test.mjs --max-concurrency=2
 bun run duplicates:check
 exec bun run check "$@"

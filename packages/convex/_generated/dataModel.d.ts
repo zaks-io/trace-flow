@@ -1233,6 +1233,7 @@ export type DataModel = {
     indexes: {
       by_id: ["_id"];
       by_creation_time: ["_creationTime"];
+      by_is_admin_enabled: ["isAdmin", "enabled", "_creationTime"];
       by_org_id: ["orgId", "_creationTime"];
       by_token_identifier: ["tokenIdentifier", "_creationTime"];
     };

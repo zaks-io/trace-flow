@@ -473,7 +473,7 @@ export const getAdminEmails = internalQuery({
   handler: async (ctx) => {
     const admins = await ctx.db
       .query('users')
-      .filter((q) => q.and(q.eq(q.field('isAdmin'), true), q.eq(q.field('enabled'), true)))
+      .withIndex('by_is_admin_enabled', (q) => q.eq('isAdmin', true).eq('enabled', true))
       .collect();
     const emails = admins.map((admin) => normalizeEmail(admin.email));
     if (emails.some((email) => !email)) throw new Error('Admin email is missing');
