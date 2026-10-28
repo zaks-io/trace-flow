@@ -6,11 +6,16 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const configPaths = readdirSync(`${root}/apps`).flatMap((worker) =>
-  readdirSync(`${root}/apps/${worker}`)
-    .filter((file) => /^wrangler\.(toml|jsonc?)$/.test(file))
-    .map((file) => `apps/${worker}/${file}`),
-);
+const configPattern = /^apps\/[^/]+\/wrangler\.(toml|jsonc?)$/;
+const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
+const configPaths = readdirSync(`${root}/apps`, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .flatMap(({ name: worker }) =>
+    readdirSync(`${root}/apps/${worker}`)
+      .map((file) => `apps/${worker}/${file}`)
+      .filter((path) => configPattern.test(path)),
+  )
+  .sort();
 
 function bindings(path, source) {
   const parsed = path.endsWith('.toml')
@@ -68,12 +73,11 @@ describe('Worker rate-limit namespace registry', () => {
 
   test('preserves production namespaces and limits from main', () => {
     const production = (rows) => rows.filter(({ environment }) => environment === 'production');
-    const baseline = configPaths.flatMap((path) =>
-      bindings(
-        path,
-        execFileSync('git', ['show', `origin/main:${path}`], { cwd: root, encoding: 'utf8' }),
-      ),
-    );
+    const baseline = git('ls-tree', '-r', '--name-only', 'origin/main', '--', 'apps')
+      .split('\n')
+      .filter((path) => configPattern.test(path))
+      .sort()
+      .flatMap((path) => bindings(path, git('show', `origin/main:${path}`)));
     expect(production(current)).toEqual(production(baseline));
     expect(production(current).length).toBeGreaterThan(0);
   });
