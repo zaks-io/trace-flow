@@ -13,7 +13,7 @@
   "observability": {
     "traces": {
       "enabled": true,
-      "destinations": ["axiom-traces", "sentry-trace-flow-traces"],
+      "destinations": ["axiom-traces"],
       "head_sampling_rate": 1,
     },
     "logs": {
@@ -76,7 +76,7 @@
       "observability": {
         "traces": {
           "enabled": true,
-          "destinations": ["axiom-traces", "sentry-trace-flow-traces"],
+          "destinations": ["axiom-traces"],
           "head_sampling_rate": 1,
         },
         "logs": {
@@ -117,7 +117,7 @@
       "observability": {
         "traces": {
           "enabled": true,
-          "destinations": ["axiom-traces", "sentry-trace-flow-traces"],
+          "destinations": ["axiom-traces"],
           "head_sampling_rate": 1,
         },
         "logs": {

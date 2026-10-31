@@ -5,6 +5,7 @@ import { DurableObject, tracing } from 'cloudflare:workers';
 import * as Sentry from '@sentry/cloudflare';
 import {
   captureSafeException,
+  DURABLE_OBJECT_IGNORED_SPANS,
   internalTraceHeaders,
   sentryRequestPrivacy,
   TRACE_FLOW_PROPAGATION_TARGETS,
@@ -142,6 +143,7 @@ export const UsageTracker = Sentry.instrumentDurableObjectWithSentry(
     enableRpcTracePropagation: true,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
     ...sentryRequestPrivacy(),
+    ignoreSpans: DURABLE_OBJECT_IGNORED_SPANS,
   }),
   UsageTrackerBase,
 );

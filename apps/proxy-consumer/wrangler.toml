@@ -8,7 +8,7 @@ logpush = true
 
 [observability.traces]
 enabled = true
-destinations = ["axiom-traces", "sentry-trace-flow-traces"]
+destinations = ["axiom-traces"]
 head_sampling_rate = 1
 
 [observability.logs]
@@ -28,8 +28,10 @@ TINYBIRD_TRACE_WRITE_MODE = "clean"
 [placement]
 mode = "smart"
 
+# The TraceBatcher health check wakes every shard. Dev and preview carry almost no traffic, so they
+# run it hourly; production keeps the five-minute cadence.
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["0 * * * *"]
 
 # Durable Object for batching traces
 [[durable_objects.bindings]]
@@ -149,7 +151,7 @@ AXIOM_DATASET = "cloudflare"
 TINYBIRD_HOST = "https://api.us-west-2.aws.tinybird.co"
 
 [env.preview.triggers]
-crons = ["*/5 * * * *"]
+crons = ["0 * * * *"]
 
 [[env.preview.durable_objects.bindings]]
 name = "TRACE_BATCHER"

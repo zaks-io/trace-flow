@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import * as Sentry from '@sentry/cloudflare';
 import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import {
+  DURABLE_OBJECT_IGNORED_SPANS,
   sentryRequestPrivacy,
   TRACE_FLOW_PROPAGATION_TARGETS,
 } from '@trace-flow/utils/sentry-tracing';
@@ -86,6 +87,7 @@ export const TraceDeliverySweep = Sentry.instrumentDurableObjectWithSentry(
     enableRpcTracePropagation: true,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
     ...sentryRequestPrivacy(),
+    ignoreSpans: DURABLE_OBJECT_IGNORED_SPANS,
   }),
   TraceDeliverySweepBase,
 );

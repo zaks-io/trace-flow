@@ -120,6 +120,14 @@ returned rows are excluded. Convex uses a separate client and scope per operatio
 and flushes before returning. Search Sentry for `span.op:db.query
 span.description:tinybird.*` in the relevant environment.
 
+Cloudflare native Worker traces export only to Axiom's `cloudflare` dataset. Filter
+by `service.name` (the Worker script); root invocation spans carry `cpu_time_ms` and
+`wall_time_ms` in `attributes.custom`. Sentry receives the SDK's application traces
+and errors; application spans consume a span budget shared by every project in the
+organization. Durable Object SQL spans are excluded from Sentry export
+(`DURABLE_OBJECT_IGNORED_SPANS`); find them in Axiom as `durable_object_storage_exec`
+with query text and rows read and written.
+
 ### Convex Environment
 
 Convex owns user/org state, API keys, Collector Credentials, compatibility policy, session ownership,

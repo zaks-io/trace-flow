@@ -1,4 +1,7 @@
-import { sentryRequestPrivacy } from '@trace-flow/utils/sentry-tracing';
+import {
+  DURABLE_OBJECT_IGNORED_SPANS,
+  sentryRequestPrivacy,
+} from '@trace-flow/utils/sentry-tracing';
 import * as Sentry from '@sentry/cloudflare';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { DurableObject } from 'cloudflare:workers';
@@ -154,6 +157,7 @@ export const SnapshotCapacity = Sentry.instrumentDurableObjectWithSentry(
     tracesSampleRate: 1.0,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
     ...sentryRequestPrivacy(),
+    ignoreSpans: DURABLE_OBJECT_IGNORED_SPANS,
     enableRpcTracePropagation: true,
     rpcTracePropagationBindings: ['AGENT_DELIVERY_COORDINATOR'],
   }),

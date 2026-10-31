@@ -111,6 +111,18 @@ export const TRACE_FLOW_PROPAGATION_TARGETS: (string | RegExp)[] = [
   /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/,
 ];
 
+/**
+ * `ignoreSpans` for every Sentry-instrumented Durable Object.
+ *
+ * The SDK records one `db.query` span per Durable Object SQL statement, which made these spans
+ * about a quarter of the shared Sentry span budget. Cloudflare native traces in Axiom keep the
+ * same statements as `durable_object_storage_exec` spans with query text and rows read/written.
+ * Matching the SQL system keeps Tinybird `db.query` spans.
+ */
+export const DURABLE_OBJECT_IGNORED_SPANS: NonNullable<Sentry.CloudflareOptions['ignoreSpans']> = [
+  { op: 'db.query', attributes: { 'db.system.name': 'cloudflare-durable-object-sql' } },
+];
+
 /** Trace headers of the currently active trace, for a producer to attach to a queue message. */
 export function currentSentryTraceContext(): SentryTraceContext {
   const context = Sentry.getActiveSpan()?.spanContext();
