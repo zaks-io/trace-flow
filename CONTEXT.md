@@ -69,7 +69,7 @@ _Avoid_: "Consumer" when agent analytics is also in scope; use "Proxy Consumer" 
 The Durable Object class (`apps/proxy-consumer/src/batcher.ts`) that accumulates Spans before insert. One instance per Trace Shard.
 
 **Trace Shard**:
-A single TraceBatcher instance. Queue Messages fan out across Trace Shards to amortize Tinybird inserts. A `*/5 * * * *` cron flushes stale Trace Shards. Named with the "Trace" prefix so other shard types (e.g. for usage rollups or rate limits) can coexist without ambiguity.
+A single TraceBatcher instance. Queue Messages fan out across Trace Shards to amortize Tinybird inserts. A five-minute cron in production (hourly in dev and preview) checks Trace Shards and force-flushes stale ones. Named with the "Trace" prefix so other shard types (e.g. for usage rollups or rate limits) can coexist without ambiguity.
 _Avoid_: "shard" (unqualified), "partition", "batcher worker".
 
 **Agent Ingest**:

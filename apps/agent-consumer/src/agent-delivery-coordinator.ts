@@ -1,4 +1,7 @@
-import { sentryRequestPrivacy } from '@trace-flow/utils/sentry-tracing';
+import {
+  DURABLE_OBJECT_IGNORED_SPANS,
+  sentryRequestPrivacy,
+} from '@trace-flow/utils/sentry-tracing';
 import { abandonUnstartedSnapshotCopy, type ResumeSnapshotInput } from './snapshot-recovery';
 import {
   initializeSnapshotChecks,
@@ -740,6 +743,7 @@ export const AgentDeliveryCoordinator = Sentry.instrumentDurableObjectWithSentry
     tracesSampleRate: 1.0,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
     ...sentryRequestPrivacy(),
+    ignoreSpans: DURABLE_OBJECT_IGNORED_SPANS,
     // The calling Worker appends RPC trace metadata, which only an instrumented DO strips.
     enableRpcTracePropagation: true,
   }),

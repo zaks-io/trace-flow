@@ -62,6 +62,7 @@ export const AgentDeadLetters = Sentry.instrumentDurableObjectWithSentry(
     tracesSampleRate: 1.0,
     tracePropagationTargets: sentryTracing.TRACE_FLOW_PROPAGATION_TARGETS,
     ...sentryTracing.sentryRequestPrivacy(),
+    ignoreSpans: sentryTracing.DURABLE_OBJECT_IGNORED_SPANS,
     // Match the caller so RPC instrumentation strips metadata before invoking business methods.
     enableRpcTracePropagation: true,
   }),

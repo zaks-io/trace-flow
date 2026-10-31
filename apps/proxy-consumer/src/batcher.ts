@@ -1,4 +1,7 @@
-import { sentryRequestPrivacy } from '@trace-flow/utils/sentry-tracing';
+import {
+  DURABLE_OBJECT_IGNORED_SPANS,
+  sentryRequestPrivacy,
+} from '@trace-flow/utils/sentry-tracing';
 import * as Sentry from '@sentry/cloudflare';
 import { normalizeAnalyticsKey } from '@trace-flow/utils';
 import {
@@ -960,6 +963,7 @@ export const TraceBatcher = Sentry.instrumentDurableObjectWithSentry(
     tracesSampleRate: 1.0,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
     ...sentryRequestPrivacy(),
+    ignoreSpans: DURABLE_OBJECT_IGNORED_SPANS,
     // Must match the calling Worker: the stub appends a trailing metadata argument that only an
     // RPC-instrumented Durable Object strips back off before the method sees its args.
     enableRpcTracePropagation: true,
