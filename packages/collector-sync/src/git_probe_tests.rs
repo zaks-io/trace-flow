@@ -161,6 +161,50 @@ async fn git_exit_codes_distinguish_absence_from_failure_and_support_unborn_bran
 }
 
 #[tokio::test]
+async fn pruned_or_broken_worktree_gitfiles_are_absence_not_deferral() {
+    let repo = tempfile::TempDir::new().unwrap();
+    assert!(git(repo.path(), &["init", "-b", "main"]).status.success());
+    assert!(git(
+        repo.path(),
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Initial"
+        ]
+    )
+    .status
+    .success());
+    let worktree = tempfile::TempDir::new().unwrap();
+    let pruned = worktree.path().join("pruned");
+    assert!(git(
+        repo.path(),
+        &["worktree", "add", "-q", pruned.to_str().unwrap()]
+    )
+    .status
+    .success());
+    // The checkout survives but its metadata in the main repository is gone.
+    std::fs::remove_dir_all(repo.path().join(".git/worktrees")).unwrap();
+
+    let dangling = tempfile::TempDir::new().unwrap();
+    std::fs::write(dangling.path().join(".git"), "gitdir: /nonexistent\n").unwrap();
+    let malformed = tempfile::TempDir::new().unwrap();
+    std::fs::write(malformed.path().join(".git"), "not a gitfile\n").unwrap();
+
+    for cwd in [pruned.as_path(), dangling.path(), malformed.path()] {
+        assert_eq!(
+            resolve_git_metadata(cwd.to_str().unwrap()).await,
+            Ok(None),
+            "{cwd:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn missing_git_binary_is_absence_and_does_not_defer_assembly() {
     let cwd = tempfile::TempDir::new().unwrap();
     let absent_binary = cwd.path().join("missing-git-executable");

@@ -294,11 +294,20 @@ impl CursorStore {
             .map_err(|_| CursorStoreError::CorruptMeta { key, value })
     }
 
+    fn write_transaction(&self) -> Result<rusqlite::Transaction<'_>, CursorStoreError> {
+        Ok(rusqlite::Transaction::new_unchecked(
+            &self.conn,
+            TransactionBehavior::Immediate,
+        )?)
+    }
+
     /// Persist a pass's cutoff before discovery, retaining the earliest unfinished window across
     /// retries, restarts, and window changes. A setup/assembly error or cancellation must not let
     /// files age out just because no complete-sync watermark has been recorded yet.
     pub fn begin_sync(&self, cutoff_ms: i64) -> Result<i64, CursorStoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        // Read-then-write: take the write lock up front so an overlapping pass on another connection
+        // cannot invalidate the WAL read snapshot and fail the upgrade with SQLITE_BUSY_SNAPSHOT.
+        let tx = self.write_transaction()?;
         let cutoff_ms = self
             .get_timestamp_meta(META_INCOMPLETE_SYNC_CUTOFF_MS)?
             .map_or(cutoff_ms, |pending| pending.min(cutoff_ms));
@@ -317,7 +326,7 @@ impl CursorStore {
         at_ms: i64,
         scanned_cutoff_ms: i64,
     ) -> Result<(), CursorStoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_transaction()?;
         self.set_meta(META_LAST_COMPLETE_SYNC_AT_MS, &at_ms.to_string())?;
         let covered = self
             .get_timestamp_meta(META_INCOMPLETE_SYNC_CUTOFF_MS)?

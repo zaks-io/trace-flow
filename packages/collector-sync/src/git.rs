@@ -16,7 +16,8 @@
 //!
 //! Resolution classifies absence separately from failure:
 //! - Missing/invalid cwd or git executable (`NotFound`/`NotADirectory`): no pin, sync proceeds.
-//! - Root probe exit 128 with C-locale `fatal: not a git repository`: no repo, sync proceeds.
+//! - Root probe exit 128 with a C-locale not-a-repository message, including a dangling or
+//!   malformed `.git` gitfile left by a pruned worktree: no repo, sync proceeds.
 //! - Origin/branch exit 1: legitimate absent field, a resolved repo may be pinned.
 //! - Timeout, other spawn/exit failures, invalid UTF-8 or empty root: retryable failure.
 //! - Dubious ownership: retryable failure with an actionable diagnostic. Deferring visibly avoids
@@ -140,6 +141,17 @@ where
     }))
 }
 
+/// C-locale root-probe messages for a cwd with no usable repository. A pruned linked worktree keeps
+/// a `.git` gitfile that points at deleted metadata, and git words that differently across versions
+/// ("not a git repository: <path>" in older releases, "gitfile does not point to a valid
+/// repository" in newer ones). No retry can repair it, so it is absence rather than a deferral that
+/// would hold the session forever.
+const NOT_A_REPOSITORY: [&str; 3] = [
+    "fatal: not a git repository",
+    "fatal: gitfile does not point to a valid repository",
+    "fatal: invalid gitfile format",
+];
+
 async fn run_git(
     cwd: &str,
     args: &[&str],
@@ -186,7 +198,9 @@ async fn run_git_command(
         let stderr = String::from_utf8_lossy(&output.stderr);
         if args == ["rev-parse", "--show-toplevel"]
             && output.status.code() == Some(128)
-            && stderr.starts_with("fatal: not a git repository (or any")
+            && NOT_A_REPOSITORY
+                .iter()
+                .any(|prefix| stderr.starts_with(prefix))
         {
             return Err(GitProbeError::NotRepository);
         }
