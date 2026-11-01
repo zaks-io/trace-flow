@@ -18,7 +18,9 @@
 //! its start time as the new watermark, so time the collector spent not running is rescanned, never
 //! skipped. Before discovery, the store retains the earliest unfinished cutoff. Retries use the
 //! earlier of that cutoff and the requested window, so failures cannot age files out even before
-//! the first watermark. Completion atomically records the watermark and clears the pending cutoff.
+//! the first watermark. Completion atomically records the watermark and clears the pending cutoff
+//! only if this pass scanned at least that far back, so an overlapping narrower pass (the desktop
+//! loop beside a CLI import) cannot drop a wider unfinished window.
 //! Presets, `--since`, and the legacy 7-day replay backfill still choose the requested window; an
 //! unfinished wider window remains in scope until a clean pass completes it.
 //! Batch ids are minted per POST from a process counter seeded by the wall clock so they are unique
@@ -286,7 +288,7 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
         // grace window. A pass with discovery, assembly, or ingest failures keeps the old watermark
         // so unread or failed files stay in the next incremental window.
         store
-            .mark_complete_sync(cfg.now_ms)
+            .mark_complete_sync(cfg.now_ms, window.cutoff_ms())
             .context("record complete sync")?;
     }
     if needs_replay_backfill && complete {

@@ -307,15 +307,27 @@ impl CursorStore {
         Ok(cutoff_ms)
     }
 
-    /// Record that a sync pass which started at `at_ms` finished with no failures.
-    /// Clear the pending cutoff atomically so a failed metadata write preserves the retry window.
-    pub fn mark_complete_sync(&self, at_ms: i64) -> Result<(), CursorStoreError> {
+    /// Record that a sync pass which started at `at_ms` and scanned back to `scanned_cutoff_ms`
+    /// finished with no failures. Passes can overlap on one database (a CLI import beside the
+    /// desktop or service loop), so a narrower pass must not clear a wider cutoff that another pass
+    /// left unfinished; only a pass that scanned at least that far back clears it. The watermark and
+    /// the clear commit together so a failed metadata write preserves the retry window.
+    pub fn mark_complete_sync(
+        &self,
+        at_ms: i64,
+        scanned_cutoff_ms: i64,
+    ) -> Result<(), CursorStoreError> {
         let tx = self.conn.unchecked_transaction()?;
         self.set_meta(META_LAST_COMPLETE_SYNC_AT_MS, &at_ms.to_string())?;
-        self.conn.execute(
-            "DELETE FROM cursor_meta WHERE org_id = ?1 AND key = ?2",
-            params![self.org_id, META_INCOMPLETE_SYNC_CUTOFF_MS],
-        )?;
+        let covered = self
+            .get_timestamp_meta(META_INCOMPLETE_SYNC_CUTOFF_MS)?
+            .is_some_and(|pending| pending >= scanned_cutoff_ms);
+        if covered {
+            self.conn.execute(
+                "DELETE FROM cursor_meta WHERE org_id = ?1 AND key = ?2",
+                params![self.org_id, META_INCOMPLETE_SYNC_CUTOFF_MS],
+            )?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -775,12 +787,12 @@ mod tests {
     fn last_complete_sync_is_none_until_marked_then_round_trips() {
         let store = CursorStore::open_in_memory("org_1").unwrap();
         assert_eq!(store.last_complete_sync_at_ms().unwrap(), None);
-        store.mark_complete_sync(1_716_000_000_000).unwrap();
+        store.mark_complete_sync(1_716_000_000_000, 0).unwrap();
         assert_eq!(
             store.last_complete_sync_at_ms().unwrap(),
             Some(1_716_000_000_000)
         );
-        store.mark_complete_sync(1_716_000_005_000).unwrap();
+        store.mark_complete_sync(1_716_000_005_000, 0).unwrap();
         assert_eq!(
             store.last_complete_sync_at_ms().unwrap(),
             Some(1_716_000_005_000)
