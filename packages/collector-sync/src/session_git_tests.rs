@@ -95,7 +95,85 @@ async fn cursor_jsonl_pins_successful_repo_without_remote_and_prefers_transcript
     let after = assemble_sync_unit(&file, AgentSource::Cursor, &GitRemoteCache::new(), &store)
         .await
         .unwrap();
-    assert_eq!(before.ctx, after.ctx);
+    assert_eq!(after.ctx.normalized_git_remote, "github.com/acme/later");
+    assert_eq!(after.ctx.repo_root, before.ctx.repo_root);
+    assert_eq!(after.ctx.git_branch, before.ctx.git_branch);
+    assert_eq!(pin.git_branch.as_deref(), Some("main"));
+}
+
+#[tokio::test]
+async fn linked_worktree_pins_its_own_root_and_survives_removal() {
+    let repo = tempfile::TempDir::new().unwrap();
+    let transcripts = tempfile::TempDir::new().unwrap();
+    git(repo.path(), &["init", "-b", "main"]);
+    git(
+        repo.path(),
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Initial",
+        ],
+    );
+    git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/worktree.git",
+        ],
+    );
+    let worktree = transcripts.path().join("linked");
+    git(
+        repo.path(),
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "linked-branch",
+            worktree.to_str().unwrap(),
+        ],
+    );
+    let store = CursorStore::open_in_memory("org").unwrap();
+    let file = transcript(transcripts.path(), worktree.to_str(), None);
+    let unit = assemble_sync_unit(&file, AgentSource::Claude, &GitRemoteCache::new(), &store)
+        .await
+        .unwrap();
+    assert_eq!(
+        std::path::Path::new(&unit.ctx.repo_root)
+            .canonicalize()
+            .unwrap(),
+        worktree.canonicalize().unwrap()
+    );
+    assert_ne!(
+        std::path::Path::new(&unit.ctx.repo_root)
+            .canonicalize()
+            .unwrap(),
+        repo.path().canonicalize().unwrap()
+    );
+    assert_eq!(unit.ctx.git_branch, "linked-branch");
+    assert_eq!(unit.ctx.normalized_git_remote, "github.com/acme/worktree");
+    assert_eq!(
+        store
+            .session_git(AgentSource::Claude, &file.path)
+            .unwrap()
+            .unwrap()
+            .repo_root,
+        unit.ctx.repo_root
+    );
+    git(
+        repo.path(),
+        &["worktree", "remove", worktree.to_str().unwrap()],
+    );
+    let deleted = assemble_sync_unit(&file, AgentSource::Claude, &GitRemoteCache::new(), &store)
+        .await
+        .unwrap();
+    assert_eq!(deleted.ctx, unit.ctx);
 }
 
 #[tokio::test]

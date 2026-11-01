@@ -116,7 +116,7 @@ impl SessionGitHarness {
     }
 }
 
-fn git(repo: &Path, args: &[&str]) {
+fn git(repo: &Path, args: &[&str]) -> String {
     let output = std::process::Command::new("git")
         .current_dir(repo)
         .args(args)
@@ -127,6 +127,7 @@ fn git(repo: &Path, args: &[&str]) {
         "git {args:?}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
 }
 
 fn init_repo(repo: &Path) {
@@ -152,6 +153,57 @@ fn init_repo(repo: &Path) {
             "origin",
             "git@github.com:acme/original.git",
         ],
+    );
+}
+
+#[tokio::test]
+async fn no_origin_session_adopts_first_remote_once() {
+    let harness = SessionGitHarness::new().await;
+    git(&harness.repo, &["remote", "remove", "origin"]);
+    harness.append("session", 1, None);
+    let first = harness.sync().await;
+    assert_eq!(first[0].facts.messages[0].normalized_git_remote, "");
+    git(
+        &harness.repo,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/first.git",
+        ],
+    );
+    git(&harness.repo, &["checkout", "-b", "later-branch"]);
+    harness.append("session", 2, None);
+    let adopted = harness.sync().await;
+    assert_eq!(adopted[0].facts.messages.len(), 2);
+    assert!(adopted[0]
+        .facts
+        .messages
+        .iter()
+        .all(
+            |message| message.normalized_git_remote == "github.com/acme/first"
+                && message.git_branch == "main"
+        ));
+    git(
+        &harness.repo,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://github.com/acme/later.git",
+        ],
+    );
+    harness.append("session", 3, None);
+    let fixed = harness.sync().await;
+    assert_eq!(fixed[0].facts.messages.len(), 2);
+    assert_eq!(fixed[0].facts.messages[0], adopted[0].facts.messages[0]);
+    assert_eq!(
+        fixed[0].facts.messages[1].normalized_git_remote,
+        "github.com/acme/first"
+    );
+    assert_eq!(
+        fixed[0].facts.messages[1].vendor_message_id.as_deref(),
+        Some("session-3")
     );
 }
 
@@ -209,6 +261,39 @@ async fn ac2_new_session_after_rename_uses_current_remote() {
         uploaded[0].facts.messages[0].normalized_git_remote,
         "github.com/acme/renamed"
     );
+}
+
+#[tokio::test]
+async fn detached_head_pins_no_live_branch_and_transcript_branch_still_wins() {
+    for branch in [None, Some("recorded-branch")] {
+        let harness = SessionGitHarness::new().await;
+        git(&harness.repo, &["checkout", "--detach", "HEAD"]);
+        harness.append("session", 1, branch);
+        let first = harness.sync().await;
+        assert_eq!(first[0].facts.messages[0].git_branch, branch.unwrap_or(""));
+        let store = collector_sync::CursorStore::open(
+            crate::connection::Paths::at(harness.state.path().to_path_buf()).cursor_db("org_1"),
+            "org_1",
+        )
+        .unwrap();
+        let pin = store
+            .session_git(
+                collector_contracts::AgentSource::Claude,
+                harness.transcript("session").to_str().unwrap(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(pin.git_branch, None);
+        git(&harness.repo, &["checkout", "-b", "later-branch"]);
+        harness.append("session", 2, branch);
+        let later = harness.sync().await;
+        assert_eq!(later[0].facts.messages[0], first[0].facts.messages[0]);
+        assert!(later[0]
+            .facts
+            .messages
+            .iter()
+            .all(|message| message.git_branch == branch.unwrap_or("")));
+    }
 }
 
 #[tokio::test]
@@ -276,10 +361,12 @@ async fn ac6_absolute_paths_never_leave_collector_in_uploaded_envelopes() {
     let harness = SessionGitHarness::new().await;
     harness.append("session", 1, None);
     let path = harness.transcript("session");
+    let git_root = PathBuf::from(git(&harness.repo, &["rev-parse", "--show-toplevel"]));
+    let tool_path = git_root.join("src/lib.rs");
     let record = json!({
         "type":"assistant", "sessionId":"session", "uuid":"tool-message", "cwd":harness.repo,
         "message":{"id":"tool-message", "role":"assistant", "content":[{
-            "type":"tool_use", "id":"read-1", "name":"Read", "input":{"file_path":harness.repo.join("src/lib.rs")}
+            "type":"tool_use", "id":"read-1", "name":"Read", "input":{"file_path":tool_path}
         }]}
     });
     writeln!(
@@ -296,8 +383,22 @@ async fn ac6_absolute_paths_never_leave_collector_in_uploaded_envelopes() {
         "src/lib.rs"
     );
     let wire = serde_json::to_string(&uploaded).unwrap();
-    assert!(!wire.contains(harness.home.path().to_str().unwrap()));
-    assert!(!wire.contains(harness.state.path().to_str().unwrap()));
+    for private_path in [
+        harness.home.path().to_path_buf(),
+        harness.home.path().canonicalize().unwrap(),
+        harness.state.path().to_path_buf(),
+        harness.state.path().canonicalize().unwrap(),
+        git_root.clone(),
+        tool_path,
+    ] {
+        let raw = private_path.to_str().unwrap();
+        let escaped = serde_json::to_string(raw).unwrap();
+        assert!(!wire.contains(raw), "raw absolute path leaked");
+        assert!(
+            !wire.contains(&escaped[1..escaped.len() - 1]),
+            "JSON-escaped absolute path leaked"
+        );
+    }
     assert!(!wire.contains("repo_root"));
     let store = collector_sync::CursorStore::open(
         crate::connection::Paths::at(harness.state.path().to_path_buf()).cursor_db("org_1"),
@@ -311,8 +412,9 @@ async fn ac6_absolute_paths_never_leave_collector_in_uploaded_envelopes() {
         )
         .unwrap()
         .unwrap();
+    assert_eq!(pin.repo_root, git_root.to_str().unwrap());
     assert_eq!(
-        Path::new(&pin.repo_root),
+        git_root.canonicalize().unwrap(),
         harness.repo.canonicalize().unwrap()
     );
     assert!(!wire.contains("file_path\":\"/"));

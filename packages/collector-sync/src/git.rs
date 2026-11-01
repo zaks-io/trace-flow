@@ -8,9 +8,10 @@
 //!
 //! [`GitRemoteCache`] deduplicates probes for a cwd within one cycle, including unsuccessful probes.
 //! Assembly first checks the durable `(source, transcript path)` pin in [`crate::cursor::CursorStore`].
-//! Only a successful live resolution with a repo root creates a pin. Later cycles reuse that pin
-//! without git, even after a remote rename, branch switch, or worktree deletion. Unpinned failures
-//! retry with the next cycle's fresh cache; new transcripts resolve the current repo evidence.
+//! A repo root creates a pin only when every probe succeeds or reports legitimate absence. Pins
+//! with a non-empty remote bypass git even after a rename, branch switch, or worktree deletion.
+//! Empty-remote pins keep their root and branch but retry live resolution until they adopt their
+//! first non-empty remote, once. Failed probes retry with the next cycle's fresh cache.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -75,51 +76,53 @@ impl GitRemoteCache {
 }
 
 /// Shell out to `git` to read a `cwd`'s root, branch, and `origin` URL. Returns `None` when the
-/// directory is not inside a worktree (no `--show-toplevel`). Integration-tested at 3d against a real
-/// repo; the freeze cache above is what the 3b unit tests cover.
+/// directory is not inside a worktree or any probe fails. Incomplete metadata must not become a
+/// durable session pin. Missing origin and detached HEAD are successful resolutions with absent fields.
 pub async fn resolve_git_metadata(cwd: &str) -> Option<GitMetadata> {
+    resolve_git_metadata_with(|args, absent_exit| run_git(cwd, args, absent_exit)).await
+}
+
+async fn resolve_git_metadata_with<F, Fut>(probe: F) -> Option<GitMetadata>
+where
+    F: Fn(&'static [&'static str], Option<i32>) -> Fut,
+    Fut: std::future::Future<Output = Result<Option<String>, ()>>,
+{
     let (root, branch, remote) = tokio::join!(
-        run_git(cwd, &["rev-parse", "--show-toplevel"]),
-        run_git(cwd, &["rev-parse", "--abbrev-ref", "HEAD"]),
-        run_git(cwd, &["config", "--get", "remote.origin.url"]),
+        probe(&["rev-parse", "--show-toplevel"], None),
+        probe(&["symbolic-ref", "--short", "-q", "HEAD"], Some(1)),
+        probe(&["config", "--get", "remote.origin.url"], Some(1)),
     );
-    // `--show-toplevel` only succeeds inside a worktree and prints an existing canonical path, so its
-    // presence is the repo test; no extra `stat` is warranted (and a blocking one in async would be
-    // wrong here).
-    let root = root?;
     Some(GitMetadata {
-        git_root: root,
-        git_remote_url: remote,
-        // A detached HEAD reports the literal "HEAD"; treat that as no branch.
-        git_branch: branch.filter(|b| b != "HEAD"),
+        git_root: root.ok()??,
+        git_remote_url: remote.ok()?,
+        git_branch: branch.ok()?,
     })
 }
 
-/// Run one `git` probe in `cwd`, returning its trimmed stdout or `None`. Every failure mode — missing
-/// `cwd`, non-zero exit, non-UTF-8 output, empty output — collapses to `None`, which the caller reads
-/// as "this field is absent" (and an absent `--show-toplevel` as "not a repo"). That coarse signal is
-/// all repo attribution needs; per-failure diagnostics belong to the 3d end-to-end run, not here.
-async fn run_git(cwd: &str, args: &[&str]) -> Option<String> {
-    // These probes are local config/HEAD reads that finish in milliseconds. The deadline exists only so
-    // a wedged `git` (a credential prompt on a misconfigured remote, a stuck filesystem) can't stall the
-    // whole sync cycle; a timeout collapses to `None` like every other failure mode.
+/// Only the caller's documented absence exit code is accepted. Timeouts, spawn errors, unexpected
+/// exits, and invalid UTF-8 fail the entire resolution so the next sync cycle can retry.
+async fn run_git(cwd: &str, args: &[&str], absent_exit: Option<i32>) -> Result<Option<String>, ()> {
     let output = timeout(
         Duration::from_secs(5),
-        Command::new("git").current_dir(cwd).args(args).output(),
+        Command::new("git")
+            .current_dir(cwd)
+            .args(args)
+            .kill_on_drop(true)
+            .output(),
     )
     .await
-    .ok()?
-    .ok()?;
+    .map_err(|_| ())?
+    .map_err(|_| ())?;
     if !output.status.success() {
-        return None;
+        return if absent_exit.is_some() && output.status.code() == absent_exit {
+            Ok(None)
+        } else {
+            Err(())
+        };
     }
-    let text = String::from_utf8(output.stdout).ok()?;
+    let text = String::from_utf8(output.stdout).map_err(|_| ())?;
     let trimmed = text.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
+    Ok((!trimmed.is_empty()).then(|| trimmed.to_string()))
 }
 
 #[cfg(test)]
@@ -182,3 +185,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "git_probe_tests.rs"]
+mod probe_tests;

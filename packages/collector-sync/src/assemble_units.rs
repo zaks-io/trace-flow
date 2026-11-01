@@ -11,7 +11,9 @@
 //! [`assemble_sync_unit`] reads a discovered transcript snapshot and builds a [`SyncUnit`]. Live git
 //! fallback first checks [`CursorStore`]'s per-source, per-transcript pin; a successful repo resolution
 //! persists its root, normalized remote, and branch before facts are built. Later reads reuse that
-//! evidence without git. Failed resolutions stay unpinned and retry in a later sync cycle.
+//! evidence without git once the remote is non-empty. Empty-remote pins keep their original root and
+//! branch while retrying until the first non-empty remote is adopted, once. A failed probe creates
+//! no pin and never changes an existing pin.
 //!
 //! Claude and Cursor JSONL prefer the transcript's `gitBranch` over the pinned live branch. Codex
 //! prefers its embedded git evidence and uses the pin only for live fallback. [`build_session_context`]
@@ -133,7 +135,8 @@ async fn assemble_records(
     content_hash_head: String,
     lineage: Option<&CodexLineage>,
 ) -> std::io::Result<SyncUnit> {
-    // Source-specific extraction preserves Codex embedded evidence and Claude transcript hints.
+    // Claude repeats sessionId/cwd/gitBranch per line; Codex embeds them in session_meta. Using
+    // the Claude extractor for Codex loses cwd and remote, incorrectly falling back to path identity.
     let (fields, meta, head_sha, codex_agent_depth, parent_vendor_session_id) = match source {
         AgentSource::Codex => {
             let codex = codex_session_fields(&records);
