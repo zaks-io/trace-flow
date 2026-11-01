@@ -12,7 +12,9 @@ impl SessionGitHarness {
     fn window_edge_transcript(&self) -> PathBuf {
         self.append("window-edge", 1, None);
         let path = self.transcript("window-edge");
-        std::fs::File::open(&path)
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
             .unwrap()
             .set_modified(UNIX_EPOCH + Duration::from_millis((NOW - 86_340_000) as u64))
             .unwrap();
@@ -106,7 +108,9 @@ async fn failed_history_or_legacy_backfill_keeps_its_window_until_complete() {
         harness.sync().await;
         let path = harness.window_edge_transcript();
         let edge_mtime = NOW - 7 * 86_400_000 + 60_000;
-        std::fs::File::open(&path)
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
             .unwrap()
             .set_modified(UNIX_EPOCH + Duration::from_millis(edge_mtime as u64))
             .unwrap();
@@ -144,7 +148,9 @@ async fn failed_history_or_legacy_backfill_keeps_its_window_until_complete() {
         assert!(!harness.store().needs_replay_backfill().unwrap());
         // Completing the pending history does not turn subsequent incremental passes into imports.
         harness.append("outside-incremental", 1, None);
-        std::fs::File::open(harness.transcript("outside-incremental"))
+        std::fs::File::options()
+            .write(true)
+            .open(harness.transcript("outside-incremental"))
             .unwrap()
             .set_modified(UNIX_EPOCH + Duration::from_millis(edge_mtime as u64))
             .unwrap();
