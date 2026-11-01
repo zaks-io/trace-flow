@@ -491,120 +491,28 @@ async fn codex_pins_live_fallback_and_keeps_embedded_git_precedence() {
     }
 }
 
-impl SessionGitHarness {
-    /// Three records, one with an absolute tool path that relativizes only once the repo resolves.
-    fn append_retry_transcript(&self) {
-        self.append("retry", 1, None);
-        self.append("retry", 2, None);
-        let root = PathBuf::from(git(&self.repo, &["rev-parse", "--show-toplevel"]));
-        let record = json!({
-            "type":"assistant", "sessionId":"retry", "uuid":"retry-3", "cwd":self.repo,
-            "message":{"id":"retry-3", "role":"assistant", "content":[{
-                "type":"tool_use", "id":"read-retry", "name":"Read", "input":{"file_path":root.join("src/lib.rs")}
-            }]}
-        });
-        writeln!(
-            std::fs::OpenOptions::new()
-                .append(true)
-                .open(self.transcript("retry"))
-                .unwrap(),
-            "{record}"
-        )
-        .unwrap();
-    }
-
-    /// With git already broken, one pass a day later must defer the retry transcript without
-    /// uploading, pinning, advancing its cursor or completing. After `restore_git`, the unchanged
-    /// transcript uploads once with full attribution.
-    async fn assert_deferred_until_git_recovers(
-        &self,
-        error_fragment: &str,
-        restore_git: impl FnOnce(),
-    ) {
-        let now = 1_779_840_000_000;
-        let first = run_fact_sync(
-            self.home.path(),
-            self.state.path(),
-            self.ingest_url.clone(),
-            false,
-            now + 86_400_000,
-        )
-        .await;
-        restore_git();
-        assert!(
-            self.uploads.lock().unwrap().is_empty(),
-            "a failed probe must upload nothing: {first:?}"
-        );
-        let report = &first
-            .reports
-            .iter()
-            .find(|(source, _)| *source == collector_contracts::AgentSource::Claude)
-            .unwrap()
-            .1;
-        assert!(!report.is_complete());
-        assert_eq!(report.failed, 1);
-        let error = report.first_error.as_deref().unwrap();
-        assert!(error.contains(error_fragment), "{error}");
-        assert!(!error.contains(self.repo.to_str().unwrap()));
-        assert!(!error.contains("https://"));
-        let store = collector_sync::CursorStore::open(
-            crate::connection::Paths::at(self.state.path().to_path_buf()).cursor_db("org_1"),
-            "org_1",
-        )
-        .unwrap();
-        let path = self.transcript("retry");
-        assert_eq!(store.last_complete_sync_at_ms().unwrap(), Some(now));
-        assert!(store
-            .session_git(
-                collector_contracts::AgentSource::Claude,
-                path.to_str().unwrap()
-            )
-            .unwrap()
-            .is_none());
-        assert!(store
-            .get(
-                collector_contracts::AgentSource::Claude,
-                path.to_str().unwrap()
-            )
-            .unwrap()
-            .is_none());
-        // Do not append or touch the transcript before recovery.
-        let recovered = self.sync().await;
-        assert_eq!(recovered.len(), 1);
-        assert_eq!(recovered[0].facts.messages.len(), 3);
-        assert_eq!(
-            recovered[0].facts.file_events[0].normalized_repo_path,
-            "src/lib.rs"
-        );
-        assert!(recovered[0]
-            .facts
-            .messages
-            .iter()
-            .all(|m| m.normalized_git_remote == "github.com/acme/original"));
-        assert_eq!(
-            store
-                .session_git(
-                    collector_contracts::AgentSource::Claude,
-                    path.to_str().unwrap()
-                )
-                .unwrap()
-                .unwrap()
-                .normalized_git_remote,
-            "github.com/acme/original"
-        );
-        assert!(
-            self.sync().await.is_empty(),
-            "the unchanged transcript uploads only once"
-        );
-    }
-}
-
 #[tokio::test]
 async fn failed_probe_defers_upload_and_retries_unchanged_transcript() {
     let harness = SessionGitHarness::new().await;
     // Keep a prior complete watermark to prove a failed pass cannot age this file out.
     harness.sync().await;
-    harness.append_retry_transcript();
+    harness.append("retry", 1, None);
+    harness.append("retry", 2, None);
+    let root = PathBuf::from(git(&harness.repo, &["rev-parse", "--show-toplevel"]));
+    let record = json!({
+        "type":"assistant", "sessionId":"retry", "uuid":"retry-3", "cwd":harness.repo,
+        "message":{"id":"retry-3", "role":"assistant", "content":[{
+            "type":"tool_use", "id":"read-retry", "name":"Read", "input":{"file_path":root.join("src/lib.rs")}
+        }]}
+    });
+    writeln!(
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(harness.transcript("retry"))
+            .unwrap(),
+        "{record}"
+    )
+    .unwrap();
     let config = harness.repo.join(".git").join("config");
     let original = std::fs::read(&config).unwrap();
     let mut broken = original.clone();
@@ -615,42 +523,81 @@ async fn failed_probe_defers_upload_and_retries_unchanged_transcript() {
         git(&harness.repo, &["symbolic-ref", "--short", "-q", "HEAD"]),
         "main"
     );
-    harness
-        .assert_deferred_until_git_recovers("git config returned invalid UTF-8", || {
-            std::fs::write(&config, original).unwrap()
-        })
-        .await;
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn unreadable_repository_metadata_defers_until_access_returns() {
-    use std::os::unix::fs::PermissionsExt;
-
-    /// Restores the mode on drop so a failed assertion cannot leave an undeletable temp dir.
-    struct RestoreMode(PathBuf, std::fs::Permissions);
-    impl Drop for RestoreMode {
-        fn drop(&mut self) {
-            let _ = std::fs::set_permissions(&self.0, self.1.clone());
-        }
-    }
-
-    let harness = SessionGitHarness::new().await;
-    harness.sync().await;
-    harness.append_retry_transcript();
-    let git_dir = harness.repo.join(".git");
-    let restore = RestoreMode(
-        git_dir.clone(),
-        std::fs::metadata(&git_dir).unwrap().permissions(),
+    let now = 1_779_840_000_000;
+    let first = run_fact_sync(
+        harness.home.path(),
+        harness.state.path(),
+        harness.ingest_url.clone(),
+        false,
+        now + 86_400_000,
+    )
+    .await;
+    assert!(
+        harness.uploads.lock().unwrap().is_empty(),
+        "a failed probe must upload nothing: {first:?}"
     );
-    // Wrong owner, chmod, or a macOS privacy block: git then reports "not a git repository".
-    std::fs::set_permissions(&git_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
-    if std::fs::File::open(&git_dir).is_ok() {
-        return; // Root ignores permission bits, so nothing is unreadable.
-    }
-    harness
-        .assert_deferred_until_git_recovers("metadata is not readable", || drop(restore))
-        .await;
+    let report = &first
+        .reports
+        .iter()
+        .find(|(source, _)| *source == collector_contracts::AgentSource::Claude)
+        .unwrap()
+        .1;
+    assert!(!report.is_complete());
+    assert_eq!(report.failed, 1);
+    let error = report.first_error.as_deref().unwrap();
+    assert!(error.contains("git config returned invalid UTF-8"));
+    assert!(!error.contains(harness.repo.to_str().unwrap()));
+    assert!(!error.contains("https://"));
+    let store = collector_sync::CursorStore::open(
+        crate::connection::Paths::at(harness.state.path().to_path_buf()).cursor_db("org_1"),
+        "org_1",
+    )
+    .unwrap();
+    let path = harness.transcript("retry");
+    assert_eq!(store.last_complete_sync_at_ms().unwrap(), Some(now));
+    assert!(store
+        .session_git(
+            collector_contracts::AgentSource::Claude,
+            path.to_str().unwrap()
+        )
+        .unwrap()
+        .is_none());
+    assert!(store
+        .get(
+            collector_contracts::AgentSource::Claude,
+            path.to_str().unwrap()
+        )
+        .unwrap()
+        .is_none());
+    std::fs::write(&config, original).unwrap();
+    // Do not append or touch the transcript before recovery.
+    let recovered = harness.sync().await;
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].facts.messages.len(), 3);
+    assert_eq!(
+        recovered[0].facts.file_events[0].normalized_repo_path,
+        "src/lib.rs"
+    );
+    assert!(recovered[0]
+        .facts
+        .messages
+        .iter()
+        .all(|m| m.normalized_git_remote == "github.com/acme/original"));
+    assert_eq!(
+        store
+            .session_git(
+                collector_contracts::AgentSource::Claude,
+                path.to_str().unwrap()
+            )
+            .unwrap()
+            .unwrap()
+            .normalized_git_remote,
+        "github.com/acme/original"
+    );
+    assert!(
+        harness.sync().await.is_empty(),
+        "the unchanged transcript uploads only once"
+    );
 }
 
 #[tokio::test]

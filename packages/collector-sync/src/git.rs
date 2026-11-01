@@ -17,14 +17,17 @@
 //! Resolution classifies absence separately from failure:
 //! - Missing/invalid cwd or git executable (`NotFound`/`NotADirectory`): no pin, sync proceeds.
 //! - Root probe exit 128 with a C-locale not-a-repository message, including a dangling or
-//!   malformed `.git` gitfile left by a pruned worktree, and no unreadable `.git` metadata on the
-//!   discovery path: no repo, sync proceeds. Probes drop
+//!   malformed `.git` gitfile left by a pruned worktree: no repo, sync proceeds. Probes drop
 //!   inherited repository-selection variables such as `GIT_DIR`, so discovery always starts at cwd.
 //! - Origin/branch exit 1: legitimate absent field, a resolved repo may be pinned.
 //! - Timeout, other spawn/exit failures, invalid UTF-8 or empty root: retryable failure.
-//! - Dubious ownership, or a not-a-repository message caused by unreadable `.git` metadata:
-//!   retryable failure with an actionable diagnostic. Deferring visibly avoids silently replacing
-//!   valid attribution; the user must fix repository trust or access outside the Collector.
+//! - Dubious ownership: retryable failure with an actionable diagnostic. Deferring visibly avoids
+//!   silently replacing valid attribution; the user must fix repository trust outside the Collector.
+//!
+//! Known limitation (TRA-453): git words an unreadable `.git` (wrong owner, chmod, macOS privacy
+//! block) exactly like a non-repo, and skips an unreadable nested `.git` to discover a readable
+//! parent repo. Telling those apart means reproducing git's discovery rules, so such sessions
+//! resolve as git reports them.
 //!
 //! Exit 128 alone is insufficient: git uses it for both non-repos and real repo failures. Raw stderr
 //! and remote output never enter errors, because either can contain private paths or credentials.
@@ -68,8 +71,6 @@ pub enum GitProbeError {
     Exit { command: String, code: Option<i32> },
     #[error("git rejected dubious ownership; verify repository ownership and configure safe.directory for this checkout if trusted")]
     DubiousOwnership,
-    #[error("git repository metadata is not readable by the Collector; check the repository's file permissions and, on macOS, the Collector's folder access")]
-    MetadataUnreadable,
     #[error("git {command} returned invalid UTF-8; check repository metadata")]
     InvalidUtf8 { command: String },
     #[error("git returned an empty repository root; check the repository with git status")]
@@ -150,9 +151,8 @@ where
 /// a `.git` gitfile that points at deleted metadata, and git words that differently across versions
 /// ("not a git repository: <path>" in older releases, "gitfile does not point to a valid
 /// repository" in newer ones). No retry can repair it, so it is absence rather than a deferral that
-/// would hold the session forever. These prefixes mean absence only because probes never inherit
-/// [`REPOSITORY_SELECTION_ENV`] and unreadable metadata is ruled out first: a stale `GIT_DIR` or an
-/// unreadable `.git` produces the same text.
+/// would hold the session forever. These prefixes are only trustworthy because probes never inherit
+/// [`REPOSITORY_SELECTION_ENV`]: a stale `GIT_DIR` produces the same "not a git repository" text.
 const NOT_A_REPOSITORY: [&str; 4] = [
     "fatal: not a git repository",
     "fatal: gitfile does not point to a valid repository",
@@ -235,13 +235,7 @@ async fn run_git_command(
                 .iter()
                 .any(|prefix| stderr.starts_with(prefix))
         {
-            return Err(
-                if crate::git_access::repository_metadata_unreadable(std::path::Path::new(cwd)) {
-                    GitProbeError::MetadataUnreadable
-                } else {
-                    GitProbeError::NotRepository
-                },
-            );
+            return Err(GitProbeError::NotRepository);
         }
         // Do not silently rewrite attribution or change user trust settings on persistent failures.
         if stderr.starts_with("fatal: detected dubious ownership in repository") {
