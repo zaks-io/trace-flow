@@ -47,7 +47,9 @@ impl SessionGitHarness {
     fn transcript(&self, session: &str) -> PathBuf {
         self.home
             .path()
-            .join(".claude/projects/project")
+            .join(".claude")
+            .join("projects")
+            .join("project")
             .join(format!("{session}.jsonl"))
     }
 
@@ -74,7 +76,8 @@ impl SessionGitHarness {
         let path = self
             .home
             .path()
-            .join(".codex/sessions")
+            .join(".codex")
+            .join("sessions")
             .join(format!("{session}.jsonl"));
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let mut output = std::fs::OpenOptions::new()
