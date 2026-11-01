@@ -62,7 +62,7 @@ pub use discovery::{
     DISCOVERY_INCOMPLETE,
 };
 pub use envelope::{build_envelope, BatchMeta};
-pub use git::{resolve_git_metadata, GitMetadata, GitRemoteCache};
+pub use git::{resolve_git_metadata, GitMetadata, GitProbeError, GitRemoteCache, GitResolution};
 pub use git_remote::normalize_git_remote;
 pub use import::{HistoryPreset, ImportWindow};
 pub use orchestrator::{Action, Orchestrator, OrchestratorState, Trigger};

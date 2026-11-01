@@ -3,7 +3,8 @@
 //! Durable git attribution for a source transcript. Pins contain only normalized remotes and local
 //! repo roots, never raw remote URLs. Like cursors, pins are isolated by Organization. A successful
 //! live repo resolution pins the root and branch. An empty remote can adopt the first non-empty
-//! remote from a later successful resolve, once. Failed probes leave pins untouched and retry later.
+//! remote from a later successful resolve, once. Failed probes preserve existing pins. Without a
+//! pin, failures return a retryable assembly error so an unchanged transcript is read next cycle.
 
 use collector_contracts::AgentSource;
 use rusqlite::{params, OptionalExtension};
@@ -76,8 +77,10 @@ impl CursorStore {
         file_path: &str,
         cwd: Option<&str>,
         cache: &GitRemoteCache,
-    ) -> Result<Option<SessionGit>, CursorStoreError> {
-        let pinned = self.session_git(source, file_path)?;
+    ) -> std::io::Result<Option<SessionGit>> {
+        let pinned = self
+            .session_git(source, file_path)
+            .map_err(std::io::Error::other)?;
         if pinned
             .as_ref()
             .is_some_and(|pin| !pin.normalized_git_remote.is_empty())
@@ -87,13 +90,13 @@ impl CursorStore {
         let Some(cwd) = cwd else {
             return Ok(pinned);
         };
-        let Some(meta) = cache.resolve(cwd).await else {
-            return Ok(pinned);
+        let meta = match cache.resolve(cwd).await {
+            Ok(Some(meta)) => meta,
+            Ok(None) => return Ok(pinned),
+            Err(_) if pinned.is_some() => return Ok(pinned),
+            Err(error) => return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, error)),
         };
         let resolved = SessionGit::from(meta);
-        if resolved.repo_root.is_empty() {
-            return Ok(pinned);
-        }
         self.conn.execute(
             "INSERT INTO session_git (org_id, source, file_path, repo_root, normalized_git_remote, git_branch)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -101,10 +104,11 @@ impl CursorStore {
              SET normalized_git_remote = excluded.normalized_git_remote
              WHERE session_git.normalized_git_remote = '' AND excluded.normalized_git_remote <> ''",
             params![self.org_id, source_key(source), file_path, resolved.repo_root, resolved.normalized_git_remote, resolved.git_branch],
-        )?;
+        ).map_err(std::io::Error::other)?;
         // The conditional upsert preserves the first root/branch and first non-empty remote even
         // if another store resolves this session between our read and write.
         self.session_git(source, file_path)
+            .map_err(std::io::Error::other)
     }
 }
 

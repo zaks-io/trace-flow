@@ -487,3 +487,165 @@ async fn codex_pins_live_fallback_and_keeps_embedded_git_precedence() {
         }
     }
 }
+
+#[tokio::test]
+async fn failed_probe_defers_upload_and_retries_unchanged_transcript() {
+    let harness = SessionGitHarness::new().await;
+    // Keep a prior complete watermark to prove a failed pass cannot age this file out.
+    harness.sync().await;
+    harness.append("retry", 1, None);
+    harness.append("retry", 2, None);
+    let root = PathBuf::from(git(&harness.repo, &["rev-parse", "--show-toplevel"]));
+    let record = json!({
+        "type":"assistant", "sessionId":"retry", "uuid":"retry-3", "cwd":harness.repo,
+        "message":{"id":"retry-3", "role":"assistant", "content":[{
+            "type":"tool_use", "id":"read-retry", "name":"Read", "input":{"file_path":root.join("src/lib.rs")}
+        }]}
+    });
+    writeln!(
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(harness.transcript("retry"))
+            .unwrap(),
+        "{record}"
+    )
+    .unwrap();
+    let config = harness.repo.join(".git").join("config");
+    let original = std::fs::read(&config).unwrap();
+    let mut broken = original.clone();
+    broken.extend_from_slice(b"\n[remote \"origin\"]\n url = https://github.com/acme/\xff.git\n");
+    std::fs::write(&config, broken).unwrap();
+    // Git accepts this config; only the remote probe produces invalid UTF-8.
+    assert_eq!(
+        git(&harness.repo, &["symbolic-ref", "--short", "-q", "HEAD"]),
+        "main"
+    );
+    let now = 1_779_840_000_000;
+    let first = run_fact_sync(
+        harness.home.path(),
+        harness.state.path(),
+        harness.ingest_url.clone(),
+        false,
+        now + 86_400_000,
+    )
+    .await;
+    assert!(
+        harness.uploads.lock().unwrap().is_empty(),
+        "a failed probe must upload nothing: {first:?}"
+    );
+    let report = &first
+        .reports
+        .iter()
+        .find(|(source, _)| *source == collector_contracts::AgentSource::Claude)
+        .unwrap()
+        .1;
+    assert!(!report.is_complete());
+    assert_eq!(report.failed, 1);
+    let error = report.first_error.as_deref().unwrap();
+    assert!(error.contains("git config returned invalid UTF-8"));
+    assert!(!error.contains(harness.repo.to_str().unwrap()));
+    assert!(!error.contains("https://"));
+    let store = collector_sync::CursorStore::open(
+        crate::connection::Paths::at(harness.state.path().to_path_buf()).cursor_db("org_1"),
+        "org_1",
+    )
+    .unwrap();
+    let path = harness.transcript("retry");
+    assert_eq!(store.last_complete_sync_at_ms().unwrap(), Some(now));
+    assert!(store
+        .session_git(
+            collector_contracts::AgentSource::Claude,
+            path.to_str().unwrap()
+        )
+        .unwrap()
+        .is_none());
+    assert!(store
+        .get(
+            collector_contracts::AgentSource::Claude,
+            path.to_str().unwrap()
+        )
+        .unwrap()
+        .is_none());
+    std::fs::write(&config, original).unwrap();
+    // Do not append or touch the transcript before recovery.
+    let recovered = harness.sync().await;
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].facts.messages.len(), 3);
+    assert_eq!(
+        recovered[0].facts.file_events[0].normalized_repo_path,
+        "src/lib.rs"
+    );
+    assert!(recovered[0]
+        .facts
+        .messages
+        .iter()
+        .all(|m| m.normalized_git_remote == "github.com/acme/original"));
+    assert_eq!(
+        store
+            .session_git(
+                collector_contracts::AgentSource::Claude,
+                path.to_str().unwrap()
+            )
+            .unwrap()
+            .unwrap()
+            .normalized_git_remote,
+        "github.com/acme/original"
+    );
+    assert!(
+        harness.sync().await.is_empty(),
+        "the unchanged transcript uploads only once"
+    );
+}
+
+#[tokio::test]
+async fn legitimate_git_absence_uploads_without_pinning_or_deferring() {
+    for case in ["deleted_cwd", "non_repo", "missing_cwd"] {
+        let harness = SessionGitHarness::new().await;
+        harness.append(case, 1, None);
+        match case {
+            "deleted_cwd" => std::fs::remove_dir_all(&harness.repo).unwrap(),
+            "non_repo" => std::fs::remove_dir_all(harness.repo.join(".git")).unwrap(),
+            "missing_cwd" => {
+                let path = harness.transcript(case);
+                let mut record: serde_json::Value =
+                    serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+                record.as_object_mut().unwrap().remove("cwd");
+                std::fs::write(path, format!("{record}\n")).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let uploaded = harness.sync().await;
+        assert_eq!(uploaded.len(), 1, "{case}");
+        assert_eq!(
+            uploaded[0].facts.messages[0].normalized_git_remote, "",
+            "{case}"
+        );
+        let store = collector_sync::CursorStore::open(
+            crate::connection::Paths::at(harness.state.path().to_path_buf()).cursor_db("org_1"),
+            "org_1",
+        )
+        .unwrap();
+        let path = harness.transcript(case);
+        assert!(
+            store
+                .session_git(
+                    collector_contracts::AgentSource::Claude,
+                    path.to_str().unwrap()
+                )
+                .unwrap()
+                .is_none(),
+            "{case}"
+        );
+        assert!(
+            store
+                .get(
+                    collector_contracts::AgentSource::Claude,
+                    path.to_str().unwrap()
+                )
+                .unwrap()
+                .is_some(),
+            "{case}"
+        );
+        assert!(harness.sync().await.is_empty(), "{case}");
+    }
+}

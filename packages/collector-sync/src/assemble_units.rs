@@ -13,7 +13,9 @@
 //! persists its root, normalized remote, and branch before facts are built. Later reads reuse that
 //! evidence without git once the remote is non-empty. Empty-remote pins keep their original root and
 //! branch while retrying until the first non-empty remote is adopted, once. A failed probe creates
-//! no pin and never changes an existing pin.
+//! no pin and never changes an existing pin. Without a pin it returns a retryable assembly error:
+//! nothing uploads, the file cursor stays put, and the cycle remains incomplete for the next retry.
+//! Legitimate absence (missing cwd/git or a non-repo) still assembles without attribution.
 //!
 //! Claude and Cursor JSONL prefer the transcript's `gitBranch` over the pinned live branch. Codex
 //! prefers its embedded git evidence and uses the pin only for live fallback. [`build_session_context`]
@@ -169,10 +171,11 @@ async fn assemble_records(
             // to a live resolve when Codex recorded no git block at all.
             let meta = match codex.embedded_git {
                 Some(g) => Some(SessionGit::from(g)),
-                None => store
-                    .resolve_session_git(source, &file.path, codex.fields.cwd.as_deref(), cache)
-                    .await
-                    .map_err(Error::other)?,
+                None => {
+                    store
+                        .resolve_session_git(source, &file.path, codex.fields.cwd.as_deref(), cache)
+                        .await?
+                }
             };
             (
                 codex.fields,
@@ -186,8 +189,7 @@ async fn assemble_records(
             let fields = claude_session_fields(&records);
             let meta = store
                 .resolve_session_git(source, &file.path, fields.cwd.as_deref(), cache)
-                .await
-                .map_err(Error::other)?;
+                .await?;
             (fields, meta, String::new(), None, String::new())
         }
     };

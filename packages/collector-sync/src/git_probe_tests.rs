@@ -27,19 +27,22 @@ async fn failed_probe_recovers(failed_command: &str) {
     let cwd = repo.path().to_str().unwrap();
     let partial = resolve_git_metadata_with(|args, absent_exit| async move {
         if args[0] == failed_command {
-            Err(())
+            Err(GitProbeError::Exit {
+                command: args[0].into(),
+                code: Some(128),
+            })
         } else {
             run_git(cwd, args, absent_exit).await
         }
     })
     .await;
     let cache = GitRemoteCache::new();
-    cache.freeze(cwd, partial);
+    let _ = cache.freeze(cwd, partial);
     let store = CursorStore::open_in_memory("org").unwrap();
     store
         .resolve_session_git(AgentSource::Claude, "session.jsonl", Some(cwd), &cache)
         .await
-        .unwrap();
+        .unwrap_err();
     assert_eq!(
         store
             .session_git(AgentSource::Claude, "session.jsonl")
@@ -101,13 +104,17 @@ async fn git_exit_codes_distinguish_absence_from_failure_and_support_unborn_bran
         resolve_git_metadata(cwd)
             .await
             .unwrap()
+            .unwrap()
             .git_branch
             .as_deref(),
         Some("main")
     );
     assert_eq!(
         run_git(cwd, &["config", "--invalid-option"], Some(1)).await,
-        Err(())
+        Err(GitProbeError::Exit {
+            command: "config".into(),
+            code: Some(129)
+        })
     );
     assert_eq!(
         run_git(
@@ -116,7 +123,7 @@ async fn git_exit_codes_distinguish_absence_from_failure_and_support_unborn_bran
             None
         )
         .await,
-        Err(())
+        Err(GitProbeError::Unavailable)
     );
 
     assert!(git(
@@ -147,5 +154,108 @@ async fn git_exit_codes_distinguish_absence_from_failure_and_support_unborn_bran
         run_git(cwd, &["symbolic-ref", "--short", "-q", "HEAD"], Some(1)).await,
         Ok(None)
     );
-    assert_eq!(resolve_git_metadata(cwd).await.unwrap().git_branch, None);
+    assert_eq!(
+        resolve_git_metadata(cwd).await.unwrap().unwrap().git_branch,
+        None
+    );
+}
+
+#[tokio::test]
+async fn missing_git_binary_is_absence_and_does_not_defer_assembly() {
+    let cwd = tempfile::TempDir::new().unwrap();
+    let absent_binary = cwd.path().join("missing-git-executable");
+    let resolution = resolve_git_metadata_with(|args, absent| {
+        run_git_command(
+            Command::new(&absent_binary),
+            cwd.path().to_str().unwrap(),
+            args,
+            absent,
+        )
+    })
+    .await;
+    assert_eq!(resolution, Ok(None));
+    let cache = GitRemoteCache::new();
+    let _ = cache.freeze(cwd.path().to_str().unwrap(), resolution);
+    let store = CursorStore::open_in_memory("org").unwrap();
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "type":"user", "sessionId":"session", "uuid":"one", "cwd":cwd.path(),
+        "message":{"role":"user", "content":"Inspect"}
+    }))
+    .unwrap();
+    let file = crate::DiscoveredFile {
+        path: cwd.path().join("session.jsonl").to_str().unwrap().into(),
+        size_bytes: bytes.len() as u64,
+        mtime_ms: 1.0,
+    };
+    let unit =
+        crate::assemble_sync_unit_from_bytes(&file, AgentSource::Claude, &cache, &store, &bytes)
+            .await
+            .unwrap();
+    assert_eq!(unit.ctx.repo_root, "");
+    assert_eq!(unit.ctx.normalized_git_remote, "");
+    assert_eq!(
+        store.session_git(AgentSource::Claude, &file.path).unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn persistent_dubious_ownership_failure_is_actionable_and_retryable() {
+    let cwd = tempfile::TempDir::new().unwrap();
+    assert!(git(cwd.path(), &["init", "-b", "main"]).status.success());
+    let resolution = resolve_git_metadata_with(|args, absent| {
+        let mut command = Command::new("git");
+        // Git's test seam simulates foreign ownership without changing filesystem owners.
+        command.env("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1");
+        run_git_command(command, cwd.path().to_str().unwrap(), args, absent)
+    })
+    .await;
+    assert_eq!(resolution, Err(GitProbeError::DubiousOwnership));
+    let cache = GitRemoteCache::new();
+    let _ = cache.freeze(cwd.path().to_str().unwrap(), resolution);
+    let store = CursorStore::open_in_memory("org").unwrap();
+    let error = store
+        .resolve_session_git(AgentSource::Claude, "session", cwd.path().to_str(), &cache)
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+    assert!(error.to_string().contains("safe.directory"));
+    assert!(!error.to_string().contains(cwd.path().to_str().unwrap()));
+}
+
+#[tokio::test]
+async fn empty_remote_pin_survives_a_failed_probe_with_root_and_branch() {
+    let cwd = tempfile::TempDir::new().unwrap();
+    assert!(git(cwd.path(), &["init", "-b", "main"]).status.success());
+    let store = CursorStore::open_in_memory("org").unwrap();
+    let pin = store
+        .resolve_session_git(
+            AgentSource::Claude,
+            "session",
+            cwd.path().to_str(),
+            &GitRemoteCache::new(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(pin.normalized_git_remote, "");
+    assert_eq!(pin.git_branch.as_deref(), Some("main"));
+    let cache = GitRemoteCache::new();
+    let _ = cache.freeze(
+        cwd.path().to_str().unwrap(),
+        Err(GitProbeError::Timeout {
+            command: "config".into(),
+        }),
+    );
+    assert_eq!(
+        store
+            .resolve_session_git(AgentSource::Claude, "session", cwd.path().to_str(), &cache)
+            .await
+            .unwrap(),
+        Some(pin.clone())
+    );
+    assert_eq!(
+        store.session_git(AgentSource::Claude, "session").unwrap(),
+        Some(pin)
+    );
 }
