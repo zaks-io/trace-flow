@@ -13,10 +13,14 @@
 //! once for parsed-fact assembly.
 //!
 //! The window is the 24h active-session grace for `sync`, measured back from the last complete pass
-//! recorded in the cursor store (or from now on the very first pass), or a `HistoryPreset` for
+//! recorded in the cursor store (or from the start of the first pass), or a `HistoryPreset` for
 //! `import`/`--since`. A pass that finishes with no discovery, assembly, or ingest failures records
 //! its start time as the new watermark, so time the collector spent not running is rescanned, never
-//! skipped. A skipped filesystem error holds the prior watermark so unread files cannot age out.
+//! skipped. Before discovery, the store retains the earliest unfinished cutoff. Retries use the
+//! earlier of that cutoff and the requested window, so failures cannot age files out even before
+//! the first watermark. Completion atomically records the watermark and clears the pending cutoff.
+//! Presets, `--since`, and the legacy 7-day replay backfill still choose the requested window; an
+//! unfinished wider window remains in scope until a clean pass completes it.
 //! Batch ids are minted per POST from a process counter seeded by the wall clock so they are unique
 //! within a run without needing `Date.now()` at the cursor seam.
 
@@ -198,6 +202,11 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
         .last_complete_sync_at_ms()
         .context("read last complete sync")?;
     let window = window.import_window(cfg.now_ms, last_complete_sync_at_ms);
+    let window = ImportWindow::from_cutoff_ms(
+        store
+            .begin_sync(window.cutoff_ms())
+            .context("preserve unfinished sync window")?,
+    );
 
     let cache = GitRemoteCache::new();
     let mut batch_seq: u64 = cfg.now_ms.max(0) as u64;

@@ -5,6 +5,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+#[path = "sync_window_tests.rs"]
+mod sync_window_tests;
+
 struct SessionGitHarness {
     home: tempfile::TempDir,
     state: tempfile::TempDir,

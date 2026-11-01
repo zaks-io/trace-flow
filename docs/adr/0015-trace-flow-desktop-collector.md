@@ -41,6 +41,10 @@ Parsed fact sync is the normal analytics path for every Organization. Lossless t
 
 First-run parsed fact sync is incremental by default. It records `collector_started_at` when the user clicks **Start syncing** and includes files modified within the preceding 24 hours to catch active sessions. Parsed fact history import is a separate explicit action with v1 presets: 7 days, 30 days, or 1 year. Conversation Archive enrollment has its own all-currently-available-history choice because the archive is not bounded by the one-year fact horizon.
 
+Before discovery, each parsed fact pass persists its mtime cutoff in the Organization's existing cursor metadata. Until a pass completes, later passes use the earlier of that pending cutoff and their requested window. A failed first sync therefore retains its original 24-hour window across retries and restarts, even without a complete-sync watermark. Discovery, assembly, or upload failures keep both the pending cutoff and the prior watermark. A clean pass atomically records its start time as the complete-sync watermark and clears the pending cutoff.
+
+History presets and `--since` still select the requested window. The legacy `needs_replay_backfill` marker still selects 7 days for incremental sync until a clean pass completes. An unfinished history or legacy backfill retains its earliest cutoff even when a retry requests a shorter preset or incremental sync. A wider request can extend the pending window; a shorter request cannot abandon unfinished work. After completion, ordinary window selection resumes, including the one-year retention floor for incremental resumption.
+
 Autostart is visible and enabled by default before **Start syncing**. Users can turn it off during setup or later in settings.
 
 ## Runtime Behavior

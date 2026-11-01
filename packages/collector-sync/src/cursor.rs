@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS cursor_meta (
 const META_REPLAY_BACKFILL_NEEDED: &str = "replay_backfill_needed";
 const META_LEGACY_CURSOR_REPAIR_DONE: &str = "legacy_cursor_repair_done";
 const META_LAST_COMPLETE_SYNC_AT_MS: &str = "last_complete_sync_at_ms";
+const META_INCOMPLETE_SYNC_CUTOFF_MS: &str = "incomplete_sync_cutoff_ms";
 
 /// How far one transcript file has been ingested. The four fields the discovery pass needs to decide
 /// whether a file is unchanged since the last successful upload.
@@ -280,21 +281,43 @@ impl CursorStore {
     /// any such pass. Embedders resume their incremental window from here so the time the collector
     /// spent not running is rescanned rather than skipped.
     pub fn last_complete_sync_at_ms(&self) -> Result<Option<i64>, CursorStoreError> {
-        let Some(value) = self.get_meta(META_LAST_COMPLETE_SYNC_AT_MS)? else {
+        self.get_timestamp_meta(META_LAST_COMPLETE_SYNC_AT_MS)
+    }
+
+    fn get_timestamp_meta(&self, key: &'static str) -> Result<Option<i64>, CursorStoreError> {
+        let Some(value) = self.get_meta(key)? else {
             return Ok(None);
         };
         value
             .parse()
             .map(Some)
-            .map_err(|_| CursorStoreError::CorruptMeta {
-                key: META_LAST_COMPLETE_SYNC_AT_MS,
-                value,
-            })
+            .map_err(|_| CursorStoreError::CorruptMeta { key, value })
+    }
+
+    /// Persist a pass's cutoff before discovery, retaining the earliest unfinished window across
+    /// retries, restarts, and window changes. A setup/assembly error or cancellation must not let
+    /// files age out just because no complete-sync watermark has been recorded yet.
+    pub fn begin_sync(&self, cutoff_ms: i64) -> Result<i64, CursorStoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        let cutoff_ms = self
+            .get_timestamp_meta(META_INCOMPLETE_SYNC_CUTOFF_MS)?
+            .map_or(cutoff_ms, |pending| pending.min(cutoff_ms));
+        self.set_meta(META_INCOMPLETE_SYNC_CUTOFF_MS, &cutoff_ms.to_string())?;
+        tx.commit()?;
+        Ok(cutoff_ms)
     }
 
     /// Record that a sync pass which started at `at_ms` finished with no failures.
+    /// Clear the pending cutoff atomically so a failed metadata write preserves the retry window.
     pub fn mark_complete_sync(&self, at_ms: i64) -> Result<(), CursorStoreError> {
-        self.set_meta(META_LAST_COMPLETE_SYNC_AT_MS, &at_ms.to_string())
+        let tx = self.conn.unchecked_transaction()?;
+        self.set_meta(META_LAST_COMPLETE_SYNC_AT_MS, &at_ms.to_string())?;
+        self.conn.execute(
+            "DELETE FROM cursor_meta WHERE org_id = ?1 AND key = ?2",
+            params![self.org_id, META_INCOMPLETE_SYNC_CUTOFF_MS],
+        )?;
+        tx.commit()?;
+        Ok(())
     }
 
     fn count_rows(&self, table: &str) -> Result<i64, CursorStoreError> {
@@ -730,6 +753,10 @@ pub(crate) fn content_hash<T: serde::Serialize>(value: &T) -> Result<String, Cur
     }
     Ok(out)
 }
+
+#[cfg(test)]
+#[path = "cursor_window_tests.rs"]
+mod cursor_window_tests;
 
 #[cfg(test)]
 mod tests {
