@@ -42,6 +42,7 @@ pub mod git_remote;
 pub mod import;
 pub mod orchestrator;
 mod quarantine;
+pub mod session_git;
 pub mod sync_cycle;
 
 pub use assemble_units::{
@@ -61,7 +62,7 @@ pub use discovery::{
     DISCOVERY_INCOMPLETE,
 };
 pub use envelope::{build_envelope, BatchMeta};
-pub use git::{resolve_git_metadata, GitMetadata, GitRemoteCache};
+pub use git::{resolve_git_metadata, GitMetadata, GitProbeError, GitRemoteCache, GitResolution};
 pub use git_remote::normalize_git_remote;
 pub use import::{HistoryPreset, ImportWindow};
 pub use orchestrator::{Action, Orchestrator, OrchestratorState, Trigger};

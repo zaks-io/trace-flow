@@ -4,14 +4,33 @@
 // the remote on every call, which lets a mid-run `git remote set-url` silently re-attribute a
 // session. Trace Flow owns the contract, IDs, pricing, redaction, and storage around this code.
 
-//! Git remote resolution with a **freeze cache**.
+//! Live git resolution with a per-sync-cycle freeze cache.
 //!
-//! A session's repo attribution must be stable for the whole sync run. The first time a `cwd` is
-//! seen, [`GitRemoteCache`] resolves its git root / remote / branch and **freezes** the result;
-//! every later lookup returns the frozen value without shelling out again. A `cwd` that is not a git
-//! repo freezes as `None`, so non-repo directories are probed at most once too. The frozen value is
-//! the *first* observed one — a later remote change does not overwrite it — which is the whole point:
-//! one canonical remote per `cwd` per run (ADR "Repo and pull request attribution").
+//! [`GitRemoteCache`] deduplicates probes for a cwd within one cycle, including unsuccessful probes.
+//! Assembly first checks the durable `(source, transcript path)` pin in [`crate::cursor::CursorStore`].
+//! A repo root creates a pin only when every probe succeeds or reports legitimate absence. Pins
+//! with a non-empty remote bypass git even after a rename, branch switch, or worktree deletion.
+//! Empty-remote pins keep their root and branch but retry live resolution until they adopt their
+//! first non-empty remote, once. A failed probe without a pin defers assembly and keeps the file
+//! cursor and complete-cycle watermark unchanged. The next cycle retries the unchanged transcript.
+//!
+//! Resolution classifies absence separately from failure:
+//! - Missing/invalid cwd or git executable (`NotFound`/`NotADirectory`): no pin, sync proceeds.
+//! - Root probe exit 128 with a C-locale not-a-repository message, including a dangling or
+//!   malformed `.git` gitfile left by a pruned worktree: no repo, sync proceeds. Probes drop
+//!   inherited repository-selection variables such as `GIT_DIR`, so discovery always starts at cwd.
+//! - Origin/branch exit 1: legitimate absent field, a resolved repo may be pinned.
+//! - Timeout, other spawn/exit failures, invalid UTF-8 or empty root: retryable failure.
+//! - Dubious ownership: retryable failure with an actionable diagnostic. Deferring visibly avoids
+//!   silently replacing valid attribution; the user must fix repository trust outside the Collector.
+//!
+//! Known limitation (TRA-453): git words an unreadable `.git` (wrong owner, chmod, macOS privacy
+//! block) exactly like a non-repo, and skips an unreadable nested `.git` to discover a readable
+//! parent repo. Telling those apart means reproducing git's discovery rules, so such sessions
+//! resolve as git reports them.
+//!
+//! Exit 128 alone is insufficient: git uses it for both non-repos and real repo failures. Raw stderr
+//! and remote output never enter errors, because either can contain private paths or credentials.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -29,11 +48,39 @@ pub struct GitMetadata {
     pub git_branch: Option<String>,
 }
 
-/// Process-lifetime `cwd -> Option<GitMetadata>` freeze cache. `Some(None)` distinguishes "frozen as
-/// not-a-repo" from "never probed", so a non-repo `cwd` is shelled out for exactly once.
+/// `Ok(Some(metadata))` is a repo, `Ok(None)` is legitimate absence, and `Err` is a failed probe.
+/// Errors contain only fixed diagnostics, command names and exit codes, never git output.
+pub type GitResolution = Result<Option<GitMetadata>, GitProbeError>;
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum GitProbeError {
+    #[error("git is unavailable or the working directory no longer exists")]
+    Unavailable,
+    #[error("not a git repository")]
+    NotRepository,
+    #[error("git {command} timed out; retry on the next sync")]
+    Timeout { command: String },
+    #[error(
+        "git {command} could not start ({kind:?}); check git installation and directory access"
+    )]
+    Spawn {
+        command: String,
+        kind: std::io::ErrorKind,
+    },
+    #[error("git {command} failed (exit {code:?}); check the repository with git status")]
+    Exit { command: String, code: Option<i32> },
+    #[error("git rejected dubious ownership; verify repository ownership and configure safe.directory for this checkout if trusted")]
+    DubiousOwnership,
+    #[error("git {command} returned invalid UTF-8; check repository metadata")]
+    InvalidUtf8 { command: String },
+    #[error("git returned an empty repository root; check the repository with git status")]
+    EmptyRoot,
+}
+
+/// Per-cycle freeze cache preserves resolved, absent, and failed outcomes independently of misses.
 #[derive(Debug, Default)]
 pub struct GitRemoteCache {
-    frozen: Mutex<HashMap<String, Option<GitMetadata>>>,
+    frozen: Mutex<HashMap<String, GitResolution>>,
 }
 
 impl GitRemoteCache {
@@ -49,7 +96,7 @@ impl GitRemoteCache {
     /// `peek` and both shell out, but `freeze` is first-writer-wins, so they converge on one frozen
     /// value and the duplicate `git` spawn is the only cost. Fine while the orchestrator syncs one
     /// job at a time; revisit if it ever dispatches concurrent resolves for the same `cwd`.
-    pub async fn resolve(&self, cwd: &str) -> Option<GitMetadata> {
+    pub async fn resolve(&self, cwd: &str) -> GitResolution {
         if let Some(frozen) = self.peek(cwd) {
             return frozen;
         }
@@ -57,15 +104,14 @@ impl GitRemoteCache {
         self.freeze(cwd, resolved)
     }
 
-    /// `Some(frozen)` if `cwd` has been resolved (the inner `Option` is the metadata, `None` for a
-    /// non-repo), or `None` if it has never been probed.
-    fn peek(&self, cwd: &str) -> Option<Option<GitMetadata>> {
+    /// `Some(outcome)` for a cache hit, or `None` if the cwd has never been probed.
+    fn peek(&self, cwd: &str) -> Option<GitResolution> {
         self.frozen.lock().unwrap().get(cwd).cloned()
     }
 
     /// Insert-once: freezes `value` for `cwd` if unset and returns whatever is now frozen. A second
     /// `freeze` for the same `cwd` is a no-op and returns the original (first-writer-wins).
-    fn freeze(&self, cwd: &str, value: Option<GitMetadata>) -> Option<GitMetadata> {
+    fn freeze(&self, cwd: &str, value: GitResolution) -> GitResolution {
         self.frozen
             .lock()
             .unwrap()
@@ -75,111 +121,165 @@ impl GitRemoteCache {
     }
 }
 
-/// Shell out to `git` to read a `cwd`'s root, branch, and `origin` URL. Returns `None` when the
-/// directory is not inside a worktree (no `--show-toplevel`). Integration-tested at 3d against a real
-/// repo; the freeze cache above is what the 3b unit tests cover.
-pub async fn resolve_git_metadata(cwd: &str) -> Option<GitMetadata> {
-    let (root, branch, remote) = tokio::join!(
-        run_git(cwd, &["rev-parse", "--show-toplevel"]),
-        run_git(cwd, &["rev-parse", "--abbrev-ref", "HEAD"]),
-        run_git(cwd, &["config", "--get", "remote.origin.url"]),
-    );
-    // `--show-toplevel` only succeeds inside a worktree and prints an existing canonical path, so its
-    // presence is the repo test; no extra `stat` is warranted (and a blocking one in async would be
-    // wrong here).
-    let root = root?;
-    Some(GitMetadata {
-        git_root: root,
-        git_remote_url: remote,
-        // A detached HEAD reports the literal "HEAD"; treat that as no branch.
-        git_branch: branch.filter(|b| b != "HEAD"),
-    })
+/// Read root, branch, and origin without conflating absence and failed probes.
+pub async fn resolve_git_metadata(cwd: &str) -> GitResolution {
+    resolve_git_metadata_with(|args, absent_exit| run_git(cwd, args, absent_exit)).await
 }
 
-/// Run one `git` probe in `cwd`, returning its trimmed stdout or `None`. Every failure mode — missing
-/// `cwd`, non-zero exit, non-UTF-8 output, empty output — collapses to `None`, which the caller reads
-/// as "this field is absent" (and an absent `--show-toplevel` as "not a repo"). That coarse signal is
-/// all repo attribution needs; per-failure diagnostics belong to the 3d end-to-end run, not here.
-async fn run_git(cwd: &str, args: &[&str]) -> Option<String> {
-    // These probes are local config/HEAD reads that finish in milliseconds. The deadline exists only so
-    // a wedged `git` (a credential prompt on a misconfigured remote, a stuck filesystem) can't stall the
-    // whole sync cycle; a timeout collapses to `None` like every other failure mode.
+async fn resolve_git_metadata_with<F, Fut>(probe: F) -> GitResolution
+where
+    F: Fn(&'static [&'static str], Option<i32>) -> Fut,
+    Fut: std::future::Future<Output = Result<Option<String>, GitProbeError>>,
+{
+    // Establish absence first: a non-repo's branch probe also fails, but must not defer sync.
+    let root = match probe(&["rev-parse", "--show-toplevel"], None).await {
+        Err(GitProbeError::Unavailable | GitProbeError::NotRepository) => return Ok(None),
+        other => other?.ok_or(GitProbeError::EmptyRoot)?,
+    };
+    let (branch, remote) = tokio::join!(
+        probe(&["symbolic-ref", "--short", "-q", "HEAD"], Some(1)),
+        probe(&["config", "--get", "remote.origin.url"], Some(1)),
+    );
+    Ok(Some(GitMetadata {
+        git_root: root,
+        git_remote_url: remote?,
+        git_branch: branch?,
+    }))
+}
+
+/// C-locale root-probe messages for a cwd with no usable repository. A pruned linked worktree keeps
+/// a `.git` gitfile that points at deleted metadata, and git words that differently across versions
+/// ("not a git repository: <path>" in older releases, "gitfile does not point to a valid
+/// repository" in newer ones). No retry can repair it, so it is absence rather than a deferral that
+/// would hold the session forever. These prefixes are only trustworthy because probes never inherit
+/// [`REPOSITORY_SELECTION_ENV`]: a stale `GIT_DIR` produces the same "not a git repository" text.
+const NOT_A_REPOSITORY: [&str; 4] = [
+    "fatal: not a git repository",
+    "fatal: gitfile does not point to a valid repository",
+    "fatal: invalid gitfile format",
+    "fatal: no path in gitfile",
+];
+
+/// `git rev-parse --local-env-vars` minus `GIT_CONFIG_PARAMETERS` and `GIT_CONFIG_COUNT`, which is
+/// what git itself clears before running a command in another repository (`sanitize_repo_env` in
+/// git's run-command.c).
+/// A Collector started from a git hook or a shell that exported `GIT_DIR` would otherwise probe that
+/// repository instead of the session's cwd. The two config variables carry user settings such as
+/// `safe.directory`, not a repository choice, so they stay.
+const REPOSITORY_SELECTION_ENV: [&str; 13] = [
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+];
+
+async fn run_git(
+    cwd: &str,
+    args: &[&str],
+    absent_exit: Option<i32>,
+) -> Result<Option<String>, GitProbeError> {
+    run_git_command(Command::new("git"), cwd, args, absent_exit).await
+}
+
+async fn run_git_command(
+    mut command: Command,
+    cwd: &str,
+    args: &[&str],
+    absent_exit: Option<i32>,
+) -> Result<Option<String>, GitProbeError> {
+    let name = args[0].to_string();
+    for variable in REPOSITORY_SELECTION_ENV {
+        command.env_remove(variable);
+    }
     let output = timeout(
         Duration::from_secs(5),
-        Command::new("git").current_dir(cwd).args(args).output(),
+        command
+            .current_dir(cwd)
+            .env("LC_ALL", "C")
+            .args(args)
+            .kill_on_drop(true)
+            .output(),
     )
     .await
-    .ok()?
-    .ok()?;
+    .map_err(|_| GitProbeError::Timeout {
+        command: name.clone(),
+    })?
+    .map_err(|error| match error.kind() {
+        // Windows reports a deleted cwd as NotADirectory, Unix as NotFound. Neither can resolve.
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => {
+            GitProbeError::Unavailable
+        }
+        kind => GitProbeError::Spawn {
+            command: name.clone(),
+            kind,
+        },
+    })?;
     if !output.status.success() {
-        return None;
+        if absent_exit.is_some() && output.status.code() == absent_exit {
+            return Ok(None);
+        }
+        // C-locale git uses exit 128 for both absence and fatal repository errors.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if args == ["rev-parse", "--show-toplevel"]
+            && output.status.code() == Some(128)
+            && NOT_A_REPOSITORY
+                .iter()
+                .any(|prefix| stderr.starts_with(prefix))
+        {
+            return Err(GitProbeError::NotRepository);
+        }
+        // Do not silently rewrite attribution or change user trust settings on persistent failures.
+        if stderr.starts_with("fatal: detected dubious ownership in repository") {
+            return Err(GitProbeError::DubiousOwnership);
+        }
+        return Err(GitProbeError::Exit {
+            command: name,
+            code: output.status.code(),
+        });
     }
-    let text = String::from_utf8(output.stdout).ok()?;
+    let text = String::from_utf8(output.stdout)
+        .map_err(|_| GitProbeError::InvalidUtf8 { command: name })?;
     let trimmed = text.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
+    Ok((!trimmed.is_empty()).then(|| trimmed.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn meta(remote: &str) -> GitMetadata {
-        GitMetadata {
+    fn meta(remote: &str) -> GitResolution {
+        Ok(Some(GitMetadata {
             git_root: "/work/repo".to_string(),
             git_remote_url: Some(remote.to_string()),
             git_branch: Some("main".to_string()),
+        }))
+    }
+
+    #[test]
+    fn freeze_preserves_all_outcomes_and_first_writer_wins() {
+        let cache = GitRemoteCache::new();
+        for (cwd, outcome) in [
+            ("repo", meta("https://github.com/acme/repo.git")),
+            ("absent", Ok(None)),
+            ("failed", Err(GitProbeError::EmptyRoot)),
+        ] {
+            assert_eq!(cache.peek(cwd), None);
+            assert_eq!(cache.freeze(cwd, outcome.clone()), outcome);
+            assert_eq!(cache.freeze(cwd, meta("later")), outcome);
+            assert_eq!(cache.peek(cwd), Some(outcome));
         }
     }
-
-    #[test]
-    fn peek_misses_before_resolve_and_hits_after_freeze() {
-        let cache = GitRemoteCache::new();
-        assert_eq!(cache.peek("/work/repo"), None);
-        cache.freeze("/work/repo", Some(meta("git@github.com:acme/repo.git")));
-        assert_eq!(
-            cache.peek("/work/repo"),
-            Some(Some(meta("git@github.com:acme/repo.git")))
-        );
-    }
-
-    #[test]
-    fn freeze_is_first_writer_wins_so_a_later_remote_change_is_ignored() {
-        let cache = GitRemoteCache::new();
-        let first = cache.freeze("/work/repo", Some(meta("git@github.com:acme/repo.git")));
-        // Simulate a mid-run `git remote set-url`: the cache must keep the first frozen value.
-        let second = cache.freeze("/work/repo", Some(meta("git@github.com:evil/fork.git")));
-        assert_eq!(first, Some(meta("git@github.com:acme/repo.git")));
-        assert_eq!(second, first);
-        assert_eq!(
-            cache.peek("/work/repo"),
-            Some(Some(meta("git@github.com:acme/repo.git")))
-        );
-    }
-
-    #[test]
-    fn non_repo_cwd_freezes_as_none_so_it_is_probed_at_most_once() {
-        let cache = GitRemoteCache::new();
-        assert_eq!(cache.freeze("/tmp/not-a-repo", None), None);
-        // Frozen as `Some(None)` — a cache hit that yields no metadata, not a miss that re-probes.
-        assert_eq!(cache.peek("/tmp/not-a-repo"), Some(None));
-    }
-
-    #[test]
-    fn distinct_cwds_freeze_independently() {
-        let cache = GitRemoteCache::new();
-        cache.freeze("/work/a", Some(meta("git@github.com:acme/a.git")));
-        cache.freeze("/work/b", Some(meta("git@github.com:acme/b.git")));
-        assert_eq!(
-            cache.peek("/work/a"),
-            Some(Some(meta("git@github.com:acme/a.git")))
-        );
-        assert_eq!(
-            cache.peek("/work/b"),
-            Some(Some(meta("git@github.com:acme/b.git")))
-        );
-    }
 }
+
+#[cfg(test)]
+#[path = "git_probe_tests.rs"]
+mod probe_tests;

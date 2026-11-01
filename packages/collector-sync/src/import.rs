@@ -24,6 +24,8 @@
 //! The window is a pure value: it carries one cutoff and answers [`includes`](ImportWindow::includes)
 //! for a file's mtime. The discovery/drive layer (later 3b/3d) supplies the timestamps and applies
 //! it; this module decides nothing about reading files or talking to the network.
+//! Embedders persist the earliest unfinished cutoff and restore it with
+//! [`ImportWindow::from_cutoff_ms`] until a pass completes, including on the first sync.
 
 const MS_PER_DAY: i64 = 24 * 60 * 60 * 1000;
 
@@ -58,6 +60,11 @@ pub struct ImportWindow {
 }
 
 impl ImportWindow {
+    /// Restore a cutoff retained by the cursor store for an unfinished pass.
+    pub fn from_cutoff_ms(cutoff_ms: i64) -> Self {
+        Self { cutoff_ms }
+    }
+
     /// The default first incremental scan: the 24h grace window ending at `collector_started_at`.
     pub fn first_incremental(collector_started_at_ms: i64) -> Self {
         Self {

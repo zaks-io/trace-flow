@@ -13,10 +13,16 @@
 //! once for parsed-fact assembly.
 //!
 //! The window is the 24h active-session grace for `sync`, measured back from the last complete pass
-//! recorded in the cursor store (or from now on the very first pass), or a `HistoryPreset` for
+//! recorded in the cursor store (or from the start of the first pass), or a `HistoryPreset` for
 //! `import`/`--since`. A pass that finishes with no discovery, assembly, or ingest failures records
 //! its start time as the new watermark, so time the collector spent not running is rescanned, never
-//! skipped. A skipped filesystem error holds the prior watermark so unread files cannot age out.
+//! skipped. Before discovery, the store retains the earliest unfinished cutoff. Retries use the
+//! earlier of that cutoff and the requested window, so failures cannot age files out even before
+//! the first watermark. Completion atomically records the watermark and clears the pending cutoff
+//! only if this pass scanned at least that far back, so an overlapping narrower pass (the desktop
+//! loop beside a CLI import) cannot drop a wider unfinished window.
+//! Presets, `--since`, and the legacy 7-day replay backfill still choose the requested window; an
+//! unfinished wider window remains in scope until a clean pass completes it.
 //! Batch ids are minted per POST from a process counter seeded by the wall clock so they are unique
 //! within a run without needing `Date.now()` at the cursor seam.
 
@@ -198,6 +204,11 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
         .last_complete_sync_at_ms()
         .context("read last complete sync")?;
     let window = window.import_window(cfg.now_ms, last_complete_sync_at_ms);
+    let window = ImportWindow::from_cutoff_ms(
+        store
+            .begin_sync(window.cutoff_ms())
+            .context("preserve unfinished sync window")?,
+    );
 
     let cache = GitRemoteCache::new();
     let mut batch_seq: u64 = cfg.now_ms.max(0) as u64;
@@ -241,7 +252,10 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
                 &mut report,
             )
             .context("select changed files")?;
-            while let Some(units) = files.next_batch(&cache, &mut report, &mut files_read).await {
+            while let Some(units) = files
+                .next_batch(&cache, &store, &mut report, &mut files_read)
+                .await
+            {
                 if !units.is_empty() {
                     apply_fact_cycle(
                         &client,
@@ -274,7 +288,7 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
         // grace window. A pass with discovery, assembly, or ingest failures keeps the old watermark
         // so unread or failed files stay in the next incremental window.
         store
-            .mark_complete_sync(cfg.now_ms)
+            .mark_complete_sync(cfg.now_ms, window.cutoff_ms())
             .context("record complete sync")?;
     }
     if needs_replay_backfill && complete {
@@ -403,6 +417,10 @@ pub fn window_from_since(since: &str) -> Result<Window> {
 }
 
 #[cfg(test)]
+#[path = "session_git_tests.rs"]
+mod session_git_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
@@ -474,14 +492,16 @@ mod tests {
         std::fs::write(codex_dir.join("codex-session-001.jsonl"), CODEX).unwrap();
     }
 
-    fn raw_response(status: u16, reason: &str, body: &str) -> String {
+    pub(super) fn raw_response(status: u16, reason: &str, body: &str) -> String {
         format!(
             "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
             body.len()
         )
     }
 
-    async fn spawn_http(handler: impl Fn(Vec<u8>) -> String + Send + Sync + 'static) -> String {
+    pub(super) async fn spawn_http(
+        handler: impl Fn(Vec<u8>) -> String + Send + Sync + 'static,
+    ) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let handler = Arc::new(handler);
@@ -558,7 +578,7 @@ mod tests {
         CursorStore::open(Paths::at(state.to_path_buf()).cursor_db("org_1"), "org_1").unwrap()
     }
 
-    async fn run_fact_sync(
+    pub(super) async fn run_fact_sync(
         home: &Path,
         state: &Path,
         ingest_url: String,
@@ -670,7 +690,7 @@ mod tests {
         assert_eq!(last_complete_sync_at_ms(state.path()), None);
     }
 
-    fn request_json(raw: &[u8]) -> String {
+    pub(super) fn request_json(raw: &[u8]) -> String {
         use std::io::Read as _;
         let start = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
         let mut json = String::new();

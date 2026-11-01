@@ -6,17 +6,21 @@
 // remote normalizer rather than inline. Trace Flow owns the contract, IDs, pricing, redaction, and
 // storage around this code.
 
-//! Sync-unit assembly: the read half of 3d.
+//! Transcript assembly with durable session git attribution.
 //!
-//! [`assemble_sync_unit`] turns one [`DiscoveredFile`] the scan selected into the [`SyncUnit`] the drive
-//! loop POSTs: it reads the whole transcript, resolves the session's git attribution once, and records
-//! the cursor the loop advances only after a `2xx`. The **whole-file model** (ADR / otto) means the unit
-//! carries the *entire* file and the cursor's `byte_offset` is the file size; server-side dedupe absorbs
-//! the re-send of an unchanged tail.
+//! [`assemble_sync_unit`] reads a discovered transcript snapshot and builds a [`SyncUnit`]. Live git
+//! fallback first checks [`CursorStore`]'s per-source, per-transcript pin; a successful repo resolution
+//! persists its root, normalized remote, and branch before facts are built. Later reads reuse that
+//! evidence without git once the remote is non-empty. Empty-remote pins keep their original root and
+//! branch while retrying until the first non-empty remote is adopted, once. A failed probe creates
+//! no pin and never changes an existing pin. Without a pin it returns a retryable assembly error:
+//! nothing uploads, the file cursor stays put, and the cycle remains incomplete for the next retry.
+//! Legitimate absence (missing cwd/git or a non-repo) still assembles without attribution.
 //!
-//! The field mapping lives in the pure [`build_session_context`] (it takes already-resolved
-//! [`GitMetadata`], so it is testable without a real repo); the only impure steps are the file read and
-//! the one `git` resolve in the async wrapper.
+//! Claude and Cursor JSONL prefer the transcript's `gitBranch` over the pinned live branch. Codex
+//! prefers its embedded git evidence and uses the pin only for live fallback. [`build_session_context`]
+//! maps that evidence to parser context. Absolute repo roots remain local path-relativization anchors
+//! and never enter uploaded facts. The file cursor advances only after successful upload.
 
 use std::io::{BufRead, BufReader, Cursor, Error, ErrorKind, Read};
 
@@ -29,10 +33,10 @@ use crate::claude_session::{
 };
 use crate::codex_lineage::CodexLineage;
 use crate::codex_session::codex_session_fields;
-use crate::cursor::FileCursor;
+use crate::cursor::{CursorStore, FileCursor};
 use crate::discovery::{head_hash, DiscoveredFile};
-use crate::git::{GitMetadata, GitRemoteCache};
-use crate::git_remote::normalize_git_remote;
+use crate::git::GitRemoteCache;
+use crate::session_git::SessionGit;
 use crate::sync_cycle::{SyncUnit, UnitCursor};
 
 /// Read `file`, resolve its session's git attribution, and assemble the [`SyncUnit`] the drive loop
@@ -42,18 +46,20 @@ pub async fn assemble_sync_unit(
     file: &DiscoveredFile,
     source: AgentSource,
     cache: &GitRemoteCache,
+    store: &CursorStore,
 ) -> std::io::Result<SyncUnit> {
-    assemble_sync_unit_with_lineage(file, source, cache, None).await
+    assemble_sync_unit_with_lineage(file, source, cache, store, None).await
 }
 
 pub async fn assemble_sync_unit_with_lineage(
     file: &DiscoveredFile,
     source: AgentSource,
     cache: &GitRemoteCache,
+    store: &CursorStore,
     lineage: Option<&CodexLineage>,
 ) -> std::io::Result<SyncUnit> {
     let snapshot = read_transcript_file(file)?;
-    assemble_snapshot(file, source, cache, snapshot, lineage).await
+    assemble_snapshot(file, source, cache, store, snapshot, lineage).await
 }
 
 /// Read and parse `file`, bounded to its discovered size. Separate from [`assemble_snapshot`] so an
@@ -69,6 +75,7 @@ pub async fn assemble_snapshot(
     file: &DiscoveredFile,
     source: AgentSource,
     cache: &GitRemoteCache,
+    store: &CursorStore,
     snapshot: TranscriptSnapshot,
     lineage: Option<&CodexLineage>,
 ) -> std::io::Result<SyncUnit> {
@@ -76,6 +83,7 @@ pub async fn assemble_snapshot(
         file,
         source,
         cache,
+        store,
         snapshot.parsed.records,
         snapshot.content_hash_head,
         lineage,
@@ -91,6 +99,7 @@ pub async fn assemble_sync_unit_from_bytes(
     file: &DiscoveredFile,
     source: AgentSource,
     cache: &GitRemoteCache,
+    store: &CursorStore,
     bytes: &[u8],
 ) -> std::io::Result<SyncUnit> {
     let size = usize::try_from(file.size_bytes)
@@ -111,6 +120,7 @@ pub async fn assemble_sync_unit_from_bytes(
         file,
         source,
         cache,
+        store,
         snapshot.parsed.records,
         snapshot.content_hash_head,
         None,
@@ -122,15 +132,13 @@ async fn assemble_records(
     file: &DiscoveredFile,
     source: AgentSource,
     cache: &GitRemoteCache,
+    store: &CursorStore,
     records: Vec<Value>,
     content_hash_head: String,
     lineage: Option<&CodexLineage>,
 ) -> std::io::Result<SyncUnit> {
-    // Codex and Claude carry session identity + git differently: Claude repeats `sessionId`/`cwd`/
-    // `gitBranch` per line and the repo is resolved live from `cwd`; Codex records one `session_meta`
-    // whose payload embeds the id, cwd, and git remote/branch/sha directly. Using the Claude reader on
-    // a Codex transcript left every Codex session with no cwd → no remote → a path-hash that read like
-    // a commit. Branch on source so each gets the right extractor.
+    // Claude repeats sessionId/cwd/gitBranch per line; Codex embeds them in session_meta. Using
+    // the Claude extractor for Codex loses cwd and remote, incorrectly falling back to path identity.
     let (fields, meta, head_sha, codex_agent_depth, parent_vendor_session_id) = match source {
         AgentSource::Codex => {
             let codex = codex_session_fields(&records);
@@ -162,11 +170,12 @@ async fn assemble_records(
             // Prefer the transcript's embedded git (stable even if the checkout moved); only fall back
             // to a live resolve when Codex recorded no git block at all.
             let meta = match codex.embedded_git {
-                Some(g) => Some(g),
-                None => match codex.fields.cwd.as_deref() {
-                    Some(cwd) => cache.resolve(cwd).await,
-                    None => None,
-                },
+                Some(g) => Some(SessionGit::from(g)),
+                None => {
+                    store
+                        .resolve_session_git(source, &file.path, codex.fields.cwd.as_deref(), cache)
+                        .await?
+                }
             };
             (
                 codex.fields,
@@ -178,12 +187,9 @@ async fn assemble_records(
         }
         AgentSource::Claude | AgentSource::Cursor => {
             let fields = claude_session_fields(&records);
-            // One git resolve per session, keyed on its cwd; a non-repo (or absent cwd) leaves
-            // attribution empty.
-            let meta = match fields.cwd.as_deref() {
-                Some(cwd) => cache.resolve(cwd).await,
-                None => None,
-            };
+            let meta = store
+                .resolve_session_git(source, &file.path, fields.cwd.as_deref(), cache)
+                .await?;
             (fields, meta, String::new(), None, String::new())
         }
     };
@@ -290,24 +296,24 @@ fn read_transcript_snapshot(
     })
 }
 
-/// Map a session's record-derived [`ClaudeSessionFields`] and resolved [`GitMetadata`] onto the
+/// Map a session's record-derived [`ClaudeSessionFields`] and resolved [`SessionGit`] onto the
 /// [`SessionContext`] every emitter reads. Pure: `meta` is `None` for a non-repo cwd, which leaves the
 /// remote and `repo_root` empty — the safe default that makes the parser relativize every absolute path
 /// to the `outside_repo` sentinel, so no home dir or username leaks into a file event.
 pub fn build_session_context(
     fields: &ClaudeSessionFields,
     transcript_path: &str,
-    meta: Option<&GitMetadata>,
+    meta: Option<&SessionGit>,
     git_head_sha: &str,
 ) -> SessionContext {
     let normalized_git_remote = meta
-        .and_then(|m| m.git_remote_url.as_deref())
-        .map(normalize_git_remote)
+        .map(|m| m.normalized_git_remote.clone())
         .unwrap_or_default();
-    let repo_root = meta.map(|m| m.git_root.clone()).unwrap_or_default();
-    let git_branch = meta
-        .and_then(|m| m.git_branch.clone())
-        .or_else(|| fields.git_branch.clone())
+    let repo_root = meta.map(|m| m.repo_root.clone()).unwrap_or_default();
+    let git_branch = fields
+        .git_branch
+        .clone()
+        .or_else(|| meta.and_then(|m| m.git_branch.clone()))
         .unwrap_or_default();
     // Coarse, hashable label used only when there is no remote. The *basename* of the repo root (or the
     // cwd when not a repo), never the full path, so `/Users/<name>/...` can't ride through the fallback.
@@ -362,10 +368,12 @@ mod tests {
         }
     }
 
-    fn meta(remote: Option<&str>, root: &str, branch: Option<&str>) -> GitMetadata {
-        GitMetadata {
-            git_root: root.to_string(),
-            git_remote_url: remote.map(str::to_string),
+    fn meta(remote: Option<&str>, root: &str, branch: Option<&str>) -> SessionGit {
+        SessionGit {
+            repo_root: root.to_string(),
+            normalized_git_remote: remote
+                .map(crate::git_remote::normalize_git_remote)
+                .unwrap_or_default(),
             git_branch: branch.map(str::to_string),
         }
     }
@@ -409,7 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn resolved_meta_sets_normalized_remote_repo_root_and_overrides_the_branch_hint() {
+    fn resolved_meta_sets_normalized_remote_and_root_but_transcript_branch_wins() {
         let ctx = build_session_context(
             &fields(Some("/work/trace-flow"), Some("feature-x")),
             "/p/abc.jsonl",
@@ -422,8 +430,7 @@ mod tests {
         );
         assert_eq!(ctx.normalized_git_remote, "github.com/acme/trace-flow");
         assert_eq!(ctx.repo_root, "/work/trace-flow");
-        // The live branch wins over the record hint.
-        assert_eq!(ctx.git_branch, "main");
+        assert_eq!(ctx.git_branch, "feature-x");
         assert_eq!(ctx.repo_path_fallback, "trace-flow");
     }
 
@@ -512,7 +519,8 @@ mod tests {
         };
 
         let cache = GitRemoteCache::new();
-        let unit = assemble_sync_unit(&file, AgentSource::Claude, &cache)
+        let store = CursorStore::open_in_memory("org").unwrap();
+        let unit = assemble_sync_unit(&file, AgentSource::Claude, &cache, &store)
             .await
             .unwrap();
 
@@ -564,7 +572,8 @@ mod tests {
         };
 
         let cache = GitRemoteCache::new();
-        let unit = assemble_sync_unit(&file, AgentSource::Codex, &cache)
+        let store = CursorStore::open_in_memory("org").unwrap();
+        let unit = assemble_sync_unit(&file, AgentSource::Codex, &cache, &store)
             .await
             .unwrap();
 
@@ -606,14 +615,20 @@ mod tests {
             size_bytes: body.len() as u64,
         };
         let cache = GitRemoteCache::new();
+        let store = CursorStore::open_in_memory("org").unwrap();
 
-        let streamed = assemble_sync_unit(&file, AgentSource::Claude, &cache)
+        let streamed = assemble_sync_unit(&file, AgentSource::Claude, &cache, &store)
             .await
             .unwrap();
-        let from_bytes =
-            assemble_sync_unit_from_bytes(&file, AgentSource::Claude, &cache, body.as_bytes())
-                .await
-                .unwrap();
+        let from_bytes = assemble_sync_unit_from_bytes(
+            &file,
+            AgentSource::Claude,
+            &cache,
+            &store,
+            body.as_bytes(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(streamed.records, from_bytes.records);
         assert_eq!(read_transcript_file(&file).unwrap().skipped_lines(), 1);
@@ -645,14 +660,16 @@ mod tests {
         };
         std::fs::write(&path, format!("{first}{appended}")).unwrap();
         let cache = GitRemoteCache::new();
+        let store = CursorStore::open_in_memory("org").unwrap();
 
-        let streamed = assemble_sync_unit(&file, AgentSource::Claude, &cache)
+        let streamed = assemble_sync_unit(&file, AgentSource::Claude, &cache, &store)
             .await
             .unwrap();
         let from_bytes = assemble_sync_unit_from_bytes(
             &file,
             AgentSource::Claude,
             &cache,
+            &store,
             format!("{first}{appended}").as_bytes(),
         )
         .await
@@ -681,8 +698,10 @@ mod tests {
         };
         std::fs::write(&path, &body[..body.len() / 2]).unwrap();
         let cache = GitRemoteCache::new();
+        let store = CursorStore::open_in_memory("org").unwrap();
 
-        let disk_error = match assemble_sync_unit(&file, AgentSource::Claude, &cache).await {
+        let disk_error = match assemble_sync_unit(&file, AgentSource::Claude, &cache, &store).await
+        {
             Ok(_) => panic!("a short disk snapshot must fail"),
             Err(error) => error,
         };
@@ -690,6 +709,7 @@ mod tests {
             &file,
             AgentSource::Claude,
             &cache,
+            &store,
             &body.as_bytes()[..body.len() / 2],
         )
         .await
@@ -723,9 +743,14 @@ mod tests {
             size_bytes: body.len() as u64,
         };
 
-        let unit = assemble_sync_unit(&file, AgentSource::Codex, &GitRemoteCache::new())
-            .await
-            .unwrap();
+        let unit = assemble_sync_unit(
+            &file,
+            AgentSource::Codex,
+            &GitRemoteCache::new(),
+            &CursorStore::open_in_memory("org").unwrap(),
+        )
+        .await
+        .unwrap();
         assert_eq!(unit.ctx.agent_depth, 3);
         assert_eq!(unit.ctx.parent_vendor_session_id, "unavailable-parent");
     }
@@ -747,11 +772,17 @@ mod tests {
             mtime_ms: 1.0,
             size_bytes: body.len() as u64,
         };
-        let error =
-            match assemble_sync_unit(&file, AgentSource::Codex, &GitRemoteCache::new()).await {
-                Ok(_) => panic!("self-parent must fail before upload"),
-                Err(error) => error,
-            };
+        let error = match assemble_sync_unit(
+            &file,
+            AgentSource::Codex,
+            &GitRemoteCache::new(),
+            &CursorStore::open_in_memory("org").unwrap(),
+        )
+        .await
+        {
+            Ok(_) => panic!("self-parent must fail before upload"),
+            Err(error) => error,
+        };
         assert_eq!(error.kind(), ErrorKind::InvalidData);
     }
 
@@ -786,6 +817,7 @@ mod tests {
             &child,
             AgentSource::Codex,
             &GitRemoteCache::new(),
+            &CursorStore::open_in_memory("org").unwrap(),
             Some(&lineage),
         )
         .await

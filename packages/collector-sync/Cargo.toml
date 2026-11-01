@@ -12,7 +12,7 @@ collector-contracts = { path = "../collector-contracts" }
 collector-parser = { path = "../collector-parser" }
 collector-api-client = { path = "../collector-api-client" }
 # Git remote resolution shells out to `git` via the async process API: `process` for the subprocess,
-# `macros` for the `join!` that runs the three rev-parse/config probes concurrently, `time` for the
+# `macros` for the `join!` that runs branch/config probes concurrently, `time` for the
 # per-probe `timeout` that stops a wedged `git` stalling the sync cycle. The runtime is the embedder's;
 # this crate spawns none.
 tokio = { version = "1", features = ["process", "macros", "time"] }
