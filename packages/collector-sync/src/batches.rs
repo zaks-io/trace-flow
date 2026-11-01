@@ -11,6 +11,9 @@
 //! split into sequential envelopes. Accepted envelopes commit their fact send state so retries can
 //! converge across admission windows; the unit cursor waits for the whole batch to succeed. One
 //! `collector_batch_id` is minted per POST.
+//! Within each unit, the first occurrence of each fact identity wins before already-sent facts are
+//! filtered. Partial retries and later reads therefore cannot revive a discarded duplicate as a
+//! revision. Fact send state commits on acknowledgment even if a concurrent batch aborts the cycle.
 //!
 //! A unit that assembles to zero facts still carries a cursor that must advance (an empty session is
 //! "seen, nothing to send"), so it rides along; the Worker treats an all-empty envelope as an accepted
@@ -200,7 +203,9 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
         store: &CursorStore,
         unit: &SyncUnit,
     ) -> Result<AssembledUnit, CursorStoreError> {
-        let facts = session_facts(self.meta.source, &unit.records, &unit.ctx);
+        let mut facts = session_facts(self.meta.source, &unit.records, &unit.ctx);
+        // Choose the same copy on every read, even when the winning copy was already accepted.
+        EnvelopeIdentities::default().dedupe(self.meta.source, &mut facts, &mut Vec::new())?;
         let context = SessionFactContext::capture(&facts);
         let (mut facts, fact_cursors) = store.filter_unsent_facts(self.meta.source, facts)?;
         context.retain_for(&mut facts);
@@ -233,13 +238,8 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
     fn split(
         &mut self,
         index: usize,
-        mut assembled: AssembledUnit,
+        assembled: AssembledUnit,
     ) -> Result<PreparedBatch, CursorStoreError> {
-        EnvelopeIdentities::default().dedupe(
-            self.meta.source,
-            &mut assembled.facts,
-            &mut assembled.fact_cursors,
-        )?;
         let envelopes = split_facts(assembled.facts, self.max_bytes)
             .into_iter()
             .map(|chunk| {

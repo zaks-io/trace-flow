@@ -14,12 +14,15 @@
 //! lets it run against scripted responses with no network.
 //!
 //! Cursor discipline (ADR): a unit's cursor advances only after its whole batch succeeds. Fact send
-//! state commits for each accepted envelope, even when a later envelope fails, so re-reading the unit
-//! next cycle sends only remaining facts plus attribution context. A *cycle-fatal* error (bad credential,
-//! too-old client, org rate limit, closed delivery gate) is not specific to one envelope and would
-//! reject every remaining POST too, so it stops the cycle early; per-envelope failures only strand
-//! their own unit and the cycle continues with the rest. A `400` is isolated to the unit that caused
-//! it within the cycle, and that unit is quarantined so it cannot block pass completion.
+//! state commits immediately after each envelope is accepted, before the next POST can await. This
+//! retains progress even if another batch fails fatally or cancellation drops unfinished uploads.
+//! Re-reading the unit next cycle sends only remaining facts plus attribution context, keeping the
+//! first occurrence of each identity within the unit before filtering sent facts. A *cycle-fatal*
+//! error (bad credential, too-old client, org rate limit, closed delivery gate) is not specific to one
+//! envelope and would reject every remaining POST too, so it stops the cycle early. Per-envelope
+//! failures only strand their own unit and the cycle continues with the rest. A `400` is isolated to
+//! the unit that caused it within the cycle, and that unit is quarantined so it cannot block pass
+//! completion.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -211,7 +214,8 @@ struct Rejected {
 ///
 /// Sessions are grouped into batches under the session/byte budget (lazily, via [`BatchPreparer`]);
 /// each batch's unit cursors advance together after all its POSTs return `2xx`. Fact cursors commit
-/// for the accepted prefix even if a later POST fails, so oversized units make progress. POSTs run
+/// immediately for each accepted envelope, including in unfinished batches dropped after a fatal
+/// error in another batch or cancellation, so oversized units make progress. POSTs run
 /// concurrently in a `FuturesUnordered` capped at `max_concurrent_uploads`, but that set is polled on
 /// this one task, so cursor writes and report mutation stay single-threaded (the `CursorStore`'s
 /// SQLite connection is not shared across tasks).
@@ -225,7 +229,8 @@ struct Rejected {
 /// the client or server, not at the data.
 ///
 /// A cycle-fatal error (bad credential, too-old client, shed load) stops draining the rest: every
-/// remaining batch would hit the same wall, and their cursors stay put for the next cycle.
+/// remaining batch would hit the same wall. Unfinished batches keep their unit cursors unchanged
+/// for the next cycle, while their already accepted fact cursors remain committed.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_sync_cycle_tuned<C: IngestClient>(
     client: &C,
@@ -309,14 +314,12 @@ async fn drain<C: IngestClient>(
                 held.insert(batch.oldest_unit(), batch);
                 continue;
             }
-            inflight.push(post_batch(client, batch, cancel));
+            inflight.push(post_batch(client, store, meta.source, batch, cancel));
         }
-        let Some((batch, accepted_envelopes, result)) = inflight.next().await else {
+        let Some(completed) = inflight.next().await else {
             break;
         };
-        for accepted in batch.envelopes.iter().take(accepted_envelopes) {
-            store.advance_facts(meta.source, &accepted.fact_cursors)?;
-        }
+        let (batch, result) = completed?;
         match result {
             Ok(_) => {
                 for &index in &batch.units {
@@ -394,26 +397,29 @@ async fn drain<C: IngestClient>(
     Ok(report)
 }
 
-/// Own the batch while uploading so the cycle task can commit the accepted prefix without sharing
-/// its SQLite connection with upload futures. Sequential POSTs keep that prefix unambiguous.
+/// These futures are polled only on the cycle task. Commit each acknowledgment before another await
+/// so dropping an unfinished upload cannot discard accepted progress. No POSTs run after drop.
 async fn post_batch<C: IngestClient>(
     client: &C,
+    store: &CursorStore,
+    source: AgentSource,
     batch: PreparedBatch,
     cancel: Option<&CancellationToken>,
-) -> (PreparedBatch, usize, IngestResult) {
+) -> Result<(PreparedBatch, IngestResult), CursorStoreError> {
     let mut accepted = None;
-    for (index, envelope) in batch.envelopes.iter().enumerate() {
+    for envelope in &batch.envelopes {
         match client.ingest(&envelope.envelope, cancel).await {
-            Ok(result) => accepted = Some(result),
-            Err(error) => return (batch, index, Err(error)),
+            Ok(result) => {
+                store.advance_facts(source, &envelope.fact_cursors)?;
+                accepted = Some(result);
+            }
+            Err(error) => return Ok((batch, Err(error))),
         }
     }
-    let accepted_envelopes = batch.envelopes.len();
-    (
+    Ok((
         batch,
-        accepted_envelopes,
         Ok(accepted.expect("a prepared batch always has an envelope")),
-    )
+    ))
 }
 
 #[cfg(test)]
@@ -1330,6 +1336,8 @@ mod tests {
         assert!(!report.aborted_early);
     }
 
+    mod concurrent_abort;
+    mod duplicate_retry;
     mod http_upload;
     mod isolation;
     mod partial_upload;
