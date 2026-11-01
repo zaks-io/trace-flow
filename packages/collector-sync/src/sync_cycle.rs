@@ -13,8 +13,9 @@
 //! decides only what to POST and when a cursor may move. The [`IngestClient`] trait is the seam that
 //! lets it run against scripted responses with no network.
 //!
-//! Cursor discipline (ADR): a unit's cursor advances on `Ok` and on `Ok` only. Any failure leaves the
-//! cursor where it was, so the file is re-sent next cycle. A *cycle-fatal* error (bad credential,
+//! Cursor discipline (ADR): a unit's cursor advances only after its whole batch succeeds. Fact send
+//! state commits for each accepted envelope, even when a later envelope fails, so re-reading the unit
+//! next cycle sends only remaining facts plus attribution context. A *cycle-fatal* error (bad credential,
 //! too-old client, org rate limit, closed delivery gate) is not specific to one envelope and would
 //! reject every remaining POST too, so it stops the cycle early; per-envelope failures only strand
 //! their own unit and the cycle continues with the rest. A `400` is isolated to the unit that caused
@@ -209,7 +210,8 @@ struct Rejected {
 /// `tuning.max_concurrent_uploads` at once.
 ///
 /// Sessions are grouped into batches under the session/byte budget (lazily, via [`BatchPreparer`]);
-/// each batch's cursors advance together, and only after its POST returns `2xx`. POSTs run
+/// each batch's unit cursors advance together after all its POSTs return `2xx`. Fact cursors commit
+/// for the accepted prefix even if a later POST fails, so oversized units make progress. POSTs run
 /// concurrently in a `FuturesUnordered` capped at `max_concurrent_uploads`, but that set is polled on
 /// this one task, so cursor writes and report mutation stay single-threaded (the `CursorStore`'s
 /// SQLite connection is not shared across tasks).
@@ -309,12 +311,14 @@ async fn drain<C: IngestClient>(
             }
             inflight.push(post_batch(client, batch, cancel));
         }
-        let Some((batch, result)) = inflight.next().await else {
+        let Some((batch, accepted_envelopes, result)) = inflight.next().await else {
             break;
         };
+        for accepted in batch.envelopes.iter().take(accepted_envelopes) {
+            store.advance_facts(meta.source, &accepted.fact_cursors)?;
+        }
         match result {
             Ok(_) => {
-                store.advance_facts(meta.source, &batch.fact_cursors)?;
                 for &index in &batch.units {
                     units[index].next_cursor.advance(store, meta.source)?;
                 }
@@ -390,23 +394,24 @@ async fn drain<C: IngestClient>(
     Ok(report)
 }
 
-/// POST one prepared batch, returning the batch back alongside the result so the caller can advance
-/// exactly its cursors after every envelope succeeds. Owns the batch (moved into the future) so it
-/// can outlive the iterator while the upload is in flight.
+/// Own the batch while uploading so the cycle task can commit the accepted prefix without sharing
+/// its SQLite connection with upload futures. Sequential POSTs keep that prefix unambiguous.
 async fn post_batch<C: IngestClient>(
     client: &C,
     batch: PreparedBatch,
     cancel: Option<&CancellationToken>,
-) -> (PreparedBatch, IngestResult) {
+) -> (PreparedBatch, usize, IngestResult) {
     let mut accepted = None;
-    for envelope in &batch.envelopes {
-        match client.ingest(envelope, cancel).await {
+    for (index, envelope) in batch.envelopes.iter().enumerate() {
+        match client.ingest(&envelope.envelope, cancel).await {
             Ok(result) => accepted = Some(result),
-            Err(error) => return (batch, Err(error)),
+            Err(error) => return (batch, index, Err(error)),
         }
     }
+    let accepted_envelopes = batch.envelopes.len();
     (
         batch,
+        accepted_envelopes,
         Ok(accepted.expect("a prepared batch always has an envelope")),
     )
 }
@@ -1064,7 +1069,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn split_session_commits_only_after_every_envelope_succeeds() {
+    async fn split_session_commits_accepted_facts_and_retries_only_remaining_facts() {
         let store = CursorStore::open_in_memory("org").unwrap();
         let mut mint = counter();
         let model = "m".repeat(1_000);
@@ -1096,7 +1101,13 @@ mod tests {
         let part_count = probe.calls.get() as usize;
         assert!(part_count > 2);
 
-        let first = MockClient::new([ok(), Err(IngestError::InternalError)]);
+        let first = MockClient::new([
+            ok(),
+            ok(),
+            Err(IngestError::EnqueueFailed {
+                retry_after: Some(Duration::from_secs(60)),
+            }),
+        ]);
         let mut first_orchestrator = syncing_orchestrator();
         let (first_report, _) = run_sync_cycle_tuned(
             &first,
@@ -1113,57 +1124,42 @@ mod tests {
 
         assert_eq!(first_report.advanced, 0);
         assert_eq!(first_report.failed, 1);
-        assert_eq!(first.calls.get(), 2);
+        assert_eq!(first.calls.get(), 3);
+        assert!(first_report.throttled);
+        assert_eq!(first_report.retry_after, Some(Duration::from_secs(60)));
+        assert!(first_report.aborted_early);
+        assert!(matches!(
+            first_report.first_error,
+            Some(IngestError::EnqueueFailed { .. })
+        ));
         assert!(store
             .get(AgentSource::Claude, "/large.jsonl")
             .unwrap()
             .is_none());
         let original_facts = session_facts(AgentSource::Claude, &unit.records, &unit.ctx);
+        let accepted_messages: HashSet<_> = first.envelopes.borrow()[..2]
+            .iter()
+            .flat_map(|envelope| envelope.facts.messages.iter().cloned())
+            .map(|message| message.vendor_message_id.unwrap())
+            .collect();
+        let remaining_messages: Vec<_> = original_facts
+            .messages
+            .iter()
+            .filter(|message| {
+                !accepted_messages.contains(message.vendor_message_id.as_ref().unwrap())
+            })
+            .cloned()
+            .collect();
+        assert!(accepted_messages.len() > 1);
+        assert!(!remaining_messages.is_empty());
         assert_eq!(
             store
                 .filter_unsent_facts(AgentSource::Claude, original_facts.clone())
                 .unwrap()
                 .0
-                .messages
-                .len(),
-            7,
-            "a partial remote acceptance must not hide local facts"
-        );
-
-        let final_failure = MockClient::new(
-            std::iter::repeat_with(ok)
-                .take(part_count - 1)
-                .chain(std::iter::once(Err(IngestError::InternalError))),
-        );
-        let mut final_failure_orchestrator = syncing_orchestrator();
-        let (final_failure_report, _) = run_sync_cycle_tuned(
-            &final_failure,
-            &store,
-            &mut final_failure_orchestrator,
-            &meta(),
-            std::slice::from_ref(&unit),
-            &mut mint,
-            None,
-            tuning,
-        )
-        .await
-        .unwrap();
-        assert_eq!(final_failure.calls.get() as usize, part_count);
-        assert_eq!(final_failure_report.advanced, 0);
-        assert_eq!(final_failure_report.failed, 1);
-        assert!(store
-            .get(AgentSource::Claude, "/large.jsonl")
-            .unwrap()
-            .is_none());
-        assert_eq!(
-            store
-                .filter_unsent_facts(AgentSource::Claude, original_facts.clone())
-                .unwrap()
-                .0
-                .messages
-                .len(),
-            7,
-            "a final-part failure must not hide locally accepted earlier parts"
+                .messages,
+            remaining_messages,
+            "only facts in failed or unsent envelopes remain pending"
         );
 
         let second = MockClient::new(std::iter::repeat_with(ok).take(20));
@@ -1184,10 +1180,16 @@ mod tests {
         assert_eq!(second_report.advanced, 1);
         assert_eq!(second_report.failed, 0);
         assert!(second.calls.get() > 1);
-        assert!(store
-            .get(AgentSource::Claude, "/large.jsonl")
-            .unwrap()
-            .is_some());
+        assert!(second.calls.get() < part_count as u32);
+        assert!(!second_report.throttled);
+        assert!(!second_report.aborted_early);
+        assert_eq!(
+            store.get(AgentSource::Claude, "/large.jsonl").unwrap(),
+            match &unit.next_cursor {
+                UnitCursor::File(cursor) => Some(cursor.clone()),
+                _ => unreachable!(),
+            }
+        );
         assert!(store
             .filter_unsent_facts(AgentSource::Claude, original_facts.clone())
             .unwrap()
@@ -1204,15 +1206,94 @@ mod tests {
         assert!(envelopes
             .iter()
             .all(|envelope| { serialized_facts_bytes(&envelope.facts) <= tuning.max_batch_bytes }));
-        let message_ids: HashSet<_> = envelopes
+        let first_envelopes = first.envelopes.borrow();
+        let message_ids: HashSet<_> = first_envelopes[..2]
             .iter()
+            .chain(envelopes.iter())
             .flat_map(|envelope| envelope.facts.messages.iter())
             .filter_map(|message| message.vendor_message_id.as_deref())
             .collect();
         assert_eq!(message_ids.len(), 7, "every original fact was preserved");
-        assert!(envelopes.iter().skip(1).all(|envelope| {
+        assert!(envelopes.iter().all(|envelope| {
             envelope.facts.messages.first() == original_facts.messages.first()
         }));
+        let retried_ids: HashSet<_> = envelopes
+            .iter()
+            .flat_map(|envelope| envelope.facts.messages.iter())
+            .filter_map(|message| message.vendor_message_id.clone())
+            .collect();
+        let expected_retry_ids: HashSet<_> = remaining_messages
+            .iter()
+            .chain(original_facts.messages.iter().take(1))
+            .filter_map(|message| message.vendor_message_id.clone())
+            .collect();
+        assert_eq!(retried_ids, expected_retry_ids);
+    }
+
+    #[tokio::test]
+    async fn cancellation_during_a_split_upload_keeps_accepted_facts_and_the_unit_pending() {
+        struct CancellingClient(MockClient);
+
+        impl IngestClient for CancellingClient {
+            async fn ingest(
+                &self,
+                envelope: &AgentIngestEnvelope,
+                cancel: Option<&CancellationToken>,
+            ) -> IngestResult {
+                if self.0.calls.get() == 1 {
+                    cancel
+                        .expect("cycle passes its cancellation token")
+                        .cancel();
+                }
+                self.0.ingest(envelope, cancel).await
+            }
+        }
+
+        let client = CancellingClient(MockClient::new([
+            ok(),
+            Err(IngestError::Transport(
+                std::io::Error::other("request cancelled").into(),
+            )),
+        ]));
+        let store = CursorStore::open_in_memory("org").unwrap();
+        let unit = multi_message_unit("/large.jsonl", 3, "claude-opus-4-7");
+        let original = session_facts(AgentSource::Claude, &unit.records, &unit.ctx);
+        let mut orch = syncing_orchestrator();
+        let token = CancellationToken::new();
+        let (report, _) = run_sync_cycle_tuned(
+            &client,
+            &store,
+            &mut orch,
+            &meta(),
+            std::slice::from_ref(&unit),
+            &mut counter(),
+            Some(&token),
+            SyncTuning {
+                max_batch_bytes: 1,
+                ..serial_tuning()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(client.0.calls.get(), 2);
+        assert_eq!(report.advanced, 0);
+        assert_eq!(report.failed, 1);
+        assert!(report.aborted_early);
+        assert!(!report.throttled);
+        assert_eq!(orch.state(), OrchestratorState::Error);
+        assert!(store
+            .get(AgentSource::Claude, "/large.jsonl")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            store
+                .filter_unsent_facts(AgentSource::Claude, original.clone())
+                .unwrap()
+                .0
+                .messages,
+            original.messages[1..]
+        );
     }
 
     #[tokio::test]
@@ -1249,5 +1330,7 @@ mod tests {
         assert!(!report.aborted_early);
     }
 
+    mod http_upload;
     mod isolation;
+    mod partial_upload;
 }

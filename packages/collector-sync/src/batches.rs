@@ -8,8 +8,9 @@
 //! the in-flight batches, not the whole sync window, and a pre-cancelled run does no assembly. Each
 //! unit's facts are assembled once and merged into the open batch; the batch closes when adding the
 //! next unit would exceed `max_sessions_per_batch` or `max_batch_bytes`. A lone oversized session is
-//! split into sequential envelopes that share one local commit boundary, so a partial upload never
-//! advances its cursor. One `collector_batch_id` is minted per POST.
+//! split into sequential envelopes. Accepted envelopes commit their fact send state so retries can
+//! converge across admission windows; the unit cursor waits for the whole batch to succeed. One
+//! `collector_batch_id` is minted per POST.
 //!
 //! A unit that assembles to zero facts still carries a cursor that must advance (an empty session is
 //! "seen, nothing to send"), so it rides along; the Worker treats an all-empty envelope as an accepted
@@ -22,21 +23,27 @@
 
 use std::collections::{HashSet, VecDeque};
 
-use collector_contracts::{AgentIngestEnvelope, AgentIngestFacts};
+use collector_contracts::{AgentIngestEnvelope, AgentIngestFacts, AgentSource};
 use collector_parser::assemble::session_facts;
 
-use crate::cursor::{CursorStore, CursorStoreError, FactCursor};
+use crate::cursor::{
+    capability_snapshot_cursor, file_event_cursor, message_cursor, pull_request_link_cursor,
+    tool_event_cursor, CursorStore, CursorStoreError, FactCursor,
+};
 use crate::envelope::{build_envelope, BatchMeta};
 use crate::fact_batches::{serialized_facts_bytes, split_facts, SessionFactContext};
 use crate::fact_dedupe::EnvelopeIdentities;
 use crate::sync_cycle::{SyncTuning, SyncUnit};
 
-/// One prepared batch: the envelopes to POST and, by index into the cycle's units, whose cursors to
-/// commit iff every POST is accepted.
-pub(crate) struct PreparedBatch {
-    pub(crate) envelopes: Vec<AgentIngestEnvelope>,
-    pub(crate) units: Vec<usize>,
+pub(crate) struct PreparedEnvelope {
+    pub(crate) envelope: AgentIngestEnvelope,
     pub(crate) fact_cursors: Vec<FactCursor>,
+}
+
+/// Unit cursors wait for every POST; fact send state belongs to each accepted envelope.
+pub(crate) struct PreparedBatch {
+    pub(crate) envelopes: Vec<PreparedEnvelope>,
+    pub(crate) units: Vec<usize>,
     /// Carries a changed copy of a fact an earlier batch sent, so it must not start until every batch in
     /// flight, and every retry split from one, finishes. Arriving last makes it the Worker's latest
     /// revision.
@@ -235,12 +242,16 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
         )?;
         let envelopes = split_facts(assembled.facts, self.max_bytes)
             .into_iter()
-            .map(|chunk| build_envelope(self.meta, (self.mint_batch_id)(), chunk))
-            .collect();
+            .map(|chunk| {
+                Ok(PreparedEnvelope {
+                    fact_cursors: split_fact_cursors(self.meta.source, &chunk)?,
+                    envelope: build_envelope(self.meta, (self.mint_batch_id)(), chunk),
+                })
+            })
+            .collect::<Result<_, CursorStoreError>>()?;
         Ok(PreparedBatch {
             envelopes,
             units: vec![index],
-            fact_cursors: assembled.fact_cursors,
             after_inflight: self.ordered_units.remove(&index),
         })
     }
@@ -252,16 +263,39 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
             .filter(|unit| self.ordered_units.remove(unit))
             .count();
         PreparedBatch {
-            envelopes: vec![build_envelope(
-                self.meta,
-                (self.mint_batch_id)(),
-                open.facts,
-            )],
+            envelopes: vec![PreparedEnvelope {
+                envelope: build_envelope(self.meta, (self.mint_batch_id)(), open.facts),
+                fact_cursors: open.fact_cursors,
+            }],
             units: open.units,
-            fact_cursors: open.fact_cursors,
             after_inflight: ordered > 0,
         }
     }
+}
+
+fn split_fact_cursors(
+    source: AgentSource,
+    facts: &AgentIngestFacts,
+) -> Result<Vec<FactCursor>, CursorStoreError> {
+    // Repeated attribution context is safe to recommit; deriving cursors from each chunk keeps failed
+    // and unsent chunks out of the accepted prefix, including facts outside the message array.
+    let mut cursors = Vec::new();
+    for fact in &facts.messages {
+        cursors.push(message_cursor(source, fact)?);
+    }
+    for fact in &facts.tool_events {
+        cursors.push(tool_event_cursor(source, fact)?);
+    }
+    for fact in &facts.file_events {
+        cursors.push(file_event_cursor(source, fact)?);
+    }
+    for fact in &facts.capability_snapshots {
+        cursors.push(capability_snapshot_cursor(source, fact)?);
+    }
+    for fact in &facts.pull_request_links {
+        cursors.push(pull_request_link_cursor(source, fact)?);
+    }
+    Ok(cursors)
 }
 
 /// Concatenate one session's facts onto the batch accumulator. Identity duplicates were already

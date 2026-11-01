@@ -159,9 +159,14 @@ delivery, receipt, and recovery alarm without publishing a queue reference until
 reserved. Agent Ingest returns `503 enqueue_failed` with `Retry-After: 60` for known admission
 closure, including a gate that closes after the admission check. The Collector honors bounded
 numeric admission delays within its retry budget. When that budget is spent, or the failure has no
-usable delay, the Collector stops the pass with cursors unchanged and skips periodic passes for
+usable delay, the Collector stops the pass with incomplete units' cursors unchanged and skips periodic passes for
 `Retry-After` (60 seconds when absent, capped at one hour) plus up to 50% jitter. Unknown
 reservation failures and mismatched delivery references remain errors.
+
+Accepted envelopes commit their fact send state even if a later envelope fails. The next pass
+re-reads incomplete units and sends only their remaining facts plus session attribution context,
+so oversized sessions can finish across admission windows. File and composer cursors advance only
+after every envelope in their batch succeeds.
 
 A `400 invalid_envelope` on a multi-session batch does not fail its healthy sessions. The Collector
 re-sends the sessions named in `vendor_session_ids` alone (or every session alone when the body
