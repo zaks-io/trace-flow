@@ -62,7 +62,10 @@
       {
         "queue": "agent-ingest-dev",
         "max_batch_size": 100,
-        "max_batch_timeout": 5,
+        // An org's deliveries run one at a time, and each finished delivery wakes the next with a
+        // single message on this queue. Any batch wait is paid once per delivery, so a 5 s wait made
+        // a 64-delivery drain take ~7 minutes with ingest admission closed (TRA-449).
+        "max_batch_timeout": 0,
         "max_concurrency": 6,
         "max_retries": 5,
         "dead_letter_queue": "agent-ingest-dlq-dev",
@@ -132,7 +135,8 @@
           {
             "queue": "agent-ingest-prod",
             "max_batch_size": 100,
-            "max_batch_timeout": 5,
+            // Delivery wake-ups are serial per org; see the dev consumer (TRA-449).
+            "max_batch_timeout": 0,
             "max_concurrency": 6,
             "max_retries": 5,
             "dead_letter_queue": "agent-ingest-dlq-prod",
