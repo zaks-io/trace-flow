@@ -205,6 +205,8 @@ async fn persistent_dubious_ownership_failure_is_actionable_and_retryable() {
     assert!(git(cwd.path(), &["init", "-b", "main"]).status.success());
     let resolution = resolve_git_metadata_with(|args, absent| {
         let mut command = Command::new("git");
+        // Reset inherited safe.directory entries so runner-wide trust cannot mask this failure.
+        command.args(["-c", "safe.directory="]);
         // Git's test seam simulates foreign ownership without changing filesystem owners.
         command.env("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1");
         run_git_command(command, cwd.path().to_str().unwrap(), args, absent)
