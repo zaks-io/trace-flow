@@ -599,12 +599,22 @@ async fn failed_probe_defers_upload_and_retries_unchanged_transcript() {
 
 #[tokio::test]
 async fn legitimate_git_absence_uploads_without_pinning_or_deferring() {
-    for case in ["deleted_cwd", "non_repo", "missing_cwd"] {
+    for case in [
+        "deleted_cwd",
+        "non_repo",
+        "missing_cwd",
+        "non_directory_cwd",
+    ] {
         let harness = SessionGitHarness::new().await;
         harness.append(case, 1, None);
         match case {
             "deleted_cwd" => std::fs::remove_dir_all(&harness.repo).unwrap(),
             "non_repo" => std::fs::remove_dir_all(harness.repo.join(".git")).unwrap(),
+            "non_directory_cwd" => {
+                // Exercise NotADirectory on Unix too, as Windows returns it for deleted cwd paths.
+                std::fs::remove_dir_all(&harness.repo).unwrap();
+                std::fs::write(&harness.repo, "the checkout is no longer a directory").unwrap();
+            }
             "missing_cwd" => {
                 let path = harness.transcript(case);
                 let mut record: serde_json::Value =

@@ -15,7 +15,7 @@
 //! cursor and complete-cycle watermark unchanged. The next cycle retries the unchanged transcript.
 //!
 //! Resolution classifies absence separately from failure:
-//! - Missing cwd or git executable (`NotFound`): nothing to resolve, no pin, sync proceeds.
+//! - Missing/invalid cwd or git executable (`NotFound`/`NotADirectory`): no pin, sync proceeds.
 //! - Root probe exit 128 with C-locale `fatal: not a git repository`: no repo, sync proceeds.
 //! - Origin/branch exit 1: legitimate absent field, a resolved repo may be pinned.
 //! - Timeout, other spawn/exit failures, invalid UTF-8 or empty root: retryable failure.
@@ -169,7 +169,10 @@ async fn run_git_command(
         command: name.clone(),
     })?
     .map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => GitProbeError::Unavailable,
+        // Windows reports a deleted cwd as NotADirectory, Unix as NotFound. Neither can resolve.
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => {
+            GitProbeError::Unavailable
+        }
         kind => GitProbeError::Spawn {
             command: name.clone(),
             kind,
