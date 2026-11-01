@@ -17,7 +17,8 @@
 //! Resolution classifies absence separately from failure:
 //! - Missing/invalid cwd or git executable (`NotFound`/`NotADirectory`): no pin, sync proceeds.
 //! - Root probe exit 128 with a C-locale not-a-repository message, including a dangling or
-//!   malformed `.git` gitfile left by a pruned worktree: no repo, sync proceeds.
+//!   malformed `.git` gitfile left by a pruned worktree: no repo, sync proceeds. Probes drop
+//!   inherited repository-selection variables such as `GIT_DIR`, so discovery always starts at cwd.
 //! - Origin/branch exit 1: legitimate absent field, a resolved repo may be pinned.
 //! - Timeout, other spawn/exit failures, invalid UTF-8 or empty root: retryable failure.
 //! - Dubious ownership: retryable failure with an actionable diagnostic. Deferring visibly avoids
@@ -145,11 +146,35 @@ where
 /// a `.git` gitfile that points at deleted metadata, and git words that differently across versions
 /// ("not a git repository: <path>" in older releases, "gitfile does not point to a valid
 /// repository" in newer ones). No retry can repair it, so it is absence rather than a deferral that
-/// would hold the session forever.
-const NOT_A_REPOSITORY: [&str; 3] = [
+/// would hold the session forever. These prefixes are only trustworthy because probes never inherit
+/// [`REPOSITORY_SELECTION_ENV`]: a stale `GIT_DIR` produces the same "not a git repository" text.
+const NOT_A_REPOSITORY: [&str; 4] = [
     "fatal: not a git repository",
     "fatal: gitfile does not point to a valid repository",
     "fatal: invalid gitfile format",
+    "fatal: no path in gitfile",
+];
+
+/// `git rev-parse --local-env-vars` minus `GIT_CONFIG_PARAMETERS` and `GIT_CONFIG_COUNT`, which is
+/// what git itself clears before running a command in another repository (`sanitize_repo_env` in
+/// git's run-command.c).
+/// A Collector started from a git hook or a shell that exported `GIT_DIR` would otherwise probe that
+/// repository instead of the session's cwd. The two config variables carry user settings such as
+/// `safe.directory`, not a repository choice, so they stay.
+const REPOSITORY_SELECTION_ENV: [&str; 13] = [
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
 ];
 
 async fn run_git(
@@ -167,6 +192,9 @@ async fn run_git_command(
     absent_exit: Option<i32>,
 ) -> Result<Option<String>, GitProbeError> {
     let name = args[0].to_string();
+    for variable in REPOSITORY_SELECTION_ENV {
+        command.env_remove(variable);
+    }
     let output = timeout(
         Duration::from_secs(5),
         command

@@ -194,13 +194,75 @@ async fn pruned_or_broken_worktree_gitfiles_are_absence_not_deferral() {
     std::fs::write(dangling.path().join(".git"), "gitdir: /nonexistent\n").unwrap();
     let malformed = tempfile::TempDir::new().unwrap();
     std::fs::write(malformed.path().join(".git"), "not a gitfile\n").unwrap();
+    let empty_target = tempfile::TempDir::new().unwrap();
+    std::fs::write(empty_target.path().join(".git"), "gitdir: \n").unwrap();
 
-    for cwd in [pruned.as_path(), dangling.path(), malformed.path()] {
+    for cwd in [
+        pruned.as_path(),
+        dangling.path(),
+        malformed.path(),
+        empty_target.path(),
+    ] {
         assert_eq!(
             resolve_git_metadata(cwd.to_str().unwrap()).await,
             Ok(None),
             "{cwd:?}"
         );
+    }
+}
+
+#[tokio::test]
+async fn inherited_repository_selection_cannot_redirect_or_hide_the_session_repo() {
+    let repo = tempfile::TempDir::new().unwrap();
+    assert!(git(repo.path(), &["init", "-b", "main"]).status.success());
+    assert!(git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/repo.git"
+        ]
+    )
+    .status
+    .success());
+    let other = tempfile::TempDir::new().unwrap();
+    assert!(git(other.path(), &["init", "-b", "other"]).status.success());
+    assert!(git(
+        other.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/other.git"
+        ]
+    )
+    .status
+    .success());
+    let cwd = repo.path().to_str().unwrap();
+    let expected = resolve_git_metadata(cwd).await.unwrap().unwrap();
+    assert_eq!(
+        expected.git_remote_url.as_deref(),
+        Some("https://github.com/acme/repo.git")
+    );
+
+    // A Collector launched from a git hook, or a shell that exported GIT_DIR, inherits these.
+    let missing = repo.path().join("missing-git-dir");
+    let other_git_dir = other.path().join(".git");
+    for inherited in [
+        vec![("GIT_DIR", missing.as_os_str())],
+        vec![
+            ("GIT_DIR", other_git_dir.as_os_str()),
+            ("GIT_WORK_TREE", other.path().as_os_str()),
+        ],
+    ] {
+        let resolution = resolve_git_metadata_with(|args, absent| {
+            let mut command = Command::new("git");
+            command.envs(inherited.iter().copied());
+            run_git_command(command, cwd, args, absent)
+        })
+        .await;
+        assert_eq!(resolution, Ok(Some(expected.clone())), "{inherited:?}");
     }
 }
 
