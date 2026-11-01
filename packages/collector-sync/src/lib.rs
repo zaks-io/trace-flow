@@ -38,6 +38,7 @@ pub mod envelope;
 mod fact_batches;
 mod fact_dedupe;
 pub mod git;
+mod git_access;
 pub mod git_remote;
 pub mod import;
 pub mod orchestrator;
