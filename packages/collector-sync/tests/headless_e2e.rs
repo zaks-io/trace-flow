@@ -139,7 +139,7 @@ async fn headless_run_posts_real_claude_transcripts_and_advances_cursors() {
     let mut units = Vec::with_capacity(selected.len());
     for file in &selected {
         units.push(
-            assemble_sync_unit(file, AgentSource::Claude, &cache)
+            assemble_sync_unit(file, AgentSource::Claude, &cache, &store)
                 .await
                 .expect("assemble unit"),
         );

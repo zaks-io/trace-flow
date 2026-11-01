@@ -79,7 +79,7 @@ Linux hosts run the Collector through the `trace-flow` CLI as a systemd service 
 
 ## Local State And Secrets
 
-Trace Flow Desktop uses local SQLite, managed through Tauri's SQL plugin with SQLite support, for non-secret durable Collector state: sync cursors, processed file metadata, Source settings, path/worktree-to-remote cache, machine id, parser-version observations, last sync timestamps, and job/status metadata.
+Trace Flow Desktop uses local SQLite, managed through Tauri's SQL plugin with SQLite support, for non-secret durable Collector state: sync cursors, processed file metadata, Source settings, per-session git attribution pins keyed by Source and transcript path, machine id, parser-version observations, last sync timestamps, and job/status metadata.
 
 SQLite is not a durable upload queue for parsed facts. If fact upload fails, the Collector re-reads from Source files later; server-side stable IDs and Tinybird dedupe are authoritative.
 
@@ -122,6 +122,12 @@ File facts store repo-relative paths only. Files outside the primary Repo are dr
 ## Source, Git, And Pull Request Evidence
 
 The Collector is transcript-led, not repo-monitoring-led. It watches Source transcript stores and reads git state only on demand when transcripts lack enough repository evidence. Source discovery comes from local Source transcript stores. Allowed git enrichment includes repo root, normalized remote, branch, HEAD, and a durable path/worktree-to-remote cache. Branch and HEAD are optional hints, not identity.
+
+The cursor SQLite store pins successful live git resolutions per Organization, Source, and transcript file path. The first resolution with a git root stores that root, the normalized remote, and the live branch. Later reads reuse the pin without running git, so a remote rename, branch switch, or deleted worktree cannot rewrite that session's live attribution. A new transcript in the same cwd resolves the current values. The root also preserves the coarse path fallback and relative-file anchor for repos without a remote. Missing cwd, non-repo cwd, and failed or timed-out root probes create no pin and retry in a later cycle.
+
+Claude and Cursor JSONL use their transcript's `gitBranch` before the pinned live branch. Codex continues to prefer embedded git evidence; only its live fallback uses a pin. Pins are additive local SQLite state, created idempotently when an existing database opens. They store normalized remotes rather than credential-bearing raw remote URLs. Absolute repo roots and transcript paths remain local. Fact identities, upload shapes, and `repo_fingerprint` derivation are unchanged.
+
+On upgrade, the first subsequent read pins current values. Existing active Claude sessions whose transcript branch differs from the previously used live branch can re-send once. There is no historical pin backfill or pin pruning in this change. TRA-448 separately bounds and makes progress on large re-sends.
 
 Repo identity for worktrees resolves from the observed worktree's own git metadata and normalized remote, not from the main checkout path. Absolute worktree paths are local-only state and are not uploaded.
 

@@ -77,6 +77,7 @@ impl FactSources {
     pub(crate) async fn next_batch(
         &mut self,
         cache: &GitRemoteCache,
+        store: &CursorStore,
         report: &mut SourceReport,
         files_read: &mut usize,
     ) -> Option<Vec<SyncUnit>> {
@@ -92,8 +93,15 @@ impl FactSources {
                     report.skipped_lines = report
                         .skipped_lines
                         .saturating_add(snapshot.skipped_lines());
-                    assemble_snapshot(&file, self.source, cache, snapshot, self.lineage.as_ref())
-                        .await
+                    assemble_snapshot(
+                        &file,
+                        self.source,
+                        cache,
+                        store,
+                        snapshot,
+                        self.lineage.as_ref(),
+                    )
+                    .await
                 }
                 Err(error) => Err(error),
             };
@@ -389,7 +397,7 @@ mod tests {
         let mut files_read = 0;
 
         let units = sources
-            .next_batch(&GitRemoteCache::new(), &mut report, &mut files_read)
+            .next_batch(&GitRemoteCache::new(), &store, &mut report, &mut files_read)
             .await
             .unwrap();
         assert_eq!(units.len(), 1);
@@ -427,7 +435,7 @@ mod tests {
         let mut files_read = 0;
 
         let units = sources
-            .next_batch(&GitRemoteCache::new(), &mut report, &mut files_read)
+            .next_batch(&GitRemoteCache::new(), &store, &mut report, &mut files_read)
             .await
             .unwrap();
         assert!(units.is_empty());

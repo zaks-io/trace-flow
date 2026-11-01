@@ -4,14 +4,13 @@
 // the remote on every call, which lets a mid-run `git remote set-url` silently re-attribute a
 // session. Trace Flow owns the contract, IDs, pricing, redaction, and storage around this code.
 
-//! Git remote resolution with a **freeze cache**.
+//! Live git resolution with a per-sync-cycle freeze cache.
 //!
-//! A session's repo attribution must be stable for the whole sync run. The first time a `cwd` is
-//! seen, [`GitRemoteCache`] resolves its git root / remote / branch and **freezes** the result;
-//! every later lookup returns the frozen value without shelling out again. A `cwd` that is not a git
-//! repo freezes as `None`, so non-repo directories are probed at most once too. The frozen value is
-//! the *first* observed one — a later remote change does not overwrite it — which is the whole point:
-//! one canonical remote per `cwd` per run (ADR "Repo and pull request attribution").
+//! [`GitRemoteCache`] deduplicates probes for a cwd within one cycle, including unsuccessful probes.
+//! Assembly first checks the durable `(source, transcript path)` pin in [`crate::cursor::CursorStore`].
+//! Only a successful live resolution with a repo root creates a pin. Later cycles reuse that pin
+//! without git, even after a remote rename, branch switch, or worktree deletion. Unpinned failures
+//! retry with the next cycle's fresh cache; new transcripts resolve the current repo evidence.
 
 use std::collections::HashMap;
 use std::sync::Mutex;

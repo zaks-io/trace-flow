@@ -42,6 +42,7 @@ pub mod git_remote;
 pub mod import;
 pub mod orchestrator;
 mod quarantine;
+pub mod session_git;
 pub mod sync_cycle;
 
 pub use assemble_units::{

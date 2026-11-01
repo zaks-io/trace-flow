@@ -189,6 +189,7 @@ impl CursorStore {
 
     fn init(mut conn: Connection, org_id: String) -> Result<Self, CursorStoreError> {
         conn.execute_batch(MIGRATION)?;
+        conn.execute_batch(crate::session_git::MIGRATION)?;
         ensure_composer_content_hash(&mut conn)?;
         Ok(Self {
             conn,
