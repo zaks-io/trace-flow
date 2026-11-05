@@ -6,257 +6,127 @@ argument-hint: "[repo-path]"
 
 # Setup
 
-Create or refresh the repo-local agent config used by the other skills. Run this
-once per repo, then rerun it when the workflow may have changed or the user wants
-to verify that the config is current. The output is a compact lookup table, not
-a narrative doc.
-
-Include stable values workflow agents need repeatedly: repo commands, tracker
-IDs, labels, agent access, review gates, handoff shape, and safety rules.
-Agents should query external systems to refresh live state, not to rediscover
-these values. If a value cannot be verified during setup, report the evidence
-gap and the source that should verify it without storing a task in config.
-
-Shared workflow skills may be distributed as project skills, plugin or
-marketplace, managed settings, user/global-only, or mixed mode. Record which
-mode this repo actually uses. Project-scoped generated `ziw-*` copies are valid
-when repo, remote, or cloud workers need the skills from a fresh clone; treat
-them as vendored generated dependencies from `zaks-io/skills`, update them
-mechanically, and do not hand-edit them in downstream repos.
-
-Setup is a verification pass, not a best-effort note-taking pass. Every populated
-config value that can change agent behavior must have current evidence from the
-repo, tracker, code host, CI, agent integration, environment config, or explicit
-user instruction. Omit unverified values; missing required configuration blocks
-the affected workflow. Report the evidence gap instead of inventing a value.
-
-For encountered friction, use [friction-log.md](../ziw-orchestrate/references/friction-log.md)
-with the configured complaint store and this role's mutation authority.
+Create or refresh `docs/agents/workflow/config.md`, the workflow lookup table.
+Finish with verified mappings, working adapters, and gaps blocking only affected workflows.
 
 ## Inputs
 
-- Repo path to configure.
-- Existing repo rules, CI, package scripts, issue tracker, and deploy docs.
-- Existing spec indexes, specs, glossaries, context maps, and ADR conventions.
-  When configuring unmapped glossary paths, use [glossary-discovery.md](../ziw-grill/references/glossary-discovery.md) for
-  current and legacy glossary discovery. Preserve configured paths; default new
-  glossaries to `GLOSSARY.md` and multi-context maps to `GLOSSARY-MAP.md`.
-- Any user-provided tracker, agent access, or environment constraints.
+Repo path, existing config/rules, and requested setup or refresh scope.
 
-## Output File
+## Steps
 
-Create or update:
+1. Read existing config. Initially use [project-config.md](references/project-config.md)
+   as the field index; load applicable sections. On refresh, patch existing config.
+2. [Set verification scope](#set-verification-scope) from the request and drift evidence.
+3. [Verify values](#verify-values) through repo files and read-only provider queries.
+4. [Write stable config](#write-stable-config), preserving conventions and decisions.
+5. [Update adapters](#update-adapters); report checks, changes, and gaps.
 
-- `docs/agents/workflow/config.md`
+## Set verification scope
 
-Treat this file as the repo's workflow lookup table. Keep it terse: values,
-paths, commands, IDs, routing, and policies. Keep project progress, blockers,
-verification follow-ups, and TODOs in Linear or the configured issue tracker.
-Read tool availability, CI/PR health, review results, and deployment status live;
-never persist their snapshots in config. Status names and IDs describe the
-workflow schema, not the current state of work. Omit inapplicable fields and
-verification transcripts.
+- Run initially, then refresh for workflow changes or requested verification.
+- Initial setup or explicit full verification covers every applicable field.
+- Scoped refresh covers changed/suspect fields and dependencies. Preserve unrelated
+  stable mappings without claiming revalidation; optional unrelated integrations do not block.
+- Stale commands, renamed labels, moved projects, CI, delegation, or environment
+  changes expand only affected scope.
+- For in-scope tracker mappings, make a read-only query with configured IDs/query-safe
+  names. Replace stale names only with verified equivalents for the same scope.
+- Change missing, stale, wrong, or newly verified fields. Preserve explicit human
+  decisions unless the user or current evidence contradicts them.
 
-Use [references/project-config.md](references/project-config.md) as the field
-index. Read the sections needed for the repo; omit inapplicable fields.
-Load other references only for the matching work:
+Load references only for matching work:
 
-- Changing tracker states, labels, readiness, or issue body shape:
-  [references/issue-tracker-contract.md](references/issue-tracker-contract.md).
-- Configuring workers, recurring orchestration, or merge-safety policy:
-  [references/operating-profile.md](references/operating-profile.md).
-- Configuring a Linear + Cursor delegation path:
-  [references/linear-cursor-example.md](references/linear-cursor-example.md).
-- Updating role responsibilities or agent adapters:
-  [references/agent-workflow.md](references/agent-workflow.md).
-- Defining or changing cross-agent handoff shape:
-  [references/handoff.md](references/handoff.md).
+- Tracker states, labels, readiness, bodies, estimates:
+  [issue-tracker-contract.md](references/issue-tracker-contract.md).
+- Workers, unattended hooks, continuation, loop limits, capacity, merge safety:
+  [operating-profile.md](references/operating-profile.md).
+- Linear + Cursor: [linear-cursor-example.md](references/linear-cursor-example.md).
+- Roles/adapters: [agent-workflow.md](references/agent-workflow.md).
+- Handoffs: [handoff.md](references/handoff.md).
+- Unmapped glossaries: [glossary-discovery.md](../ziw-grill/references/glossary-discovery.md).
 
-## Refresh Existing Config
+**Friction:** file encountered friction with the configured complaint tool, once per distinct issue and without secrets. Load [friction-log.md](../ziw-orchestrate/references/friction-log.md) when the writer is missing, fails, or replies ambiguously; for tracker-based intake; or for orchestrator event categories or a run rollup.
 
-If `docs/agents/workflow/config.md` already exists, read it before inspecting
-anything else. Use it as the baseline for refresh:
+## Verify values
 
-- preserve verified stable values that still match current repo and tracker
-  state
-- re-verify every populated behavior-affecting field before leaving it
-  authoritative; do not preserve a stale value just because it is already in the
-  file
-- re-run at least one read-only query against configured tracker IDs and
-  query-safe names before trusting a project, team, board, or roadmap mapping
-- check unresolved tracker setup work, changed commands, renamed labels, moved
-  projects, changed CI, changed worker delegation paths, and changed environment
-  rules
-- replace stale slugs or display names that return empty tracker results when a
-  verified provider ID or canonical name resolves the same scope
-- update only fields that are missing, stale, wrong, or newly verified
-- do not erase explicit human decisions unless current evidence or the user
-  contradicts them
-- report what changed, what stayed verified, and what remains unknown
+Use current evidence within scope:
 
-When removing existing state notes, preserve actionable gaps in the configured
-tracker within the task's write authority, searching for duplicates first. Do
-not turn disabled optional integrations into new work. Without tracker-write
-authority, report the state that still needs transfer; do not discard it or
-substitute a local backlog. Keep only stable policy and mapping in config.
-Use the configured intake route without readiness labels. Find prior setup work
-with a bounded query scoped to that tracker location and repo route, then search
-its titles/descriptions for the affected setting before creating a follow-up.
+- Repo rules, package scripts/lockfiles, Make/Just/Turbo, Git, and CI establish
+  identity, commands, generated artifacts, branch/PR conventions, and gates.
+  Query code-host protections, linked checks, and PR query shapes when needed.
+- Specs, glossaries/context maps, ADRs, runbooks, and user instructions establish
+  planning authority, paths, status conventions, and documentation checks.
+- Read-only tracker calls establish location, projects/boards/teams, statuses,
+  labels, priorities, estimates, relations, templates, and query contracts.
+  Record exact query-safe names, stable IDs, and accepted fields.
+- Tracker metadata, verified config, or user instructions establish delegation,
+  environment labels, continuation handles, and remote mechanics. Record supported
+  paths rather than a full assignee inventory.
+- Resolve target-repo Claude/Codex/editor files, imports, symlinks, and generated
+  metadata from a clean path. Verify distribution source/mode, lockfile, refresh
+  command, project paths, symlink layout, and marketplace.
+- Deployment config, CI, runbooks, service inventories, and user instructions
+  establish preview/hosted-check rules, credentials, and production approval.
+- Verify enabled hosted review from provider config/docs/settings.
+  CodeRabbit root `.coderabbit.yaml` maps `reviews.auto_review`.
 
-Do not regenerate the config from scratch when refreshing. The job is to detect
-drift from the current config, then patch the lookup table.
+Verify commands from definitions when sufficient; report unexecuted commands.
+Read-only metadata queries use existing authorized access. Omit unverifiable
+values and name missing evidence. Track authorized actionable follow-ups;
+otherwise report owner/action. Required gaps block only affected workflows.
 
-## Verification Standard
+### Gate parity
 
-Verify all populated workflow fields that setup writes or preserves:
+- Map hooks, local checks, and required CI jobs to commands. Flag missing local
+  tasks; preserve thresholds, environment requirements, and secret-scan scope.
+- Trust configured task caches; list only specific tasks whose keys miss inputs.
+- Verify unattended enforcement and production approval through the operating profile.
+- Prefer the configured MCP complaint writer. Inspect its schema without fictitious
+  events; tracker fallback needs explicit configuration.
 
-- repo identity, default branch, branch prefix, package manager, lockfile, and
-  command names from repo files and git metadata
-- install, check, build, test, lint, smoke, preview, and generated-artifact
-  commands from scripts, CI workflows, makefiles, justfiles, runbooks, or direct
-  safe command execution
-- planning artifact authority, paths, status convention, and documentation
-  checks from spec indexes, context maps, ADR indexes, scripts, CI, or explicit
-  user instruction
-- issue tracker provider, location, team/project/board/roadmap, statuses,
-  labels, priorities, estimate fields, relationships, issue templates, and query
-  contracts with read-only tracker tool calls when tools are available
-- code host default branch, branch protections, PR conventions, linked checks,
-  and open PR query shape through git metadata, code host tools, or workflow
-  files
-- worker delegation paths, environment labels or fields, continuation paths, and
-  remote worker delegation mechanics through tracker metadata, verified config,
-  or explicit user instruction
-- Claude, Codex, editor, and repo-local adapter paths by resolving files,
-  symlinks, imports, and generated skill metadata from a clean path
-- shared workflow skill distribution mode, source, lockfile, refresh command,
-  project paths, symlink layout, plugin marketplace, and whether generated skill
-  directories are committed dependencies, ignored local cache, or absent
-- environment safety, deployment paths, hosted checks, preview rules, credential
-  rules, and production approval rules from deployment config, CI, runbooks, or
-  explicit user instruction
+## Write stable config
 
-Do not run install, deploy, production mutation, expensive hosted actions, or
-credentialed provider actions just to verify setup unless the user explicitly
-approved that action. For those values, verify the command or path exists and
-report that execution was not performed; do not cache an execution status in config.
+- Keep reusable values, paths, commands, IDs, routing, limits, and policies terse.
+  Include applicable planning, tracker/readiness, delegation, access, review/merge,
+  environment safety, complaint, and handoff mappings.
+- Tracker taxonomy supplies defaults, not evidence labels exist. Preserve verified
+  conventions and align separate label docs with config.
+- Keep readiness, risk, review evidence, type, area, and ownership policy consistent.
+- Preserve glossary paths. New defaults are `GLOSSARY.md` and, across contexts, `GLOSSARY-MAP.md`.
+- Record project, plugin/marketplace, managed, user/global, or mixed skill distribution.
+- Classify generated `ziw-*` copies as committed dependencies, symlink fanout,
+  ignored cache, absent, or repo-authored. Retain source/lockfile for committed
+  generated dependencies and update mechanically.
+- Store progress, blockers, baseline failures, and verification follow-ups in the tracker.
+  Read CI/PR/review/deploy health and provider availability live; names/IDs describe schema.
+- Before removing state notes, search prior setup titles/descriptions with a bounded,
+  tracker-location/repo-route query. Transfer nonduplicates to configured intake
+  without readiness labels when authorized. Otherwise preserve notes and report the action.
 
-Every gap must name the missing value and its verification source. Put project
-follow-ups in the configured tracker within authorized scope; otherwise report
-the required owner/action. The final report names workflows blocked by missing
-configuration. Do not create an `Unknowns` checklist in Repo Config.
+## Update adapters
 
-## Gather
+- Point existing `AGENTS.md`, `CLAUDE.md`, editor rules, and usage docs to config
+  before workflow skills. Use the role reference to keep adapters short.
+- Follow the target repo's Claude registration rules and import its agent Markdown,
+  usually one-line `@AGENTS.md`.
+- Symlink only required exact paths; verify targets from a clean checkout.
+  Report refused paths and track repairs without guessing.
 
-Inspect files that exist:
+## Never
 
-- `AGENTS.md`, `CLAUDE.md`, editor or agent rules, and repo-local skills
-- target repo's Claude Code integration config, `.claude/*`, and any repo-local
-  agent, command, or skill directories that Claude should load
-- `package.json`, lockfiles, Makefile, Justfile, turbo config, and CI workflows
-- project status, roadmap, specs, ADRs, runbooks, and existing `docs/agents/*`
-- existing agent label docs, such as `docs/agents/triage-labels.md`
-- code host branch, default branch, PR, preview, and deploy workflows
-- root `.coderabbit.yaml` when present, especially `reviews.auto_review`
-- hosted review provider docs or app settings when CodeRabbit, Cursor Bugbot,
-  or another PR review bot is enabled
-- issue tracker provider, provider location, projects or boards, statuses,
-  labels, issue templates, and existing issue examples by querying tracker tools
-  when available
-- environment files, deployment config, and service inventories
-
-## Configure
-
-Use the project-config template as the canonical field list. Populate only
-verified values that future agents need repeatedly: repo commands and CI gates,
-planning authority, tracker mapping and readiness, delegation and capacity,
-review/merge authority, environments, complaint routing, and handoff shape.
-Keep execution evidence and unresolved work out of config; report them in the
-handoff and configured tracker rather than repeating the template as prose.
-
-Check gate parity: local hooks and the required CI job should use the same
-verification entrypoint. Record its command and job. Flag required checks
-outside that entrypoint as a config gap rather than implying a partial local
-command is the full gate. Preserve exact cache, threshold, environment, and
-secret-scan scopes.
-
-For hosted or unattended workflows, verify environment-enforced hooks, worker
-continuation, loop limits, and production deploy approval from current evidence.
-Store the stable policy only; baseline failures and repair work belong in the
-tracker, with current CI health read live. Load the operating profile for those policies. For complaint
-routing, prefer the configured MCP writer and verify its exposed schema;
-tracker storage needs an explicit fallback. Never test delegation by assigning
-real implementation work or test a complaint writer by filing a fictitious event.
-
-## Issue Tracker Defaults
-
-Find the tracker source of truth in live metadata, verified config, or explicit
-user instruction. Read the relevant sections of the issue-tracker contract when
-creating or changing the mapping. Its labels are defaults, not proof that the
-tracker has them. Preserve different verified repo conventions.
-
-Verify exact names and stable IDs with read-only tracker queries. Provider
-locations must be query-safe; record the status and dependency field names the
-tool actually accepts. Missing provider, status, label, estimate, or worker
-values are omitted and reported as evidence gaps. Do not probe assignable agents by mutating real issues.
-Record supported delegation paths and verified continuation handles rather
-than caching the full assignee inventory.
-
-If separate label docs exist, update them to mirror the config or point back
-to it. Keep readiness, risk, review evidence, type, area, and ownership policy
-consistent. The template and tracker contract own the default taxonomy and
-label treatment rules; do not duplicate them here.
-
-## Adapter Update
-
-After writing the config, update short agent adapters when present:
-
-- `AGENTS.md`
-- `CLAUDE.md`
-- editor or agent rules
-- repo-local skill usage docs
-
-Adapters should say to read `docs/agents/workflow/config.md` before using the
-workflow skills. Keep them short and use
-[references/agent-workflow.md](references/agent-workflow.md) as the adapter
-contract.
-
-If runtime-generated shared `ziw-*` skill files exist under `.agents/skills/`,
-`.claude/skills/`, `.codex/skills/`, or `skills/`, decide whether those files
-are a committed dependency, symlink fanout, ignored local cache, absent, or
-repo-authored project-specific skills. For committed dependencies, record the
-source and lockfile and commit mechanical updates. Never hand-edit downstream
-generated copies.
-
-For Claude Code, configure the target repo's Claude Code integration, not this
-skills repo. Treat that integration as the source of truth for Claude-facing
-agent, command, and skill registration. Configure it to import the target repo's
-agent markdown, usually `AGENTS.md` through a one-line `CLAUDE.md` `@AGENTS.md`
-import when supported. Claude Code is picky, so do not make independent copies.
-Symlink repo-local Claude Code paths into the integration location when Claude
-Code requires exact paths, then verify each link target resolves from a clean
-checkout. Report any path Claude Code refuses to follow and track actionable
-repair work outside config instead of guessing.
-
-## Safety
-
-- Never include secrets, tokens, signed URLs, customer payloads, or private logs
-  in the config.
-- Never deploy or mutate production while setting up config.
-- Prefer exact discovered commands over guesses.
-- Omit unverified commands and report the missing evidence.
+- Invent or retain contradicted values, or activate disabled optional integrations.
+- Store state snapshots, execution evidence, tasks, transcripts, or `Unknowns` in config.
+- Discard state awaiting transfer or substitute a local backlog without tracker-write authority.
+- Assign real implementation issues to probe workers or file fictitious complaints.
+- Hand-edit generated downstream skills.
+- Include secrets, tokens, signed URLs, customer payloads, or private logs in config.
+- Run install, deploy, expensive hosted, or credentialed provider actions solely
+  for setup verification without explicit approval. Authorized read-only metadata queries are allowed.
+- Deploy or mutate production during setup.
 
 ## Done
 
-Report:
-
-- config path written
-- whether this was first setup or refresh of an existing config
-- whether the config is complete enough to be the workflow lookup table
-- config fields changed or preserved and evidence gaps reported outside config
-- workflows blocked by missing configuration and their tracker follow-ups
-- commands discovered
-- tracker routing and labels found or missing
-- agent adapters updated
-- missing decisions or access requiring the user
-- validation command run
+Report config path, initial/full/scoped mode, fields verified/changed/preserved,
+adapters, commands, executed checks, gaps, authorized follow-ups, and affected-workflow
+readiness. Scoped refresh does not establish whole-config verification.
