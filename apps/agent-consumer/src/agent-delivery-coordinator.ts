@@ -100,6 +100,7 @@ import {
   renewAgentSnapshotClaim,
   validateSnapshotClaimId,
 } from './agent-snapshot-progress';
+import { sentryTracesSampleRate } from '@trace-flow/utils';
 
 export * from './agent-delivery-coordinator-contract';
 export * from './agent-ingestion-erasure';
@@ -740,7 +741,7 @@ export const AgentDeliveryCoordinator = Sentry.instrumentDurableObjectWithSentry
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
-    tracesSampleRate: 1.0,
+    tracesSampleRate: sentryTracesSampleRate(env.SENTRY_ENVIRONMENT ?? 'development'),
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
     ...sentryRequestPrivacy(),
     ignoreSpans: DURABLE_OBJECT_IGNORED_SPANS,

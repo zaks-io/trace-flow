@@ -13,6 +13,7 @@ import {
   isTraceDeliveryMessage,
   loadTraceDelivery,
   normalizeAnalyticsKey,
+  sentryTracesSampleRate,
 } from '@trace-flow/utils';
 import {
   TRACE_FLOW_PROPAGATION_TARGETS,
@@ -740,7 +741,7 @@ function sentryOptions(env: Env) {
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
-    tracesSampleRate: 1.0,
+    tracesSampleRate: sentryTracesSampleRate(env.SENTRY_ENVIRONMENT ?? 'development'),
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
     ...sentryRequestPrivacy(),
     enableRpcTracePropagation: true,

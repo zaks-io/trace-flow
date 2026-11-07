@@ -1,6 +1,6 @@
 import { axiomConfigFromEnv, createLogger, type TraceContext } from '@trace-flow/logging';
 import type { SubscriptionKVData } from '@trace-flow/types';
-import { generateTraceId } from '@trace-flow/utils';
+import { generateTraceId, sentryTracesSampleRate } from '@trace-flow/utils';
 import { DurableObject, tracing } from 'cloudflare:workers';
 import * as Sentry from '@sentry/cloudflare';
 import {
@@ -139,7 +139,7 @@ export const UsageTracker = Sentry.instrumentDurableObjectWithSentry(
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
-    tracesSampleRate: 1,
+    tracesSampleRate: sentryTracesSampleRate(env.SENTRY_ENVIRONMENT ?? 'development'),
     enableRpcTracePropagation: true,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
     ...sentryRequestPrivacy(),

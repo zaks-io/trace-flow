@@ -1,15 +1,17 @@
 import * as Sentry from '@sentry/nextjs';
+import { sentryTracesSampleRate } from '@trace-flow/utils';
 import { apiTracePropagationTargets } from '@/lib/trace-propagation';
 
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
+const environment = process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT ?? process.env.NODE_ENV;
 
 if (dsn) {
   Sentry.init({
     dsn,
-    environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT ?? process.env.NODE_ENV,
+    environment,
     release: process.env.NEXT_PUBLIC_DEPLOY_ID,
     sendDefaultPii: false,
-    tracesSampleRate: 1.0,
+    tracesSampleRate: sentryTracesSampleRate(environment),
     tracePropagationTargets: apiTracePropagationTargets(),
     integrations: [
       Sentry.browserTracingIntegration(),

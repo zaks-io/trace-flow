@@ -15,7 +15,7 @@ import { withNativeTrace } from '@trace-flow/utils/native-tracing';
 import { normalizeTraceRequest } from '@trace-flow/utils/ingress-tracing';
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { HTTPException } from 'hono/http-exception';
-import { applySecurityHeaders } from '@trace-flow/utils';
+import { applySecurityHeaders, sentryTracesSampleRate } from '@trace-flow/utils';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import type { ProxyEnv } from './context';
 import { handleOTLPTraces } from './otlp';
@@ -202,7 +202,7 @@ export function proxySentryOptions(env: ProxyEnv): Sentry.CloudflareOptions {
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
-    tracesSampleRate: 1.0,
+    tracesSampleRate: sentryTracesSampleRate(env.SENTRY_ENVIRONMENT ?? 'development'),
     enableRpcTracePropagation: true,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
     ...sentryRequestPrivacy(),
