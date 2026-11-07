@@ -14,6 +14,7 @@ import { tracing } from 'cloudflare:workers';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { withNativeTrace } from '@trace-flow/utils/native-tracing';
 import { normalizeTraceRequest } from '@trace-flow/utils/ingress-tracing';
+import { sentryTracesSampleRate } from '@trace-flow/utils';
 import { Hono } from 'hono';
 import type { AgentIngestEnv } from './context';
 import { handleIngest } from './handler';
@@ -33,7 +34,7 @@ const instrumentedApp = Sentry.withSentry(
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
-    tracesSampleRate: 1.0,
+    tracesSampleRate: sentryTracesSampleRate(env.SENTRY_ENVIRONMENT ?? 'development'),
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
     ...sentryRequestPrivacy(),
     enableRpcTracePropagation: true,

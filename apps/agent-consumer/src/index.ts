@@ -5,7 +5,7 @@ import { sentryRequestPrivacy } from '@trace-flow/utils/sentry-tracing';
  */
 import * as Sentry from '@sentry/cloudflare';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
-import { sha256Hex } from '@trace-flow/utils';
+import { sha256Hex, sentryTracesSampleRate } from '@trace-flow/utils';
 import type { AgentConsumerEnv } from './context';
 import type { ResumeSnapshotInput } from './snapshot-recovery';
 import { discoverSnapshotCopy } from './snapshot-tinybird';
@@ -258,7 +258,7 @@ function sentryOptions(env: AgentConsumerEnv) {
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
-    tracesSampleRate: 1.0,
+    tracesSampleRate: sentryTracesSampleRate(env.SENTRY_ENVIRONMENT ?? 'development'),
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
     ...sentryRequestPrivacy(),
     enableRpcTracePropagation: true,

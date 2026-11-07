@@ -4,6 +4,7 @@ import {
   sentryRequestPrivacy,
   TRACE_FLOW_PROPAGATION_TARGETS,
 } from '@trace-flow/utils/sentry-tracing';
+import { sentryTracesSampleRate } from '@trace-flow/utils';
 
 // Re-export Durable Objects from OpenNext (required for Cloudflare)
 export { DOQueueHandler, DOShardedTagCache, BucketCachePurge } from '../.open-next/worker.js';
@@ -31,7 +32,7 @@ const instrumentedHandler = Sentry.withSentry(
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'prod',
-    tracesSampleRate: 1.0,
+    tracesSampleRate: sentryTracesSampleRate(env.SENTRY_ENVIRONMENT ?? 'prod'),
     sendDefaultPii: false,
     enableLogs: true,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,

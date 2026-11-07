@@ -4,6 +4,7 @@ import {
   BodySizeLimitError,
   readRequestBodyWithLimit,
   TRACE_CONTEXT_HEADERS,
+  sentryTracesSampleRate,
 } from '@trace-flow/utils';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { normalizeTraceRequest } from '@trace-flow/utils/ingress-tracing';
@@ -424,7 +425,7 @@ const instrumentedMcp = Sentry.withSentry(
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
-    tracesSampleRate: 1.0,
+    tracesSampleRate: sentryTracesSampleRate(env.SENTRY_ENVIRONMENT ?? 'development'),
     sendDefaultPii: false,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
     ...sentryRequestPrivacy(),

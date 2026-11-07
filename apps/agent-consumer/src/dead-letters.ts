@@ -12,6 +12,7 @@ import {
 } from '@trace-flow/tinybird-client';
 import type { AgentConsumerEnv } from './context';
 import { DlqCleanup } from './dlq-cleanup';
+import { sentryTracesSampleRate } from '@trace-flow/utils';
 
 export const AGENT_DEAD_LETTERS_INSTANCE_NAME = '__dlq__';
 
@@ -59,7 +60,7 @@ export const AgentDeadLetters = Sentry.instrumentDurableObjectWithSentry(
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
-    tracesSampleRate: 1.0,
+    tracesSampleRate: sentryTracesSampleRate(env.SENTRY_ENVIRONMENT ?? 'development'),
     tracePropagationTargets: sentryTracing.TRACE_FLOW_PROPAGATION_TARGETS,
     ...sentryTracing.sentryRequestPrivacy(),
     ignoreSpans: sentryTracing.DURABLE_OBJECT_IGNORED_SPANS,

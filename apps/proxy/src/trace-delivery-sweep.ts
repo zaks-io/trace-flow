@@ -8,7 +8,7 @@ import {
 } from '@trace-flow/utils/sentry-tracing';
 import type { ProxyEnv } from './context';
 import { validateNamespace } from './delivery';
-import { TRACE_DELIVERY_PREFIX } from '@trace-flow/utils';
+import { TRACE_DELIVERY_PREFIX, sentryTracesSampleRate } from '@trace-flow/utils';
 import { createSweepMetrics, sweepTraceDeliveries } from './delivery-sweep';
 
 interface SweepPosition {
@@ -83,7 +83,7 @@ export const TraceDeliverySweep = Sentry.instrumentDurableObjectWithSentry(
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
-    tracesSampleRate: 1,
+    tracesSampleRate: sentryTracesSampleRate(env.SENTRY_ENVIRONMENT ?? 'development'),
     enableRpcTracePropagation: true,
     tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
     ...sentryRequestPrivacy(),

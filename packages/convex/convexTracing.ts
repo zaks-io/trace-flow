@@ -10,7 +10,12 @@ import {
   startInactiveSpan,
   type Span,
 } from '@sentry/core';
-import { parseTraceparent, validateSpanId, validateTraceId } from '@trace-flow/utils';
+import {
+  parseTraceparent,
+  sentryTracesSampleRate,
+  validateSpanId,
+  validateTraceId,
+} from '@trace-flow/utils';
 import { validateConvexTraceContext, type ConvexTraceContext } from './traceContext';
 
 export interface ConvexTracingOptions {
@@ -47,7 +52,7 @@ function createScope(): Scope {
   const client = new ServerRuntimeClient({
     dsn,
     environment,
-    tracesSampleRate: 1,
+    tracesSampleRate: sentryTracesSampleRate(environment),
     integrations: [],
     stackParser: () => [],
     sendDefaultPii: false,

@@ -14,6 +14,7 @@ export * from './trace-delivery';
 export * from './agent-delivery';
 export * from './agent-delivery-identity';
 export * from './bounded-body';
+export * from './sentry-sampling';
 
 // Backward compat — djb2Hash was previously exported as hashString
 export { djb2Hash as hashString } from './crypto';
