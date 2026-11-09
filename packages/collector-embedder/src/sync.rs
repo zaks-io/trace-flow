@@ -228,9 +228,9 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
         store.set_replay_facts(cfg.replay);
         let mut cursor_db_read = None;
         if roots.is_empty() {
-            let (units, db_state) =
-                assemble_cursor_source_units(&store, &cfg, window, &mut report)?;
-            cursor_db_read = db_state;
+            let (units, read) =
+                assemble_cursor_source_units(&store, &cfg, &paths, window, &mut report)?;
+            cursor_db_read = read;
             if !units.is_empty() {
                 apply_fact_cycle(
                     &client,
@@ -277,9 +277,9 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
             }
         }
         settle_unconfirmed(&store, source, unconfirmed, &mut report)?;
-        if let Some(db_state) = cursor_db_read.filter(|_| report.is_complete()) {
+        if let Some(read) = cursor_db_read.filter(|_| report.is_complete()) {
             store
-                .mark_cursor_db_synced(&db_state, window.cutoff_ms())
+                .mark_cursor_db_synced(&read.db_state, window.cutoff_ms())
                 .context("record cursor db sync")?;
         }
         let aborted_early = report.aborted_early;
@@ -390,38 +390,66 @@ fn settle_unconfirmed(
     Ok(())
 }
 
+/// One Cursor DB read, recorded with [`CursorStore::mark_cursor_db_synced`] once its pass completes.
+/// It holds the Cursor gate lock until then.
+struct CursorDbRead {
+    db_state: String,
+    _gate: std::fs::File,
+}
+
 /// Discover + assemble units for the Cursor source: snapshot `state.vscdb` read-only and assemble each
-/// changed composer, plus the DB state those units were read at. A missing DB (Cursor not installed,
+/// changed composer, plus the read those units came from. A missing DB (Cursor not installed,
 /// or a non-macOS host) is a clean no-op. So is a DB that has not changed since the last complete pass
 /// over at least this window: reading the whole multi-GB store again would find nothing new.
 fn assemble_cursor_source_units(
     store: &CursorStore,
     cfg: &RunConfig<'_>,
+    paths: &Paths,
     window: ImportWindow,
     report: &mut SourceReport,
-) -> Result<(Vec<SyncUnit>, Option<String>)> {
+) -> Result<(Vec<SyncUnit>, Option<CursorDbRead>)> {
     let Some(db) = cursor_db_path(cfg.home).filter(|p| p.exists()) else {
         return Ok((Vec::new(), None));
     };
     // For the Cursor source, "files scanned" is the single state.vscdb; "selected" is the changed
     // composers the snapshot assembled.
     report.source_files_scanned = 1;
-    // A parser upgrade can change what a composer yields, so it invalidates the recorded state.
-    let db_state = format!(
-        "parser {PARSER_VERSION} {}",
-        cursor_db_state(&db).context("read cursor db state")?
-    );
-    if !cfg.replay
-        && store
-            .cursor_db_already_synced(&db_state, window.cutoff_ms())
-            .context("read cursor db sync state")?
+    // Only one pass at a time may skip or record a read, so a read never completes over a skip that
+    // relied on an earlier read. A pass that finds the gate held reads Cursor and records nothing.
+    let read = match paths.try_lock_cursor_gate(cfg.org_id)? {
+        Some(gate) => {
+            // A parser upgrade can change what a composer yields, so it invalidates the recorded state.
+            let db_state = format!(
+                "parser {PARSER_VERSION} {}",
+                cursor_db_state(&db).context("read cursor db state")?
+            );
+            if !cfg.replay
+                && store
+                    .skip_cursor_db_pass(&db_state, window.cutoff_ms())
+                    .context("read cursor db sync state")?
+            {
+                return Ok((Vec::new(), None));
+            }
+            Some(CursorDbRead {
+                db_state,
+                _gate: gate,
+            })
+        }
+        None => None,
+    };
+    let read_window = match store
+        .cursor_db_read_cutoff_ms()
+        .context("read cursor db read cutoff")?
     {
-        return Ok((Vec::new(), None));
-    }
-    let units =
-        assemble_cursor_units(&db, store, window, cfg.replay).context("assemble cursor units")?;
+        Some(last_read) if last_read < window.cutoff_ms() => {
+            ImportWindow::from_cutoff_ms(last_read)
+        }
+        _ => window,
+    };
+    let units = assemble_cursor_units(&db, store, read_window, cfg.replay)
+        .context("assemble cursor units")?;
     report.selected = units.len();
-    Ok((units, Some(db_state)))
+    Ok((units, read))
 }
 
 /// Parse a `--since` value into a [`Window`]. Accepts the ADR presets only; an unknown value is a

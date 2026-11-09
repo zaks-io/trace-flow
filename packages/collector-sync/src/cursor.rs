@@ -108,6 +108,11 @@ const META_LAST_COMPLETE_SYNC_AT_MS: &str = "last_complete_sync_at_ms";
 const META_INCOMPLETE_SYNC_CUTOFF_MS: &str = "incomplete_sync_cutoff_ms";
 const META_CURSOR_DB_STATE: &str = "cursor_db_state";
 const META_CURSOR_DB_CUTOFF_MS: &str = "cursor_db_cutoff_ms";
+const META_CURSOR_DB_SKIPPED_PASSES: &str = "cursor_db_skipped_passes";
+
+/// File stats cannot see a commit SQLite publishes after the reader's snapshot opens, so at most this
+/// many passes in a row skip an unchanged Cursor DB, which bounds how late such a commit can sync.
+pub const CURSOR_DB_MAX_SKIPPED_PASSES: u32 = 11;
 
 /// How far one transcript file has been ingested. The four fields the discovery pass needs to decide
 /// whether a file is unchanged since the last successful upload.
@@ -280,10 +285,10 @@ impl CursorStore {
     /// any such pass. Embedders resume their incremental window from here so the time the collector
     /// spent not running is rescanned rather than skipped.
     pub fn last_complete_sync_at_ms(&self) -> Result<Option<i64>, CursorStoreError> {
-        self.get_timestamp_meta(META_LAST_COMPLETE_SYNC_AT_MS)
+        self.get_int_meta(META_LAST_COMPLETE_SYNC_AT_MS)
     }
 
-    fn get_timestamp_meta(&self, key: &'static str) -> Result<Option<i64>, CursorStoreError> {
+    fn get_int_meta(&self, key: &'static str) -> Result<Option<i64>, CursorStoreError> {
         let Some(value) = self.get_meta(key)? else {
             return Ok(None);
         };
@@ -308,7 +313,7 @@ impl CursorStore {
         // cannot invalidate the WAL read snapshot and fail the upgrade with SQLITE_BUSY_SNAPSHOT.
         let tx = self.write_transaction()?;
         let cutoff_ms = self
-            .get_timestamp_meta(META_INCOMPLETE_SYNC_CUTOFF_MS)?
+            .get_int_meta(META_INCOMPLETE_SYNC_CUTOFF_MS)?
             .map_or(cutoff_ms, |pending| pending.min(cutoff_ms));
         self.set_meta(META_INCOMPLETE_SYNC_CUTOFF_MS, &cutoff_ms.to_string())?;
         tx.commit()?;
@@ -328,7 +333,7 @@ impl CursorStore {
         let tx = self.write_transaction()?;
         self.set_meta(META_LAST_COMPLETE_SYNC_AT_MS, &at_ms.to_string())?;
         let covered = self
-            .get_timestamp_meta(META_INCOMPLETE_SYNC_CUTOFF_MS)?
+            .get_int_meta(META_INCOMPLETE_SYNC_CUTOFF_MS)?
             .is_some_and(|pending| pending >= scanned_cutoff_ms);
         if covered {
             self.delete_meta(META_INCOMPLETE_SYNC_CUTOFF_MS)?;
@@ -337,23 +342,43 @@ impl CursorStore {
         Ok(())
     }
 
-    /// Whether a complete pass already read the Cursor DB in exactly `db_state`, with a window at
-    /// least as wide as `cutoff_ms`. Rereading it then finds nothing new.
-    pub fn cursor_db_already_synced(
+    /// Skip this pass's Cursor read, and count the skip, when the recorded read saw the DB in exactly
+    /// `db_state` with a window at least as wide as `cutoff_ms`, and fewer than
+    /// [`CURSOR_DB_MAX_SKIPPED_PASSES`] passes have skipped since. Callers serialize this with
+    /// [`mark_cursor_db_synced`](Self::mark_cursor_db_synced) across processes, so a skip always
+    /// counts against the read it relied on.
+    pub fn skip_cursor_db_pass(
         &self,
         db_state: &str,
         cutoff_ms: i64,
     ) -> Result<bool, CursorStoreError> {
+        let tx = self.write_transaction()?;
         if self.get_meta(META_CURSOR_DB_STATE)?.as_deref() != Some(db_state) {
             return Ok(false);
         }
-        Ok(self
-            .get_timestamp_meta(META_CURSOR_DB_CUTOFF_MS)?
-            .is_some_and(|synced_cutoff| synced_cutoff <= cutoff_ms))
+        let window_covered = self
+            .get_int_meta(META_CURSOR_DB_CUTOFF_MS)?
+            .is_some_and(|read_cutoff| read_cutoff <= cutoff_ms);
+        let skips_left = self
+            .get_int_meta(META_CURSOR_DB_SKIPPED_PASSES)?
+            .filter(|&skipped| skipped < i64::from(CURSOR_DB_MAX_SKIPPED_PASSES));
+        let Some(skipped) = skips_left.filter(|_| window_covered) else {
+            return Ok(false);
+        };
+        self.set_meta(META_CURSOR_DB_SKIPPED_PASSES, &(skipped + 1).to_string())?;
+        tx.commit()?;
+        Ok(true)
     }
 
-    /// Record a Cursor pass that read `db_state` back to `cutoff_ms` and had every selected composer
-    /// accepted. Call only after the pass completes with no failures.
+    /// The window cutoff of the recorded Cursor read. A reread reaches back to it, so a new composer
+    /// that a skipped pass would have admitted has not aged out of the window by then.
+    pub fn cursor_db_read_cutoff_ms(&self) -> Result<Option<i64>, CursorStoreError> {
+        self.get_int_meta(META_CURSOR_DB_CUTOFF_MS)
+    }
+
+    /// Record a Cursor read that saw `db_state` back to `cutoff_ms` and had every selected composer
+    /// accepted, and restart its skip count. Call only after the pass completes with no failures, and
+    /// serialized with [`skip_cursor_db_pass`](Self::skip_cursor_db_pass).
     pub fn mark_cursor_db_synced(
         &self,
         db_state: &str,
@@ -362,6 +387,7 @@ impl CursorStore {
         let tx = self.write_transaction()?;
         self.set_meta(META_CURSOR_DB_STATE, db_state)?;
         self.set_meta(META_CURSOR_DB_CUTOFF_MS, &cutoff_ms.to_string())?;
+        self.set_meta(META_CURSOR_DB_SKIPPED_PASSES, "0")?;
         tx.commit()?;
         Ok(())
     }
@@ -963,26 +989,50 @@ mod tests {
         }
     }
 
+    fn skip_until_reread(store: &CursorStore) -> u32 {
+        let mut skips = 0;
+        while store.skip_cursor_db_pass("state-a", 100).unwrap() {
+            skips += 1;
+            assert!(
+                skips <= CURSOR_DB_MAX_SKIPPED_PASSES,
+                "the skip limit holds"
+            );
+        }
+        skips
+    }
+
     #[test]
     fn the_cursor_db_gate_needs_the_same_db_state_and_no_wider_window() {
         let store = CursorStore::open_in_memory("org").unwrap();
-        assert!(!store.cursor_db_already_synced("state-a", 100).unwrap());
+        assert!(!store.skip_cursor_db_pass("state-a", 100).unwrap());
 
         store.mark_cursor_db_synced("state-a", 100).unwrap();
-        assert!(store.cursor_db_already_synced("state-a", 100).unwrap());
-        assert!(store.cursor_db_already_synced("state-a", 200).unwrap());
         assert!(
-            !store.cursor_db_already_synced("state-a", 99).unwrap(),
+            !store.skip_cursor_db_pass("state-a", 99).unwrap(),
             "a wider window can admit composers the last pass left out"
         );
         assert!(
-            !store.cursor_db_already_synced("state-b", 200).unwrap(),
+            !store.skip_cursor_db_pass("state-b", 200).unwrap(),
             "Cursor committed since the last pass"
         );
         assert!(!CursorStore::open_in_memory("other-org")
             .unwrap()
-            .cursor_db_already_synced("state-a", 200)
+            .skip_cursor_db_pass("state-a", 200)
             .unwrap());
+        assert!(store.skip_cursor_db_pass("state-a", 100).unwrap());
+        assert!(store.skip_cursor_db_pass("state-a", 200).unwrap());
+        assert_eq!(store.cursor_db_read_cutoff_ms().unwrap(), Some(100));
+    }
+
+    #[test]
+    fn the_cursor_db_is_reread_after_the_skip_limit_and_a_new_read_earns_more_skips() {
+        let store = CursorStore::open_in_memory("org").unwrap();
+        store.mark_cursor_db_synced("state-a", 100).unwrap();
+        assert_eq!(skip_until_reread(&store), CURSOR_DB_MAX_SKIPPED_PASSES);
+        assert!(!store.skip_cursor_db_pass("state-a", 100).unwrap());
+
+        store.mark_cursor_db_synced("state-a", 100).unwrap();
+        assert_eq!(skip_until_reread(&store), CURSOR_DB_MAX_SKIPPED_PASSES);
     }
 
     #[test]
@@ -994,7 +1044,7 @@ mod tests {
         store.mark_cursor_db_synced("state-a", 100).unwrap();
 
         assert!(store.repair_legacy_cursors_without_fact_state().unwrap());
-        assert!(!store.cursor_db_already_synced("state-a", 100).unwrap());
+        assert!(!store.skip_cursor_db_pass("state-a", 100).unwrap());
     }
 
     #[test]

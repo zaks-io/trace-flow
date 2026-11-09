@@ -149,3 +149,81 @@ async fn a_failed_cursor_pass_is_retried_even_though_the_db_did_not_change() {
     assert_eq!(cursor_report(&retried).selected, 1);
     assert_eq!(cursor_report(&retried).advanced, 1);
 }
+
+#[tokio::test]
+async fn an_idle_cursor_db_is_reread_after_the_skip_limit() {
+    let h = CursorHarness::new().await;
+    assert_eq!(cursor_report(&h.sync(0, false).await).advanced, 1);
+    let skips = i64::from(collector_sync::CURSOR_DB_MAX_SKIPPED_PASSES);
+
+    h.forget_c1_content();
+    for cycle in 1..=skips {
+        assert_eq!(cursor_report(&h.sync(cycle, false).await).selected, 0);
+    }
+    assert_eq!(cursor_report(&h.sync(skips + 1, false).await).selected, 1);
+
+    h.forget_c1_content();
+    assert_eq!(cursor_report(&h.sync(skips + 2, false).await).selected, 0);
+}
+
+/// A commit SQLite publishes after a pass's snapshot opens leaves the DB state unchanged, so the passes
+/// that follow skip it. The reread must still admit a new composer that the last read's window covered.
+#[tokio::test]
+async fn a_reread_after_skips_reaches_back_to_the_last_read_window() {
+    let h = CursorHarness::new().await;
+    assert_eq!(cursor_report(&h.sync(0, false).await).advanced, 1);
+
+    let state = collector_sync::cursor_db_state(&h.db).unwrap();
+    let modified = std::fs::metadata(&h.db).unwrap().modified().unwrap();
+    commit_row(
+        &h.db,
+        "composerData:late",
+        json!({ "composerId": "late", "createdAt": NOW_MS - 24 * 60 * 60 * 1000 + 10 * 60 * 1000 }),
+    );
+    commit_row(
+        &h.db,
+        "bubbleId:late:b1",
+        json!({ "bubbleId": "b1", "type": 1, "createdAt": "2026-05-26T00:10:00.000Z", "text": "hi" }),
+    );
+    std::fs::File::options()
+        .write(true)
+        .open(&h.db)
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+    assert_eq!(collector_sync::cursor_db_state(&h.db).unwrap(), state);
+
+    let skips = i64::from(collector_sync::CURSOR_DB_MAX_SKIPPED_PASSES);
+    for cycle in 1..=skips {
+        assert_eq!(cursor_report(&h.sync(cycle, false).await).selected, 0);
+    }
+    let reread = h.sync(skips + 1, false).await;
+    assert_eq!(cursor_report(&reread).selected, 1);
+    assert_eq!(cursor_report(&reread).advanced, 1);
+}
+
+#[tokio::test]
+async fn a_pass_that_finds_the_cursor_gate_held_reads_and_records_nothing() {
+    let h = CursorHarness::new().await;
+    assert_eq!(cursor_report(&h.sync(0, false).await).advanced, 1);
+    let held = Paths::at(h.state.path().to_path_buf())
+        .try_lock_cursor_gate("org_1")
+        .unwrap()
+        .expect("no other pass holds the gate");
+
+    h.forget_c1_content();
+    assert_eq!(cursor_report(&h.sync(1, false).await).selected, 1);
+    commit_row(&h.db, "unrelated:ui-state", json!({ "open": true }));
+    h.forget_c1_content();
+    assert_eq!(cursor_report(&h.sync(2, false).await).selected, 1);
+    drop(held);
+
+    h.forget_c1_content();
+    assert_eq!(
+        cursor_report(&h.sync(3, false).await).selected,
+        1,
+        "the pass without the gate recorded nothing to skip against"
+    );
+    h.forget_c1_content();
+    assert_eq!(cursor_report(&h.sync(4, false).await).selected, 0);
+}

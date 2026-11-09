@@ -25,13 +25,20 @@ writing anything. On a 4 GB Cursor store the copy wrote about 4 GB every five-mi
 sync pass also skips the Cursor source when the DB's size and modification time, and its WAL's, match
 the last complete pass over at least the same window, so an idle Cursor costs a stat instead of a
 5-second reparse. A failed pass, replay, a wider window, a parser upgrade, or the legacy cursor
-repair all reread it. The unused `scratch/` state dir, including any copy a killed pass left behind,
-is removed. ADR 0012 records the read-transaction decision.
+repair all reread it. File stats cannot see a commit SQLite publishes after the snapshot opens, so at
+most 11 passes in a row skip, about an hour at the five-minute cadence, and the reread reaches back to
+the last read's window so a new composer that skipped passes would have admitted is not aged out. Only
+a pass holding a per-org lock file may skip or record a read, so overlapping CLI and Desktop passes
+cannot record over each other; a pass that finds the lock held reads Cursor in full and records nothing.
+Leftover `scratch/trace-flow-cursor-*` copies from killed passes are removed; anything else in
+`scratch/` is kept. ADR 0012 records the read-transaction decision.
 **Verified:** `cargo fmt --check`, `cargo clippy --workspace --all-targets -D warnings`, and `cargo
 test --workspace` pass. New tests cover a mid-pass commit staying invisible, a rollback-journal read
 leaving the source byte-identical and releasing Cursor on drop, and the idle skip end to end against a
-fake ingest, including retry after a rejected pass. On the real 4 GB store, `cursor-dryrun` went from
-3,949 MB written, 14.9 s, and 10.3 CPU-seconds to 0 MB, 6.7 s, and 6.6 CPU-seconds.
+fake ingest, including retry after a rejected pass, the reread after the skip limit, a pass that
+finds the lock held, and a hidden commit reaching back to the last read's window. On the real 4 GB
+store, `cursor-dryrun` went from 3,949 MB written, 14.9 s, and 10.3 CPU-seconds to 0 MB, 6.7 s, and
+6.6 CPU-seconds.
 **Next / blockers:** Merge ships the next Desktop release.
 
 ---
