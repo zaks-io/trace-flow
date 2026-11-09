@@ -105,11 +105,16 @@ TRA-407. Seed the target deployment once via the Convex **dashboard** → Data �
 `updatedAt` is any epoch-ms number — the active row is the latest by `updatedAt`). Raise the minimums or
 add denylisted versions later to gate or block specific releases without a Worker deploy.
 
-Each batch's `desktop_version` is the embedding app's own release version. Trace Flow Desktop sends its
-release version (`0.1.<desktop-release run number>`, the version the updater compares against), and the
-`trace-flow` CLI sends its crate version (what `trace-flow --version` prints). Older releases of both
-apps send `0.1.0`. Both apps are gated by the same `minDesktopVersion` and denylist, so
-a Desktop minimum above the CLI's version also blocks the CLI.
+Each batch's `desktop_version` is the embedding app's own release version. Trace Flow Desktop sends
+`<major>.<minor>.<desktop-release run number>`, the version its updater compares against, and the
+`trace-flow` CLI sends its crate version, which `trace-flow --version` prints. Releases before
+Desktop 0.1.71 and CLI 0.2.0 send `0.1.0`.
+
+Both apps share `minDesktopVersion` and the denylist, so they share a minor line. To make a release
+enforceable, bump the minor in `apps/desktop/src-tauri/tauri.conf.json` and `apps/cli/Cargo.toml`
+together, then set `minDesktopVersion` to `<major>.<minor>.0`. Never set a minimum on a Desktop patch
+number: the patch is a run number, so it would also block the CLI. `0.2.0` admits only releases that
+report their real version.
 
 **Diagnosing `policy_unavailable`:** `wrangler tail --env production --format json` from `apps/agent-ingest`
 and grep `policy_fetch`. `status:404` = empty table or wrong `CONVEX_SITE_URL` deployment; `status:401` =

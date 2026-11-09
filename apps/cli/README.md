@@ -213,9 +213,9 @@ installer.
 When publishing a new release, push the version tag first and dispatch the workflow from that tag:
 
 ```sh
-git tag trace-flow-cli-v0.1.2
-git push origin trace-flow-cli-v0.1.2
-gh workflow run cli-release.yml --ref trace-flow-cli-v0.1.2 -f tag=trace-flow-cli-v0.1.2
+git tag trace-flow-cli-v0.2.0
+git push origin trace-flow-cli-v0.2.0
+gh workflow run cli-release.yml --ref trace-flow-cli-v0.2.0 -f tag=trace-flow-cli-v0.2.0
 ```
 
 Use `tag=dry-run` to build without creating a GitHub Release. Required macOS signing secrets are

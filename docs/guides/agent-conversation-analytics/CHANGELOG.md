@@ -15,9 +15,22 @@ per working session or task hand-off. Copy the template.
 
 ---
 
-## 2026-11-09 Collector reports its app version t3/report-collector-app-version
+## 2026-11-09 Collector apps move to 0.2 t3/bump-collector-app-versions
 
 **Status:** in review
+**Changed:** Trace Flow Desktop and the `trace-flow` CLI both move to 0.2.0 (`tauri.conf.json`, both
+`Cargo.toml` files, `apps/desktop/package.json`, and both lockfiles), so 0.2 is the first line on
+which both apps report their real version and one `minDesktopVersion` of `0.2.0` gates both. Desktop
+releases become `0.2.<run number>`. The runbook documents bumping both minors together when a release
+must be enforceable. The parser version stays `0.3.0` because fact output is unchanged.
+**Verified:** `cargo check --workspace --locked` and `bun install --frozen-lockfile` pass with the
+bumped lockfiles; `trace-flow --version` prints `trace-flow 0.2.0`; the release workflow's version
+step resolves `0.2.<run number>`, newer than the published 0.1.71.
+**Next / blockers:** none.
+
+## 2026-11-09 Collector reports its app version t3/report-collector-app-version
+
+**Status:** done (#638)
 **Changed:** Every batch's `desktop_version` was `env!("CARGO_PKG_VERSION")` of `collector-embedder`,
 which is always `0.1.0`, so the ingest compatibility policy could not tell any Desktop or CLI release
 apart. `RunConfig` now takes the embedding app's `app_version`. Trace Flow Desktop passes
