@@ -45,6 +45,7 @@ impl SessionGitHarness {
             replay: false,
             now_ms: now,
             batch_id_prefix: "test",
+            app_version: TEST_APP_VERSION,
             state_dir: Some(self.state.path()),
         })
         .await

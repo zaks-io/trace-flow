@@ -15,9 +15,24 @@ per working session or task hand-off. Copy the template.
 
 ---
 
-## 2026-11-08 Cursor reader disk and CPU fix t3/investigate-collector-cpu-sync
+## 2026-11-09 Collector reports its app version t3/report-collector-app-version
 
 **Status:** in review
+**Changed:** Every batch's `desktop_version` was `env!("CARGO_PKG_VERSION")` of `collector-embedder`,
+which is always `0.1.0`, so the ingest compatibility policy could not tell any Desktop or CLI release
+apart. `RunConfig` now takes the embedding app's `app_version`. Trace Flow Desktop passes
+`app.package_info().version`, the release-stamped version its updater already compares against, and
+the CLI and its service pass the CLI crate version. The runbook notes that both apps share
+`minDesktopVersion` and the denylist.
+**Verified:** `cargo test --workspace --locked` green, including a new embedder test that every batch
+carries the configured app version. Reverting the batch to the crate version fails that test with
+`0.1.0`. `cargo clippy --workspace --all-targets --locked -- -D warnings` clean.
+**Next / blockers:** Per-app minimums need an app identifier in the batch. Batch validation rejects
+unknown keys, so ingest has to accept the field before any client sends it.
+
+## 2026-11-08 Cursor reader disk and CPU fix t3/investigate-collector-cpu-sync
+
+**Status:** done (#637)
 **Changed:** The Cursor reader no longer copies `state.vscdb` with `VACUUM INTO` on every pass. It
 reads the live DB read-only inside one read transaction, which keeps the consistent snapshot without
 writing anything. On a 4 GB Cursor store the copy wrote about 4 GB every five-minute cycle, roughly

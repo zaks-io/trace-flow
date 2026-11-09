@@ -1,4 +1,4 @@
-use super::tests::{raw_response, request_json, run_fact_sync, spawn_http};
+use super::tests::{raw_response, request_json, run_fact_sync, spawn_http, TEST_APP_VERSION};
 use collector_contracts::AgentIngestEnvelope;
 use serde_json::json;
 use std::io::Write;

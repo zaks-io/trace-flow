@@ -67,9 +67,11 @@ impl EngineHandle {
 /// hook, which runs on a thread with no active tokio runtime, so `tokio::spawn` would panic. Tauri's
 /// runtime is initialised on demand and lives for the app, and `run_loop`'s `interval`/`select!` run
 /// inside it on the tokio reactor.
-pub fn spawn(bus: AppStateBus, settings_file: SettingsFile) -> EngineHandle {
+///
+/// `app_version` is the release version every upload reports to the ingest compatibility policy.
+pub fn spawn(bus: AppStateBus, settings_file: SettingsFile, app_version: String) -> EngineHandle {
     let (tx, rx) = mpsc::unbounded_channel();
-    tauri::async_runtime::spawn(run_loop(rx, bus, settings_file));
+    tauri::async_runtime::spawn(run_loop(rx, bus, settings_file, app_version));
     EngineHandle { tx }
 }
 
@@ -77,6 +79,7 @@ async fn run_loop(
     mut rx: mpsc::UnboundedReceiver<EngineCommand>,
     bus: AppStateBus,
     settings_file: SettingsFile,
+    app_version: String,
 ) {
     let mut settings = load_settings(&settings_file);
     if let Some(home) = dirs_home() {
@@ -101,7 +104,7 @@ async fn run_loop(
 
     if settings.syncing {
         tracing::info!("sync authorized before relaunch; resuming");
-        backoff_until = run_authorized_cycle(&bus, &mut settings).await;
+        backoff_until = run_authorized_cycle(&bus, &mut settings, &app_version).await;
         persist(&settings_file, &settings);
     }
 
@@ -123,7 +126,7 @@ async fn run_loop(
                         // Persist the authorization before the (possibly long) pass so a quit
                         // mid-backfill still comes back syncing.
                         persist(&settings_file, &settings);
-                        backoff_until = run_authorized_cycle(&bus, &mut settings).await;
+                        backoff_until = run_authorized_cycle(&bus, &mut settings, &app_version).await;
                     }
                 }
                 persist(&settings_file, &settings);
@@ -135,7 +138,7 @@ async fn run_loop(
                 }
                 if settings.syncing {
                     let before = settings.clone();
-                    backoff_until = run_authorized_cycle(&bus, &mut settings).await;
+                    backoff_until = run_authorized_cycle(&bus, &mut settings, &app_version).await;
                     if settings != before {
                         persist(&settings_file, &settings);
                     }
@@ -147,9 +150,13 @@ async fn run_loop(
 
 /// One authorized pass, in the window [`cycle::authorized_window`] picks. Returns when periodic
 /// passes may resume if the ingest Worker shed load.
-async fn run_authorized_cycle(bus: &AppStateBus, settings: &mut Settings) -> Option<Instant> {
+async fn run_authorized_cycle(
+    bus: &AppStateBus,
+    settings: &mut Settings,
+    app_version: &str,
+) -> Option<Instant> {
     let window = window_for_authorized_cycle(settings);
-    let outcome = run_cycle(bus, window, settings.source_homes.clone()).await?;
+    let outcome = run_cycle(bus, window, settings.source_homes.clone(), app_version).await?;
     apply_authorized_cycle(settings, &outcome);
     let backoff = outcome.backoff?;
     tracing::warn!(
@@ -216,6 +223,7 @@ async fn run_cycle(
     bus: &AppStateBus,
     window: Window,
     source_homes: SourceHomes,
+    app_version: &str,
 ) -> Option<CycleOutcome> {
     let conn = match Paths::resolve().and_then(|p| p.load_connection()) {
         Ok(Some(conn)) => conn,
@@ -285,21 +293,17 @@ async fn run_cycle(
 
     bus.update(|s| s.sync = SyncStatus::Syncing);
 
-    let now_ms = now_ms();
-    let org_id = conn.org_id;
-    let cycle_source_homes = source_homes.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        run_cycle_blocking(
-            org_id,
-            credential,
-            ingest_url,
-            home,
-            cycle_source_homes,
-            window,
-            now_ms,
-        )
-    })
-    .await;
+    let pass = BlockingPass {
+        org_id: conn.org_id,
+        credential,
+        ingest_url,
+        home,
+        source_homes: source_homes.clone(),
+        window,
+        now_ms: now_ms(),
+        app_version: app_version.to_string(),
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || pass.run()).await;
 
     let outcome = match result {
         Ok(outcome) => {
@@ -341,7 +345,8 @@ async fn run_cycle(
     outcome
 }
 
-fn run_cycle_blocking(
+/// The owned inputs of one pass, moved onto the blocking thread that runs it.
+struct BlockingPass {
     org_id: String,
     credential: String,
     ingest_url: String,
@@ -349,32 +354,38 @@ fn run_cycle_blocking(
     source_homes: SourceHomes,
     window: Window,
     now_ms: i64,
-) -> CycleOutcome {
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(runtime) => runtime,
-        Err(err) => return CycleOutcome::setup_failure(format!("build runtime: {err}")),
-    };
+    app_version: String,
+}
 
-    let result = runtime.block_on(sync::run_detailed(sync::RunConfig {
-        ingest_url,
-        credential,
-        org_id: &org_id,
-        home: &home,
-        source_homes: Some(&source_homes),
-        window,
-        replay: false,
-        now_ms,
-        batch_id_prefix: "desktop",
-        state_dir: None,
-    }));
+impl BlockingPass {
+    fn run(self) -> CycleOutcome {
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(err) => return CycleOutcome::setup_failure(format!("build runtime: {err}")),
+        };
 
-    if let Ok(outcome) = &result {
-        log_report_details(&outcome.reports);
+        let result = runtime.block_on(sync::run_detailed(sync::RunConfig {
+            ingest_url: self.ingest_url,
+            credential: self.credential,
+            org_id: &self.org_id,
+            home: &self.home,
+            source_homes: Some(&self.source_homes),
+            window: self.window,
+            replay: false,
+            now_ms: self.now_ms,
+            batch_id_prefix: "desktop",
+            app_version: &self.app_version,
+            state_dir: None,
+        }));
+
+        if let Ok(outcome) = &result {
+            log_report_details(&outcome.reports);
+        }
+        CycleOutcome::from_run(&result)
     }
-    CycleOutcome::from_run(&result)
 }
 
 fn log_report_details(reports: &[(collector_contracts::AgentSource, sync::SourceReport)]) {
