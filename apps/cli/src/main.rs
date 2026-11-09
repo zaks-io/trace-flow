@@ -260,6 +260,7 @@ async fn cmd_sync(layout: &Layout, since: &str, replay: bool) -> Result<()> {
         replay,
         now_ms: watch::now_ms(),
         batch_id_prefix: "cli",
+        app_version: env!("CARGO_PKG_VERSION"),
         state_dir: Some(layout.paths.root()),
     })
     .await?;

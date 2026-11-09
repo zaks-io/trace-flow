@@ -42,12 +42,11 @@ use crate::connection::Paths;
 use crate::fact_sources::FactSources;
 use crate::sources::{cursor_db_path, ingestable_sources, SourceHomes};
 
-/// The version strings the ingest worker's compatibility policy gates on. The CLI is the collector
-/// "desktop" embedder; the parser version tracks the `collector-parser` crate. Bump it whenever fact
-/// identity or content changes, so known transcripts are re-parsed and quarantined units retried.
+/// The parser version the ingest worker's compatibility policy gates on, next to
+/// [`RunConfig::app_version`]. It tracks the `collector-parser` crate. Bump it whenever fact identity or
+/// content changes, so known transcripts are re-parsed and quarantined units retried.
 /// 0.3.0: Claude compact-boundary re-appends dropped; Codex continuation pages scoped and their
 /// inherited cumulative tokens no longer recounted.
-pub const DESKTOP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const PARSER_VERSION: &str = "0.3.0";
 
 /// How far back a sync reaches.
@@ -127,6 +126,9 @@ pub struct RunConfig<'a> {
     /// A short embedder tag (e.g. `"cli"`, `"desktop"`) that prefixes the per-POST batch id, so a
     /// batch id reads as `cli-<n>` / `desktop-<n>` for audit. Not security-relevant.
     pub batch_id_prefix: &'a str,
+    /// The embedding app's release version, sent as each batch's `desktop_version` so the ingest
+    /// compatibility policy can tell releases apart. This crate's own version never changes.
+    pub app_version: &'a str,
     /// The state directory. `None` resolves the default through [`Paths::resolve`]; host-wide
     /// services and tests pass their own.
     pub state_dir: Option<&'a Path>,
@@ -222,6 +224,11 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
     let mut files_read = 0usize;
     let mut reports = Vec::new();
     for source in ingestable_sources() {
+        let meta = BatchMeta {
+            source,
+            desktop_version: cfg.app_version.to_string(),
+            parser_version: PARSER_VERSION.to_string(),
+        };
         let mut report = SourceReport::default();
         let mut unconfirmed = Vec::new();
         let roots = source_homes.roots(source);
@@ -235,7 +242,7 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
                 apply_fact_cycle(
                     &client,
                     &store,
-                    source,
+                    &meta,
                     &units,
                     &mut mint,
                     &mut report,
@@ -263,7 +270,7 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
                     apply_fact_cycle(
                         &client,
                         &store,
-                        source,
+                        &meta,
                         &units,
                         &mut mint,
                         &mut report,
@@ -323,23 +330,17 @@ fn resolve_paths(cfg: &RunConfig<'_>) -> Result<Paths> {
 async fn apply_fact_cycle(
     client: &CollectorApiClient,
     store: &CursorStore,
-    source: AgentSource,
+    meta: &BatchMeta,
     units: &[SyncUnit],
     mint: &mut dyn FnMut() -> String,
     report: &mut SourceReport,
     unconfirmed: &mut Vec<UnconfirmedRejection>,
 ) -> Result<()> {
-    let meta = BatchMeta {
-        source,
-        desktop_version: DESKTOP_VERSION.to_string(),
-        parser_version: PARSER_VERSION.to_string(),
-    };
-
     let mut orch = Orchestrator::new();
     orch.apply(Trigger::Resume);
     orch.apply(Trigger::SyncNow);
 
-    let (cycle, _actions) = run_sync_cycle(client, store, &mut orch, &meta, units, mint, None)
+    let (cycle, _actions) = run_sync_cycle(client, store, &mut orch, meta, units, mint, None)
         .await
         .context("run sync cycle")?;
 
@@ -481,6 +482,8 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
+    pub(super) const TEST_APP_VERSION: &str = "9.8.7";
+
     const CLAUDE: &[u8] = br#"{"uuid":"claude-record-001","type":"user","sessionId":"claude-session-001","message":{"role":"user","content":"Inspect src/lib.rs"}}
 {"uuid":"claude-record-002","type":"assistant","sessionId":"claude-session-001","message":{"id":"msg-001","role":"assistant","content":[{"type":"text","text":"I will inspect it."}]}}
 "#;
@@ -613,6 +616,7 @@ mod tests {
             replay: false,
             now_ms: 1_779_840_000_000,
             batch_id_prefix: "test",
+            app_version: TEST_APP_VERSION,
             state_dir: Some(state),
         })
         .await
@@ -648,6 +652,7 @@ mod tests {
             replay,
             now_ms,
             batch_id_prefix: "test",
+            app_version: TEST_APP_VERSION,
             state_dir: Some(state),
         })
         .await
@@ -697,6 +702,45 @@ mod tests {
             .get(AgentSource::Codex, transcript.to_str().unwrap())
             .unwrap()
             .is_some());
+    }
+
+    #[tokio::test]
+    async fn every_batch_reports_the_embedding_apps_version() {
+        let home = crate::test_support::private_tempdir();
+        let state = crate::test_support::private_tempdir();
+        write_home_transcripts(home.path());
+        let batches = Arc::new(Mutex::new(Vec::new()));
+        let ingest_url = spawn_http({
+            let batches = Arc::clone(&batches);
+            move |raw| {
+                let envelope: collector_contracts::AgentIngestEnvelope =
+                    serde_json::from_str(&request_json(&raw)).unwrap();
+                batches.lock().unwrap().push(envelope.batch);
+                raw_response(
+                    202,
+                    "Accepted",
+                    r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#,
+                )
+            }
+        })
+        .await;
+
+        run_fact_sync(
+            home.path(),
+            state.path(),
+            ingest_url,
+            false,
+            1_779_840_000_000,
+        )
+        .await;
+
+        let batches = batches.lock().unwrap();
+        let sources: Vec<_> = batches.iter().map(|batch| batch.source).collect();
+        assert_eq!(sources, [AgentSource::Claude, AgentSource::Codex]);
+        for batch in batches.iter() {
+            assert_eq!(batch.desktop_version, TEST_APP_VERSION);
+            assert_eq!(batch.parser_version, PARSER_VERSION);
+        }
     }
 
     #[tokio::test]

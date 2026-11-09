@@ -105,6 +105,12 @@ TRA-407. Seed the target deployment once via the Convex **dashboard** → Data �
 `updatedAt` is any epoch-ms number — the active row is the latest by `updatedAt`). Raise the minimums or
 add denylisted versions later to gate or block specific releases without a Worker deploy.
 
+Each batch's `desktop_version` is the embedding app's own release version. Trace Flow Desktop sends its
+release version (`0.1.<desktop-release run number>`, the version the updater compares against), and the
+`trace-flow` CLI sends its crate version (what `trace-flow --version` prints). Older releases of both
+apps send `0.1.0`. Both apps are gated by the same `minDesktopVersion` and denylist, so
+a Desktop minimum above the CLI's version also blocks the CLI.
+
 **Diagnosing `policy_unavailable`:** `wrangler tail --env production --format json` from `apps/agent-ingest`
 and grep `policy_fetch`. `status:404` = empty table or wrong `CONVEX_SITE_URL` deployment; `status:401` =
 `AGENT_INGEST_SHARED_SECRET` mismatch between Worker and Convex.

@@ -212,6 +212,7 @@ async fn run_pass(
         replay: false,
         now_ms: now_ms(),
         batch_id_prefix: "service",
+        app_version: env!("CARGO_PKG_VERSION"),
         state_dir: Some(layout.paths.root()),
     })
     .await)

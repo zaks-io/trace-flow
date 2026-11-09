@@ -90,7 +90,11 @@ pub fn run() {
             let settings_file =
                 crate::settings::SettingsFile::at(&paths::app_config_dir(app.handle())?);
             app.manage(settings_file.clone());
-            let engine_handle: EngineHandle = engine::spawn(bus.clone(), settings_file);
+            let engine_handle: EngineHandle = engine::spawn(
+                bus.clone(),
+                settings_file,
+                app.package_info().version.to_string(),
+            );
             app.manage(engine_handle);
 
             // The single login seam, shared by every command and the tray (one in-flight guard).
