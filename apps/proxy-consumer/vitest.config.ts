@@ -8,6 +8,8 @@ export default defineConfig({
         configPath: './wrangler.toml',
       },
       miniflare: {
+        // A developer's .dev.vars may still name an older datasource; tests assert the default.
+        bindings: { TINYBIRD_DATASOURCE: 'otel_trace_spans' },
         queueConsumers: {
           'trace-flow-requests-dev': {
             maxBatchSize: 100,

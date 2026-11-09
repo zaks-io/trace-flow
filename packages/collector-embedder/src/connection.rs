@@ -29,6 +29,9 @@ use crate::private_file;
 /// The directory env var (set in tests, or to relocate state). Falls back to the platform config dir.
 const STATE_DIR_ENV: &str = "TRACE_FLOW_STATE_DIR";
 
+const LEGACY_SCRATCH_DIR: &str = "scratch";
+const LEGACY_SNAPSHOT_PREFIX: &str = "trace-flow-cursor-";
+
 /// Persisted connection state. Written by `login`, read by `sync`/`status`, removed by `disconnect`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Connection {
@@ -113,19 +116,44 @@ impl Paths {
             .join(format!("cursors-{}.sqlite3", sanitize(org_id)))
     }
 
-    /// A scratch dir for the Cursor reader's read-only `state.vscdb` snapshot copy. Under the state root
-    /// so it shares the same volume (a cross-device copy of a multi-GB DB would be slow) and is swept by
-    /// the same cleanup; the reader makes a private per-pass subdir inside it and removes it on drop.
-    pub fn scratch_dir(&self) -> PathBuf {
-        self.root.join("scratch")
+    /// Take the lock a pass holds while it may skip or record a read of `org_id`'s Cursor DB, or
+    /// `None` while another pass holds it. It is released when the file drops, including when the
+    /// process dies. Disconnect leaves the empty file, since unlinking a held lock would let a second
+    /// pass lock a new file beside it.
+    pub fn try_lock_cursor_gate(&self, org_id: &str) -> Result<Option<std::fs::File>> {
+        let path = self
+            .root
+            .join(format!("cursor-gate-{}.lock", sanitize(org_id)));
+        let context = || format!("lock {}", path.display());
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .with_context(context)?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(file)),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+            Err(std::fs::TryLockError::Error(err)) => Err(err).with_context(context),
+        }
     }
 
-    /// Create the state dir and its scratch subdir private (`0700`), or hide existing ones other
-    /// users can read, and refuse them while others can write to them or they hold another user's
-    /// files. Idempotent; runs before the cursor store opens. See [`crate::private_file`].
+    /// Create the state dir private (`0700`), or hide an existing one other users can read, and refuse
+    /// it while others can write to it or it holds another user's files. Idempotent; runs before the
+    /// cursor store opens. See [`crate::private_file`].
     pub fn ensure(&self) -> Result<()> {
         private_file::ensure_private_dir(&self.root)?;
-        private_file::ensure_private_dir(&self.scratch_dir())
+        self.remove_legacy_cursor_snapshots()
+    }
+
+    /// Earlier Collectors copied the multi-GB Cursor DB into `scratch/trace-flow-cursor-*/` on every
+    /// pass, and a process killed mid-copy left that copy behind. Nothing writes there anymore. Only
+    /// those snapshot dirs are removed: a relocated state dir may hold a `scratch/` of its own.
+    fn remove_legacy_cursor_snapshots(&self) -> Result<()> {
+        let dir = self.root.join(LEGACY_SCRATCH_DIR);
+        // Another Collector sharing this state dir may be removing the same leftovers right now.
+        already_gone(remove_cursor_snapshots_in(&dir))
+            .with_context(|| format!("remove legacy Cursor snapshots in {}", dir.display()))
     }
 
     /// Read the saved connection, or `None` if the CLI is not logged in. Refuses a symlink or a
@@ -186,10 +214,35 @@ impl Paths {
 }
 
 fn remove_if_present(path: &Path) -> Result<()> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(()),
+    already_gone(std::fs::remove_file(path)).with_context(|| format!("remove {}", path.display()))
+}
+
+fn already_gone(result: std::io::Result<()>) -> std::io::Result<()> {
+    match result {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err).with_context(|| format!("remove {}", path.display())),
+        other => other,
+    }
+}
+
+/// Remove `scratch/trace-flow-cursor-*` snapshot dirs, then `scratch/` if nothing else is left. A
+/// symlinked `scratch/` or entry is never followed.
+fn remove_cursor_snapshots_in(dir: &Path) -> std::io::Result<()> {
+    if !std::fs::symlink_metadata(dir)?.is_dir() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let is_snapshot = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with(LEGACY_SNAPSHOT_PREFIX));
+        if is_snapshot && entry.file_type()?.is_dir() {
+            already_gone(std::fs::remove_dir_all(entry.path()))?;
+        }
+    }
+    match std::fs::remove_dir(dir) {
+        Err(err) if err.kind() == std::io::ErrorKind::DirectoryNotEmpty => Ok(()),
+        other => other,
     }
 }
 
@@ -332,6 +385,49 @@ mod tests {
         assert!(err.contains("reconnect"));
     }
 
+    #[test]
+    fn ensure_removes_a_leftover_cursor_snapshot_and_keeps_collector_state() {
+        let dir = crate::test_support::private_tempdir();
+        let paths = Paths::at(dir.path().join("state"));
+        let leftover = paths
+            .root()
+            .join("scratch")
+            .join("trace-flow-cursor-abc123");
+        std::fs::create_dir_all(&leftover).unwrap();
+        std::fs::write(leftover.join("state.vscdb"), b"orphaned snapshot").unwrap();
+        std::fs::write(paths.cursor_db("org"), b"cursor state").unwrap();
+
+        paths.ensure().unwrap();
+        paths.ensure().unwrap();
+
+        assert!(!paths.root().join("scratch").exists());
+        assert_eq!(
+            std::fs::read(paths.cursor_db("org")).unwrap(),
+            b"cursor state"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_keeps_a_scratch_dir_it_did_not_create_and_never_follows_links() {
+        use std::os::unix::fs::symlink;
+        let dir = crate::test_support::private_tempdir();
+        let paths = Paths::at(dir.path().join("state"));
+        let scratch = paths.root().join("scratch");
+        std::fs::create_dir_all(scratch.join("trace-flow-cursor-abc123")).unwrap();
+        std::fs::write(scratch.join("notes.txt"), b"mine").unwrap();
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("keep.txt"), b"mine").unwrap();
+        symlink(&elsewhere, scratch.join("trace-flow-cursor-linked")).unwrap();
+
+        paths.ensure().unwrap();
+
+        assert!(!scratch.join("trace-flow-cursor-abc123").exists());
+        assert_eq!(std::fs::read(scratch.join("notes.txt")).unwrap(), b"mine");
+        assert_eq!(std::fs::read(elsewhere.join("keep.txt")).unwrap(), b"mine");
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_planted_connection_file_is_refused_on_read_and_replaced_on_write() {
@@ -353,7 +449,6 @@ mod tests {
         paths.ensure().unwrap();
         let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(paths.root()), 0o700);
-        assert_eq!(mode(&paths.scratch_dir()), 0o700);
 
         paths.save_connection(&conn()).unwrap();
         assert_eq!(paths.load_connection().unwrap(), Some(conn()));
