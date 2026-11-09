@@ -56,7 +56,7 @@ pub use claude_session::{
 pub use codex_lineage::CodexLineage;
 pub use codex_session::{codex_session_fields, CodexSessionFields};
 pub use cursor::{ComposerCursor, CursorStore, CursorStoreError, FileCursor};
-pub use cursor_reader::{assemble_cursor_units, CursorReadError};
+pub use cursor_reader::{assemble_cursor_units, cursor_db_state, CursorReadError};
 pub use discovery::{
     head_hash, select_changed, walk_transcripts, DiscoveredFile, DiscoveryWalk,
     DISCOVERY_INCOMPLETE,

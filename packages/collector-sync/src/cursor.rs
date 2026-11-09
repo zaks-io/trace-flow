@@ -106,6 +106,8 @@ const META_REPLAY_BACKFILL_NEEDED: &str = "replay_backfill_needed";
 const META_LEGACY_CURSOR_REPAIR_DONE: &str = "legacy_cursor_repair_done";
 const META_LAST_COMPLETE_SYNC_AT_MS: &str = "last_complete_sync_at_ms";
 const META_INCOMPLETE_SYNC_CUTOFF_MS: &str = "incomplete_sync_cutoff_ms";
+const META_CURSOR_DB_STATE: &str = "cursor_db_state";
+const META_CURSOR_DB_CUTOFF_MS: &str = "cursor_db_cutoff_ms";
 
 /// How far one transcript file has been ingested. The four fields the discovery pass needs to decide
 /// whether a file is unchanged since the last successful upload.
@@ -257,6 +259,7 @@ impl CursorStore {
             "DELETE FROM composer_cursors WHERE org_id = ?1",
             params![self.org_id],
         )?;
+        self.delete_meta(META_CURSOR_DB_STATE)?;
         self.set_meta(META_REPLAY_BACKFILL_NEEDED, "1")?;
         Ok(true)
     }
@@ -270,11 +273,7 @@ impl CursorStore {
 
     pub fn mark_replay_backfill_complete(&self) -> Result<(), CursorStoreError> {
         self.set_meta(META_LEGACY_CURSOR_REPAIR_DONE, "1")?;
-        self.conn.execute(
-            "DELETE FROM cursor_meta WHERE org_id = ?1 AND key = ?2",
-            params![self.org_id, META_REPLAY_BACKFILL_NEEDED],
-        )?;
-        Ok(())
+        self.delete_meta(META_REPLAY_BACKFILL_NEEDED)
     }
 
     /// When the last sync pass that finished with no failures started (epoch ms), or `None` before
@@ -332,11 +331,37 @@ impl CursorStore {
             .get_timestamp_meta(META_INCOMPLETE_SYNC_CUTOFF_MS)?
             .is_some_and(|pending| pending >= scanned_cutoff_ms);
         if covered {
-            self.conn.execute(
-                "DELETE FROM cursor_meta WHERE org_id = ?1 AND key = ?2",
-                params![self.org_id, META_INCOMPLETE_SYNC_CUTOFF_MS],
-            )?;
+            self.delete_meta(META_INCOMPLETE_SYNC_CUTOFF_MS)?;
         }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Whether a complete pass already read the Cursor DB in exactly `db_state`, with a window at
+    /// least as wide as `cutoff_ms`. Rereading it then finds nothing new.
+    pub fn cursor_db_already_synced(
+        &self,
+        db_state: &str,
+        cutoff_ms: i64,
+    ) -> Result<bool, CursorStoreError> {
+        if self.get_meta(META_CURSOR_DB_STATE)?.as_deref() != Some(db_state) {
+            return Ok(false);
+        }
+        Ok(self
+            .get_timestamp_meta(META_CURSOR_DB_CUTOFF_MS)?
+            .is_some_and(|synced_cutoff| synced_cutoff <= cutoff_ms))
+    }
+
+    /// Record a Cursor pass that read `db_state` back to `cutoff_ms` and had every selected composer
+    /// accepted. Call only after the pass completes with no failures.
+    pub fn mark_cursor_db_synced(
+        &self,
+        db_state: &str,
+        cutoff_ms: i64,
+    ) -> Result<(), CursorStoreError> {
+        let tx = self.write_transaction()?;
+        self.set_meta(META_CURSOR_DB_STATE, db_state)?;
+        self.set_meta(META_CURSOR_DB_CUTOFF_MS, &cutoff_ms.to_string())?;
         tx.commit()?;
         Ok(())
     }
@@ -355,6 +380,14 @@ impl CursorStore {
         Ok(stmt
             .query_row(params![self.org_id, key], |row| row.get(0))
             .optional()?)
+    }
+
+    fn delete_meta(&self, key: &str) -> Result<(), CursorStoreError> {
+        self.conn.execute(
+            "DELETE FROM cursor_meta WHERE org_id = ?1 AND key = ?2",
+            params![self.org_id, key],
+        )?;
+        Ok(())
     }
 
     fn set_meta(&self, key: &str, value: &str) -> Result<(), CursorStoreError> {
@@ -928,6 +961,40 @@ mod tests {
             max_created_at,
             content_hash: Some(format!("sha256:{id}:{count}:{max_created_at}")),
         }
+    }
+
+    #[test]
+    fn the_cursor_db_gate_needs_the_same_db_state_and_no_wider_window() {
+        let store = CursorStore::open_in_memory("org").unwrap();
+        assert!(!store.cursor_db_already_synced("state-a", 100).unwrap());
+
+        store.mark_cursor_db_synced("state-a", 100).unwrap();
+        assert!(store.cursor_db_already_synced("state-a", 100).unwrap());
+        assert!(store.cursor_db_already_synced("state-a", 200).unwrap());
+        assert!(
+            !store.cursor_db_already_synced("state-a", 99).unwrap(),
+            "a wider window can admit composers the last pass left out"
+        );
+        assert!(
+            !store.cursor_db_already_synced("state-b", 200).unwrap(),
+            "Cursor committed since the last pass"
+        );
+        assert!(!CursorStore::open_in_memory("other-org")
+            .unwrap()
+            .cursor_db_already_synced("state-a", 200)
+            .unwrap());
+    }
+
+    #[test]
+    fn the_legacy_cursor_repair_forgets_the_cursor_db_gate_with_the_composers() {
+        let store = CursorStore::open_in_memory("org").unwrap();
+        store
+            .advance_composer(AgentSource::Cursor, &composer("c1", 1, 1_000))
+            .unwrap();
+        store.mark_cursor_db_synced("state-a", 100).unwrap();
+
+        assert!(store.repair_legacy_cursors_without_fact_state().unwrap());
+        assert!(!store.cursor_db_already_synced("state-a", 100).unwrap());
     }
 
     #[test]

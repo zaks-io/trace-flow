@@ -13,10 +13,11 @@
 //! [`SyncUnit`] the drive loop POSTs — so `run_sync_cycle` (batching, POST, advance-only-after-2xx) is
 //! reused unchanged. The unit's `next_cursor` is a [`UnitCursor::Composer`] watermark, not a file cursor.
 //!
-//! **Snapshot safety (ADR).** The live DB is opened read-only and SQLite materializes one transactionally
-//! consistent scratch database with `VACUUM INTO`. That includes committed WAL pages without copying the
-//! live main/WAL/SHM files at different instants. The completed scratch DB is then opened with
-//! `immutable=1&mode=ro` and deleted when the [`CursorSnapshot`] drops.
+//! **Snapshot safety (ADR).** The live DB is opened read-only and every query runs inside one read
+//! transaction, so the pass sees a single committed state, including committed WAL frames, and never
+//! writes, checkpoints, or copies the database or its WAL. Materializing a copy instead
+//! (`VACUUM INTO`) rewrote the whole multi-GB DB every cycle, most of it `agentKv:` rows this reader
+//! never selects.
 //!
 //! **`GLOB`, never `LIKE` (ADR).** `LIKE` is case-insensitive by default, which disables the `key` index
 //! and forces a full multi-GB scan. Every key scan here is a `GLOB` prefix (`composerData:*`,
@@ -29,11 +30,12 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::time::Duration;
 
 use collector_contracts::AgentSource;
 use collector_parser::cursor_session::{cursor_repo_hint, cursor_session_fields};
 use collector_parser::session_context::SessionContext;
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 use serde_json::{json, Value};
 
 use crate::cursor::{content_hash, ComposerCursor, CursorStore, CursorStoreError};
@@ -41,84 +43,69 @@ use crate::git_remote::normalize_git_remote;
 use crate::import::ImportWindow;
 use crate::sync_cycle::{SyncUnit, UnitCursor};
 
-/// A failure reading a Cursor `state.vscdb`: materializing/opening the snapshot (`Io`), querying SQLite
-/// store (`Sqlite`), or persisting/loading the per-composer watermark (`Store`). A malformed or skippable
-/// bubble is never an error — only an unusable DB or a broken cursor store is.
+/// A failure reading a Cursor `state.vscdb`: opening or querying it (`Sqlite`), or persisting/loading the
+/// per-composer watermark (`Store`). A malformed or skippable bubble is never an error; only an unusable
+/// DB or a broken cursor store is.
 #[derive(Debug, thiserror::Error)]
 pub enum CursorReadError {
-    #[error("cursor snapshot io error")]
-    Io(#[from] std::io::Error),
     #[error("cursor snapshot sqlite error")]
     Sqlite(#[from] rusqlite::Error),
     #[error("cursor cursor-store error")]
     Store(#[from] CursorStoreError),
 }
 
-/// A read-only, point-in-time snapshot of a Cursor `state.vscdb`. Owns a private temp directory holding
-/// the materialized database, opened `immutable`; the directory is removed on drop.
+/// Opening the snapshot can briefly contend with Cursor for a lock, such as during WAL recovery or a
+/// checkpoint that restarts the log. Wait it out instead of failing the whole sync pass.
+const LIVE_DB_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// A read-only, point-in-time view of a live Cursor `state.vscdb`. The connection holds one read
+/// transaction from [`open`](Self::open) until drop, so every query sees the same committed state.
+/// Cursor keeps its store in WAL mode, where an open reader never blocks its commits but does keep
+/// checkpoints from recycling the log, so drop the snapshot before any upload or other slow work.
 pub struct CursorSnapshot {
     conn: Connection,
-    /// The private scratch dir holding the materialized DB, auto-removed on drop. `None` for a test conn.
-    /// Held only for its `Drop`; the snapshot outlives the live DB even if it rotates underneath.
-    _scratch: Option<tempfile::TempDir>,
 }
 
 impl CursorSnapshot {
-    /// Materialize the live DB into a fresh private subdir of `scratch_dir` and open the result read-only
-    /// and immutable. SQLite's read transaction includes committed WAL pages atomically. The private
-    /// subdir means the destination cannot collide with the source. `scratch_dir` must exist and have room
-    /// for the DB, which can be multi-GB.
-    pub fn open(live_db: &Path, scratch_dir: &Path) -> Result<Self, CursorReadError> {
-        let file_name = live_db
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("state.vscdb");
-        // A unique subdir per snapshot isolates the materialized DB from the source and a concurrent pass.
-        let scratch = tempfile::Builder::new()
-            .prefix("trace-flow-cursor-")
-            .tempdir_in(scratch_dir)?;
-
-        let copied_main = scratch.path().join(file_name);
-        let destination = copied_main.to_str().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Cursor snapshot destination is not valid UTF-8",
-            )
-        })?;
-        let live =
-            Connection::open_with_flags(live_db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        live.execute("VACUUM main INTO ?1", [destination])?;
-        drop(live);
-
-        // `immutable=1` => SQLite assumes the file never changes: no locks, no `-wal` writeback. `mode=ro`
-        // is belt-and-suspenders so an accidental write errors instead of mutating the snapshot.
-        // Percent-encode the URI-significant characters so a path containing `%`, `?`, or `#` (SQLite
-        // decodes the URI path and truncates at `?`/`#`) doesn't open the wrong file or fail. Encode
-        // `%` first to avoid double-encoding the escapes we introduce.
-        let encoded_path = copied_main
-            .display()
-            .to_string()
-            .replace('%', "%25")
-            .replace('?', "%3f")
-            .replace('#', "%23");
-        let uri = format!("file:{encoded_path}?immutable=1&mode=ro");
-        let conn = Connection::open_with_flags(
-            uri,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-        )?;
-        Ok(Self {
-            conn,
-            _scratch: Some(scratch),
-        })
+    /// Open the live DB read-only and pin its current committed state for this pass.
+    pub fn open(live_db: &Path) -> Result<Self, CursorReadError> {
+        let conn = Connection::open_with_flags(live_db, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        conn.busy_timeout(LIVE_DB_BUSY_TIMEOUT)?;
+        // A deferred transaction pins its snapshot at the first read, so read once here.
+        conn.execute_batch("BEGIN")?;
+        conn.query_row("SELECT count(*) FROM sqlite_schema", [], |_| Ok(()))?;
+        Ok(Self { conn })
     }
 
     #[cfg(test)]
     fn from_conn(conn: Connection) -> Self {
-        Self {
-            conn,
-            _scratch: None,
-        }
+        Self { conn }
     }
+}
+
+/// The live DB's on-disk state: size and modification time of the main file and its WAL. Every commit
+/// rewrites one of them, so an unchanged state means Cursor committed nothing in between.
+///
+/// # Errors
+/// The I/O error if either file cannot be stat'ed. A missing WAL is a valid state, not an error.
+pub fn cursor_db_state(live_db: &Path) -> std::io::Result<String> {
+    let mut wal = live_db.as_os_str().to_os_string();
+    wal.push("-wal");
+    let wal_state = match file_state(Path::new(&wal)) {
+        Ok(state) => state,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => "none".to_string(),
+        Err(err) => return Err(err),
+    };
+    Ok(format!("main {} wal {wal_state}", file_state(live_db)?))
+}
+
+fn file_state(path: &Path) -> std::io::Result<String> {
+    let meta = std::fs::metadata(path)?;
+    let modified = meta
+        .modified()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+    Ok(format!("{}@{}", meta.len(), modified.as_nanos()))
 }
 
 /// One composer's session header, from a `composerData:<id>` row.
@@ -375,17 +362,15 @@ fn in_window(window: ImportWindow, session_start: Option<i64>, max_bubble: Optio
 /// unchanged composers inside the requested window. Sync (no async): the reader does no git shell-out.
 ///
 /// # Errors
-/// [`CursorReadError`]: `Io` if snapshot materialization fails, `Sqlite` if a query fails, `Store` if
-/// loading a composer's stored watermark fails. A malformed bubble within a composer is skipped, not an
-/// error.
+/// [`CursorReadError`]: `Sqlite` if opening the snapshot or a query fails, `Store` if loading a
+/// composer's stored watermark fails. A malformed bubble within a composer is skipped, not an error.
 pub fn assemble_cursor_units(
     live_db: &Path,
-    scratch_dir: &Path,
     store: &CursorStore,
     window: ImportWindow,
     replay: bool,
 ) -> Result<Vec<SyncUnit>, CursorReadError> {
-    let snap = CursorSnapshot::open(live_db, scratch_dir)?;
+    let snap = CursorSnapshot::open(live_db)?;
     let mut units = Vec::new();
     for composer in list_composers(&snap)? {
         let records = read_bubbles(&snap, &composer)?;
@@ -419,7 +404,7 @@ mod tests {
     use serde_json::json;
     use std::fs;
 
-    /// An in-memory `cursorDiskKV` fixture with no multi-GB file or snapshot materialization.
+    /// An in-memory `cursorDiskKV` fixture.
     /// The real `cursorDiskKV` schema (`key TEXT UNIQUE …, value BLOB`); the `UNIQUE` index is what the
     /// GLOB prefix scan rides, so the fixture must carry it for the index-plan canary to be meaningful.
     const CREATE_KV: &str =
@@ -532,12 +517,9 @@ mod tests {
         assert!(ctx.repo_root.is_empty());
     }
 
-    #[test]
-    fn snapshot_includes_committed_wal_rows_without_mutating_the_source() {
-        let source_dir = tempfile::tempdir().unwrap();
-        let scratch_dir = tempfile::tempdir().unwrap();
-        let db_path = source_dir.path().join("state.vscdb");
-
+    /// A live WAL-mode DB whose rows exist only in the un-checkpointed WAL, with its writer still open.
+    fn wal_only_db(dir: &Path) -> (std::path::PathBuf, Connection) {
+        let db_path = dir.join("state.vscdb");
         let schema = Connection::open(&db_path).unwrap();
         schema.execute_batch(CREATE_KV).unwrap();
         schema.close().unwrap();
@@ -550,21 +532,42 @@ mod tests {
             composer_row("wal-composer", "gpt-5.2", 1_700_000_000_000),
             bubble_row("wal-composer", "wal-bubble", 2, "2026-05-25T22:00:00.000Z"),
         ] {
-            writer
-                .execute(
-                    "INSERT INTO cursorDiskKV (key, value) VALUES (?1, ?2)",
-                    rusqlite::params![key, value.to_string()],
-                )
-                .unwrap();
+            insert_row(&writer, &key, &value);
         }
+        assert_eq!(fs::read(&db_path).unwrap(), main_before_insert);
+        (db_path, writer)
+    }
+
+    fn insert_row(conn: &Connection, key: &str, value: &Value) {
+        conn.execute(
+            "INSERT INTO cursorDiskKV (key, value) VALUES (?1, ?2)",
+            rusqlite::params![key, value.to_string()],
+        )
+        .unwrap();
+    }
+
+    fn dir_contents(dir: &Path) -> BTreeMap<String, Vec<u8>> {
+        fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                (name, fs::read(&path).unwrap())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn snapshot_includes_committed_wal_rows_without_mutating_the_source() {
+        let source_dir = tempfile::tempdir().unwrap();
+        let (db_path, writer) = wal_only_db(source_dir.path());
 
         let wal_path = db_path.with_file_name("state.vscdb-wal");
-        assert_eq!(fs::read(&db_path).unwrap(), main_before_insert);
         let main_before_snapshot = fs::read(&db_path).unwrap();
         let wal_before_snapshot = fs::read(&wal_path).unwrap();
         assert!(!wal_before_snapshot.is_empty());
 
-        let snapshot = CursorSnapshot::open(&db_path, scratch_dir.path()).unwrap();
+        let snapshot = CursorSnapshot::open(&db_path).unwrap();
         let composers = list_composers(&snapshot).unwrap();
         assert_eq!(composers.len(), 1);
         assert_eq!(composers[0].composer_id, "wal-composer");
@@ -578,6 +581,78 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM cursorDiskKV", [], |row| row.get(0))
             .unwrap();
         assert_eq!(source_rows, 2);
+    }
+
+    #[test]
+    fn a_commit_after_the_snapshot_opens_is_invisible_until_the_next_pass() {
+        let source_dir = tempfile::tempdir().unwrap();
+        let (db_path, writer) = wal_only_db(source_dir.path());
+
+        let snapshot = CursorSnapshot::open(&db_path).unwrap();
+        let (late_key, late_value) = composer_row("late-composer", "gpt-5.2", 1_700_000_001_000);
+        insert_row(&writer, &late_key, &late_value);
+
+        let ids = |snap: &CursorSnapshot| -> Vec<String> {
+            list_composers(snap)
+                .unwrap()
+                .into_iter()
+                .map(|c| c.composer_id)
+                .collect()
+        };
+        assert_eq!(ids(&snapshot), vec!["wal-composer"]);
+        drop(snapshot);
+        assert_eq!(
+            ids(&CursorSnapshot::open(&db_path).unwrap()),
+            vec!["late-composer", "wal-composer"]
+        );
+    }
+
+    #[test]
+    fn a_wal_only_commit_changes_the_db_state_though_the_main_file_does_not() {
+        let source_dir = tempfile::tempdir().unwrap();
+        let (db_path, writer) = wal_only_db(source_dir.path());
+        let main_before = fs::read(&db_path).unwrap();
+        let before = cursor_db_state(&db_path).unwrap();
+
+        let (key, value) = composer_row("late-composer", "gpt-5.2", 1_700_000_001_000);
+        insert_row(&writer, &key, &value);
+
+        assert_eq!(fs::read(&db_path).unwrap(), main_before);
+        assert_ne!(cursor_db_state(&db_path).unwrap(), before);
+    }
+
+    #[test]
+    fn a_wal_db_cursor_closed_cleanly_is_still_readable() {
+        let source_dir = tempfile::tempdir().unwrap();
+        let (db_path, writer) = wal_only_db(source_dir.path());
+        writer.close().unwrap();
+        assert!(!db_path.with_file_name("state.vscdb-wal").exists());
+
+        let snapshot = CursorSnapshot::open(&db_path).unwrap();
+        assert_eq!(list_composers(&snapshot).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_rollback_journal_snapshot_writes_no_files_and_releases_cursor_on_drop() {
+        let source_dir = tempfile::tempdir().unwrap();
+        let db_path = source_dir.path().join("state.vscdb");
+        write_db(
+            &db_path,
+            &[
+                composer_row("c1", "gpt-5.2", 1_000),
+                bubble_row("c1", "b1", 2, "2026-05-25T22:00:00.000Z"),
+            ],
+        );
+        let before = dir_contents(source_dir.path());
+
+        let snapshot = CursorSnapshot::open(&db_path).unwrap();
+        let composers = list_composers(&snapshot).unwrap();
+        assert_eq!(read_bubbles(&snapshot, &composers[0]).unwrap().len(), 1);
+        assert_eq!(dir_contents(source_dir.path()), before);
+        drop(snapshot);
+
+        let (key, value) = composer_row("c2", "gpt-5.2", 2_000);
+        insert_row(&Connection::open(&db_path).unwrap(), &key, &value);
     }
 
     #[test]
@@ -757,8 +832,7 @@ mod tests {
         write_db(&db_path, &snap_rows);
 
         let store = CursorStore::open_in_memory("org").unwrap();
-        let units =
-            assemble_cursor_units(&db_path, dir.path(), &store, open_window(), false).unwrap();
+        let units = assemble_cursor_units(&db_path, &store, open_window(), false).unwrap();
         assert_eq!(units.len(), 1);
         let UnitCursor::Composer(cursor) = &units[0].next_cursor else {
             panic!("cursor source assembles a composer cursor");
@@ -769,12 +843,10 @@ mod tests {
 
         // Advance the watermark and re-run: the unchanged composer is now skipped.
         store.advance_composer(AgentSource::Cursor, cursor).unwrap();
-        let again =
-            assemble_cursor_units(&db_path, dir.path(), &store, open_window(), false).unwrap();
+        let again = assemble_cursor_units(&db_path, &store, open_window(), false).unwrap();
         assert!(again.is_empty());
 
-        let replayed =
-            assemble_cursor_units(&db_path, dir.path(), &store, open_window(), true).unwrap();
+        let replayed = assemble_cursor_units(&db_path, &store, open_window(), true).unwrap();
         assert_eq!(replayed.len(), 1);
     }
 
@@ -792,7 +864,7 @@ mod tests {
         let db_path = dir.path().join("state.vscdb");
         write_db(&db_path, &rows);
         let store = CursorStore::open_in_memory("org").unwrap();
-        let initial = assemble_cursor_units(&db_path, dir.path(), &store, open_window(), false)
+        let initial = assemble_cursor_units(&db_path, &store, open_window(), false)
             .unwrap()
             .pop()
             .unwrap();
@@ -820,8 +892,7 @@ mod tests {
         );
 
         let recent_window = ImportWindow::first_incremental(9_000_000_000_000);
-        let selected =
-            assemble_cursor_units(&db_path, dir.path(), &store, recent_window, false).unwrap();
+        let selected = assemble_cursor_units(&db_path, &store, recent_window, false).unwrap();
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].ctx.vendor_session_id, "known");
         let UnitCursor::Composer(next) = &selected[0].next_cursor else {
@@ -859,7 +930,6 @@ mod tests {
 
         let units = assemble_cursor_units(
             &db_path,
-            dir.path(),
             &store,
             ImportWindow::first_incremental(9_000_000_000_000),
             false,
@@ -868,8 +938,8 @@ mod tests {
         assert_eq!(units.len(), 1);
     }
 
-    /// Write a `cursorDiskKV` DB to a real file so snapshot materialization and immutable open run end to
-    /// end. The WAL-only test separately keeps a live writer open through snapshot creation.
+    /// Write a `cursorDiskKV` DB to a real file so assembly opens a live DB end to end. The WAL cases
+    /// separately keep a writer open through the snapshot.
     fn write_db(path: &Path, rows: &[(String, Value)]) {
         let conn = Connection::open(path).unwrap();
         // DELETE journal mode keeps this fixture simple; the WAL-only case is covered above.

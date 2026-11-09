@@ -29,6 +29,8 @@ use crate::private_file;
 /// The directory env var (set in tests, or to relocate state). Falls back to the platform config dir.
 const STATE_DIR_ENV: &str = "TRACE_FLOW_STATE_DIR";
 
+const LEGACY_SCRATCH_DIR: &str = "scratch";
+
 /// Persisted connection state. Written by `login`, read by `sync`/`status`, removed by `disconnect`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Connection {
@@ -113,19 +115,23 @@ impl Paths {
             .join(format!("cursors-{}.sqlite3", sanitize(org_id)))
     }
 
-    /// A scratch dir for the Cursor reader's read-only `state.vscdb` snapshot copy. Under the state root
-    /// so it shares the same volume (a cross-device copy of a multi-GB DB would be slow) and is swept by
-    /// the same cleanup; the reader makes a private per-pass subdir inside it and removes it on drop.
-    pub fn scratch_dir(&self) -> PathBuf {
-        self.root.join("scratch")
-    }
-
-    /// Create the state dir and its scratch subdir private (`0700`), or hide existing ones other
-    /// users can read, and refuse them while others can write to them or they hold another user's
-    /// files. Idempotent; runs before the cursor store opens. See [`crate::private_file`].
+    /// Create the state dir private (`0700`), or hide an existing one other users can read, and refuse
+    /// it while others can write to it or it holds another user's files. Idempotent; runs before the
+    /// cursor store opens. See [`crate::private_file`].
     pub fn ensure(&self) -> Result<()> {
         private_file::ensure_private_dir(&self.root)?;
-        private_file::ensure_private_dir(&self.scratch_dir())
+        self.remove_legacy_scratch_dir()
+    }
+
+    /// Earlier Collectors copied the multi-GB Cursor DB into `scratch/` on every pass, and a process
+    /// killed mid-copy left that copy behind. Nothing writes there anymore.
+    fn remove_legacy_scratch_dir(&self) -> Result<()> {
+        let dir = self.root.join(LEGACY_SCRATCH_DIR);
+        match std::fs::remove_dir_all(&dir) {
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err)
+                .with_context(|| format!("remove legacy Cursor scratch dir {}", dir.display())),
+            _ => Ok(()),
+        }
     }
 
     /// Read the saved connection, or `None` if the CLI is not logged in. Refuses a symlink or a
@@ -332,6 +338,28 @@ mod tests {
         assert!(err.contains("reconnect"));
     }
 
+    #[test]
+    fn ensure_removes_a_leftover_cursor_snapshot_and_keeps_collector_state() {
+        let dir = crate::test_support::private_tempdir();
+        let paths = Paths::at(dir.path().join("state"));
+        let leftover = paths
+            .root()
+            .join("scratch")
+            .join("trace-flow-cursor-abc123");
+        std::fs::create_dir_all(&leftover).unwrap();
+        std::fs::write(leftover.join("state.vscdb"), b"orphaned snapshot").unwrap();
+        std::fs::write(paths.cursor_db("org"), b"cursor state").unwrap();
+
+        paths.ensure().unwrap();
+        paths.ensure().unwrap();
+
+        assert!(!paths.root().join("scratch").exists());
+        assert_eq!(
+            std::fs::read(paths.cursor_db("org")).unwrap(),
+            b"cursor state"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_planted_connection_file_is_refused_on_read_and_replaced_on_write() {
@@ -353,7 +381,6 @@ mod tests {
         paths.ensure().unwrap();
         let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(paths.root()), 0o700);
-        assert_eq!(mode(&paths.scratch_dir()), 0o700);
 
         paths.save_connection(&conn()).unwrap();
         assert_eq!(paths.load_connection().unwrap(), Some(conn()));

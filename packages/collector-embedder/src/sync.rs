@@ -34,8 +34,8 @@ pub use collector_api_client::InvalidEnvelopeCause;
 use collector_api_client::{CollectorApiClient, CollectorApiClientConfig};
 use collector_contracts::AgentSource;
 use collector_sync::{
-    assemble_cursor_units, run_sync_cycle, BatchMeta, CursorStore, GitRemoteCache, HistoryPreset,
-    ImportWindow, Orchestrator, SyncUnit, Trigger, UnconfirmedRejection,
+    assemble_cursor_units, cursor_db_state, run_sync_cycle, BatchMeta, CursorStore, GitRemoteCache,
+    HistoryPreset, ImportWindow, Orchestrator, SyncUnit, Trigger, UnconfirmedRejection,
 };
 
 use crate::connection::Paths;
@@ -226,8 +226,11 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
         let mut unconfirmed = Vec::new();
         let roots = source_homes.roots(source);
         store.set_replay_facts(cfg.replay);
+        let mut cursor_db_read = None;
         if roots.is_empty() {
-            let units = assemble_cursor_source_units(&store, &cfg, window, &mut report)?;
+            let (units, db_state) =
+                assemble_cursor_source_units(&store, &cfg, window, &mut report)?;
+            cursor_db_read = db_state;
             if !units.is_empty() {
                 apply_fact_cycle(
                     &client,
@@ -274,6 +277,11 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
             }
         }
         settle_unconfirmed(&store, source, unconfirmed, &mut report)?;
+        if let Some(db_state) = cursor_db_read.filter(|_| report.is_complete()) {
+            store
+                .mark_cursor_db_synced(&db_state, window.cutoff_ms())
+                .context("record cursor db sync")?;
+        }
         let aborted_early = report.aborted_early;
         reports.push((source, report));
         if aborted_early {
@@ -383,24 +391,37 @@ fn settle_unconfirmed(
 }
 
 /// Discover + assemble units for the Cursor source: snapshot `state.vscdb` read-only and assemble each
-/// changed composer. A missing DB (Cursor not installed, or a non-macOS host) is a clean no-op.
+/// changed composer, plus the DB state those units were read at. A missing DB (Cursor not installed,
+/// or a non-macOS host) is a clean no-op. So is a DB that has not changed since the last complete pass
+/// over at least this window: reading the whole multi-GB store again would find nothing new.
 fn assemble_cursor_source_units(
     store: &CursorStore,
     cfg: &RunConfig<'_>,
     window: ImportWindow,
     report: &mut SourceReport,
-) -> Result<Vec<SyncUnit>> {
+) -> Result<(Vec<SyncUnit>, Option<String>)> {
     let Some(db) = cursor_db_path(cfg.home).filter(|p| p.exists()) else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
     };
-    let paths = resolve_paths(cfg)?;
-    let units = assemble_cursor_units(&db, &paths.scratch_dir(), store, window, cfg.replay)
-        .context("assemble cursor units")?;
     // For the Cursor source, "files scanned" is the single state.vscdb; "selected" is the changed
     // composers the snapshot assembled.
     report.source_files_scanned = 1;
+    // A parser upgrade can change what a composer yields, so it invalidates the recorded state.
+    let db_state = format!(
+        "parser {PARSER_VERSION} {}",
+        cursor_db_state(&db).context("read cursor db state")?
+    );
+    if !cfg.replay
+        && store
+            .cursor_db_already_synced(&db_state, window.cutoff_ms())
+            .context("read cursor db sync state")?
+    {
+        return Ok((Vec::new(), None));
+    }
+    let units =
+        assemble_cursor_units(&db, store, window, cfg.replay).context("assemble cursor units")?;
     report.selected = units.len();
-    Ok(units)
+    Ok((units, Some(db_state)))
 }
 
 /// Parse a `--since` value into a [`Window`]. Accepts the ADR presets only; an unknown value is a
@@ -419,6 +440,10 @@ pub fn window_from_since(since: &str) -> Result<Window> {
 #[cfg(test)]
 #[path = "session_git_tests.rs"]
 mod session_git_tests;
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "cursor_source_tests.rs"]
+mod cursor_source_tests;
 
 #[cfg(test)]
 mod tests {

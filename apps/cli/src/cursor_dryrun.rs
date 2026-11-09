@@ -21,16 +21,14 @@ pub fn run(layout: &Layout) -> Result<()> {
         return Ok(());
     };
 
-    let paths = &layout.paths;
-    paths.ensure()?;
     // An ephemeral in-memory store means every composer reads as "changed", so the dry-run sees the
     // whole DB without touching or advancing the real per-org cursor state.
     let store = CursorStore::open_in_memory("dryrun").context("open scratch cursor store")?;
     // Admit every composer regardless of age: cutoff 0 via a first-incremental window at +24h.
     let window = ImportWindow::first_incremental(24 * 60 * 60 * 1000);
 
-    let units = assemble_cursor_units(&db, &paths.scratch_dir(), &store, window, false)
-        .context("assemble cursor units")?;
+    let units =
+        assemble_cursor_units(&db, &store, window, false).context("assemble cursor units")?;
 
     let (mut messages, mut tools, mut files, mut prs) = (0usize, 0usize, 0usize, 0usize);
     let (mut partial, mut missing, mut full) = (0usize, 0usize, 0usize);
