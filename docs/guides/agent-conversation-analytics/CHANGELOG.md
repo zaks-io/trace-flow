@@ -22,10 +22,14 @@ per working session or task hand-off. Copy the template.
 `Cargo.toml` files, `apps/desktop/package.json`, and both lockfiles), so 0.2 is the first line on
 which both apps report their real version and one `minDesktopVersion` of `0.2.0` gates both. Desktop
 releases become `0.2.<run number>`. The runbook documents bumping both minors together when a release
-must be enforceable. The parser version stays `0.3.0` because fact output is unchanged.
+must be enforceable. The parser version stays `0.3.0` because fact output is unchanged. The public
+collector docs pinned the CLI installer to the never-published `trace-flow-cli-v0.1.2`, a 404, so they
+now give the `cargo install --git` source build, and they no longer describe Cursor as read through a
+temporary snapshot.
 **Verified:** `cargo check --workspace --locked` and `bun install --frozen-lockfile` pass with the
 bumped lockfiles; `trace-flow --version` prints `trace-flow 0.2.0`; the release workflow's version
-step resolves `0.2.<run number>`, newer than the published 0.1.71.
+step resolves `0.2.<run number>`, newer than the published 0.1.71. The documented
+`cargo install --git ... --locked trace-flow-cli` installs a working `trace-flow` from GitHub.
 **Next / blockers:** none.
 
 ## 2026-11-09 Collector reports its app version t3/report-collector-app-version

@@ -8,7 +8,7 @@ Supported sources:
 
 - Claude Code: `~/.claude/projects`
 - Codex CLI: `~/.codex/sessions`
-- Cursor on macOS: the global `state.vscdb` store, opened read-only through a snapshot
+- Cursor on macOS: the global `state.vscdb` store, read in place and read-only
 
 Raw transcripts do not leave the machine through the fact-ingest path.
 

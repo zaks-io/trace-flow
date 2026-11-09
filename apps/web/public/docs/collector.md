@@ -26,7 +26,7 @@ select **Start syncing**.
 | ----------- | ------------------------------------------------------------- | ---------------------------------------------- |
 | Claude Code | `~/.claude/projects`                                          | macOS and Windows desktop, macOS and Linux CLI |
 | Codex CLI   | `~/.codex/sessions`                                           | macOS and Windows desktop, macOS and Linux CLI |
-| Cursor      | macOS global `state.vscdb`, read through a temporary snapshot | macOS                                          |
+| Cursor      | macOS global `state.vscdb`, read in place without changing it | macOS                                          |
 
 The collector parses transcripts locally and uploads redacted typed facts. The normal analytics path
 does not upload raw transcripts.
@@ -34,14 +34,16 @@ does not upload raw transcripts.
 ## Install the CLI
 
 The `trace-flow` CLI runs on macOS (Apple silicon or Intel) and on Linux (x86_64 or ARM64) with
-glibc 2.39 or newer, such as Ubuntu 24.04 or Debian 13 and later. Install it with:
+glibc 2.39 or newer, such as Ubuntu 24.04 or Debian 13 and later. No prebuilt CLI release is
+published yet, so build it from source with a current stable Rust toolchain from
+[rustup](https://rustup.rs). On Linux, first install `pkg-config` and the D-Bus headers
+(`sudo apt install pkg-config libdbus-1-dev` on Debian and Ubuntu). Then run:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/zaks-io/trace-flow/releases/download/trace-flow-cli-v0.1.2/trace-flow-cli-installer.sh | sh
+cargo install --git https://github.com/zaks-io/trace-flow --locked trace-flow-cli
 ```
 
-The installer puts `trace-flow` in `~/.cargo/bin` and adds that directory to your `PATH` for new
-shells. Its commands:
+This puts `trace-flow` in `~/.cargo/bin`, which rustup adds to your `PATH`. Its commands:
 
 ```text
 trace-flow [--system] [--config <path>] login [--no-browser]
