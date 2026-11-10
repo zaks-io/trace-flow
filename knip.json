@@ -18,7 +18,7 @@
     "apps/proxy": {},
     "apps/proxy-consumer": {},
     "apps/web": {
-      "entry": ["open-next.config.ts"],
+      "entry": ["open-next.config.ts", "scripts/verify-worker.ts"],
       "ignoreDependencies": ["postcss"],
       "ignoreUnresolved": ["@/generated/*"]
     }

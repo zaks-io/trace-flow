@@ -15,7 +15,7 @@
     "type-check": "tsc --noEmit",
     "lint": "eslint",
     "test": "vitest run",
-    "test:worker": "bun run scripts/verify-worker.ts",
+    "test:worker": "bash scripts/verify-built-worker.sh",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
@@ -65,7 +65,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260702.1",
-    "@opennextjs/cloudflare": "^1.20.6",
+    "@opennextjs/cloudflare": "^1.20.16",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -78,7 +78,7 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.69.0",
     "vitest": "^4.1.11",
-    "wrangler": "^4.127.1"
+    "wrangler": "^4.158.0"
   },
   "license": "Apache-2.0"
 }
