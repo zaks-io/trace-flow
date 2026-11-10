@@ -183,9 +183,14 @@ jobs:
           import { readFileSync } from 'node:fs';
           const graph = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/turbo-affected.json`, 'utf8'));
           console.log(`mcp=${graph.packages.includes('@trace-flow/mcp')}`);
+          console.log(`web=${graph.packages.includes('@trace-flow/web')}`);
           NODE
       - name: Check affected packages
         run: bun turbo run lint type-check test build ${{ steps.selection.outputs.flags }} --concurrency=2 --summarize
+      - name: Verify affected web Worker build
+        if: steps.graph.outputs.web == 'true'
+        working-directory: apps/web
+        run: bun run test:worker
       - name: Validate affected MCP environments
         if: steps.graph.outputs.mcp == 'true'
         working-directory: apps/mcp

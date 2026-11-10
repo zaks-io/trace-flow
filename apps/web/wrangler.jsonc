@@ -36,6 +36,9 @@
     },
   ],
   "env": {
+    // Offline build verification for scripts/verify-built-worker.sh. Named environments do not
+    // inherit `ai`, and an AI binding always connects to Cloudflare, so CI runs without a token.
+    "verify": {},
     "development": {
       "name": "trace-flow-web-dev",
       "workers_dev": true,
