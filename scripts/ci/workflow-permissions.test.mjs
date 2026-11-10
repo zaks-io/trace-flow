@@ -916,15 +916,16 @@ describe('affected package CI', () => {
     expect(transit.dependencies).toContain('@trace-flow/utils#transit');
   });
 
-  test('MCP validation follows affected selection without changing deployment tasks', () => {
+  test('Worker validation follows affected selection without changing deployment tasks', () => {
     const selection = ci.jobs.affected.steps.find((step) => step.id === 'graph');
     const source = selection.run.match(
       /node --input-type=module <<'NODE' >> "\$GITHUB_OUTPUT"\n([\s\S]*?)\nNODE/,
     )[1];
     for (const [packages, expected] of [
-      [['@trace-flow/mcp'], 'mcp=true'],
-      [[], 'mcp=false'],
-      [['@trace-flow/proxy'], 'mcp=false'],
+      [['@trace-flow/mcp'], ['mcp=true', 'web=false']],
+      [['@trace-flow/web'], ['mcp=false', 'web=true']],
+      [[], ['mcp=false', 'web=false']],
+      [['@trace-flow/proxy'], ['mcp=false', 'web=false']],
     ]) {
       const evaluate = new Function(
         'readFileSync',
@@ -938,8 +939,14 @@ describe('affected package CI', () => {
         { env: { RUNNER_TEMP: '/tmp' } },
         { log: (value) => output.push(value) },
       );
-      expect(output).toEqual([expected]);
+      expect(output).toEqual(expected);
     }
+    const webVerification = ci.jobs.affected.steps.find(
+      (step) => step.name === 'Verify affected web Worker build',
+    );
+    expect(webVerification.if).toBe("steps.graph.outputs.web == 'true'");
+    expect(webVerification['working-directory']).toBe('apps/web');
+    expect(webVerification.run.trim()).toBe('bun run test:worker');
     const validation = ci.jobs.affected.steps.find(
       (step) => step.name === 'Validate affected MCP environments',
     );

@@ -9,6 +9,17 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 port="${WEB_VERIFY_PORT:-8791}"
 url="http://127.0.0.1:$port"
 log="$(mktemp)"
+vars="$(mktemp)"
+server=
+
+cleanup() {
+  if [[ -n $server ]]; then
+    kill -TERM -- "-$server" 2>/dev/null || true
+    wait "$server" 2>/dev/null || true
+  fi
+  rm -f "$log" "$vars"
+}
+trap cleanup EXIT
 
 fail() {
   echo "$1" >&2
@@ -23,14 +34,24 @@ if curl -s -o /dev/null -m 2 "$url/"; then
   exit 1
 fi
 
+# Without Auth0 config the middleware throws and redirects every page to /auth/login. Worker vars
+# override values OpenNext embeds from .env files, so local runs match CI. These are the
+# scripts/ci-check.sh placeholders, not credentials; the verifier never completes a sign-in.
+cat >"$vars" <<EOF
+APP_BASE_URL=$url
+AUTH0_DOMAIN=test.auth0.com
+AUTH0_CLIENT_ID=test-client-id
+AUTH0_CLIENT_SECRET=test
+AUTH0_SECRET=test-secret-at-least-32-characters-long
+EOF
+
 bunx opennextjs-cloudflare build
 # The verify environment has no AI binding, so neither step needs Cloudflare credentials. The
 # verifier never requests Markdown, the only path that calls AI.
 bunx opennextjs-cloudflare populateCache local --env verify
-bunx wrangler dev --env verify --ip 127.0.0.1 --port "$port" --show-interactive-dev-session=false \
-  >"$log" 2>&1 &
+bunx wrangler dev --env verify --env-file "$vars" --ip 127.0.0.1 --port "$port" \
+  --show-interactive-dev-session=false >"$log" 2>&1 &
 server=$!
-trap 'kill -TERM -- "-$server" 2>/dev/null || true; wait "$server" 2>/dev/null || true; rm -f "$log"' EXIT
 
 for attempt in $(seq 120); do
   kill -0 "$server" 2>/dev/null || fail "Wrangler exited before the Worker became ready"
