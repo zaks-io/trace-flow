@@ -25,7 +25,9 @@ backfilled, and parser upgrades could not re-read compressed history. A local au
 9,514 Codex sessions compressed, 148 of them absent from production. Discovery now also walks
 `.jsonl.zst` and keeps only the plain file while both exist. Assembly, head-hash change detection, and
 Codex lineage read decompressed text; the bound and shrink check stay on on-disk bytes, and assembly
-batches weigh a compressed file at its declared decompressed size. Compressed rollouts keep their
+batches weigh a compressed file at its declared decompressed size. A compressed read needs a
+declared size of at most 2 GiB and fails once output passes it, so a few-KB zstd bomb in one user's
+agent home cannot exhaust the root `--system` collector. Compressed rollouts keep their
 mtime, so routine incremental passes do not re-read them; `sync --since 30d` or `1y` imports them.
 Codex also collapses some subagent and guardian-review rollouts as it compresses them: every record
 is re-stamped to one time and `subagent_history_start_ordinal` equals the record count. Token totals

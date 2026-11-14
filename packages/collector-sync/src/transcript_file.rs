@@ -12,6 +12,11 @@
 //! records its on-disk size and mtime, because those are what the next scan stats. Rollouts keep
 //! their mtime through compression, so an idle rollout stays outside the incremental window, and
 //! history imports and replays read it like any other file.
+//!
+//! A plain file's size bounds what reading it costs; a compressed one's on-disk size does not. The
+//! root `--system` collector reads other users' agent homes, so a few-KB zstd bomb there could exhaust
+//! it. Every compressed read therefore needs a declared decompressed size within
+//! [`MAX_DECOMPRESSED_BYTES`] and fails once the output passes it, which also rejects later frames.
 
 use std::cell::Cell;
 use std::fs::File;
@@ -25,6 +30,8 @@ const PLAIN_SUFFIX: &str = ".jsonl";
 const COMPRESSED_SUFFIX: &str = ".jsonl.zst";
 /// `ZSTD_FRAMEHEADERSIZE_MAX`: enough bytes to read any frame's declared content size.
 const FRAME_HEADER_MAX_BYTES: u64 = 18;
+/// About four times the largest Codex rollout seen decompressed (497 MB).
+const MAX_DECOMPRESSED_BYTES: u64 = 2 << 30;
 
 pub(crate) fn is_transcript_name(name: &str) -> bool {
     name.ends_with(PLAIN_SUFFIX) || name.ends_with(COMPRESSED_SUFFIX)
@@ -53,12 +60,30 @@ pub(crate) fn transcript_stem(path: &str) -> Option<&str> {
 pub(crate) fn open_text(path: &str) -> io::Result<Box<dyn BufRead>> {
     let file = File::open(path)?;
     if is_compressed(path) {
-        Ok(Box::new(BufReader::new(zstd::stream::read::Decoder::new(
-            file,
-        )?)))
+        decompressed(path, file, MAX_DECOMPRESSED_BYTES)
     } else {
         Ok(Box::new(BufReader::new(file)))
     }
+}
+
+/// Decode `input`, the compressed file at `path`, to at most its declared size; see the module docs.
+fn decompressed<R: Read + 'static>(
+    path: &str,
+    input: R,
+    limit: u64,
+) -> io::Result<Box<dyn BufRead>> {
+    let declared = declared_content_size(path).ok_or_else(|| {
+        invalid_data("compressed transcript does not declare its decompressed size".to_string())
+    })?;
+    if declared > limit {
+        return Err(invalid_data(format!(
+            "compressed transcript declares {declared} bytes, over the {limit}-byte limit"
+        )));
+    }
+    Ok(Box::new(BufReader::new(DeclaredLen {
+        inner: zstd::stream::read::Decoder::new(input)?,
+        remaining: declared,
+    })))
 }
 
 /// A transcript's text bounded to its discovered on-disk size. [`BoundedText::consumed`] reports the
@@ -77,7 +102,7 @@ impl BoundedText {
             consumed: Rc::clone(&consumed),
         };
         let text: Box<dyn BufRead> = if is_compressed(&file.path) {
-            Box::new(BufReader::new(zstd::stream::read::Decoder::new(input)?))
+            decompressed(&file.path, input, MAX_DECOMPRESSED_BYTES)?
         } else {
             Box::new(BufReader::new(input))
         };
@@ -91,7 +116,7 @@ impl BoundedText {
 
 /// Bytes a transcript occupies once read, for bounding how many files assemble together. A
 /// compressed file reports the content size its zstd frame declares. One that declares none, or
-/// cannot be probed, reports `u64::MAX` so it assembles alone rather than with a guessed size.
+/// cannot be probed, reports `u64::MAX` so it is batched alone; reading it then fails.
 pub fn resident_bytes(file: &DiscoveredFile) -> u64 {
     if !is_compressed(&file.path) {
         return file.size_bytes;
@@ -109,6 +134,29 @@ fn declared_content_size(path: &str) -> Option<u64> {
     zstd::zstd_safe::get_frame_content_size(&header)
         .ok()
         .flatten()
+}
+
+/// Fails once `inner` yields more than `remaining` bytes, instead of decoding without bound.
+struct DeclaredLen<R> {
+    inner: R,
+    remaining: u64,
+}
+
+impl<R: Read> Read for DeclaredLen<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        // Ask for one byte past the declared size, so an overrun surfaces instead of truncating.
+        let want = usize::try_from(self.remaining.saturating_add(1)).unwrap_or(usize::MAX);
+        let len = buf.len().min(want);
+        let n = self.inner.read(&mut buf[..len])?;
+        self.remaining = self.remaining.checked_sub(n as u64).ok_or_else(|| {
+            invalid_data("compressed transcript decodes past its declared size".to_string())
+        })?;
+        Ok(n)
+    }
+}
+
+fn invalid_data(message: String) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
 struct CountingReader<R> {
@@ -146,6 +194,75 @@ mod tests {
         assert_eq!(plain_path("/s/a.jsonl"), None);
         assert_eq!(transcript_stem("/s/rollout-x.jsonl.zst"), Some("rollout-x"));
         assert_eq!(transcript_stem("/s/rollout-x.jsonl"), Some("rollout-x"));
+    }
+
+    fn write_compressed(dir: &Path, name: &str, frames: &[&[u8]]) -> String {
+        let path = dir.join(name);
+        let bytes: Vec<u8> = frames
+            .iter()
+            .flat_map(|text| zstd::bulk::compress(text, 3).unwrap())
+            .collect();
+        std::fs::write(&path, bytes).unwrap();
+        path.to_str().unwrap().to_string()
+    }
+
+    fn read_all(mut text: Box<dyn BufRead>) -> io::Result<Vec<u8>> {
+        let mut out = Vec::new();
+        text.read_to_end(&mut out).map(|_| out)
+    }
+
+    #[test]
+    fn compressed_reads_stop_at_the_declared_size() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let one = write_compressed(dir.path(), "one.jsonl.zst", &[b"{\"a\":1}\n"]);
+        assert_eq!(read_all(open_text(&one).unwrap()).unwrap(), b"{\"a\":1}\n");
+
+        // A later frame decodes past the first frame's declared size.
+        let two = write_compressed(dir.path(), "two.jsonl.zst", &[b"{}\n", b"{}\n"]);
+        let err = read_all(open_text(&two).unwrap()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let bounded = BoundedText::open(&discovered(Path::new(&two))).unwrap();
+        assert_eq!(
+            read_all(bounded.text).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+
+        let big = write_compressed(dir.path(), "big.jsonl.zst", &[&[b'\n'; 64]]);
+        let over = decompressed(&big, File::open(&big).unwrap(), 63)
+            .err()
+            .unwrap();
+        assert_eq!(over.kind(), io::ErrorKind::InvalidData);
+        assert!(decompressed(&big, File::open(&big).unwrap(), 64).is_ok());
+    }
+
+    #[test]
+    fn a_compressed_transcript_without_a_declared_size_is_not_read() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("undeclared.jsonl.zst");
+        let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), 3).unwrap();
+        std::io::Write::write_all(&mut encoder, b"{}\n").unwrap();
+        std::fs::write(&path, encoder.finish().unwrap()).unwrap();
+        let err = open_text(path.to_str().unwrap()).err().unwrap();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(BoundedText::open(&discovered(&path)).is_err());
+    }
+
+    #[test]
+    fn declared_len_allows_exactly_the_declared_bytes() {
+        let read = |bytes: &[u8], remaining| {
+            let mut out = Vec::new();
+            DeclaredLen {
+                inner: bytes,
+                remaining,
+            }
+            .read_to_end(&mut out)
+            .map(|_| out)
+        };
+        assert_eq!(read(b"abc", 3).unwrap(), b"abc");
+        assert_eq!(
+            read(b"abcd", 3).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
     }
 
     #[test]
