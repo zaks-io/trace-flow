@@ -83,8 +83,8 @@ impl FactSources {
             return None;
         }
         let mut units = Vec::with_capacity(files.len());
-        for file in files {
-            let assembled = match read_transcript_file(&file) {
+        for (file, counted_bytes) in files {
+            let assembled = match read_transcript_file(&file, counted_bytes) {
                 // Counted before assembly so a file that then fails still reports its skipped lines.
                 Ok(snapshot) => {
                     report.skipped_lines = report
@@ -124,8 +124,9 @@ impl FactSources {
     }
 
     /// Bound one batch by file count and by bytes resident once read, so a compressed transcript
-    /// counts at its decompressed size.
-    fn take_batch(&mut self) -> Vec<DiscoveredFile> {
+    /// counts at its decompressed size. Each file comes with the bytes it was counted at, which its
+    /// read may not exceed.
+    fn take_batch(&mut self) -> Vec<(DiscoveredFile, u64)> {
         let mut files = Vec::new();
         let mut bytes = 0u64;
         while let Some(next) = self.files.front() {
@@ -137,7 +138,7 @@ impl FactSources {
                 break;
             }
             // A large transcript must make progress alone; never truncate it to fit a batch.
-            files.push(self.files.pop_front().expect("front exists"));
+            files.push((self.files.pop_front().expect("front exists"), next_bytes));
             bytes = bytes.saturating_add(next_bytes);
         }
         files
@@ -213,7 +214,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(report.selected, 1);
-        assert_eq!(files.take_batch()[0].path, second.to_str().unwrap());
+        assert_eq!(files.take_batch()[0].0.path, second.to_str().unwrap());
         assert_eq!(
             store
                 .get(AgentSource::Claude, first.to_str().unwrap())
@@ -263,7 +264,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(report.selected, 1);
-        assert_eq!(files.take_batch()[0].path, compressed.to_str().unwrap());
+        assert_eq!(files.take_batch()[0].0.path, compressed.to_str().unwrap());
     }
 
     #[test]
@@ -345,7 +346,7 @@ mod tests {
         assert_eq!(source.take_batch().len(), 1);
         let large = source.take_batch();
         assert_eq!(large.len(), 1);
-        assert_eq!(large[0].size_bytes, ASSEMBLY_BATCH_BYTES + 1);
+        assert_eq!(large[0].0.size_bytes, ASSEMBLY_BATCH_BYTES + 1);
         assert_eq!(source.take_batch().len(), 2);
         assert!(source.take_batch().is_empty());
     }
@@ -600,7 +601,8 @@ mod tests {
         sources.files.insert(1, big.clone());
 
         assert_eq!(sources.take_batch().len(), 1);
-        assert_eq!(sources.take_batch(), vec![big]);
+        let counted = text.len() as u64;
+        assert_eq!(sources.take_batch(), vec![(big, counted)]);
         assert_eq!(sources.take_batch().len(), 1);
     }
 

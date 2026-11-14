@@ -39,7 +39,7 @@ use crate::discovery::{head_hash, DiscoveredFile};
 use crate::git::GitRemoteCache;
 use crate::session_git::SessionGit;
 use crate::sync_cycle::{SyncUnit, UnitCursor};
-use crate::transcript_file::{is_compressed, uncompressed_path, BoundedText};
+use crate::transcript_file::{is_compressed, resident_bytes, uncompressed_path, BoundedText};
 
 /// Read `file`, resolve its session's git attribution, and assemble the [`SyncUnit`] the drive loop
 /// POSTs. A file-level read error propagates (the loop leaves the cursor unadvanced and retries the file
@@ -60,16 +60,21 @@ pub async fn assemble_sync_unit_with_lineage(
     store: &CursorStore,
     lineage: Option<&CodexLineage>,
 ) -> std::io::Result<SyncUnit> {
-    let snapshot = read_transcript_file(file)?;
+    let snapshot = read_transcript_file(file, resident_bytes(file))?;
     assemble_snapshot(file, source, cache, store, snapshot, lineage).await
 }
 
 /// Read and parse `file`, bounded to its discovered size. Separate from [`assemble_snapshot`] so an
 /// embedder can report [`TranscriptSnapshot::skipped_lines`] even when assembly then fails. A
-/// `.jsonl.zst` transcript is decompressed; its bound and shrink check apply to the on-disk bytes.
-pub fn read_transcript_file(file: &DiscoveredFile) -> std::io::Result<TranscriptSnapshot> {
+/// `.jsonl.zst` transcript is decompressed; its bound and shrink check apply to the on-disk bytes,
+/// and its text fails the read past `max_text_bytes`, which batching sets to what it counted from
+/// [`resident_bytes`].
+pub fn read_transcript_file(
+    file: &DiscoveredFile,
+    max_text_bytes: u64,
+) -> std::io::Result<TranscriptSnapshot> {
     // Bound this pass to the discovered snapshot. A concurrent append belongs to the next pass.
-    let mut bounded = BoundedText::open(file)?;
+    let mut bounded = BoundedText::open(file, max_text_bytes)?;
     let snapshot = parse_snapshot(&mut bounded.text)?;
     expect_discovered_size(bounded.consumed(), file.size_bytes)?;
     Ok(snapshot)
@@ -659,7 +664,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(streamed.records, from_bytes.records);
-        assert_eq!(read_transcript_file(&file).unwrap().skipped_lines(), 1);
+        assert_eq!(
+            read_transcript_file(&file, resident_bytes(&file))
+                .unwrap()
+                .skipped_lines(),
+            1
+        );
         assert_eq!(streamed.ctx, from_bytes.ctx);
         assert_eq!(streamed.next_cursor, from_bytes.next_cursor);
         let UnitCursor::File(cursor) = streamed.next_cursor else {
@@ -754,7 +764,9 @@ mod tests {
         assert_eq!(from_compressed.ctx, from_plain.ctx);
         assert_eq!(from_compressed.ctx.vendor_session_id, "compressed");
         assert_eq!(
-            read_transcript_file(&compressed).unwrap().skipped_lines(),
+            read_transcript_file(&compressed, resident_bytes(&compressed))
+                .unwrap()
+                .skipped_lines(),
             1
         );
         let UnitCursor::File(cursor) = from_compressed.next_cursor else {
@@ -787,7 +799,7 @@ mod tests {
         let bytes = std::fs::read(&file.path).unwrap();
         std::fs::write(&file.path, &bytes[..bytes.len() / 2]).unwrap();
 
-        assert!(read_transcript_file(&file).is_err());
+        assert!(read_transcript_file(&file, resident_bytes(&file)).is_err());
         let cache = GitRemoteCache::new();
         let store = CursorStore::open_in_memory("org").unwrap();
         assert!(
