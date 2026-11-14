@@ -15,6 +15,43 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-11-14 Collector reads compressed Codex rollouts fix/collector-read-compressed-codex
+
+**Status:** in review
+**Changed:** Codex CLI compresses an idle rollout to `<name>.jsonl.zst` and removes the plain file,
+about a week after its last write. Discovery only matched `.jsonl`, so a session the Collector had
+not captured within that week, including every session from a Collector outage, could never be
+backfilled, and parser upgrades could not re-read compressed history. A local audit found 9,278 of
+9,514 Codex sessions compressed, 148 of them absent from production. Discovery now also walks
+`.jsonl.zst` and keeps only the plain file while both exist. Assembly, head-hash change detection,
+and Codex lineage read decompressed text; the bound and shrink check stay on on-disk bytes, and
+assembly batches weigh a compressed file at its declared decompressed size. A compressed read
+decodes to exactly the size its first frame declares, which is what batching counts, or to at most 2
+GiB when it declares none, in a batch of its own; output past either fails the read. The read takes
+that size from the frame it decodes and never exceeds what batching counted, even if the file is
+replaced in between. A few-KB zstd bomb in one user's agent home therefore cannot exhaust the root
+`--system` collector, and a streaming-encoded archive still reads. Session git pins and
+parser-upgrade checks fall back to the plain path a compressed transcript was first read under, so
+compression neither re-resolves attribution from the current checkout nor hides the file from a
+parser upgrade. Compressed rollouts keep their mtime, so routine incremental passes do not re-read
+them; `sync --since 30d` or `1y` imports them. Codex also collapses some subagent and
+guardian-review rollouts as it compresses them: every record is re-stamped to one time and
+`subagent_history_start_ordinal` equals the record count. Token totals survive but turns merge, so
+re-sending one over the facts its live rollout produced overwrites some turn identities and orphans
+the rest. Sync skips that form without a cursor and reports `skipped_collapsed_archives`. A
+collapsed session whose live rollout was never synced is not imported; ingest has no session-level
+replace that would make that safe.
+**Verified:** `cargo test -p collector-sync -p collector-embedder`; the branch code parsed all 9,533
+local Codex rollouts with zero assembly failures, and its message and tool identities matched an
+independent parse of the same files. Against production facts for the 9,130 compressed sessions
+already ingested, an unguarded backfill would have added 25.9B input tokens through 410 collapsed
+sessions. The guard skips exactly the 507 collapsed files, all already in production and none of
+the 148 missing sessions. The guarded backfill adds 2.88B input tokens: 1.21B from the missing
+sessions, the rest from sessions production holds only partly, with 24M from turn identities older
+parser versions numbered differently.
+**Next / blockers:** after release, import history once to backfill compressed sessions. A
+session-level replace on ingest would let collapsed archives import for sessions never captured live.
+
 ## 2026-11-09 Collector apps move to 0.2 t3/bump-collector-app-versions
 
 **Status:** in review

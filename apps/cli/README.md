@@ -51,7 +51,12 @@ trace-flow [--system] [--config <path>] disconnect
   printing absolute home paths.
 - `sync` parses, redacts, and uploads facts. Its default `24h` incremental window resumes from the
   last complete sync watermark so time spent offline is not silently skipped. `--watch` keeps
-  syncing every few minutes until stopped; it is what the service runs.
+  syncing every few minutes until stopped; it is what the service runs. Codex compresses idle
+  rollouts to `.jsonl.zst` about a week after their last write and keeps their modification time,
+  so routine incremental passes do not reach them; `--since 30d` or `--since 1y` imports them.
+  Codex also collapses some subagent and review rollouts as it compresses them, re-stamping every
+  record to one time. Their turns no longer match the live rollout's, so `sync` skips them and
+  reports the count rather than inflate facts already captured.
 - `service install` shows the agent homes the service will read, asks, then writes the config (only
   if none exists) and the systemd unit and starts it. `service uninstall` stops and removes the unit.
 - `status` prints connection, source, and service state without secrets.

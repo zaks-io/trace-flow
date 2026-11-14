@@ -29,6 +29,9 @@ thiserror = "1"
 walkdir = "2"
 # Head-hash change detection uses the same SHA-256 fingerprint convention as `collector-parser`.
 sha2 = "0.10"
+# Codex compresses idle rollouts to `.jsonl.zst`; reading them needs only the decoder, so the
+# legacy-format, array, and dictionary-builder features stay off.
+zstd = { version = "0.13", default-features = false }
 # Bounded-concurrency upload: `buffer_unordered` drives up to N envelope POSTs concurrently on the
 # embedder's single task (the work is network-wait, not CPU), so a history backfill is not one serial
 # round-trip per session. Only the `std`/`alloc` stream combinators are needed.

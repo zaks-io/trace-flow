@@ -258,3 +258,71 @@ async fn pins_are_isolated_by_source_and_organization() {
         .unwrap();
     assert_eq!(unit.ctx.normalized_git_remote, "github.com/acme/original");
 }
+
+#[tokio::test]
+async fn a_compressed_transcript_keeps_the_pin_its_plain_file_set() {
+    let repo = tempfile::TempDir::new().unwrap();
+    let transcripts = tempfile::TempDir::new().unwrap();
+    git(repo.path(), &["init", "-b", "main"]);
+    git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:acme/original.git",
+        ],
+    );
+    // Codex records no git block here, so attribution comes from the live probe and its pin.
+    let plain = transcripts.path().join("rollout.jsonl");
+    let text = format!(
+        "{}\n",
+        json!({"type":"session_meta", "payload":{"id":"codex-session", "cwd":repo.path()}})
+    );
+    std::fs::write(&plain, &text).unwrap();
+    let store = CursorStore::open_in_memory("org").unwrap();
+    let discovered = |path: &std::path::Path| DiscoveredFile {
+        path: path.to_str().unwrap().into(),
+        size_bytes: std::fs::metadata(path).unwrap().len(),
+        mtime_ms: 1.0,
+    };
+    let live = assemble_sync_unit(
+        &discovered(&plain),
+        AgentSource::Codex,
+        &GitRemoteCache::new(),
+        &store,
+    )
+    .await
+    .unwrap();
+    assert_eq!(live.ctx.normalized_git_remote, "github.com/acme/original");
+
+    git(
+        repo.path(),
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "git@github.com:acme/later.git",
+        ],
+    );
+    let compressed = transcripts.path().join("rollout.jsonl.zst");
+    std::fs::write(
+        &compressed,
+        zstd::bulk::compress(text.as_bytes(), 3).unwrap(),
+    )
+    .unwrap();
+    std::fs::remove_file(&plain).unwrap();
+    let archived = assemble_sync_unit(
+        &discovered(&compressed),
+        AgentSource::Codex,
+        &GitRemoteCache::new(),
+        &store,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        archived.ctx.normalized_git_remote,
+        "github.com/acme/original"
+    );
+    assert_eq!(archived.ctx.git_branch, live.ctx.git_branch);
+}

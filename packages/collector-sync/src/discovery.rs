@@ -24,7 +24,7 @@
 //! [`DiscoveryWalk::skipped_errors`] so the embedder can hold the incremental watermark. Only a
 //! [`CursorStore`] failure — a broken local DB — aborts a selection.
 
-use std::fs::File;
+use std::collections::HashSet;
 use std::io::Read;
 use std::path::Path;
 use std::time::SystemTime;
@@ -36,6 +36,7 @@ use walkdir::WalkDir;
 
 use crate::cursor::{CursorStore, CursorStoreError};
 use crate::import::ImportWindow;
+use crate::transcript_file::{is_compressed, is_transcript_name, open_text, plain_path};
 
 /// The first 4096 chars are enough to fingerprint an in-place rewrite (a transcript's header changes
 /// when the session is replaced); hashing the whole file every scan would be wasteful.
@@ -111,7 +112,7 @@ pub fn walk_transcripts(root: &Path) -> DiscoveryWalk {
         let Some(name) = entry.file_name().to_str() else {
             continue;
         };
-        if !name.ends_with(".jsonl") {
+        if !is_transcript_name(name) {
             continue;
         }
         let Some(path) = entry.path().to_str() else {
@@ -130,6 +131,7 @@ pub fn walk_transcripts(root: &Path) -> DiscoveryWalk {
             size_bytes: meta.len(),
         });
     }
+    drop_compressed_duplicates(&mut files);
     files.sort_by(|a, b| {
         a.mtime_ms
             .total_cmp(&b.mtime_ms)
@@ -139,6 +141,17 @@ pub fn walk_transcripts(root: &Path) -> DiscoveryWalk {
         files,
         skipped_errors,
     }
+}
+
+/// While Codex is compressing a rollout, `<name>.jsonl` and `<name>.jsonl.zst` both exist. The plain
+/// file is complete and the compressed one may still be partial, so the walk keeps only the plain one.
+fn drop_compressed_duplicates(files: &mut Vec<DiscoveredFile>) {
+    let plain: HashSet<String> = files
+        .iter()
+        .filter(|file| !is_compressed(&file.path))
+        .map(|file| file.path.clone())
+        .collect();
+    files.retain(|file| plain_path(&file.path).is_none_or(|path| !plain.contains(path)));
 }
 
 /// Narrow `files` to those a pass should read: inside `window` and new-or-changed since their cursor.
@@ -205,14 +218,15 @@ pub fn head_hash(text: &str) -> String {
     out
 }
 
-/// Read just enough of `path` to hash its head, without loading the whole file. The buffer holds the
-/// worst-case byte length of [`HEAD_HASH_CHAR_LIMIT`] chars, so the UTF-8 prefix always contains every
-/// char [`head_hash`] needs.
+/// Read just enough of `path`'s text to hash its head, without loading the whole file. The buffer
+/// holds the worst-case byte length of [`HEAD_HASH_CHAR_LIMIT`] chars, so the UTF-8 prefix always
+/// contains every char [`head_hash`] needs. A compressed transcript hashes its decompressed head,
+/// matching the hash assembly records.
 fn read_head_hash(path: &str) -> std::io::Result<String> {
-    let mut file = File::open(path)?;
-    let mut buf = vec![0u8; HEAD_HASH_CHAR_LIMIT * MAX_UTF8_BYTES_PER_CHAR];
-    let n = file.read(&mut buf)?;
-    Ok(head_hash(utf8_prefix(&buf[..n])))
+    let limit = (HEAD_HASH_CHAR_LIMIT * MAX_UTF8_BYTES_PER_CHAR) as u64;
+    let mut buf = Vec::with_capacity(limit as usize);
+    open_text(path)?.take(limit).read_to_end(&mut buf)?;
+    Ok(head_hash(utf8_prefix(&buf)))
 }
 
 /// The longest valid UTF-8 prefix of `bytes` (a read may cut a multi-byte char; the dropped tail is
@@ -307,6 +321,58 @@ mod tests {
         assert!(names.contains(&"a.jsonl"));
         assert!(names.contains(&"b.jsonl"));
         assert!(!names.contains(&"notes.txt"));
+    }
+
+    fn write_zst(dir: &TempDir, name: &str, body: &str) -> String {
+        let path = dir.path().join(name);
+        fs::write(&path, zstd::bulk::compress(body.as_bytes(), 3).unwrap()).unwrap();
+        path.to_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn walk_finds_compressed_rollouts_and_prefers_a_plain_sibling() {
+        let dir = TempDir::new().unwrap();
+        write_zst(&dir, "idle.jsonl.zst", "{}\n");
+        write(&dir, "compressing.jsonl", "{}\n");
+        write_zst(&dir, "compressing.jsonl.zst", "{}\n");
+        write_zst(&dir, "unrelated.zst", "{}\n");
+
+        let found = walk_transcripts(dir.path());
+        assert!(found.is_complete());
+        let mut names: Vec<_> = found
+            .files
+            .iter()
+            .map(|f| Path::new(&f.path).file_name().unwrap().to_str().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["compressing.jsonl", "idle.jsonl.zst"]);
+    }
+
+    #[test]
+    fn a_compressed_file_is_compared_by_its_decompressed_head() {
+        let dir = TempDir::new().unwrap();
+        let body = "{\"version\":1}\n";
+        let path = write_zst(&dir, "s.jsonl.zst", body);
+        let file = stat(&path);
+        let store = CursorStore::open_in_memory("org").unwrap();
+        store
+            .advance(AgentSource::Codex, &matching_cursor(&file, body))
+            .unwrap();
+        let unchanged = select_changed(
+            vec![file.clone()],
+            &store,
+            AgentSource::Codex,
+            open_window(),
+        )
+        .unwrap();
+        assert!(unchanged.is_empty());
+
+        let mut rewritten = matching_cursor(&file, body);
+        rewritten.content_hash_head = head_hash("{\"version\":0}\n");
+        store.advance(AgentSource::Codex, &rewritten).unwrap();
+        let changed =
+            select_changed(vec![file], &store, AgentSource::Codex, open_window()).unwrap();
+        assert_eq!(changed.len(), 1);
     }
 
     #[test]

@@ -3,9 +3,9 @@ use std::path::PathBuf;
 
 use collector_contracts::AgentSource;
 use collector_sync::{
-    assemble_snapshot, read_transcript_file, select_changed, walk_transcripts, CodexLineage,
-    CursorStore, CursorStoreError, DiscoveredFile, GitRemoteCache, ImportWindow, SyncUnit,
-    DISCOVERY_INCOMPLETE,
+    assemble_snapshot, read_transcript_file, resident_bytes, select_changed, uncompressed_path,
+    walk_transcripts, CodexLineage, CursorStore, CursorStoreError, DiscoveredFile, GitRemoteCache,
+    ImportWindow, SyncUnit, DISCOVERY_INCOMPLETE,
 };
 
 use crate::sync::SourceReport;
@@ -52,10 +52,7 @@ impl FactSources {
         let files = if replay || reparse_known {
             let mut selected = Vec::new();
             for file in files {
-                let needs_upgrade = reparse_known
-                    && ((store.get(source, &file.path)?.is_some()
-                        && !store.is_file_parser_current(source, &file.path)?)
-                        || store.has_stale_file_quarantine(source, &file.path)?);
+                let needs_upgrade = reparse_known && needs_upgrade(store, source, &file)?;
                 if (replay && window.includes(file.mtime_ms)) || needs_upgrade {
                     selected.push(file);
                 } else {
@@ -86,13 +83,18 @@ impl FactSources {
             return None;
         }
         let mut units = Vec::with_capacity(files.len());
-        for file in files {
-            let assembled = match read_transcript_file(&file) {
+        for (file, counted_bytes) in files {
+            let assembled = match read_transcript_file(&file, counted_bytes) {
                 // Counted before assembly so a file that then fails still reports its skipped lines.
                 Ok(snapshot) => {
                     report.skipped_lines = report
                         .skipped_lines
                         .saturating_add(snapshot.skipped_lines());
+                    if self.source == AgentSource::Codex && snapshot.is_collapsed_codex_archive() {
+                        // No cursor: nothing was sent. Old mtimes keep it out of routine passes.
+                        report.skipped_collapsed_archives += 1;
+                        continue;
+                    }
                     assemble_snapshot(
                         &file,
                         self.source,
@@ -121,23 +123,50 @@ impl FactSources {
         Some(units)
     }
 
-    fn take_batch(&mut self) -> Vec<DiscoveredFile> {
+    /// Bound one batch by file count and by bytes resident once read, so a compressed transcript
+    /// counts at its decompressed size. Each file comes with the bytes it was counted at, which its
+    /// read may not exceed.
+    fn take_batch(&mut self) -> Vec<(DiscoveredFile, u64)> {
         let mut files = Vec::new();
         let mut bytes = 0u64;
         while let Some(next) = self.files.front() {
+            let next_bytes = resident_bytes(next);
             if !files.is_empty()
                 && (files.len() >= ASSEMBLY_BATCH_FILES
-                    || bytes.saturating_add(next.size_bytes) > ASSEMBLY_BATCH_BYTES)
+                    || bytes.saturating_add(next_bytes) > ASSEMBLY_BATCH_BYTES)
             {
                 break;
             }
             // A large transcript must make progress alone; never truncate it to fit a batch.
-            let file = self.files.pop_front().expect("front exists");
-            bytes = bytes.saturating_add(file.size_bytes);
-            files.push(file);
+            files.push((self.files.pop_front().expect("front exists"), next_bytes));
+            bytes = bytes.saturating_add(next_bytes);
         }
         files
     }
+}
+
+/// Whether a parser upgrade must re-read `file`. A compressed transcript with no cursor of its own
+/// answers from the plain file it was compressed from, whose cursor records the parser that read it
+/// and whose quarantine a parser change may clear.
+fn needs_upgrade(
+    store: &CursorStore,
+    source: AgentSource,
+    file: &DiscoveredFile,
+) -> Result<bool, CursorStoreError> {
+    let read_as = if store.get(source, &file.path)?.is_some() {
+        Some(file.path.as_str())
+    } else {
+        let plain = uncompressed_path(&file.path);
+        (plain != file.path && store.get(source, plain)?.is_some()).then_some(plain)
+    };
+    let stale_parser = match read_as {
+        Some(path) => !store.is_file_parser_current(source, path)?,
+        None => false,
+    };
+    let plain = uncompressed_path(&file.path);
+    let stale_quarantine = store.has_stale_file_quarantine(source, &file.path)?
+        || (plain != file.path && store.has_stale_file_quarantine(source, plain)?);
+    Ok(stale_parser || stale_quarantine)
 }
 
 #[cfg(test)]
@@ -185,7 +214,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(report.selected, 1);
-        assert_eq!(files.take_batch()[0].path, second.to_str().unwrap());
+        assert_eq!(files.take_batch()[0].0.path, second.to_str().unwrap());
         assert_eq!(
             store
                 .get(AgentSource::Claude, first.to_str().unwrap())
@@ -193,6 +222,49 @@ mod tests {
                 .unwrap(),
             completed
         );
+    }
+
+    #[test]
+    fn a_parser_upgrade_rereads_a_transcript_compressed_after_its_last_read() {
+        let home = tempfile::TempDir::new().unwrap();
+        let plain = write_jsonl(home.path(), "rollout.jsonl", json!({"a":1}));
+        let file = walk_transcripts(home.path()).files.remove(0);
+        let mut store = CursorStore::open_in_memory("org").unwrap();
+        store.set_active_parser_version("0.1.0");
+        let text = std::fs::read_to_string(&plain).unwrap();
+        store
+            .advance(
+                AgentSource::Codex,
+                &FileCursor {
+                    file_path: file.path,
+                    mtime_ms: file.mtime_ms,
+                    byte_offset: file.size_bytes,
+                    content_hash_head: head_hash(&text),
+                },
+            )
+            .unwrap();
+        let compressed = home.path().join("rollout.jsonl.zst");
+        std::fs::write(
+            &compressed,
+            zstd::bulk::compress(text.as_bytes(), 3).unwrap(),
+        )
+        .unwrap();
+        std::fs::remove_file(&plain).unwrap();
+        store.set_active_parser_version("0.2.0");
+
+        let mut report = SourceReport::default();
+        let mut files = FactSources::discover(
+            &[home.path().to_path_buf()],
+            AgentSource::Codex,
+            &store,
+            ImportWindow::first_incremental(9_000_000_000_000),
+            false,
+            true,
+            &mut report,
+        )
+        .unwrap();
+        assert_eq!(report.selected, 1);
+        assert_eq!(files.take_batch()[0].0.path, compressed.to_str().unwrap());
     }
 
     #[test]
@@ -229,6 +301,20 @@ mod tests {
         assert_eq!(selected(&store), 0, "same parser: stays quarantined");
         store.set_active_parser_version("0.2.0");
         assert_eq!(selected(&store), 1, "new parser: retried");
+
+        // Once Codex compresses it, the quarantine recorded under the plain path still counts.
+        let text = std::fs::read(&file.path).unwrap();
+        let compressed = format!("{}.zst", file.path);
+        std::fs::write(&compressed, zstd::bulk::compress(&text, 3).unwrap()).unwrap();
+        std::fs::remove_file(&file.path).unwrap();
+        store.set_active_parser_version("0.1.0");
+        assert_eq!(
+            selected(&store),
+            0,
+            "same parser: compressed stays quarantined"
+        );
+        store.set_active_parser_version("0.2.0");
+        assert_eq!(selected(&store), 1, "new parser: compressed retried");
     }
 
     fn write_jsonl(dir: &std::path::Path, name: &str, value: serde_json::Value) -> PathBuf {
@@ -260,7 +346,7 @@ mod tests {
         assert_eq!(source.take_batch().len(), 1);
         let large = source.take_batch();
         assert_eq!(large.len(), 1);
-        assert_eq!(large[0].size_bytes, ASSEMBLY_BATCH_BYTES + 1);
+        assert_eq!(large[0].0.size_bytes, ASSEMBLY_BATCH_BYTES + 1);
         assert_eq!(source.take_batch().len(), 2);
         assert!(source.take_batch().is_empty());
     }
@@ -403,6 +489,121 @@ mod tests {
         assert_eq!(units.len(), 1);
         assert_eq!(units[0].ctx.vendor_session_id, "archived");
         assert_eq!(files_read, 1);
+    }
+
+    #[tokio::test]
+    async fn compressed_archived_codex_rollout_is_assembled() {
+        let home = tempfile::TempDir::new().unwrap();
+        let archived = home.path().join("archived_sessions");
+        std::fs::create_dir_all(&archived).unwrap();
+        let text = format!(
+            "{}\n",
+            json!({ "type": "session_meta", "payload": { "id": "compressed" } })
+        );
+        std::fs::write(
+            archived.join("compressed.jsonl.zst"),
+            zstd::bulk::compress(text.as_bytes(), 3).unwrap(),
+        )
+        .unwrap();
+        let store = CursorStore::open_in_memory("org").unwrap();
+        let mut report = SourceReport::default();
+        let mut sources = FactSources::discover(
+            &[home.path().join("sessions"), archived],
+            AgentSource::Codex,
+            &store,
+            ImportWindow::first_incremental(24 * 60 * 60 * 1000),
+            false,
+            false,
+            &mut report,
+        )
+        .unwrap();
+        let mut files_read = 0;
+
+        let units = sources
+            .next_batch(&GitRemoteCache::new(), &store, &mut report, &mut files_read)
+            .await
+            .unwrap();
+        assert_eq!(units.len(), 1);
+        assert_eq!(units[0].ctx.vendor_session_id, "compressed");
+        assert_eq!(report.failed, 0);
+    }
+
+    #[tokio::test]
+    async fn a_rollout_collapsed_on_archive_is_skipped_without_a_cursor() {
+        let home = tempfile::TempDir::new().unwrap();
+        let archived = home.path().join("archived_sessions");
+        std::fs::create_dir_all(&archived).unwrap();
+        let at = "2026-08-24T00:28:57.681Z";
+        let write_zst = |name: &str, records: &[serde_json::Value]| {
+            let text: String = records.iter().map(|r| format!("{r}\n")).collect();
+            let path = archived.join(name);
+            std::fs::write(&path, zstd::bulk::compress(text.as_bytes(), 3).unwrap()).unwrap();
+            path
+        };
+        let collapsed = write_zst(
+            "collapsed.jsonl.zst",
+            &[
+                json!({ "type": "session_meta", "timestamp": at, "payload": {
+                    "id": "collapsed", "subagent_history_start_ordinal": 2,
+                    "source": { "subagent": { "thread_spawn": { "depth": 1 } } }
+                } }),
+                json!({ "type": "event_msg", "timestamp": at, "payload": { "type": "token_count" } }),
+            ],
+        );
+        write_zst(
+            "live.jsonl.zst",
+            &[json!({ "type": "session_meta", "timestamp": at, "payload": { "id": "live" } })],
+        );
+        let store = CursorStore::open_in_memory("org").unwrap();
+        let mut report = SourceReport::default();
+        let mut sources = FactSources::discover(
+            &[archived],
+            AgentSource::Codex,
+            &store,
+            ImportWindow::first_incremental(24 * 60 * 60 * 1000),
+            false,
+            false,
+            &mut report,
+        )
+        .unwrap();
+        let mut files_read = 0;
+
+        let units = sources
+            .next_batch(&GitRemoteCache::new(), &store, &mut report, &mut files_read)
+            .await
+            .unwrap();
+        let ids: Vec<_> = units
+            .iter()
+            .map(|u| u.ctx.vendor_session_id.as_str())
+            .collect();
+        assert_eq!(ids, ["live"]);
+        assert_eq!(report.skipped_collapsed_archives, 1);
+        assert_eq!(report.failed, 0);
+        assert!(store
+            .get(AgentSource::Codex, collapsed.to_str().unwrap())
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn a_compressed_transcript_is_batched_at_its_decompressed_size() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let big = dir.path().join("big.jsonl.zst");
+        let text = vec![b'\n'; ASSEMBLY_BATCH_BYTES as usize + 1];
+        std::fs::write(&big, zstd::bulk::compress(&text, 3).unwrap()).unwrap();
+        let big = DiscoveredFile {
+            path: big.to_str().unwrap().to_string(),
+            mtime_ms: 1.0,
+            size_bytes: std::fs::metadata(&big).unwrap().len(),
+        };
+        assert!(big.size_bytes < 1024 * 1024);
+        let mut sources = source(&[1024, 1024]);
+        sources.files.insert(1, big.clone());
+
+        assert_eq!(sources.take_batch().len(), 1);
+        let counted = text.len() as u64;
+        assert_eq!(sources.take_batch(), vec![(big, counted)]);
+        assert_eq!(sources.take_batch().len(), 1);
     }
 
     #[tokio::test]

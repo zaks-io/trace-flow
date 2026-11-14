@@ -6,13 +6,13 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::io::{BufRead, BufReader, Error, ErrorKind};
-use std::path::Path;
+use std::io::{BufRead, Error, ErrorKind};
 
 use serde_json::Value;
 
 use crate::codex_session::codex_session_fields;
 use crate::discovery::DiscoveredFile;
+use crate::transcript_file::{open_text, transcript_stem};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SessionLineage {
@@ -33,10 +33,7 @@ impl CodexLineage {
     pub fn index(files: &[DiscoveredFile]) -> Self {
         let mut paths_by_session_id: HashMap<String, Vec<String>> = HashMap::new();
         for file in files {
-            let Some(stem) = Path::new(&file.path)
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-            else {
+            let Some(stem) = transcript_stem(&file.path) else {
                 continue;
             };
             paths_by_session_id
@@ -141,8 +138,7 @@ impl CodexLineage {
 fn read_session_metadata(
     path: &str,
 ) -> std::io::Result<Option<crate::codex_session::CodexSessionFields>> {
-    let input = std::fs::File::open(path)?;
-    let mut reader = BufReader::new(input);
+    let mut reader = open_text(path)?;
     let mut line = String::new();
     while reader.read_line(&mut line)? > 0 {
         if let Ok(record) = serde_json::from_str::<Value>(&line) {
@@ -174,6 +170,7 @@ fn invalid_data(message: impl Into<String>) -> Error {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::path::Path;
 
     fn write_session(
         dir: &Path,
@@ -246,6 +243,31 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("conflicting"));
+    }
+
+    #[test]
+    fn a_compressed_parent_rollout_is_indexed_and_read() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let id = "019ec26b-b904-72c1-8937-5a69c962e86e";
+        let plain = write_session(
+            dir.path(),
+            &format!("rollout-2026-06-13T12-18-20-{id}.jsonl"),
+            id,
+            None,
+            Some(1),
+        );
+        let compressed_path = format!("{}.zst", plain.path);
+        let text = std::fs::read(&plain.path).unwrap();
+        std::fs::write(&compressed_path, zstd::bulk::compress(&text, 3).unwrap()).unwrap();
+        std::fs::remove_file(&plain.path).unwrap();
+        let compressed = DiscoveredFile {
+            size_bytes: std::fs::metadata(&compressed_path).unwrap().len(),
+            path: compressed_path,
+            mtime_ms: 1.0,
+        };
+
+        let lineage = CodexLineage::index(&[compressed]);
+        assert_eq!(lineage.child_depth(id).unwrap(), 2);
     }
 
     #[test]
