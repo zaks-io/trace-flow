@@ -75,6 +75,12 @@ pub fn source_detail_lines(r: &SourceReport) -> Vec<String> {
             r.skipped_lines
         ));
     }
+    if r.skipped_collapsed_archives > 0 {
+        lines.push(format!(
+            "skipped {} Codex rollout(s) that Codex collapsed when compressing",
+            r.skipped_collapsed_archives
+        ));
+    }
     if r.throttled {
         let wait = r
             .retry_after
@@ -123,6 +129,7 @@ mod tests {
         let report = SourceReport {
             quarantined: vec!["sess-1".to_string()],
             skipped_lines: 3,
+            skipped_collapsed_archives: 2,
             invalid_envelope: Some(InvalidEnvelopeCause {
                 reason: Some("fact_identity_conflict".to_string()),
                 category: Some("messages".to_string()),
@@ -135,6 +142,7 @@ mod tests {
                 "ingest rejected an envelope: reason=fact_identity_conflict category=messages",
                 "quarantined session sess-1: rejected by ingest; retried when it changes",
                 "skipped 3 malformed transcript line(s)",
+                "skipped 2 Codex rollout(s) that Codex collapsed when compressing",
             ]
         );
         assert!(source_detail_lines(&SourceReport::default()).is_empty());

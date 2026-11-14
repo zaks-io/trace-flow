@@ -42,6 +42,8 @@ rustix = { version = "1", features = ["fs", "process"] }
 
 [dev-dependencies]
 flate2 = "1"
+# Writes the compressed Codex rollouts the batching and assembly tests read.
+zstd = { version = "0.13", default-features = false }
 # Builds the live Cursor `state.vscdb` fixtures the sync gate tests read.
 rusqlite = { version = "0.31", features = ["bundled"] }
 tempfile = "3"

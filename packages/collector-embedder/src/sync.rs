@@ -96,6 +96,9 @@ pub struct SourceReport {
     /// Transcript lines skipped as malformed in the files read this pass. They do not fail the pass;
     /// a nonzero count flags format drift that would otherwise drop data silently.
     pub skipped_lines: u32,
+    /// Codex rollouts skipped because Codex collapsed them when compressing the file. Sending one
+    /// would inflate the facts its live rollout already produced; see `TranscriptSnapshot`.
+    pub skipped_collapsed_archives: u32,
     /// Reason and category codes of the pass's first `400 invalid_envelope`, including rejections
     /// that ended in quarantine. Codes only.
     pub invalid_envelope: Option<InvalidEnvelopeCause>,
@@ -479,6 +482,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::Mutex;
+    use std::time::UNIX_EPOCH;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -702,6 +706,92 @@ mod tests {
             .get(AgentSource::Codex, transcript.to_str().unwrap())
             .unwrap()
             .is_some());
+    }
+
+    #[tokio::test]
+    async fn history_import_sends_compressed_rollouts_but_skips_collapsed_archives() {
+        const COLLAPSED: &str = r#"{"type":"session_meta","timestamp":"2026-04-20T09:00:00.000Z","payload":{"id":"codex-collapsed-001","subagent_history_start_ordinal":2,"cwd":"project","git":{"branch":"main"},"source":{"subagent":{"thread_spawn":{"parent_thread_id":"codex-parent","depth":1}}}}}
+{"type":"response_item","timestamp":"2026-04-20T09:00:00.000Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Collapsed history"}]}}
+"#;
+        let now = 1_779_840_000_000;
+        let home = crate::test_support::private_tempdir();
+        let state = crate::test_support::private_tempdir();
+        let archived = home.path().join(".codex").join("archived_sessions");
+        std::fs::create_dir_all(&archived).unwrap();
+        let write_archived = |name: &str, text: &[u8]| {
+            let path = archived.join(name);
+            std::fs::write(&path, zstd::bulk::compress(text, 3).unwrap()).unwrap();
+            // Codex keeps the last write's mtime, so only a history import reaches these.
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(UNIX_EPOCH + Duration::from_millis((now - 20 * 86_400_000) as u64))
+                .unwrap();
+            path
+        };
+        let compressed = write_archived("codex-session-001.jsonl.zst", CODEX);
+        let collapsed = write_archived("codex-collapsed-001.jsonl.zst", COLLAPSED.as_bytes());
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let ingest_url = spawn_http({
+            let sent = Arc::clone(&sent);
+            move |raw| {
+                let envelope: collector_contracts::AgentIngestEnvelope =
+                    serde_json::from_str(&request_json(&raw)).unwrap();
+                let mut sent = sent.lock().unwrap();
+                sent.extend(
+                    envelope
+                        .facts
+                        .messages
+                        .into_iter()
+                        .map(|m| m.vendor_session_id),
+                );
+                raw_response(
+                    202,
+                    "Accepted",
+                    r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#,
+                )
+            }
+        })
+        .await;
+
+        let outcome = run_detailed(RunConfig {
+            ingest_url,
+            credential: "tfc_secret".to_string(),
+            org_id: "org_1",
+            home: home.path(),
+            source_homes: None,
+            window: Window::History(HistoryPreset::Last30Days),
+            replay: false,
+            now_ms: now,
+            batch_id_prefix: "test",
+            app_version: TEST_APP_VERSION,
+            state_dir: Some(state.path()),
+        })
+        .await
+        .unwrap();
+
+        let (_, codex) = outcome
+            .reports
+            .iter()
+            .find(|(source, _)| *source == AgentSource::Codex)
+            .unwrap();
+        assert_eq!(codex.selected, 2, "{codex:?}");
+        assert_eq!(codex.advanced, 1, "{codex:?}");
+        assert_eq!(codex.skipped_collapsed_archives, 1, "{codex:?}");
+        assert!(outcome.reports.iter().all(|(_, r)| r.is_complete()));
+        let sent = sent.lock().unwrap();
+        assert!(!sent.is_empty());
+        assert!(sent.iter().all(|id| id == "codex-session-001"), "{sent:?}");
+        let store = cursor_store(state.path());
+        assert!(store
+            .get(AgentSource::Codex, compressed.to_str().unwrap())
+            .unwrap()
+            .is_some());
+        assert!(store
+            .get(AgentSource::Codex, collapsed.to_str().unwrap())
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]

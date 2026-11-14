@@ -416,6 +416,14 @@ fn log_report_details(reports: &[(collector_contracts::AgentSource, sync::Source
                 report.skipped_lines
             );
         }
+        if report.skipped_collapsed_archives > 0 {
+            tracing::info!(
+                source = ?source,
+                skipped_collapsed_archives = report.skipped_collapsed_archives,
+                "{source:?}: skipped {} rollout(s) collapsed when compressed",
+                report.skipped_collapsed_archives
+            );
+        }
     }
 }
 

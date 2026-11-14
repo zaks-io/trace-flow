@@ -29,6 +29,7 @@
 pub mod assemble_units;
 mod batches;
 pub mod claude_session;
+mod codex_archive;
 pub mod codex_lineage;
 pub mod codex_session;
 pub mod cursor;
@@ -44,6 +45,7 @@ pub mod orchestrator;
 mod quarantine;
 pub mod session_git;
 pub mod sync_cycle;
+mod transcript_file;
 
 pub use assemble_units::{
     assemble_snapshot, assemble_sync_unit, assemble_sync_unit_from_bytes,
@@ -72,3 +74,4 @@ pub use sync_cycle::{
     run_sync_cycle, run_sync_cycle_tuned, CycleReport, IngestClient, SyncTuning, SyncUnit,
     UnconfirmedRejection, UnitCursor,
 };
+pub use transcript_file::resident_bytes;

@@ -22,7 +22,7 @@
 //! maps that evidence to parser context. Absolute repo roots remain local path-relativization anchors
 //! and never enter uploaded facts. The file cursor advances only after successful upload.
 
-use std::io::{BufRead, BufReader, Cursor, Error, ErrorKind, Read};
+use std::io::{BufRead, BufReader, Cursor, Error, ErrorKind};
 
 use collector_contracts::AgentSource;
 use collector_parser::session_context::SessionContext;
@@ -31,6 +31,7 @@ use serde_json::Value;
 use crate::claude_session::{
     agent_depth_from_transcript_path, claude_session_fields, ClaudeSessionFields,
 };
+use crate::codex_archive::is_collapsed_archive;
 use crate::codex_lineage::CodexLineage;
 use crate::codex_session::codex_session_fields;
 use crate::cursor::{CursorStore, FileCursor};
@@ -38,6 +39,7 @@ use crate::discovery::{head_hash, DiscoveredFile};
 use crate::git::GitRemoteCache;
 use crate::session_git::SessionGit;
 use crate::sync_cycle::{SyncUnit, UnitCursor};
+use crate::transcript_file::{is_compressed, BoundedText};
 
 /// Read `file`, resolve its session's git attribution, and assemble the [`SyncUnit`] the drive loop
 /// POSTs. A file-level read error propagates (the loop leaves the cursor unadvanced and retries the file
@@ -63,11 +65,14 @@ pub async fn assemble_sync_unit_with_lineage(
 }
 
 /// Read and parse `file`, bounded to its discovered size. Separate from [`assemble_snapshot`] so an
-/// embedder can report [`TranscriptSnapshot::skipped_lines`] even when assembly then fails.
+/// embedder can report [`TranscriptSnapshot::skipped_lines`] even when assembly then fails. A
+/// `.jsonl.zst` transcript is decompressed; its bound and shrink check apply to the on-disk bytes.
 pub fn read_transcript_file(file: &DiscoveredFile) -> std::io::Result<TranscriptSnapshot> {
-    let input = std::fs::File::open(&file.path)?;
     // Bound this pass to the discovered snapshot. A concurrent append belongs to the next pass.
-    read_transcript_snapshot(BufReader::new(input.take(file.size_bytes)), file.size_bytes)
+    let mut bounded = BoundedText::open(file)?;
+    let snapshot = parse_snapshot(&mut bounded.text)?;
+    expect_discovered_size(bounded.consumed(), file.size_bytes)?;
+    Ok(snapshot)
 }
 
 /// Assemble the [`SyncUnit`] for `file` from a snapshot [`read_transcript_file`] returned.
@@ -94,7 +99,8 @@ pub async fn assemble_snapshot(
 /// Assemble a [`SyncUnit`] from an already-read snapshot of `file`.
 ///
 /// Callers with a captured snapshot can reuse those bytes. Facts require UTF-8, matching
-/// the historical `read_to_string` path.
+/// the historical `read_to_string` path. The bytes are transcript text, so a compressed file must go
+/// through [`read_transcript_file`] instead.
 pub async fn assemble_sync_unit_from_bytes(
     file: &DiscoveredFile,
     source: AgentSource,
@@ -102,6 +108,12 @@ pub async fn assemble_sync_unit_from_bytes(
     store: &CursorStore,
     bytes: &[u8],
 ) -> std::io::Result<SyncUnit> {
+    if is_compressed(&file.path) {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "compressed transcripts are read with read_transcript_file",
+        ));
+    }
     let size = usize::try_from(file.size_bytes)
         .map_err(|_| Error::new(ErrorKind::InvalidInput, "transcript snapshot is too large"))?;
     if bytes.len() < size {
@@ -114,8 +126,7 @@ pub async fn assemble_sync_unit_from_bytes(
             ),
         ));
     }
-    let snapshot =
-        read_transcript_snapshot(BufReader::new(Cursor::new(&bytes[..size])), file.size_bytes)?;
+    let snapshot = parse_snapshot(BufReader::new(Cursor::new(&bytes[..size])))?;
     assemble_records(
         file,
         source,
@@ -255,15 +266,17 @@ impl TranscriptSnapshot {
     pub fn skipped_lines(&self) -> u32 {
         self.parsed.skipped_lines
     }
+
+    /// True for a Codex rollout that Codex collapsed when it compressed the file. Its turns no longer
+    /// match the live rollout's, so sync skips it rather than send it over facts already ingested.
+    pub fn is_collapsed_codex_archive(&self) -> bool {
+        is_collapsed_archive(&self.parsed.records)
+    }
 }
 
-fn read_transcript_snapshot(
-    mut reader: impl BufRead,
-    expected_bytes: u64,
-) -> std::io::Result<TranscriptSnapshot> {
+fn parse_snapshot(mut reader: impl BufRead) -> std::io::Result<TranscriptSnapshot> {
     let mut parsed = TranscriptRecords::default();
     let mut line = String::new();
-    let mut bytes_read = 0u64;
     let mut head = String::new();
     let mut head_chars = 0usize;
     loop {
@@ -271,7 +284,6 @@ fn read_transcript_snapshot(
         if count == 0 {
             break;
         }
-        bytes_read = bytes_read.saturating_add(count as u64);
         if head_chars < 4096 {
             let remaining = 4096 - head_chars;
             for ch in line.chars().take(remaining) {
@@ -282,18 +294,22 @@ fn read_transcript_snapshot(
         parsed.push_line(&line);
         line.clear();
     }
-    if bytes_read != expected_bytes {
-        return Err(Error::new(
-            ErrorKind::UnexpectedEof,
-            format!(
-                "transcript shrank after discovery: expected {expected_bytes} bytes, read {bytes_read}"
-            ),
-        ));
-    }
     Ok(TranscriptSnapshot {
         parsed,
         content_hash_head: head_hash(&head),
     })
+}
+
+fn expect_discovered_size(bytes_read: u64, expected_bytes: u64) -> std::io::Result<()> {
+    if bytes_read == expected_bytes {
+        return Ok(());
+    }
+    Err(Error::new(
+        ErrorKind::UnexpectedEof,
+        format!(
+            "transcript shrank after discovery: expected {expected_bytes} bytes, read {bytes_read}"
+        ),
+    ))
 }
 
 /// Map a session's record-derived [`ClaudeSessionFields`] and resolved [`SessionGit`] onto the
@@ -683,6 +699,90 @@ mod tests {
         };
         assert_eq!(cursor.byte_offset, first.len() as u64);
         assert_eq!(cursor.content_hash_head, head_hash(&first));
+    }
+
+    fn compressed_file(dir: &std::path::Path, name: &str, body: &str) -> DiscoveredFile {
+        let path = dir.join(name);
+        let compressed = zstd::bulk::compress(body.as_bytes(), 3).unwrap();
+        std::fs::write(&path, &compressed).unwrap();
+        DiscoveredFile {
+            path: path.to_str().unwrap().to_string(),
+            mtime_ms: 10.0,
+            size_bytes: compressed.len() as u64,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_compressed_transcript_assembles_like_its_plain_text() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let body = format!(
+            "{}\nmalformed json\n{}\n",
+            json!({ "type": "session_meta", "payload": { "id": "compressed", "cwd": "/nowhere" } }),
+            json!({ "type": "event_msg", "payload": { "type": "user_message", "message": "hi" } })
+        );
+        let plain_path = dir.path().join("rollout.jsonl");
+        std::fs::write(&plain_path, &body).unwrap();
+        let plain = DiscoveredFile {
+            path: plain_path.to_str().unwrap().to_string(),
+            mtime_ms: 10.0,
+            size_bytes: body.len() as u64,
+        };
+        let compressed = compressed_file(dir.path(), "rollout.jsonl.zst", &body);
+        let cache = GitRemoteCache::new();
+        let store = CursorStore::open_in_memory("org").unwrap();
+
+        let from_plain = assemble_sync_unit(&plain, AgentSource::Codex, &cache, &store)
+            .await
+            .unwrap();
+        let from_compressed = assemble_sync_unit(&compressed, AgentSource::Codex, &cache, &store)
+            .await
+            .unwrap();
+
+        assert_eq!(from_compressed.records, from_plain.records);
+        assert_eq!(from_compressed.ctx, from_plain.ctx);
+        assert_eq!(from_compressed.ctx.vendor_session_id, "compressed");
+        assert_eq!(
+            read_transcript_file(&compressed).unwrap().skipped_lines(),
+            1
+        );
+        let UnitCursor::File(cursor) = from_compressed.next_cursor else {
+            panic!("JSONL source has a file cursor");
+        };
+        assert_eq!(cursor.file_path, compressed.path);
+        assert_eq!(cursor.byte_offset, compressed.size_bytes);
+        assert_eq!(cursor.content_hash_head, head_hash(&body));
+
+        let error = match assemble_sync_unit_from_bytes(
+            &compressed,
+            AgentSource::Codex,
+            &cache,
+            &store,
+            body.as_bytes(),
+        )
+        .await
+        {
+            Ok(_) => panic!("compressed transcripts are not raw text"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), ErrorKind::InvalidInput);
+    }
+
+    #[tokio::test]
+    async fn a_compressed_transcript_that_shrank_after_discovery_fails() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let body = "{\"type\":\"session_meta\",\"payload\":{\"id\":\"short\"}}\n".repeat(200);
+        let file = compressed_file(dir.path(), "short.jsonl.zst", &body);
+        let bytes = std::fs::read(&file.path).unwrap();
+        std::fs::write(&file.path, &bytes[..bytes.len() / 2]).unwrap();
+
+        assert!(read_transcript_file(&file).is_err());
+        let cache = GitRemoteCache::new();
+        let store = CursorStore::open_in_memory("org").unwrap();
+        assert!(
+            assemble_sync_unit(&file, AgentSource::Codex, &cache, &store)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
