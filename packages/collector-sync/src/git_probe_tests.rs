@@ -253,6 +253,13 @@ async fn cwds_without_a_work_tree_are_absence_not_deferral() {
             None,
             "{cwd:?} must not defer assembly"
         );
+        assert_eq!(
+            store
+                .session_git(AgentSource::Claude, "session.jsonl")
+                .unwrap(),
+            None,
+            "{cwd:?} must not create a pin"
+        );
     }
 }
 
@@ -285,6 +292,20 @@ async fn a_refused_bare_repository_defers_because_it_may_name_a_work_tree() {
 
     let bare = tempfile::TempDir::new().unwrap();
     assert!(git(bare.path(), &["init", "--bare", "-q"]).status.success());
+    // Git before 2.45 ignores safe.bareRepository and reports a bare cwd as having no work tree.
+    let refusal = git(
+        bare.path(),
+        &[
+            "-c",
+            "safe.bareRepository=explicit",
+            "rev-parse",
+            "--show-toplevel",
+        ],
+    );
+    if !String::from_utf8_lossy(&refusal.stderr).starts_with("fatal: cannot use bare repository") {
+        eprintln!("skipped: this git does not enforce safe.bareRepository");
+        return;
+    }
     for cwd in [meta.path(), bare.path()] {
         let resolution = resolve_with_explicit_bare_repositories(cwd).await;
         assert_eq!(resolution, Err(GitProbeError::BareRepositoryRefused));
