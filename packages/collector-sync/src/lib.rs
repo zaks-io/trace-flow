@@ -74,4 +74,4 @@ pub use sync_cycle::{
     run_sync_cycle, run_sync_cycle_tuned, CycleReport, IngestClient, SyncTuning, SyncUnit,
     UnconfirmedRejection, UnitCursor,
 };
-pub use transcript_file::resident_bytes;
+pub use transcript_file::{resident_bytes, uncompressed_path};

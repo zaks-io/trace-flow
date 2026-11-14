@@ -3,9 +3,9 @@ use std::path::PathBuf;
 
 use collector_contracts::AgentSource;
 use collector_sync::{
-    assemble_snapshot, read_transcript_file, resident_bytes, select_changed, walk_transcripts,
-    CodexLineage, CursorStore, CursorStoreError, DiscoveredFile, GitRemoteCache, ImportWindow,
-    SyncUnit, DISCOVERY_INCOMPLETE,
+    assemble_snapshot, read_transcript_file, resident_bytes, select_changed, uncompressed_path,
+    walk_transcripts, CodexLineage, CursorStore, CursorStoreError, DiscoveredFile, GitRemoteCache,
+    ImportWindow, SyncUnit, DISCOVERY_INCOMPLETE,
 };
 
 use crate::sync::SourceReport;
@@ -52,10 +52,7 @@ impl FactSources {
         let files = if replay || reparse_known {
             let mut selected = Vec::new();
             for file in files {
-                let needs_upgrade = reparse_known
-                    && ((store.get(source, &file.path)?.is_some()
-                        && !store.is_file_parser_current(source, &file.path)?)
-                        || store.has_stale_file_quarantine(source, &file.path)?);
+                let needs_upgrade = reparse_known && needs_upgrade(store, source, &file)?;
                 if (replay && window.includes(file.mtime_ms)) || needs_upgrade {
                     selected.push(file);
                 } else {
@@ -147,6 +144,26 @@ impl FactSources {
     }
 }
 
+/// Whether a parser upgrade must re-read `file`. A compressed transcript with no cursor of its own
+/// answers from the plain file it was compressed from, whose cursor records the parser that read it.
+fn needs_upgrade(
+    store: &CursorStore,
+    source: AgentSource,
+    file: &DiscoveredFile,
+) -> Result<bool, CursorStoreError> {
+    let read_as = if store.get(source, &file.path)?.is_some() {
+        Some(file.path.as_str())
+    } else {
+        let plain = uncompressed_path(&file.path);
+        (plain != file.path && store.get(source, plain)?.is_some()).then_some(plain)
+    };
+    let stale_parser = match read_as {
+        Some(path) => !store.is_file_parser_current(source, path)?,
+        None => false,
+    };
+    Ok(stale_parser || store.has_stale_file_quarantine(source, &file.path)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,6 +217,49 @@ mod tests {
                 .unwrap(),
             completed
         );
+    }
+
+    #[test]
+    fn a_parser_upgrade_rereads_a_transcript_compressed_after_its_last_read() {
+        let home = tempfile::TempDir::new().unwrap();
+        let plain = write_jsonl(home.path(), "rollout.jsonl", json!({"a":1}));
+        let file = walk_transcripts(home.path()).files.remove(0);
+        let mut store = CursorStore::open_in_memory("org").unwrap();
+        store.set_active_parser_version("0.1.0");
+        let text = std::fs::read_to_string(&plain).unwrap();
+        store
+            .advance(
+                AgentSource::Codex,
+                &FileCursor {
+                    file_path: file.path,
+                    mtime_ms: file.mtime_ms,
+                    byte_offset: file.size_bytes,
+                    content_hash_head: head_hash(&text),
+                },
+            )
+            .unwrap();
+        let compressed = home.path().join("rollout.jsonl.zst");
+        std::fs::write(
+            &compressed,
+            zstd::bulk::compress(text.as_bytes(), 3).unwrap(),
+        )
+        .unwrap();
+        std::fs::remove_file(&plain).unwrap();
+        store.set_active_parser_version("0.2.0");
+
+        let mut report = SourceReport::default();
+        let mut files = FactSources::discover(
+            &[home.path().to_path_buf()],
+            AgentSource::Codex,
+            &store,
+            ImportWindow::first_incremental(9_000_000_000_000),
+            false,
+            true,
+            &mut report,
+        )
+        .unwrap();
+        assert_eq!(report.selected, 1);
+        assert_eq!(files.take_batch()[0].path, compressed.to_str().unwrap());
     }
 
     #[test]

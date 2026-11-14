@@ -39,7 +39,7 @@ use crate::discovery::{head_hash, DiscoveredFile};
 use crate::git::GitRemoteCache;
 use crate::session_git::SessionGit;
 use crate::sync_cycle::{SyncUnit, UnitCursor};
-use crate::transcript_file::{is_compressed, BoundedText};
+use crate::transcript_file::{is_compressed, uncompressed_path, BoundedText};
 
 /// Read `file`, resolve its session's git attribution, and assemble the [`SyncUnit`] the drive loop
 /// POSTs. A file-level read error propagates (the loop leaves the cursor unadvanced and retries the file
@@ -184,7 +184,12 @@ async fn assemble_records(
                 Some(g) => Some(SessionGit::from(g)),
                 None => {
                     store
-                        .resolve_session_git(source, &file.path, codex.fields.cwd.as_deref(), cache)
+                        .resolve_session_git(
+                            source,
+                            uncompressed_path(&file.path),
+                            codex.fields.cwd.as_deref(),
+                            cache,
+                        )
                         .await?
                 }
             };
@@ -199,7 +204,12 @@ async fn assemble_records(
         AgentSource::Claude | AgentSource::Cursor => {
             let fields = claude_session_fields(&records);
             let meta = store
-                .resolve_session_git(source, &file.path, fields.cwd.as_deref(), cache)
+                .resolve_session_git(
+                    source,
+                    uncompressed_path(&file.path),
+                    fields.cwd.as_deref(),
+                    cache,
+                )
                 .await?;
             (fields, meta, String::new(), None, String::new())
         }
