@@ -73,6 +73,11 @@ pub enum GitProbeError {
     Exit { command: String, code: Option<i32> },
     #[error("git rejected dubious ownership; verify repository ownership and configure safe.directory for this checkout if trusted")]
     DubiousOwnership,
+    /// `safe.bareRepository=explicit` refuses a bare-looking repository before git reads its config,
+    /// so this is not proof of absence: a metadata directory whose `core.worktree` names a real
+    /// checkout is refused the same way.
+    #[error("git refused a bare repository because safe.bareRepository is explicit; allow it in git config if this repository is trusted")]
+    BareRepositoryRefused,
     #[error("git {command} returned invalid UTF-8; check repository metadata")]
     InvalidUtf8 { command: String },
     #[error("git returned an empty repository root; check the repository with git status")]
@@ -153,18 +158,16 @@ where
 /// a `.git` gitfile that points at deleted metadata, and git words that differently across versions
 /// ("not a git repository: <path>" in older releases, "gitfile does not point to a valid
 /// repository" in newer ones). A bare repository, a checkout flagged `core.bare=true`, and a cwd
-/// inside `.git` have no top-level directory to attribute; with `safe.bareRepository=explicit` git
-/// refuses a bare one outright, but it still has none. No retry repairs any of these, so they
+/// inside `.git` have no top-level directory to attribute. No retry repairs any of these, so they
 /// are absence rather than a deferral that would hold the session, and every later sync window,
 /// forever. These prefixes are only trustworthy because probes never inherit
 /// [`REPOSITORY_SELECTION_ENV`]: a stale `GIT_DIR` produces the same "not a git repository" text.
-const NOT_A_REPOSITORY: [&str; 6] = [
+const NOT_A_REPOSITORY: [&str; 5] = [
     "fatal: not a git repository",
     "fatal: gitfile does not point to a valid repository",
     "fatal: invalid gitfile format",
     "fatal: no path in gitfile",
     "fatal: this operation must be run in a work tree",
-    "fatal: cannot use bare repository",
 ];
 
 /// `git rev-parse --local-env-vars` minus `GIT_CONFIG_PARAMETERS` and `GIT_CONFIG_COUNT`, which is
@@ -247,6 +250,9 @@ async fn run_git_command(
         // Do not silently rewrite attribution or change user trust settings on persistent failures.
         if stderr.starts_with("fatal: detected dubious ownership in repository") {
             return Err(GitProbeError::DubiousOwnership);
+        }
+        if stderr.starts_with("fatal: cannot use bare repository") {
+            return Err(GitProbeError::BareRepositoryRefused);
         }
         return Err(GitProbeError::Exit {
             command: name,
