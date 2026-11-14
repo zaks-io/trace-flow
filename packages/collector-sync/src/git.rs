@@ -17,8 +17,10 @@
 //! Resolution classifies absence separately from failure:
 //! - Missing/invalid cwd or git executable (`NotFound`/`NotADirectory`): no pin, sync proceeds.
 //! - Root probe exit 128 with a C-locale not-a-repository message, including a dangling or
-//!   malformed `.git` gitfile left by a pruned worktree: no repo, sync proceeds. Probes drop
-//!   inherited repository-selection variables such as `GIT_DIR`, so discovery always starts at cwd.
+//!   malformed `.git` gitfile left by a pruned worktree, or a cwd with no work tree (a bare
+//!   repository, a checkout with `core.bare=true`, or a `.git` directory): no repo, sync proceeds.
+//!   Probes drop inherited repository-selection variables such as `GIT_DIR`, so discovery always
+//!   starts at cwd.
 //! - Origin/branch exit 1: legitimate absent field, a resolved repo may be pinned.
 //! - Timeout, other spawn/exit failures, invalid UTF-8 or empty root: retryable failure.
 //! - Dubious ownership: retryable failure with an actionable diagnostic. Deferring visibly avoids
@@ -147,17 +149,20 @@ where
     }))
 }
 
-/// C-locale root-probe messages for a cwd with no usable repository. A pruned linked worktree keeps
+/// C-locale root-probe messages for a cwd with no usable work tree. A pruned linked worktree keeps
 /// a `.git` gitfile that points at deleted metadata, and git words that differently across versions
 /// ("not a git repository: <path>" in older releases, "gitfile does not point to a valid
-/// repository" in newer ones). No retry can repair it, so it is absence rather than a deferral that
-/// would hold the session forever. These prefixes are only trustworthy because probes never inherit
+/// repository" in newer ones). A bare repository, a checkout flagged `core.bare=true`, and a cwd
+/// inside `.git` have no top-level directory to attribute. No retry repairs any of these, so they
+/// are absence rather than a deferral that would hold the session, and every later sync window,
+/// forever. These prefixes are only trustworthy because probes never inherit
 /// [`REPOSITORY_SELECTION_ENV`]: a stale `GIT_DIR` produces the same "not a git repository" text.
-const NOT_A_REPOSITORY: [&str; 4] = [
+const NOT_A_REPOSITORY: [&str; 5] = [
     "fatal: not a git repository",
     "fatal: gitfile does not point to a valid repository",
     "fatal: invalid gitfile format",
     "fatal: no path in gitfile",
+    "fatal: this operation must be run in a work tree",
 ];
 
 /// `git rev-parse --local-env-vars` minus `GIT_CONFIG_PARAMETERS` and `GIT_CONFIG_COUNT`, which is

@@ -212,6 +212,51 @@ async fn pruned_or_broken_worktree_gitfiles_are_absence_not_deferral() {
 }
 
 #[tokio::test]
+async fn cwds_without_a_work_tree_are_absence_not_deferral() {
+    let bare = tempfile::TempDir::new().unwrap();
+    assert!(git(bare.path(), &["init", "--bare", "-q"]).status.success());
+    // A normal clone whose config was flipped to bare still has files on disk, but git refuses to
+    // name a top-level directory for it.
+    let flagged = tempfile::TempDir::new().unwrap();
+    assert!(git(flagged.path(), &["init", "-q", "-b", "main"])
+        .status
+        .success());
+    assert!(git(flagged.path(), &["config", "core.bare", "true"])
+        .status
+        .success());
+    let normal = tempfile::TempDir::new().unwrap();
+    assert!(git(normal.path(), &["init", "-q", "-b", "main"])
+        .status
+        .success());
+
+    for cwd in [
+        bare.path().to_path_buf(),
+        flagged.path().to_path_buf(),
+        normal.path().join(".git"),
+    ] {
+        assert_eq!(
+            resolve_git_metadata(cwd.to_str().unwrap()).await,
+            Ok(None),
+            "{cwd:?}"
+        );
+        let store = CursorStore::open_in_memory("org").unwrap();
+        assert_eq!(
+            store
+                .resolve_session_git(
+                    AgentSource::Claude,
+                    "session.jsonl",
+                    cwd.to_str(),
+                    &GitRemoteCache::new(),
+                )
+                .await
+                .unwrap(),
+            None,
+            "{cwd:?} must not defer assembly"
+        );
+    }
+}
+
+#[tokio::test]
 async fn inherited_repository_selection_cannot_redirect_or_hide_the_session_repo() {
     let repo = tempfile::TempDir::new().unwrap();
     assert!(git(repo.path(), &["init", "-b", "main"]).status.success());
