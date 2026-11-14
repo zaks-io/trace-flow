@@ -257,6 +257,19 @@ async fn cwds_without_a_work_tree_are_absence_not_deferral() {
 }
 
 #[tokio::test]
+async fn a_bare_repository_git_refuses_to_open_is_absence() {
+    let bare = tempfile::TempDir::new().unwrap();
+    assert!(git(bare.path(), &["init", "--bare", "-q"]).status.success());
+    let resolution = resolve_git_metadata_with(|args, absent| {
+        let mut command = Command::new("git");
+        command.args(["-c", "safe.bareRepository=explicit"]);
+        run_git_command(command, bare.path().to_str().unwrap(), args, absent)
+    })
+    .await;
+    assert_eq!(resolution, Ok(None));
+}
+
+#[tokio::test]
 async fn inherited_repository_selection_cannot_redirect_or_hide_the_session_repo() {
     let repo = tempfile::TempDir::new().unwrap();
     assert!(git(repo.path(), &["init", "-b", "main"]).status.success());

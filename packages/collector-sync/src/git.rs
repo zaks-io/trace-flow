@@ -153,16 +153,18 @@ where
 /// a `.git` gitfile that points at deleted metadata, and git words that differently across versions
 /// ("not a git repository: <path>" in older releases, "gitfile does not point to a valid
 /// repository" in newer ones). A bare repository, a checkout flagged `core.bare=true`, and a cwd
-/// inside `.git` have no top-level directory to attribute. No retry repairs any of these, so they
+/// inside `.git` have no top-level directory to attribute; with `safe.bareRepository=explicit` git
+/// refuses a bare one outright, but it still has none. No retry repairs any of these, so they
 /// are absence rather than a deferral that would hold the session, and every later sync window,
 /// forever. These prefixes are only trustworthy because probes never inherit
 /// [`REPOSITORY_SELECTION_ENV`]: a stale `GIT_DIR` produces the same "not a git repository" text.
-const NOT_A_REPOSITORY: [&str; 5] = [
+const NOT_A_REPOSITORY: [&str; 6] = [
     "fatal: not a git repository",
     "fatal: gitfile does not point to a valid repository",
     "fatal: invalid gitfile format",
     "fatal: no path in gitfile",
     "fatal: this operation must be run in a work tree",
+    "fatal: cannot use bare repository",
 ];
 
 /// `git rev-parse --local-env-vars` minus `GIT_CONFIG_PARAMETERS` and `GIT_CONFIG_COUNT`, which is
