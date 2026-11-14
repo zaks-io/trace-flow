@@ -212,6 +212,116 @@ async fn pruned_or_broken_worktree_gitfiles_are_absence_not_deferral() {
 }
 
 #[tokio::test]
+async fn cwds_without_a_work_tree_are_absence_not_deferral() {
+    let bare = tempfile::TempDir::new().unwrap();
+    assert!(git(bare.path(), &["init", "--bare", "-q"]).status.success());
+    // A normal clone whose config was flipped to bare still has files on disk, but git refuses to
+    // name a top-level directory for it.
+    let flagged = tempfile::TempDir::new().unwrap();
+    assert!(git(flagged.path(), &["init", "-q", "-b", "main"])
+        .status
+        .success());
+    assert!(git(flagged.path(), &["config", "core.bare", "true"])
+        .status
+        .success());
+    let normal = tempfile::TempDir::new().unwrap();
+    assert!(git(normal.path(), &["init", "-q", "-b", "main"])
+        .status
+        .success());
+
+    for cwd in [
+        bare.path().to_path_buf(),
+        flagged.path().to_path_buf(),
+        normal.path().join(".git"),
+    ] {
+        assert_eq!(
+            resolve_git_metadata(cwd.to_str().unwrap()).await,
+            Ok(None),
+            "{cwd:?}"
+        );
+        let store = CursorStore::open_in_memory("org").unwrap();
+        assert_eq!(
+            store
+                .resolve_session_git(
+                    AgentSource::Claude,
+                    "session.jsonl",
+                    cwd.to_str(),
+                    &GitRemoteCache::new(),
+                )
+                .await
+                .unwrap(),
+            None,
+            "{cwd:?} must not defer assembly"
+        );
+        assert_eq!(
+            store
+                .session_git(AgentSource::Claude, "session.jsonl")
+                .unwrap(),
+            None,
+            "{cwd:?} must not create a pin"
+        );
+    }
+}
+
+async fn resolve_with_explicit_bare_repositories(cwd: &std::path::Path) -> GitResolution {
+    resolve_git_metadata_with(|args, absent| {
+        let mut command = Command::new("git");
+        command.args(["-c", "safe.bareRepository=explicit"]);
+        run_git_command(command, cwd.to_str().unwrap(), args, absent)
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_refused_bare_repository_defers_because_it_may_name_a_work_tree() {
+    // A metadata directory whose core.worktree names a real checkout resolves normally, and
+    // safe.bareRepository=explicit refuses it with the same diagnostic as a truly bare repository.
+    let meta = tempfile::TempDir::new().unwrap();
+    let work = tempfile::TempDir::new().unwrap();
+    assert!(git(meta.path(), &["init", "--bare", "-q"]).status.success());
+    for args in [
+        ["config", "core.bare", "false"],
+        ["config", "core.worktree", work.path().to_str().unwrap()],
+    ] {
+        assert!(git(meta.path(), &args).status.success());
+    }
+    assert!(resolve_git_metadata(meta.path().to_str().unwrap())
+        .await
+        .unwrap()
+        .is_some());
+
+    let bare = tempfile::TempDir::new().unwrap();
+    assert!(git(bare.path(), &["init", "--bare", "-q"]).status.success());
+    // Git before 2.45 ignores safe.bareRepository and reports a bare cwd as having no work tree.
+    let refusal = git(
+        bare.path(),
+        &[
+            "-c",
+            "safe.bareRepository=explicit",
+            "rev-parse",
+            "--show-toplevel",
+        ],
+    );
+    if !String::from_utf8_lossy(&refusal.stderr).starts_with("fatal: cannot use bare repository") {
+        eprintln!("skipped: this git does not enforce safe.bareRepository");
+        return;
+    }
+    for cwd in [meta.path(), bare.path()] {
+        let resolution = resolve_with_explicit_bare_repositories(cwd).await;
+        assert_eq!(resolution, Err(GitProbeError::BareRepositoryRefused));
+        let cache = GitRemoteCache::new();
+        let _ = cache.freeze(cwd.to_str().unwrap(), resolution);
+        let error = CursorStore::open_in_memory("org")
+            .unwrap()
+            .resolve_session_git(AgentSource::Claude, "session", cwd.to_str(), &cache)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+        assert!(error.to_string().contains("safe.bareRepository"));
+    }
+}
+
+#[tokio::test]
 async fn inherited_repository_selection_cannot_redirect_or_hide_the_session_repo() {
     let repo = tempfile::TempDir::new().unwrap();
     assert!(git(repo.path(), &["init", "-b", "main"]).status.success());
