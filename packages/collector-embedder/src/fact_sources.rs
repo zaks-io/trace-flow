@@ -145,7 +145,8 @@ impl FactSources {
 }
 
 /// Whether a parser upgrade must re-read `file`. A compressed transcript with no cursor of its own
-/// answers from the plain file it was compressed from, whose cursor records the parser that read it.
+/// answers from the plain file it was compressed from, whose cursor records the parser that read it
+/// and whose quarantine a parser change may clear.
 fn needs_upgrade(
     store: &CursorStore,
     source: AgentSource,
@@ -161,7 +162,10 @@ fn needs_upgrade(
         Some(path) => !store.is_file_parser_current(source, path)?,
         None => false,
     };
-    Ok(stale_parser || store.has_stale_file_quarantine(source, &file.path)?)
+    let plain = uncompressed_path(&file.path);
+    let stale_quarantine = store.has_stale_file_quarantine(source, &file.path)?
+        || (plain != file.path && store.has_stale_file_quarantine(source, plain)?);
+    Ok(stale_parser || stale_quarantine)
 }
 
 #[cfg(test)]
@@ -296,6 +300,20 @@ mod tests {
         assert_eq!(selected(&store), 0, "same parser: stays quarantined");
         store.set_active_parser_version("0.2.0");
         assert_eq!(selected(&store), 1, "new parser: retried");
+
+        // Once Codex compresses it, the quarantine recorded under the plain path still counts.
+        let text = std::fs::read(&file.path).unwrap();
+        let compressed = format!("{}.zst", file.path);
+        std::fs::write(&compressed, zstd::bulk::compress(&text, 3).unwrap()).unwrap();
+        std::fs::remove_file(&file.path).unwrap();
+        store.set_active_parser_version("0.1.0");
+        assert_eq!(
+            selected(&store),
+            0,
+            "same parser: compressed stays quarantined"
+        );
+        store.set_active_parser_version("0.2.0");
+        assert_eq!(selected(&store), 1, "new parser: compressed retried");
     }
 
     fn write_jsonl(dir: &std::path::Path, name: &str, value: serde_json::Value) -> PathBuf {

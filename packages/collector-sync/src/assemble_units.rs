@@ -75,7 +75,9 @@ pub fn read_transcript_file(file: &DiscoveredFile) -> std::io::Result<Transcript
     Ok(snapshot)
 }
 
-/// Assemble the [`SyncUnit`] for `file` from a snapshot [`read_transcript_file`] returned.
+/// Assemble the [`SyncUnit`] for `file` from a snapshot [`read_transcript_file`] returned. Callers
+/// that send the unit must first skip a Codex snapshot for which
+/// [`TranscriptSnapshot::is_collapsed_codex_archive`] holds, as the embedder's fact sources do.
 pub async fn assemble_snapshot(
     file: &DiscoveredFile,
     source: AgentSource,

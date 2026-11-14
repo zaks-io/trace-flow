@@ -15,10 +15,11 @@
 //!
 //! A plain file's size bounds what reading it costs; a compressed one's on-disk size does not. The
 //! root `--system` collector reads other users' agent homes, so a few-KB zstd bomb there could exhaust
-//! it. A compressed read therefore stops with an error once its output passes the size its first
-//! frame declares, which also rejects later frames, and never reads past [`MAX_DECOMPRESSED_BYTES`].
-//! A frame that declares no size is read up to that maximum rather than rejected, so a valid
-//! streaming-encoded archive cannot fail every pass and hold the sync window open.
+//! it. A compressed read therefore stops with an error once its output passes
+//! [`MAX_DECOMPRESSED_BYTES`], and a first frame that declares more is refused before decoding.
+//! Undeclared sizes and multi-frame files are valid zstd and read normally under that cap, so they
+//! cannot fail every pass and hold the sync window open. Parsing still expands text into records;
+//! the cap puts a compressed file on the footing of a plain file of the same decompressed size.
 
 use std::cell::Cell;
 use std::fs::File;
@@ -75,25 +76,20 @@ pub(crate) fn open_text(path: &str) -> io::Result<Box<dyn BufRead>> {
     }
 }
 
-/// Decode `input`, the compressed file at `path`, to at most its declared size or `limit`; see the
-/// module docs.
+/// Decode `input`, the compressed file at `path`, to at most `limit` bytes; see the module docs.
 fn decompressed<R: Read + 'static>(
     path: &str,
     input: R,
     limit: u64,
 ) -> io::Result<Box<dyn BufRead>> {
-    let remaining = match declared_content_size(path) {
-        Some(declared) if declared > limit => {
-            return Err(invalid_data(format!(
-                "compressed transcript declares {declared} bytes, over the {limit}-byte limit"
-            )));
-        }
-        Some(declared) => declared,
-        None => limit,
-    };
+    if let Some(declared) = declared_content_size(path).filter(|declared| *declared > limit) {
+        return Err(invalid_data(format!(
+            "compressed transcript declares {declared} bytes, over the {limit}-byte limit"
+        )));
+    }
     Ok(Box::new(BufReader::new(OutputLimit {
         inner: zstd::stream::read::Decoder::new(input)?,
-        remaining,
+        remaining: limit,
     })))
 }
 
@@ -160,9 +156,7 @@ impl<R: Read> Read for OutputLimit<R> {
         let len = buf.len().min(want);
         let n = self.inner.read(&mut buf[..len])?;
         self.remaining = self.remaining.checked_sub(n as u64).ok_or_else(|| {
-            invalid_data(
-                "compressed transcript decodes past its declared or maximum size".to_string(),
-            )
+            invalid_data("compressed transcript decodes past the size limit".to_string())
         })?;
         Ok(n)
     }
@@ -227,18 +221,22 @@ mod tests {
     }
 
     #[test]
-    fn compressed_reads_stop_at_the_declared_size() {
+    fn compressed_reads_cover_every_frame_and_stop_at_the_limit() {
         let dir = tempfile::TempDir::new().unwrap();
         let one = write_compressed(dir.path(), "one.jsonl.zst", &[b"{\"a\":1}\n"]);
         assert_eq!(read_all(open_text(&one).unwrap()).unwrap(), b"{\"a\":1}\n");
 
-        // A later frame decodes past the first frame's declared size.
-        let two = write_compressed(dir.path(), "two.jsonl.zst", &[b"{}\n", b"{}\n"]);
-        let err = read_all(open_text(&two).unwrap()).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        let bounded = BoundedText::open(&discovered(Path::new(&two))).unwrap();
+        let two = write_compressed(dir.path(), "two.jsonl.zst", &[b"{}\n", b"{\"b\":2}\n"]);
         assert_eq!(
-            read_all(bounded.text).unwrap_err().kind(),
+            read_all(open_text(&two).unwrap()).unwrap(),
+            b"{}\n{\"b\":2}\n"
+        );
+        let bounded = BoundedText::open(&discovered(Path::new(&two))).unwrap();
+        assert_eq!(read_all(bounded.text).unwrap(), b"{}\n{\"b\":2}\n");
+        // Later frames count toward the limit too.
+        let capped = decompressed(&two, File::open(&two).unwrap(), 4).unwrap();
+        assert_eq!(
+            read_all(capped).unwrap_err().kind(),
             io::ErrorKind::InvalidData
         );
 
